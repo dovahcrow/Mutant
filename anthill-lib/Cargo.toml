@@ -1,0 +1,42 @@
+[package]
+name = "anthill-lib"
+version = "0.1.1"
+edition = "2021"
+license = "Apache-2.0"
+description = "Core library for Anthill distributed storage"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "anthill_lib"
+path = "src/lib.rs"
+
+[dependencies]
+autonomi = "0.4.3"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_cbor = "0.11"
+thiserror = "1.0"
+tokio = { version = "1", features = ["full"] }
+hex = "0.4"
+futures = "0.3"
+tokio-retry = "0.3"
+async-trait = "0.1"
+rand = "0.8"
+once_cell = "1.19"
+sha2 = "0.10"
+bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+dialoguer = "0.11.0"
+indicatif = { version = "0.17.7", features = ["tokio"] }
+clap = { version = "4.4.8", features = ["derive"] }
+pretty_env_logger = "0.5.0"
+env_logger = "0.11.3"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1.0"
+serial_test = "3.0.0"
+
+[features]
+default = []

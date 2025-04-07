@@ -1,0 +1,4 @@
+[workspace]
+resolver = "3"
+members = ["anthill-lib", "anthill-cli"]
+default-members = ["anthill-cli"]
