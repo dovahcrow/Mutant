@@ -4181,7 +4181,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mutant"
+name = "mutant-cli"
 version = "0.1.1"
 dependencies = [
  "bincode 2.0.1",

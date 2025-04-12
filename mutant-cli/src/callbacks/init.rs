@@ -1,7 +1,7 @@
 use super::progress::StyledProgressBar;
-use anthill_lib::events::{InitCallback, InitProgressEvent};
 use futures::future::FutureExt;
 use indicatif::MultiProgress;
+use mutant_lib::events::{InitCallback, InitProgressEvent};
 
 pub fn create_init_callback(multi_progress: &MultiProgress) -> (StyledProgressBar, InitCallback) {
     let init_pb = StyledProgressBar::new_for_steps(multi_progress);

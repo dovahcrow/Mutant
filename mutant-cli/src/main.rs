@@ -18,11 +18,15 @@ async fn main() -> ExitCode {
 
     match run_cli().await {
         Ok(exit_code) => {
-            info!("Anthill CLI finished successfully.");
+            if exit_code == ExitCode::SUCCESS {
+                info!("MutAnt CLI finished successfully.");
+            } else {
+                error!("MutAnt CLI exited with error: {:?}", exit_code);
+            }
             exit_code
         }
         Err(e) => {
-            error!("Anthill CLI exited with error: {}", e);
+            error!("MutAnt CLI exited with error: {}", e);
             ExitCode::FAILURE
         }
     }

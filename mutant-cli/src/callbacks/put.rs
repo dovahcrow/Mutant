@@ -1,6 +1,6 @@
 use super::progress::StyledProgressBar;
-use anthill_lib::error::Error;
-use anthill_lib::events::{PutCallback, PutEvent};
+use mutant_lib::error::Error;
+use mutant_lib::events::{PutCallback, PutEvent};
 use dialoguer::Confirm;
 use futures::future::FutureExt;
 use humansize::{BINARY, format_size};

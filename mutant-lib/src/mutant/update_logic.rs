@@ -1,7 +1,7 @@
 use super::MutAnt;
 use crate::error::Error;
 use crate::events::{invoke_callback, PutCallback, PutEvent};
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 
 /// Updates an existing item with new data.
 ///
@@ -13,8 +13,8 @@ pub(super) async fn update_item(
     mut callback: Option<PutCallback>,
 ) -> Result<(), Error> {
     let data_size = data_bytes.len();
-    info!(
-        "Anthill [{}]: Starting update_item for key '{}' ({} bytes) using PadManager",
+    trace!(
+        "MutAnt [{}]: Starting update_item for key '{}' ({} bytes) using PadManager",
         es.master_index_addr, // Assuming this is still relevant for logging
         key,
         data_size

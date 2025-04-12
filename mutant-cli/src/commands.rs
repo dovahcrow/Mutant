@@ -1,32 +1,32 @@
 use crate::callbacks::{create_get_callback, create_put_callback};
 use crate::cli::Commands;
 
-use anthill_lib::{anthill::Anthill, error::Error};
 use humansize::{BINARY, format_size};
 use indicatif::MultiProgress;
 use log::{debug, info, warn};
+use mutant_lib::{error::Error, mutant::MutAnt};
 use nu_ansi_term::{Color, Style};
 use std::io::{self, Read, Write};
 use std::process::ExitCode;
 
 pub async fn handle_command(
     command: Commands,
-    anthill: Anthill,
+    mutant: MutAnt,
     multi_progress: &MultiProgress,
 ) -> ExitCode {
     match command {
         Commands::Put { key, value, force } => {
-            handle_put(anthill, key, value, force, multi_progress).await
+            handle_put(mutant, key, value, force, multi_progress).await
         }
-        Commands::Get { key } => handle_get(anthill, key, multi_progress).await,
-        Commands::Rm { key } => handle_rm(anthill, key).await,
-        Commands::Ls { long } => handle_ls(anthill, long).await,
-        Commands::Stats => handle_stats(anthill).await,
+        Commands::Get { key } => handle_get(mutant, key, multi_progress).await,
+        Commands::Rm { key } => handle_rm(mutant, key).await,
+        Commands::Ls { long } => handle_ls(mutant, long).await,
+        Commands::Stats => handle_stats(mutant).await,
     }
 }
 
 async fn handle_put(
-    anthill: Anthill,
+    mutant: MutAnt,
     key: String,
     value: Option<String>,
     force: bool,
@@ -56,11 +56,11 @@ async fn handle_put(
 
     let result = if force {
         debug!("Forcing update for key: {}", key);
-        anthill
+        mutant
             .update(key.clone(), &bytes_to_store, Some(callback))
             .await
     } else {
-        anthill
+        mutant
             .store(key.clone(), &bytes_to_store, Some(callback))
             .await
     };
@@ -121,13 +121,13 @@ async fn handle_put(
     }
 }
 
-async fn handle_get(anthill: Anthill, key: String, multi_progress: &MultiProgress) -> ExitCode {
+async fn handle_get(mutant: MutAnt, key: String, multi_progress: &MultiProgress) -> ExitCode {
     debug!("CLI: Handling Get command: key={}", key);
 
     let get_multi_progress = multi_progress.clone();
     let (download_pb_opt, callback) = create_get_callback(&get_multi_progress);
 
-    match anthill.fetch(&key, Some(callback)).await {
+    match mutant.fetch(&key, Some(callback)).await {
         Ok(value_bytes) => {
             if let Some(pb) = download_pb_opt.lock().unwrap().take() {
                 if !pb.is_finished() {
@@ -160,9 +160,9 @@ async fn handle_get(anthill: Anthill, key: String, multi_progress: &MultiProgres
     }
 }
 
-async fn handle_rm(anthill: Anthill, key: String) -> ExitCode {
+async fn handle_rm(mutant: MutAnt, key: String) -> ExitCode {
     debug!("CLI: Handling Rm command: key={}", key);
-    match anthill.remove(&key).await {
+    match mutant.remove(&key).await {
         Ok(_) => {
             println!("Removed key: {}", key);
             ExitCode::SUCCESS
@@ -178,12 +178,12 @@ async fn handle_rm(anthill: Anthill, key: String) -> ExitCode {
     }
 }
 
-async fn handle_ls(anthill: Anthill, long: bool) -> ExitCode {
+async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
     debug!("CLI: Handling Ls command, long={}", long);
 
     if long {
         info!("Fetching key details...");
-        match anthill.list_key_details().await {
+        match mutant.list_key_details().await {
             Ok(details) => {
                 if details.is_empty() {
                     println!("No keys stored.");
@@ -225,7 +225,7 @@ async fn handle_ls(anthill: Anthill, long: bool) -> ExitCode {
         }
     } else {
         info!("Fetching key list...");
-        match anthill.list_keys().await {
+        match mutant.list_keys().await {
             Ok(keys) => {
                 let mut keys = keys;
                 keys.sort();
@@ -247,7 +247,7 @@ async fn handle_ls(anthill: Anthill, long: bool) -> ExitCode {
     }
 }
 
-async fn handle_stats(anthill: Anthill) -> ExitCode {
+async fn handle_stats(mutant: MutAnt) -> ExitCode {
     debug!("CLI: Handling Stats command");
     info!("Fetching stats...");
 
@@ -255,7 +255,7 @@ async fn handle_stats(anthill: Anthill) -> ExitCode {
     const GAUGE_BAR_WIDTH: usize = 22;
     const PERCENTAGE_WIDTH: usize = 7;
 
-    match anthill.get_storage_stats().await {
+    match mutant.get_storage_stats().await {
         Ok(stats) => {
             let label_style = Style::new().bold();
             let highlight_style = Style::new().fg(Color::Yellow);

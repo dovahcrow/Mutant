@@ -1,8 +1,8 @@
-use anthill_lib::autonomi::{Network, Wallet};
-use anthill_lib::{anthill::Anthill, events::InitCallback};
 use clap::Parser;
 use indicatif::MultiProgress;
 use log::{debug, error, info};
+use mutant_lib::autonomi::{Network, Wallet};
+use mutant_lib::{events::InitCallback, mutant::MutAnt};
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -18,7 +18,7 @@ pub enum CliError {
     WalletParse(serde_json::Error, std::path::PathBuf),
     NetworkInit(String),
     WalletCreate(String),
-    AnthillInit(String),
+    MutAntInit(String),
 }
 
 impl std::fmt::Display for CliError {
@@ -32,7 +32,7 @@ impl std::fmt::Display for CliError {
             }
             CliError::NetworkInit(e) => write!(f, "Error initializing network: {}", e),
             CliError::WalletCreate(e) => write!(f, "Error creating wallet: {}", e),
-            CliError::AnthillInit(e) => write!(f, "Error during Anthill initialization: {}", e),
+            CliError::MutAntInit(e) => write!(f, "Error during MutAnt initialization: {}", e),
         }
     }
 }
@@ -64,7 +64,7 @@ async fn initialize_wallet(wallet_path: &PathBuf) -> Result<(Wallet, String), Cl
 
 async fn cleanup_background_tasks(
     mp_join_handle: JoinHandle<()>,
-    anthill_init_handle: Option<JoinHandle<()>>,
+    mutant_init_handle: Option<JoinHandle<()>>,
 ) {
     if !mp_join_handle.is_finished() {
         debug!("Aborting and awaiting MultiProgress drawing task...");
@@ -77,19 +77,19 @@ async fn cleanup_background_tasks(
         debug!("MultiProgress drawing task finished.");
     }
 
-    if let Some(handle) = anthill_init_handle {
-        info!("Waiting for background Anthill/Storage task to complete...");
+    if let Some(handle) = mutant_init_handle {
+        info!("Waiting for background MutAnt/Storage task to complete...");
         match handle.await {
             Ok(_) => {
-                info!("Background Anthill/Storage task finished successfully.");
+                info!("Background MutAnt/Storage task finished successfully.");
             }
             Err(e) => {
                 if e.is_panic() {
-                    error!("Background Anthill/Storage task panicked: {}", e);
+                    error!("Background MutAnt/Storage task panicked: {}", e);
                 } else if e.is_cancelled() {
-                    info!("Background Anthill/Storage task was cancelled.");
+                    info!("Background MutAnt/Storage task was cancelled.");
                 } else {
-                    error!("Background Anthill/Storage task failed to join: {}", e);
+                    error!("Background MutAnt/Storage task failed to join: {}", e);
                 }
             }
         }
@@ -97,7 +97,7 @@ async fn cleanup_background_tasks(
 }
 
 pub async fn run_cli() -> Result<ExitCode, CliError> {
-    info!("Anthill CLI started processing.");
+    info!("MutAnt CLI started processing.");
 
     let cli_args = Cli::parse();
 
@@ -111,9 +111,9 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         std::future::pending::<()>().await;
     });
 
-    info!("Initializing Anthill layer (including Storage)...");
-    let (anthill, anthill_init_handle) =
-        match Anthill::init(wallet, private_key_hex, Some(init_callback)).await {
+    info!("Initializing MutAnt layer (including Storage)...");
+    let (mutant, mutant_init_handle) =
+        match MutAnt::init(wallet, private_key_hex, Some(init_callback)).await {
             Ok((a, h)) => (a, h),
             Err(e) => {
                 if !init_pb.is_finished() {
@@ -121,7 +121,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
                 }
                 mp_join_handle.abort();
                 let _ = mp_join_handle.await;
-                return Err(CliError::AnthillInit(e.to_string()));
+                return Err(CliError::MutAntInit(e.to_string()));
             }
         };
 
@@ -129,11 +129,11 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         init_pb.finish_and_clear();
     }
 
-    let exit_code = handle_command(cli_args.command, anthill, &multi_progress).await;
+    let exit_code = handle_command(cli_args.command, mutant, &multi_progress).await;
 
-    info!("Anthill CLI command finished processing.");
+    info!("MutAnt CLI command finished processing.");
 
-    cleanup_background_tasks(mp_join_handle, anthill_init_handle).await;
+    cleanup_background_tasks(mp_join_handle, mutant_init_handle).await;
 
     Ok(exit_code)
 }

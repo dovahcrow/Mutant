@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Start of development for v0.1.1
 
+### Changed
+- Renamed `anthill-cli` to `mutant-cli` internally and directory structure.
+
 ## [0.1.0] - 2025-04-12
 
 ### Added

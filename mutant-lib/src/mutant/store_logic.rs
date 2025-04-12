@@ -1,7 +1,7 @@
 use super::MutAnt;
 use crate::error::Error;
 use crate::events::{invoke_callback, PutCallback, PutEvent};
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 
 pub(super) async fn store_item(
     es: &MutAnt,
@@ -10,9 +10,11 @@ pub(super) async fn store_item(
     mut callback: Option<PutCallback>,
 ) -> Result<(), Error> {
     let data_size = data_bytes.len();
-    info!(
-        "Anthill [{}]: Starting store_item for key '{}' ({} bytes) using PadManager",
-        es.master_index_addr, key, data_size
+    trace!(
+        "MutAnt [{}]: Starting store_item for key '{}' ({} bytes) using PadManager",
+        es.master_index_addr,
+        key,
+        data_size
     );
 
     {

@@ -1,5 +1,5 @@
 use super::progress::StyledProgressBar;
-use anthill_lib::events::{GetCallback, GetEvent};
+use mutant_lib::events::{GetCallback, GetEvent};
 use futures::future::FutureExt;
 use indicatif::MultiProgress;
 use log::{debug, warn};
