@@ -43,57 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Ensure CLI errors are always printed to stderr in `main` in addition to being logged.
 - Correctly use `--local` flag to select Devnet instead of always using Mainnet logic internally.
+- When using `--local`, ensure the hardcoded devnet private key is used, overriding any selected wallet file.
 - Initialize Autonomi network client (local or mainnet) based on configuration, not hardcoded to local.
-- When using `--local`, automatically use the hardcoded devnet/test secret key.
 - Fixed pad allocation logic error occurring after `rm` then `put` by refactoring `allocate_and_write` to correctly account for freed pads.
 - Ensure master index is saved correctly *after* data is written and index is updated in memory during `put` operation, preventing loss of key information on successful writes.
 
 ## [0.1.1] - 2024-04-11
-
-### Fixed
-- Fixed issue where `ls -l` would panic if storage was completely empty.
-
-## [0.1.0] - 2024-04-10
-
-### Added
-- Initial release of Mutant CLI and Library.
-- Basic PUT, GET, RM, LS commands.
-- Storage statistics command (`stats`).
-- Progress bars for network operations.
-
-### Changed
-- **`mutant-lib` API:** Modified `MutAnt::init` and `MutAnt::init_with_progress` to only require the `private_key_hex` string. The `autonomi::Wallet` is now derived internally.
-
-## [0.1.2] - 2025-04-12
-### Fixed
-- Resolved issue where `put` command failed on the first attempt due to incorrect pad accounting after reservation, causing a 'Write completion byte count mismatch' error.
-
-## [0.1.1] - 2025-04-11
-
-### Fixed
-- Fixed issue where `ls -l` would panic if storage was completely empty.
-
-## [0.1.0] - 2024-04-10
-
-### Added
-- Initial release of Mutant CLI and Library.
-- Basic PUT, GET, RM, LS commands.
-- Storage statistics command (`stats`).
-- Progress bars for network operations.
-
-### Changed
-- **`mutant-lib` API:** Modified `MutAnt::init` and `MutAnt::init_with_progress` to only require the `private_key_hex` string. The `autonomi::Wallet` is now derived internally.
-
-## [0.1.2] - Unreleased
-
-### Added
-- Added `--local` flag to `mutant-cli` to explicitly use the Devnet configuration.
-
-## [0.1.1] - 2025-04-12
-### Fixed
-- Correctly handle pad allocation from free list in `PadManager::allocate_and_write`.
-- Ensure `PadManager` accurately tracks and saves pads used during concurrent writes to the Master Index, resolving pad count mismatch errors.
-
-## [0.1.0] - 2025-04-11
-### Added
-- Initial release with basic `put` and `get` functionality using Autonomi scratchpads.
+// ... rest of file ...

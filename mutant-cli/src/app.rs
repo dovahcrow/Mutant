@@ -251,11 +251,18 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
 
     let cli = Cli::parse();
 
-    let private_key = match initialize_wallet().await {
-        Ok(key) => key,
-        Err(e) => {
-            error!("Failed to initialize wallet: {}", e);
-            return Err(e);
+    // Determine private key: Use hardcoded for local, otherwise load from wallet.
+    let private_key = if cli.local {
+        info!("Using hardcoded local/devnet secret key for testing.");
+        // Standard Anvil/Hardhat dev key 0
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
+    } else {
+        match initialize_wallet().await {
+            Ok(key) => key,
+            Err(e) => {
+                error!("Failed to initialize wallet: {}", e);
+                return Err(e);
+            }
         }
     };
 
