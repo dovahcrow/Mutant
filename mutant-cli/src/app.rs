@@ -113,7 +113,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
 
     info!("Initializing MutAnt layer (including Storage)...");
     let (mutant, mutant_init_handle) =
-        match MutAnt::init(wallet, private_key_hex, Some(init_callback)).await {
+        match MutAnt::init_with_progress(wallet, private_key_hex, Some(init_callback)).await {
             Ok((a, h)) => (a, h),
             Err(e) => {
                 if !init_pb.is_finished() {

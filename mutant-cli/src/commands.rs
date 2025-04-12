@@ -57,11 +57,11 @@ async fn handle_put(
     let result = if force {
         debug!("Forcing update for key: {}", key);
         mutant
-            .update(key.clone(), &bytes_to_store, Some(callback))
+            .update_with_progress(key.clone(), &bytes_to_store, Some(callback))
             .await
     } else {
         mutant
-            .store(key.clone(), &bytes_to_store, Some(callback))
+            .store_with_progress(key.clone(), &bytes_to_store, Some(callback))
             .await
     };
 
@@ -127,7 +127,7 @@ async fn handle_get(mutant: MutAnt, key: String, multi_progress: &MultiProgress)
     let get_multi_progress = multi_progress.clone();
     let (download_pb_opt, callback) = create_get_callback(&get_multi_progress);
 
-    match mutant.fetch(&key, Some(callback)).await {
+    match mutant.fetch_with_progress(&key, Some(callback)).await {
         Ok(value_bytes) => {
             if let Some(pb) = download_pb_opt.lock().unwrap().take() {
                 if !pb.is_finished() {
