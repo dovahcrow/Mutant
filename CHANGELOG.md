@@ -53,3 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Performance
 
 - Batch progress updates during `get`
+
+## [0.1.2] - Unreleased
+
+### Added
+- Added `--local` flag to `mutant-cli` to explicitly use the Devnet configuration.
+
+## [0.1.1] - 2024-06-05
+
+### Changed
+- **`mutant-lib` API:** Modified `MutAnt::init` and `MutAnt::init_with_progress` to only require the `private_key_hex` string. The `autonomi::Wallet` is now derived internally.

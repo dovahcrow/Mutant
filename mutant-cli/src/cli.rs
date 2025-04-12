@@ -8,6 +8,10 @@ pub struct Cli {
     #[arg(short, long, value_name = "FILE", default_value = "mutant_wallet.json")]
     pub wallet_path: PathBuf,
 
+    /// Run against a local Mutant network.
+    #[arg(long, default_value_t = false)]
+    pub local: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
