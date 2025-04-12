@@ -5,6 +5,8 @@
 
 **MutAnt** provides a robust and asynchronous private mutable key-value storage layer built upon the Autonomi network's `Scratchpad` primitives. It simplifies interaction with the underlying network storage.
 
+> **⚠️ Disclaimer:** MutAnt is currently under active development and is **not ready for production use or mainnet deployment**. Use it at your own risk. Expect potential bugs, breaking changes, and incomplete features.
+
 ## Core Concepts
 
 *   **Private Mutable Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `rm`) operating on byte arrays
@@ -122,11 +124,7 @@ When interacting with this script-managed testnet using commands *outside* the s
 export XDG_DATA_HOME="$(pwd)/test_network_data"
 
 # Now run your cargo command or the mutant binary
-# (Assuming mutant is built and in your PATH or target/release)
-cargo run -- ls
-
-# Alternatively, use a tool like direnv to set it automatically
-# Add 'export XDG_DATA_HOME="${PWD}/test_network_data"' to a .envrc file
+cargo run -- --local ls
 ```
 
 ### Running Integration Tests (`scripts/run_tests_with_env.sh`)

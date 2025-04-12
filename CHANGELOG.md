@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Scans standard Autonomi wallet directory (`$XDG_DATA_HOME/autonomi/client/wallets`).
   - Prompts user to select a wallet if multiple are found or config is missing.
   - Reads private key directly from the selected wallet file.
+- Added a disclaimer to the README regarding production readiness.
 
 ### Changed
 - **`mutant-lib` API:** Unified key parameter types in `store`, `store_with_progress`, `update`, and `update_with_progress` to accept `&str` instead of `String` for consistency.
