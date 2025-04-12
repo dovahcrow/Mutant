@@ -190,7 +190,8 @@ impl PadManager {
                 initial_pads_to_reserve,
                 shared_callback.clone(),
                 newly_reserved_pads_collector.clone(),
-                self.storage.clone(), // Pass Arc<Storage>
+                self.storage.clone(),              // Pass Arc<Storage>
+                self.master_index_storage.clone(), // Pass Arc<Mutex<MasterIndexStorage>>
             )
             .await;
 
@@ -200,73 +201,10 @@ impl PadManager {
                     let reserved_pads_guard = newly_reserved_pads_collector.lock().await;
                     let num_reserved = reserved_pads_guard.len();
                     debug!(
-                        "AllocateWrite[{}]: Successfully reserved {} pads (collected). Saving intermediate state...",
-                        key_owned,
-                        num_reserved
+                        "AllocateWrite[{}]: Successfully reserved {} pads (individually saved).",
+                        key_owned, num_reserved
                     );
-                    // Important: Clone the pads before extending the free list
-                    let reserved_pads_cloned = reserved_pads_guard.clone();
-                    // Drop the guard *before* locking MIS
-                    drop(reserved_pads_guard);
-
-                    // Lock MIS, add reserved pads to free list, save MIS
-                    {
-                        let mut mis_guard = self.master_index_storage.lock().await;
-                        debug!(
-                            "AllocateWrite[{}]: Lock acquired for saving reserved pads to free list",
-                             key_owned
-                        );
-                        // Use the cloned list
-                        mis_guard.free_pads.extend(reserved_pads_cloned);
-                        debug!(
-                            "AllocateWrite[{}]: Added {} reserved pads to free list (new total: {}).",
-                            key_owned,
-                            num_reserved, // Use num_reserved here
-                            mis_guard.free_pads.len()
-                        );
-                        // Need storage details for saving
-                        let (mis_addr, mis_key) = self.storage.get_master_index_info();
-                        // Drop guard before await on save
-                        drop(mis_guard);
-
-                        let save_result = storage_save_mis_from_arc_static(
-                            self.storage.client(),
-                            &mis_addr,
-                            &mis_key,
-                            &self.master_index_storage,
-                        )
-                        .await;
-
-                        if let Err(e) = save_result {
-                            error!(
-                                "AllocateWrite[{}]: CRITICAL: Failed to save intermediate state after reserving pads: {}. Reverting free list addition.",
-                                key_owned,
-                                e
-                            );
-                            // Attempt to revert: Remove the pads we just tried to add.
-                            {
-                                let mut mis_guard_revert = self.master_index_storage.lock().await;
-                                // Assume they were added at the end, revert the last N
-                                let _reserved_pads_guard =
-                                    newly_reserved_pads_collector.lock().await; // Prefix with _
-                                let revert_count = num_reserved;
-                                if mis_guard_revert.free_pads.len() >= revert_count {
-                                    let len = mis_guard_revert.free_pads.len();
-                                    mis_guard_revert.free_pads.truncate(len - revert_count);
-                                    debug!(
-                                        "AllocateWrite[{}]: Reverted adding {} pads to free list.",
-                                        key_owned, revert_count
-                                    );
-                                }
-                            }
-                            // Even though save failed, reservation likely succeeded ($$), so we don't return the collector pads
-                            return Err(e);
-                        }
-                        debug!(
-                            "AllocateWrite[{}]: Intermediate save successful after reservation.",
-                            key_owned
-                        );
-                    }
+                    // No intermediate save needed here anymore, it happens after each reservation
                 }
                 Err(e) => {
                     warn!(
