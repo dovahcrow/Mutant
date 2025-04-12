@@ -2,6 +2,9 @@
 name = "mutant-cli"
 version = "0.1.1"
 edition = "2024"
+license = "GPLv3"
+description = "Distributed mutable key value storage over the Autonomi network"
+repository = "https://github.com/Champii/MutAnt" 
 
 [dependencies]
 mutant-lib = { path = "../mutant-lib" }

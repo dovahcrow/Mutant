@@ -2,8 +2,9 @@
 name = "mutant-lib"
 version = "0.1.1"
 edition = "2021"
-license = "Apache-2.0"
-description = "Core library for MutAnt distributed storage"
+license = "GPLv3"
+description = "Core library for MutAnt distributed mutable key value storage over Autonomi network"
+repository = "https://github.com/Champii/MutAnt"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

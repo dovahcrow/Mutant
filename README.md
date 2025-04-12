@@ -1,7 +1,7 @@
 # MutAnt: Private Mutable Key-Value Storage for Autonomi
 
-[![Build Status](https://github.com/<YOUR_USERNAME>/MutAnt/actions/workflows/rust.yml/badge.svg)](https://github.com/<YOUR_USERNAME>/MutAnt/actions/workflows/rust.yml)
-[![Crates.io](https://img.shields.io/crates/v/mutant_lib.svg)](https://crates.io/crates/mutant_lib) <!-- Add crates.io badge if published -->
+[![Build Status](https://github.com/Champii/MutAnt/actions/workflows/rust.yml/badge.svg)](https://github.com/Champii/MutAnt/actions/workflows/rust.yml)
+[![Crates.io](https://img.shields.io/crates/v/mutant_lib.svg)](https://crates.io/crates/mutant_lib)
 
 **MutAnt** provides a robust and asynchronous private mutable key-value storage layer built upon the Autonomi network's `Scratchpad` primitives. It simplifies interaction with the underlying network storage.
 
@@ -20,6 +20,23 @@
 ### Prerequisites
 
 *   Rust Toolchain (latest stable recommended)
+
+### Installation
+
+#### Local installation for development
+
+#### Install from crates.io (Recommended)
+
+```bash
+cargo install mutant-cli
+```
+
+```bash
+git clone https://github.com/Champii/MutAnt.git
+cd MutAnt
+cargo install --path .
+```
+
 
 ### Command-Line Interface (CLI)
 
