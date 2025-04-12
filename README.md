@@ -200,11 +200,11 @@ Data is stored and retrieved as raw byte vectors (`Vec<u8>`), allowing the user 
 
 ## Configuration
 
-The primary configuration is the wallet file path (via `--wallet-path` CLI argument or the default `mutant_wallet.json`) and the Autonomi network configuration (`client.config` discovered via `XDG_DATA_HOME` or default locations). Internal constants within `mutant_lib` define behaviors like scratchpad size.
+The primary configuration taken from your local ant wallet if existing. MutAnt will not create or manage wallets, it will propose which one you want to use if you have multiple on the first run, then save your choice in ~/.config/mutantcli/config.toml
 
 ## License
 
-*(Specify the license for this project here, e.g., MIT or Apache-2.0)*
+This project is licensed under the LGPLv3 license. See the [LICENSE](LICENSE) file for details.
 
 ## Contributing
 
