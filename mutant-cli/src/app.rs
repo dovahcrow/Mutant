@@ -15,7 +15,7 @@ use std::process::ExitCode;
 use tokio::task::JoinHandle;
 
 use crate::callbacks::create_init_callback;
-use crate::cli::Cli;
+use crate::cli::{Cli, Commands};
 use crate::commands::handle_command;
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -251,60 +251,86 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
 
     let cli = Cli::parse();
 
-    let private_key_hex = if cli.local {
-        info!("Using hardcoded local/devnet secret key for testing.");
-        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
-    } else {
-        initialize_wallet().await?
+    let private_key = match initialize_wallet().await {
+        Ok(key) => key,
+        Err(e) => {
+            error!("Failed to initialize wallet: {}", e);
+            return Err(e);
+        }
     };
 
-    let multi_progress = MultiProgress::new();
-    let mp_clone = multi_progress.clone();
-    let mp_join_handle = tokio::spawn(async move {
-        {
-            let _ = mp_clone;
-            std::future::pending::<()>().await;
-        }
-    });
-
-    let (_pb_init, created_init_callback) = create_init_callback(&multi_progress);
-
-    let mut init_callback: Option<InitCallback> = None;
-    if atty::is(atty::Stream::Stderr) {
-        init_callback = Some(created_init_callback);
-    }
-
     let network_choice = if cli.local {
-        info!("Using local/devnet network configuration.");
         NetworkChoice::Devnet
     } else {
-        info!("Using Mainnet network configuration.");
         NetworkChoice::Mainnet
     };
 
-    let mutant_config = MutAntConfig {
+    let mp = MultiProgress::new();
+    let _mp_clone_for_task = mp.clone();
+    let (_pb, init_callback_fn): (_, InitCallback) = create_init_callback(&mp);
+
+    let config = MutAntConfig {
         network: network_choice,
     };
 
-    info!("Initializing MutAnt...");
-    let (mutant, mutant_init_handle) =
-        match MutAnt::init_with_progress(private_key_hex.clone(), mutant_config, init_callback)
-            .await
-        {
-            Ok(result) => result,
+    let (mutant, init_handle) =
+        match MutAnt::init_with_progress(private_key, config, Some(init_callback_fn)).await {
+            Ok(m) => m,
             Err(e) => {
-                error!("MutAnt initialization failed: {}", e);
-                cleanup_background_tasks(mp_join_handle, None).await;
+                error!("Failed to initialize MutAnt: {}", e);
+                mp.clear().unwrap_or_else(|e| {
+                    error!("Failed to clear MultiProgress: {}", e);
+                });
                 return Err(CliError::MutAntInit(e.to_string()));
             }
         };
-    info!("MutAnt initialized successfully.");
 
-    let command_result = handle_command(cli.command.clone(), mutant, &multi_progress).await;
+    let mp_join_handle = tokio::spawn(async move {
+        let _keep_alive = _mp_clone_for_task;
+        std::future::pending::<()>().await;
+    });
 
-    info!("MutAnt CLI command finished processing.");
+    let command_result = match cli.command {
+        Commands::Reset => {
+            println!("This command will completely reset the Mutant master index.");
+            println!("All stored data associations will be lost.");
+            println!("This operation is irreversible.");
+            println!("To confirm, please type 'reset' and press Enter:");
 
-    cleanup_background_tasks(mp_join_handle, mutant_init_handle).await;
+            let mut confirmation = String::new();
+            match io::stdin().read_line(&mut confirmation) {
+                Ok(_) => {
+                    if confirmation.trim() == "reset" {
+                        info!("User confirmed reset operation.");
+                        match mutant.reset_master_index().await {
+                            Ok(_) => {
+                                info!("Master index reset successfully.");
+                                Ok(ExitCode::SUCCESS)
+                            }
+                            Err(e) => {
+                                error!("Failed to reset master index: {}", e);
+                                Ok(ExitCode::FAILURE)
+                            }
+                        }
+                    } else {
+                        warn!("Reset confirmation failed. Aborting operation.");
+                        Ok(ExitCode::FAILURE)
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to read confirmation input: {}", e);
+                    Ok(ExitCode::FAILURE)
+                }
+            }
+        }
+        _ => Ok(handle_command(cli.command, mutant, &mp).await),
+    };
 
-    Ok(command_result)
+    info!("Command handling finished, cleaning up background tasks...");
+
+    cleanup_background_tasks(mp_join_handle, init_handle).await;
+
+    info!("Cleanup complete.");
+
+    command_result
 }

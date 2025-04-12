@@ -38,4 +38,6 @@ pub enum Commands {
     },
     /// Get storage summary (allocator perspective)
     Stats,
+    /// Resets the master index to its initial empty state. Requires confirmation.
+    Reset,
 }

@@ -3,11 +3,12 @@ use crate::cli::Commands;
 
 use humansize::{BINARY, format_size};
 use indicatif::MultiProgress;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use mutant_lib::{error::Error, mutant::MutAnt};
 use nu_ansi_term::{Color, Style};
 use std::io::{self, Read, Write};
 use std::process::ExitCode;
+use std::time::Duration;
 
 pub async fn handle_command(
     command: Commands,
@@ -22,6 +23,10 @@ pub async fn handle_command(
         Commands::Rm { key } => handle_rm(mutant, key).await,
         Commands::Ls { long } => handle_ls(mutant, long).await,
         Commands::Stats => handle_stats(mutant).await,
+        Commands::Reset => {
+            error!("Internal error: Reset command reached handle_command");
+            unreachable!("Reset command should be handled before handle_command");
+        }
     }
 }
 

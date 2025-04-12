@@ -334,6 +334,38 @@ impl MutAnt {
         .await
     }
 
+    /// Resets the master index to its initial empty state.
+    /// WARNING: This is a destructive operation and will orphan existing data pads.
+    pub async fn reset_master_index(&self) -> Result<(), Error> {
+        info!("Resetting master index requested.");
+
+        // 1. Lock the master index storage
+        let mut mis_guard = self.master_index_storage.lock().await;
+        info!("Acquired lock on master index storage.");
+
+        // 2. Reset the in-memory state to default
+        *mis_guard = MasterIndexStorage::default();
+        info!("In-memory master index reset to default.");
+
+        // 3. Drop the guard before saving to avoid deadlock in save_master_index
+        drop(mis_guard);
+        info!("Released lock on master index storage.");
+
+        // 4. Persist the empty/default master index
+        info!("Attempting to save the reset master index...");
+        match self.save_master_index().await {
+            Ok(_) => {
+                info!("Successfully saved the reset master index.");
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to save the reset master index: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Lists all user keys currently tracked in the master index.
     pub async fn list_keys(&self) -> Result<Vec<String>, Error> {
         debug!("MutAnt: list_keys called");
         let guard = self.master_index_storage.lock().await;
