@@ -162,6 +162,44 @@ impl PadManager {
             );
         } // Lock released
 
+        // --- Step 1.5: Take Pads from Free List (Under Lock) ---
+        let pads_taken_from_free: Vec<PadInfo>;
+        if initial_needed_from_free > 0 {
+            let mut mis_guard = self.master_index_storage.lock().await;
+            debug!(
+                "AllocateWrite[{}]: Lock acquired to take {} pads from free list (available: {}).",
+                key_owned,
+                initial_needed_from_free,
+                mis_guard.free_pads.len()
+            );
+            if mis_guard.free_pads.len() < initial_needed_from_free {
+                // This should ideally not happen if acquire_resources_for_write was correct
+                // and no other write interfered, but handle defensively.
+                error!(
+                    "AllocateWrite[{}]: CRITICAL: Not enough pads in free list ({}) when {} were expected. State inconsistency?",
+                    key_owned, mis_guard.free_pads.len(), initial_needed_from_free
+                );
+                return Err(Error::InternalError(format!(
+                    "Free list state mismatch for key {}",
+                    key_owned
+                )));
+            }
+            // Calculate length before mutable borrow
+            let current_free_len = mis_guard.free_pads.len();
+            let start_index = current_free_len - initial_needed_from_free;
+            // Drain the required number of pads from the end of the free list
+            pads_taken_from_free = mis_guard.free_pads.drain(start_index..).collect();
+            debug!(
+                "AllocateWrite[{}]: Took {} pads. Free list size now: {}. Releasing lock.",
+                key_owned,
+                pads_taken_from_free.len(),
+                mis_guard.free_pads.len()
+            );
+            // Lock released when mis_guard goes out of scope
+        } else {
+            pads_taken_from_free = Vec::new();
+        }
+
         let shared_callback = Arc::new(Mutex::new(callback.take()));
 
         // Create MPSC channel for reserved pads
@@ -207,7 +245,8 @@ impl PadManager {
         let write_mis = self.master_index_storage.clone(); // Needed for final save
         let data_arc = Arc::new(data.to_vec()); // Clone data into Arc for tasks
         let write_initial_pads = initial_pads_to_keep.clone(); // Pads available immediately
-        let write_rx = pad_info_rx; // Remove mut
+        let write_pads_from_free = pads_taken_from_free; // Pads taken from free list
+        let write_rx = pad_info_rx; // Pads from reservation channel
 
         // Spawn the actual concurrent write task using the standalone function
         let write_handle = tokio::spawn(async move {
@@ -220,6 +259,7 @@ impl PadManager {
                 &write_key,
                 data_arc,
                 write_initial_pads,
+                write_pads_from_free, // Pass free pads
                 write_rx,
                 write_storage,
                 write_mis,
@@ -228,46 +268,57 @@ impl PadManager {
             .await
         });
 
-        // Await both tasks
-        let (reservation_result, write_result) =
-            tokio::try_join!(reservation_handle, write_handle)?;
-        // try_join propagates JoinErrors, then we check the inner Results
+        // Await both tasks and handle potential JoinError first
+        let (reservation_result_inner, write_result_inner) =
+            match tokio::try_join!(reservation_handle, write_handle) {
+                Ok((res_inner, write_inner)) => (res_inner, write_inner),
+                Err(join_err) => {
+                    error!(
+                        "AllocateWrite[{}]: Task join error: {}",
+                        key_owned, join_err
+                    );
+                    return Err(Error::from_join_error_msg(
+                        &join_err,
+                        "Task join error during allocate_and_write".to_string(),
+                    ));
+                }
+            };
 
-        // Check results
-        if let Err(e) = reservation_result {
-            error!(
-                "AllocateWrite[{}]: Reservation task failed: {}",
-                key_owned, e
-            );
-            // Write task might have partially run, but reservation failed, so return error.
-            // Cleanup of any written data is complex, rely on subsequent overwrite/gc.
-            return Err(e);
-        }
-        if let Err(e) = write_result {
-            error!("AllocateWrite[{}]: Write task failed: {}", key_owned, e);
-            // Reservation succeeded, but write failed.
-            // Need to handle cleanup: Return pads taken from free list? Recycle kept pads?
-            // For now, just return the error. The reserved pads are persisted in free list.
-            // --- Cleanup Logic for Failed Write --- (Similar to original Step 5 Error path)
-            // {
-            //     let mut mis_guard = self.master_index_storage.lock().await;
-            //     warn!(
-            //         "AllocateWrite[{}]: Write failed after successful reservation. Cleaning up potentially taken free pads.",
-            //         key_owned
-            //     );
-            // }
-            return Err(e);
-        }
+        // --- Handle Individual Task Results ---
 
-        // --- Both tasks succeeded ---
+        // Check reservation result (inner Result<Ok(()), Error>)
+        match reservation_result_inner {
+            Ok(_) => {} // Reservation task succeeded
+            Err(e) => {
+                // Reservation task completed but returned an internal error
+                error!(
+                    "AllocateWrite[{}]: Reservation task failed internally: {}",
+                    key_owned, e
+                );
+                return Err(e);
+            }
+        };
+
+        // Check write result (inner Result<Ok(pads), Error>)
+        let successfully_written_pads = match write_result_inner {
+            Ok(pads) => pads, // Write task succeeded and returned Ok(pads)
+            Err(e) => {
+                // Write task completed but returned an internal error
+                error!(
+                    "AllocateWrite[{}]: Write task failed internally: {}",
+                    key_owned, e
+                );
+                return Err(e);
+            }
+        };
+
+        // --- Both tasks succeeded internally ---
         info!(
             "AllocateWrite[{}]: Reservation and Write tasks completed successfully.",
             key_owned
         );
 
         // --- Step 3 (In-Memory Update) & Step 5 (Final Save) combined ---
-        // Now that reservation and writes are done, update the index in memory
-        // and perform the final persistent save.
         {
             let mut mis_guard = self.master_index_storage.lock().await;
             debug!(
@@ -275,28 +326,18 @@ impl PadManager {
                 key_owned
             );
 
-            // Re-calculate final pad list (needed for KeyStorageInfo)
-            // This requires knowing which pads were actually used by the write task.
-            // The write task needs to return this info, or we need to reconstruct it.
-            // TODO: Modify write task to return the final list of PadInfo used.
-            // TEMPORARY: Assume all initial pads + all *potentially* reserved pads were used.
-            // This is NOT correct if reservation failed partially or write failed.
-            let final_pads_list = {
-                let final_list = initial_pads_to_keep.clone();
-                // Cannot access collector here anymore.
-                // Need write_handle to return the list of pads successfully written to.
-                // For now, just use initial pads.
-                // let reserved_pads_guard = newly_reserved_pads_collector.lock().await;
-                // final_list.extend(reserved_pads_guard.iter().cloned());
-                final_list // Return only initial pads for now
-            };
+            // Use the list returned by the successful write task.
+            let final_pads_list = successfully_written_pads;
+
             let final_pad_count = final_pads_list.len(); // For logging
 
             // Check if expected number of pads were used (rough check)
             let expected_pads = calculate_needed_pads(data_size, mis_guard.scratchpad_size)?;
             if final_pad_count != expected_pads {
-                warn!("AllocateWrite[{}]: Final pad count ({}) mismatch expected ({}). Proceeding anyway.",
-                    key_owned, final_pad_count, expected_pads);
+                warn!(
+                    "AllocateWrite[{}]: Final pad count ({}) mismatch expected ({}). Proceeding anyway.",
+                    key_owned, final_pad_count, expected_pads
+                );
             }
 
             // Update the index in memory

@@ -2,6 +2,7 @@ use super::PadInfo;
 use crate::error::Error;
 use crate::events::{invoke_callback, PutCallback, PutEvent};
 use crate::mutant::data_structures::MasterIndexStorage;
+use crate::storage::update_scratchpad_internal_static;
 use crate::storage::Storage as BaseStorage;
 use crate::utils::retry::retry_operation;
 use autonomi::{ScratchpadAddress, SecretKey};
@@ -17,18 +18,21 @@ pub(super) const WRITE_TASK_CONCURRENCY: usize = 20;
 // --- Standalone Concurrent Write Logic ---
 
 /// Performs concurrent writes using immediately available pads and pads streamed from a channel.
-/// (Standalone function version)
+/// Returns a list of PadInfo for all pads successfully written to.
 pub(super) async fn perform_concurrent_write_standalone(
     key: &str,
     data_arc: Arc<Vec<u8>>,
     initial_pads: Vec<PadInfo>,
+    pads_from_free: Vec<PadInfo>,
     mut reserved_pad_rx: mpsc::Receiver<Result<PadInfo, Error>>,
     storage: Arc<BaseStorage>,
     master_index_storage: Arc<Mutex<MasterIndexStorage>>,
     callback_arc: Arc<Mutex<Option<PutCallback>>>,
-) -> Result<(), Error> {
+) -> Result<Vec<PadInfo>, Error> {
     let total_size = data_arc.len();
     let key_owned = key.to_string();
+
+    let successfully_written_pads: Arc<Mutex<Vec<PadInfo>>> = Arc::new(Mutex::new(Vec::new()));
 
     let scratchpad_size = {
         let mis_guard = master_index_storage.lock().await;
@@ -81,9 +85,10 @@ pub(super) async fn perform_concurrent_write_standalone(
         let task_chunk_start = chunk_start;
         let task_chunk_end = chunk_end;
         bytes_assigned = chunk_end;
+        let current_pad_info = (pad_address.clone(), pad_key_bytes.clone());
 
         debug!(
-            "PerformWrite[{}]: Spawning writer for Initial Pad Index {} ({} bytes)",
+            "PerformWrite[{}]: Spawning writer for Initial (Reused) Pad Index {} ({} bytes)",
             key_owned, current_pad_index, chunk_len
         );
         spawn_write_task_standalone(
@@ -91,21 +96,69 @@ pub(super) async fn perform_concurrent_write_standalone(
             semaphore.clone(),
             callback_arc.clone(),
             total_bytes_uploaded.clone(),
-            key_owned.clone(),
+            total_size as u64,
+            storage.clone(),
             current_pad_index,
-            pad_address,
             pad_key_bytes,
             data_arc.clone(),
             task_chunk_start,
             task_chunk_end,
             scratchpad_size,
-            total_size as u64,
-            storage.clone(),
+            successfully_written_pads.clone(),
+            current_pad_info,
         );
         current_pad_index += 1;
     }
+
+    // --- Process Pads Taken from Free List ---
     debug!(
-        "PerformWrite[{}]: Finished spawning initial writers. Bytes assigned: {}. Waiting for reserved pads...",
+        "PerformWrite[{}]: Processing {} pads taken from free list.",
+        key_owned,
+        pads_from_free.len()
+    );
+    for (pad_address, pad_key_bytes) in pads_from_free {
+        let chunk_start = bytes_assigned;
+        let chunk_end = std::cmp::min(chunk_start + scratchpad_size, total_size);
+        let chunk_len = chunk_end - chunk_start;
+
+        if chunk_len == 0 && chunk_start >= total_size {
+            debug!(
+                "PerformWrite[{}]: Reached end of data with free pads.",
+                key_owned
+            );
+            break;
+        }
+
+        let task_chunk_start = chunk_start;
+        let task_chunk_end = chunk_end;
+        bytes_assigned = chunk_end;
+        let current_pad_info = (pad_address.clone(), pad_key_bytes.clone());
+
+        debug!(
+            "PerformWrite[{}]: Spawning writer for Free Pad Index {} ({} bytes)",
+            key_owned, current_pad_index, chunk_len
+        );
+        spawn_write_task_standalone(
+            &mut join_set,
+            semaphore.clone(),
+            callback_arc.clone(),
+            total_bytes_uploaded.clone(),
+            total_size as u64,
+            storage.clone(),
+            current_pad_index,
+            pad_key_bytes,
+            data_arc.clone(),
+            task_chunk_start,
+            task_chunk_end,
+            scratchpad_size,
+            successfully_written_pads.clone(),
+            current_pad_info,
+        );
+        current_pad_index += 1;
+    }
+
+    debug!(
+        "PerformWrite[{}]: Finished spawning initial/free writers. Bytes assigned: {}. Waiting for reserved pads...",
         key_owned, bytes_assigned
     );
 
@@ -113,6 +166,7 @@ pub(super) async fn perform_concurrent_write_standalone(
         match pad_result {
             Ok(pad_info) => {
                 let (pad_address, pad_key_bytes) = pad_info;
+                let current_pad_info = (pad_address.clone(), pad_key_bytes.clone());
 
                 let chunk_start = bytes_assigned;
                 let chunk_end = std::cmp::min(chunk_start + scratchpad_size, total_size);
@@ -132,16 +186,16 @@ pub(super) async fn perform_concurrent_write_standalone(
                         semaphore.clone(),
                         callback_arc.clone(),
                         total_bytes_uploaded.clone(),
-                        key_owned.clone(),
+                        total_size as u64,
+                        storage.clone(),
                         current_pad_index,
-                        pad_address,
                         pad_key_bytes,
                         data_arc.clone(),
                         task_chunk_start,
                         task_chunk_end,
                         scratchpad_size,
-                        total_size as u64,
-                        storage.clone(),
+                        successfully_written_pads.clone(),
+                        current_pad_info,
                     );
                 } else if chunk_start >= total_size {
                     debug!(
@@ -213,11 +267,21 @@ pub(super) async fn perform_concurrent_write_standalone(
                 "Write completion byte count mismatch".to_string(),
             ))
         } else {
+            let final_pads = Arc::try_unwrap(successfully_written_pads)
+                .map_err(|_| {
+                    Error::InternalError(
+                        "Failed to unwrap Arc for successfully written pads".to_string(),
+                    )
+                })?
+                .into_inner();
+
             debug!(
-                "PerformWrite[{}]: Completed successfully. {} bytes written.",
-                key_owned, final_bytes
+                "PerformWrite[{}]: Completed successfully. {} bytes written across {} pads.",
+                key_owned,
+                final_bytes,
+                final_pads.len()
             );
-            Ok(())
+            Ok(final_pads)
         }
     }
 }
@@ -228,19 +292,19 @@ fn spawn_write_task_standalone(
     semaphore: Arc<Semaphore>,
     callback_arc: Arc<Mutex<Option<PutCallback>>>,
     total_bytes_uploaded: Arc<Mutex<u64>>,
-    key_for_task: String,
+    total_size_overall: u64,
+    storage: Arc<BaseStorage>,
     pad_index: usize,
-    pad_address: ScratchpadAddress,
     pad_key_bytes: Vec<u8>,
     data_arc: Arc<Vec<u8>>,
     chunk_start: usize,
     chunk_end: usize,
     scratchpad_size: usize,
-    total_size_overall: u64,
-    storage: Arc<BaseStorage>,
+    successfully_written_pads: Arc<Mutex<Vec<PadInfo>>>,
+    pad_info_for_task: PadInfo,
 ) {
     join_set.spawn(async move {
-        let permit = semaphore
+        let _permit = semaphore
             .acquire_owned()
             .await
             .map_err(|_| Error::InternalError("Semaphore closed unexpectedly".to_string()))?;
@@ -249,96 +313,46 @@ fn spawn_write_task_standalone(
             let key_array: [u8; 32] = match pad_key_bytes.as_slice().try_into() {
                 Ok(arr) => arr,
                 Err(_) => {
-                    return Err(Error::InternalError(format!(
-                        "WriteTask[{}]: Pad#{} key byte conversion failed (len {})",
-                        key_for_task,
-                        pad_index,
-                        pad_key_bytes.len()
-                    )));
+                    return Err(Error::InternalError(
+                        "Pad key bytes have incorrect length".to_string(),
+                    ))
                 }
             };
-            match SecretKey::from_bytes(key_array) {
-                Ok(key) => key,
-                Err(e) => {
-                    return Err(Error::InternalError(format!(
-                        "WriteTask[{}]: Pad#{} SecretKey creation failed: {}",
-                        key_for_task, pad_index, e
-                    )));
-                }
-            }
+            SecretKey::from_bytes(key_array)
+                .map_err(|e| Error::InternalError(format!("Failed to create SecretKey: {}", e)))?
         };
 
-        let data_chunk_slice = &data_arc[chunk_start..chunk_end];
+        let data_chunk = data_arc
+            .get(chunk_start..chunk_end)
+            .ok_or_else(|| Error::InternalError("Data chunk slicing failed".to_string()))?;
 
-        let write_result = perform_single_pad_write_static(
-            storage,
-            pad_index,
-            pad_address,
-            pad_secret_key,
-            data_chunk_slice,
-            scratchpad_size,
-            callback_arc,
-            total_bytes_uploaded,
-            total_size_overall,
+        let data_to_write = data_chunk.to_vec();
+        let bytes_in_chunk = data_to_write.len() as u64;
+
+        let write_result = retry_operation(
+            &format!("Write Pad #{}", pad_index),
+            || {
+                update_scratchpad_internal_static(
+                    storage.client(),
+                    &pad_secret_key,
+                    &data_to_write,
+                    0,
+                )
+            },
+            |e| {
+                warn!(
+                    "Retrying scratchpad write for pad #{} due to error: {}",
+                    pad_index, e
+                );
+                true
+            },
         )
         .await;
 
-        drop(permit);
-        write_result
-    });
-}
-
-/// Static helper to perform the write operation for a single pad chunk.
-async fn perform_single_pad_write_static(
-    storage: Arc<BaseStorage>,
-    pad_log_index: usize,
-    _pad_address: ScratchpadAddress,
-    pad_key: SecretKey,
-    data_chunk: &[u8],
-    _expected_pad_size: usize,
-    callback_arc: Arc<Mutex<Option<PutCallback>>>,
-    total_bytes_uploaded_arc: Arc<Mutex<u64>>,
-    total_bytes_overall: u64,
-) -> Result<(), Error> {
-    let chunk_len = data_chunk.len();
-    debug!(
-        "SinglePadWrite[Pad #{}]: Starting write for {} bytes...",
-        pad_log_index, chunk_len
-    );
-
-    const USER_DATA_CONTENT_TYPE: u64 = 0;
-
-    let client = storage.client();
-
-    let write_op = || async {
-        crate::storage::update_scratchpad_internal_static(
-            client,
-            &pad_key,
-            data_chunk,
-            USER_DATA_CONTENT_TYPE,
-        )
-        .await
-    };
-
-    match retry_operation(
-        &format!("Write Pad #{}", pad_log_index),
-        write_op,
-        |e: &Error| {
-            warn!(
-                "SinglePadWrite[Pad #{}]: Retrying write due to error: {}",
-                pad_log_index, e
-            );
-            true // Retry on any storage error for now
-        },
-    )
-    .await
-    {
-        Ok(_) => {
-            debug!("SinglePadWrite[Pad #{}]: Write successful", pad_log_index);
-            let bytes_written_now = chunk_len as u64;
+        if write_result.is_ok() {
             let current_total_bytes = {
-                let mut total_guard = total_bytes_uploaded_arc.lock().await;
-                *total_guard += bytes_written_now;
+                let mut total_guard = total_bytes_uploaded.lock().await;
+                *total_guard += bytes_in_chunk;
                 *total_guard
             };
             {
@@ -347,26 +361,16 @@ async fn perform_single_pad_write_static(
                     &mut *cb_guard,
                     PutEvent::UploadProgress {
                         bytes_written: current_total_bytes,
-                        total_bytes: total_bytes_overall,
+                        total_bytes: total_size_overall,
                     },
                 )
-                .await
-                .map_err(|e| {
-                    warn!(
-                        "SinglePadWrite[Pad #{}]: UploadProgress callback failed: {}",
-                        pad_log_index, e
-                    );
-                    e
-                })?;
+                .await?;
             }
-            Ok(())
+
+            let mut pads_guard = successfully_written_pads.lock().await;
+            pads_guard.push(pad_info_for_task);
         }
-        Err(e) => {
-            error!(
-                "SinglePadWrite[Pad #{}]: Write failed after retries: {}",
-                pad_log_index, e
-            );
-            Err(e)
-        }
-    }
+
+        write_result
+    });
 }

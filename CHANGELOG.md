@@ -87,3 +87,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Added `--local` flag to `mutant-cli` to explicitly use the Devnet configuration.
+
+## [0.1.1] - 2025-04-12
+### Fixed
+- Correctly handle pad allocation from free list in `PadManager::allocate_and_write`.
+- Ensure `PadManager` accurately tracks and saves pads used during concurrent writes to the Master Index, resolving pad count mismatch errors.
+
+## [0.1.0] - 2025-04-11
+### Added
+- Initial release with basic `put` and `get` functionality using Autonomi scratchpads.
