@@ -101,7 +101,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
 
     let cli_args = Cli::parse();
 
-    let (wallet, private_key_hex) = initialize_wallet(&cli_args.wallet_path).await?;
+    let (_wallet, private_key_hex) = initialize_wallet(&cli_args.wallet_path).await?;
 
     let multi_progress = MultiProgress::new();
     let (init_pb, init_callback): (StyledProgressBar, InitCallback) =
@@ -113,7 +113,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
 
     info!("Initializing MutAnt layer (including Storage)...");
     let (mutant, mutant_init_handle) =
-        match MutAnt::init_with_progress(wallet, private_key_hex, Some(init_callback)).await {
+        match MutAnt::init_with_progress(private_key_hex, Some(init_callback)).await {
             Ok((a, h)) => (a, h),
             Err(e) => {
                 if !init_pb.is_finished() {

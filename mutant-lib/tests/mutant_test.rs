@@ -40,8 +40,8 @@ async fn setup_test_env() -> Result<(mutant_lib::mutant::MutAnt, Network, String
                 ))
             })?;
 
-        // Call the new MutAnt::new directly
-        match mutant_lib::mutant::MutAnt::init(wallet.clone(), private_key_hex.clone()).await {
+        // Call MutAnt::init with only private_key_hex
+        match mutant_lib::mutant::MutAnt::init(private_key_hex.clone()).await {
             // Destructure the new return tuple
             Ok((mutant_instance, _maybe_handle)) => {
                 info!(
@@ -252,7 +252,7 @@ async fn test_persistence() -> Result<(), Error> {
         let wallet_initial = Wallet::new_from_private_key(network.clone(), &private_key_hex)
             .map_err(|e| Error::WalletCreationFailed(e.to_string()))?;
         let (mutant_initial, _handle_initial) =
-            mutant_lib::mutant::MutAnt::init(wallet_initial, private_key_hex.clone()).await?;
+            mutant_lib::mutant::MutAnt::init(private_key_hex.clone()).await?;
         info!("Created first MutAnt instance for persistence test.");
 
         // Use the destructured mutant_initial
@@ -275,11 +275,10 @@ async fn test_persistence() -> Result<(), Error> {
         .map_err(|e| Error::WalletCreationFailed(e.to_string()))?;
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let (mutant_recreate, _handle_recreate) =
-        mutant_lib::mutant::MutAnt::init(wallet_recreate, private_key_hex).await?;
+        mutant_lib::mutant::MutAnt::init(private_key_hex).await?;
     info!("MutAnt instance recreated.");
 
     // Fetch the persisted key from the recreated instance
-    // Use the destructured mutant_recreated
     let fetched_value_recreated: Vec<u8> = mutant_recreate.fetch(&key).await?;
     assert_eq!(
         fetched_value_recreated, value,
