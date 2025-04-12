@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ensure CLI errors are always printed to stderr in `main` in addition to being logged.
 - Correctly use `--local` flag to select Devnet instead of always using Mainnet logic internally.
 - Initialize Autonomi network client (local or mainnet) based on configuration, not hardcoded to local.
+- When using `--local`, automatically use the hardcoded devnet/test secret key.
 
 ## [0.1.1] - 2024-04-11
 

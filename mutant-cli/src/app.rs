@@ -251,7 +251,12 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
 
     let cli = Cli::parse();
 
-    let private_key_hex = initialize_wallet().await?;
+    let private_key_hex = if cli.local {
+        info!("Using hardcoded local/devnet secret key for testing.");
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
+    } else {
+        initialize_wallet().await?
+    };
 
     let multi_progress = MultiProgress::new();
     let mp_clone = multi_progress.clone();
