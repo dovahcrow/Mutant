@@ -26,7 +26,8 @@ async fn main() -> ExitCode {
             exit_code
         }
         Err(e) => {
-            error!("MutAnt CLI exited with error: {}", e);
+            error!("MutAnt CLI Error: {}", e);
+            eprintln!("Error: {}", e);
             ExitCode::FAILURE
         }
     }
