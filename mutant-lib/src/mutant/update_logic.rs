@@ -8,7 +8,7 @@ use log::{debug, error, info, trace, warn};
 /// If the key does not exist, it returns a `KeyNotFound` error.
 pub(super) async fn update_item(
     es: &MutAnt,
-    key: String,
+    key: &str,
     data_bytes: &[u8],
     mut callback: Option<PutCallback>,
 ) -> Result<(), Error> {
@@ -22,9 +22,9 @@ pub(super) async fn update_item(
 
     {
         let mis_guard = es.master_index_storage.lock().await;
-        if !mis_guard.index.contains_key(&key) {
+        if !mis_guard.index.contains_key(key) {
             debug!("UpdateItem[{}]: Key does not exist.", key);
-            return Err(Error::KeyNotFound(key.clone()));
+            return Err(Error::KeyNotFound(key.to_string()));
         }
     }
 
@@ -117,7 +117,7 @@ pub(super) async fn update_item(
     );
 
     es.pad_manager
-        .allocate_and_write(&key, data_bytes, callback)
+        .allocate_and_write(key, data_bytes, callback)
         .await?;
 
     info!(

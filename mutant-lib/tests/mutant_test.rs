@@ -89,7 +89,7 @@ async fn test_store_and_fetch_small() -> Result<(), Error> {
     let key = "small_test_small_key".to_string();
     let value = b"Small test value".to_vec();
 
-    mutant_instance.store(key.clone(), &value).await?;
+    mutant_instance.store(&key, &value).await?;
     info!("Stored key: {}, value_len: {}", key, value.len());
     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
 
@@ -116,7 +116,7 @@ async fn test_store_and_fetch_large() -> Result<(), Error> {
     let key = "large_test_large_key".to_string();
     let value = vec![1u8; 6 * 1024 * 1024]; // 6MB
 
-    mutant_instance.store(key.clone(), &value).await?;
+    mutant_instance.store(&key, &value).await?;
     info!("Stored key: {}, value_len: {}", key, value.len());
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
@@ -145,7 +145,7 @@ async fn test_update_item() -> Result<(), Error> {
     let updated_value = b"Updated value".to_vec();
 
     // Store initial value
-    mutant_instance.store(key.clone(), &initial_value).await?;
+    mutant_instance.store(&key, &initial_value).await?;
     info!(
         "Stored initial key: {}, value_len: {}",
         key,
@@ -154,7 +154,7 @@ async fn test_update_item() -> Result<(), Error> {
     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
 
     // Update the value
-    mutant_instance.update(key.clone(), &updated_value).await?;
+    mutant_instance.update(&key, &updated_value).await?;
     info!(
         "Updated key: {}, new_value_len: {}",
         key,
@@ -194,12 +194,10 @@ async fn test_remove_item() -> Result<(), Error> {
 
     // Store both items
     mutant_instance
-        .store(key_to_remove.clone(), &value_to_remove)
+        .store(&key_to_remove, &value_to_remove)
         .await?;
     info!("Stored key to remove: {}", key_to_remove);
-    mutant_instance
-        .store(key_to_keep.clone(), &value_to_keep)
-        .await?;
+    mutant_instance.store(&key_to_keep, &value_to_keep).await?;
     info!("Stored key to keep: {}", key_to_keep);
     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
 
@@ -256,11 +254,9 @@ async fn test_persistence() -> Result<(), Error> {
         info!("Created first MutAnt instance for persistence test.");
 
         // Use the destructured mutant_initial
-        mutant_initial.store(key.clone(), &value).await?;
+        mutant_initial.store(&key, &value).await?;
         info!("Stored persistent key: {}", key);
-        mutant_initial
-            .store(key_removed.clone(), &value_removed)
-            .await?;
+        mutant_initial.store(&key_removed, &value_removed).await?;
         info!(
             "Stored key to be removed before recreation: {}",
             key_removed
@@ -299,5 +295,24 @@ async fn test_persistence() -> Result<(), Error> {
     }
 
     info!("Test test_persistence completed successfully.");
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn test_list_keys() -> Result<(), Error> {
+    info!("--- Test: List Keys ---");
+    let (mutant_instance, _network, _private_key_hex) = setup_test_env().await?;
+    info!("Test setup completed.");
+
+    let key1 = "list_test_key_1".to_string();
+    let key2 = "list_test_key_2".to_string();
+
+    mutant_instance.store(&key1, b"v1").await?;
+    mutant_instance.store(&key2, b"v2").await?;
+    info!("Stored key1 and key2");
+    tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+
+    info!("Test test_list_keys completed successfully.");
     Ok(())
 }

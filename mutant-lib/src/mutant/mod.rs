@@ -141,14 +141,14 @@ impl MutAnt {
 
     /// Stores raw bytes under a given user key without progress reporting.
     /// Use `store_with_progress` for detailed feedback.
-    pub async fn store(&self, user_key: String, data_bytes: &[u8]) -> Result<(), Error> {
+    pub async fn store(&self, user_key: &str, data_bytes: &[u8]) -> Result<(), Error> {
         self.store_with_progress(user_key, data_bytes, None).await
     }
 
     /// Stores raw bytes under a given user key with optional progress reporting via callback.
     pub async fn store_with_progress(
         &self,
-        user_key: String,
+        user_key: &str,
         data_bytes: &[u8],
         callback: Option<PutCallback>,
     ) -> Result<(), Error> {
@@ -199,7 +199,7 @@ impl MutAnt {
     /// Use `update_with_progress` for detailed feedback.
     ///
     /// Returns `Error::KeyNotFound` if the key does not exist.
-    pub async fn update(&self, user_key: String, data_bytes: &[u8]) -> Result<(), Error> {
+    pub async fn update(&self, user_key: &str, data_bytes: &[u8]) -> Result<(), Error> {
         self.update_with_progress(user_key, data_bytes, None).await
     }
 
@@ -208,7 +208,7 @@ impl MutAnt {
     /// Returns `Error::KeyNotFound` if the key does not exist.
     pub async fn update_with_progress(
         &self,
-        user_key: String,
+        user_key: &str,
         data_bytes: &[u8],
         callback: Option<PutCallback>,
     ) -> Result<(), Error> {
@@ -217,7 +217,7 @@ impl MutAnt {
             error!("Attempted to update the master index key directly. Denying access.");
             return Err(Error::OperationNotSupported);
         }
-        let result = update_logic::update_item(self, user_key.clone(), data_bytes, callback).await;
+        let result = update_logic::update_item(self, user_key, data_bytes, callback).await;
         debug!(
             "MutAnt::update: Returned from update_logic::update_item for key '{}'",
             user_key

@@ -5,7 +5,7 @@ use log::{debug, error, info, trace, warn};
 
 pub(super) async fn store_item(
     es: &MutAnt,
-    key: String,
+    key: &str,
     data_bytes: &[u8],
     mut callback: Option<PutCallback>,
 ) -> Result<(), Error> {
@@ -19,9 +19,9 @@ pub(super) async fn store_item(
 
     {
         let mis_guard = es.master_index_storage.lock().await;
-        if mis_guard.index.contains_key(&key) {
+        if mis_guard.index.contains_key(key) {
             debug!("StoreItem[{}]: Key already exists.", key);
-            return Err(Error::KeyAlreadyExists(key.clone()));
+            return Err(Error::KeyAlreadyExists(key.to_string()));
         }
     }
 
@@ -111,7 +111,7 @@ pub(super) async fn store_item(
     );
 
     es.pad_manager
-        .allocate_and_write(&key, data_bytes, callback)
+        .allocate_and_write(key, data_bytes, callback)
         .await?;
 
     info!(

@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
         - `docs/mutant_lib/usage.md`: Practical API usage examples.
 
 ### Changed
+- **`mutant-lib` API:** Unified key parameter types in `store`, `store_with_progress`, `update`, and `update_with_progress` to accept `&str` instead of `String` for consistency.
 - **`mutant-lib` API:** Refactored methods (`init`, `store`, `fetch`, `update`) to have two variants:
     - Standard methods (e.g., `store`) which do not take a progress callback.
     - Methods with a `_with_progress` suffix (e.g., `store_with_progress`) which optionally accept a callback function for detailed progress reporting.

@@ -57,11 +57,11 @@ async fn handle_put(
     let result = if force {
         debug!("Forcing update for key: {}", key);
         mutant
-            .update_with_progress(key.clone(), &bytes_to_store, Some(callback))
+            .update_with_progress(&key, &bytes_to_store, Some(callback))
             .await
     } else {
         mutant
-            .store_with_progress(key.clone(), &bytes_to_store, Some(callback))
+            .store_with_progress(&key, &bytes_to_store, Some(callback))
             .await
     };
 
