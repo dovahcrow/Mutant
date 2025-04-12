@@ -906,8 +906,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "anthill-cli"
-version = "0.1.0"
+name = "anthill"
+version = "0.1.1"
 dependencies = [
  "anthill-lib",
  "bincode 2.0.1",
@@ -929,7 +929,7 @@ dependencies = [
 
 [[package]]
 name = "anthill-lib"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "autonomi",

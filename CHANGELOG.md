@@ -13,11 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2025-04-12
 
 ### Added
-- Initial release.
-
-## [Unreleased]
-
-### Added
 
 - Implemented the `stats` command to display detailed storage usage information (total/free/occupied pads, total/free/occupied/wasted space).
 - Implemented concurrent chunk fetching (up to 20 simultaneous downloads) for the `get` command, significantly improving performance for large, chunked data.
