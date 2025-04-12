@@ -245,7 +245,7 @@ Data is stored and retrieved as raw byte vectors (`Vec<u8>`), allowing the user 
 
 ## Configuration
 
-The primary configuration is the wallet file path (via `--wallet-path` CLI argument or the default `anthill_wallet.json`) and the Autonomi network configuration (`client.config` discovered via `XDG_DATA_HOME` or default locations). Internal constants within `anthill_lib` define behaviors like scratchpad size.
+The primary configuration is the wallet file path (via `--wallet-path` CLI argument or the default `mutant_wallet.json`) and the Autonomi network configuration (`client.config` discovered via `XDG_DATA_HOME` or default locations). Internal constants within `mutant_lib` define behaviors like scratchpad size.
 
 ## License
 

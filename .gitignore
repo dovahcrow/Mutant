@@ -3,7 +3,7 @@
 .roomodes
 .test_deps/
 mutant_wallet.json
-/test_network_data/
+test_network_data/
 
 # Logs and PID files from testnet script
 /tmp/mutant_evm_testnet.pid

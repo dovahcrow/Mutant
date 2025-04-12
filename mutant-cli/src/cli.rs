@@ -5,12 +5,7 @@ use std::path::PathBuf;
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
     /// Path to the wallet file.
-    #[arg(
-        short,
-        long,
-        value_name = "FILE",
-        default_value = "anthill_wallet.json"
-    )]
+    #[arg(short, long, value_name = "FILE", default_value = "mutant_wallet.json")]
     pub wallet_path: PathBuf,
 
     #[command(subcommand)]
