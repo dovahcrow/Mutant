@@ -14,8 +14,6 @@ use tokio::sync::MutexGuard;
 mod concurrent;
 mod reservation;
 
-pub(crate) const WRITE_TASK_CONCURRENCY: usize = 20;
-
 pub(crate) type PadInfo = (ScratchpadAddress, Vec<u8>);
 
 // Helper function placed here or in util.rs
@@ -207,57 +205,27 @@ impl PadManager {
         let write_cb = shared_callback.clone();
         let write_storage = self.storage.clone();
         let write_mis = self.master_index_storage.clone(); // Needed for final save
-        let write_data = data.to_vec(); // Clone data for the write task
+        let data_arc = Arc::new(data.to_vec()); // Clone data into Arc for tasks
         let write_initial_pads = initial_pads_to_keep.clone(); // Pads available immediately
-        let mut write_rx = pad_info_rx; // Move receiver to write task
+        let write_rx = pad_info_rx; // Remove mut
 
-        // Spawn write task (placeholder for call to modified perform_concurrent_write)
+        // Spawn the actual concurrent write task using the standalone function
         let write_handle = tokio::spawn(async move {
             debug!(
-                "AllocateWrite-WriteTask[{}]: Starting... Waiting for pads.",
+                "AllocateWrite-WriteTask[{}]: Starting concurrent write processing...",
                 write_key
             );
-            // TODO: Modify perform_concurrent_write to accept receiver
-            // TODO: Call modified perform_concurrent_write here
-            // Example placeholder call:
-            // self.perform_concurrent_write(
-            //     &write_key,
-            //     &write_data,
-            //     write_initial_pads,
-            //     write_rx, // Pass receiver
-            //     write_cb,
-            // ).await
-
-            // Placeholder: Simulate receiving pads and processing
-            let mut pads_processed_count = write_initial_pads.len();
-            while let Some(pad_result) = write_rx.recv().await {
-                match pad_result {
-                    Ok(pad_info) => {
-                        debug!(
-                            "AllocateWrite-WriteTask[{}]: Received pad {:?}",
-                            write_key, pad_info.0
-                        );
-                        pads_processed_count += 1;
-                        // Simulate write operation for this pad
-                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                    }
-                    Err(e) => {
-                        error!(
-                            "AllocateWrite-WriteTask[{}]: Received error on channel: {}",
-                            write_key, e
-                        );
-                        // This shouldn't happen with current reservation logic (it returns Err directly)
-                        // If it did, we'd propagate the error
-                        return Err(e);
-                    }
-                }
-            }
-            debug!(
-                "AllocateWrite-WriteTask[{}]: Pad channel closed. Processed {} pads total.",
-                write_key, pads_processed_count
-            );
-            // Simulate write completion result
-            Ok::<(), Error>(())
+            // Call the standalone function from the concurrent module
+            concurrent::perform_concurrent_write_standalone(
+                &write_key,
+                data_arc,
+                write_initial_pads,
+                write_rx,
+                write_storage,
+                write_mis,
+                write_cb,
+            )
+            .await
         });
 
         // Await both tasks
@@ -281,14 +249,13 @@ impl PadManager {
             // Need to handle cleanup: Return pads taken from free list? Recycle kept pads?
             // For now, just return the error. The reserved pads are persisted in free list.
             // --- Cleanup Logic for Failed Write --- (Similar to original Step 5 Error path)
-            {
-                let mut mis_guard = self.master_index_storage.lock().await;
-                warn!("AllocateWrite[{}]: Write failed after successful reservation. Cleaning up potentially taken free pads.", key_owned);
-                // Return pads that would have been taken from the free list in Step 3
-                // Note: We don't have `final_taken_free` directly here anymore.
-                // This cleanup needs rethinking based on how perform_concurrent_write reports failure.
-                // For now, we just return the error. Reserved pads are safe in free list.
-            }
+            // {
+            //     let mut mis_guard = self.master_index_storage.lock().await;
+            //     warn!(
+            //         "AllocateWrite[{}]: Write failed after successful reservation. Cleaning up potentially taken free pads.",
+            //         key_owned
+            //     );
+            // }
             return Err(e);
         }
 
@@ -315,7 +282,7 @@ impl PadManager {
             // TEMPORARY: Assume all initial pads + all *potentially* reserved pads were used.
             // This is NOT correct if reservation failed partially or write failed.
             let final_pads_list = {
-                let mut final_list = initial_pads_to_keep.clone();
+                let final_list = initial_pads_to_keep.clone();
                 // Cannot access collector here anymore.
                 // Need write_handle to return the list of pads successfully written to.
                 // For now, just use initial pads.

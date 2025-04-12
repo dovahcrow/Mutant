@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Documentation:** Simplified usage example in `docs/mutant_lib/usage.md` by removing callbacks and progress reporting details.
 - **Documentation:** Removed all `println!` calls from the `run_mutant_examples` function in `docs/mutant_lib/usage.md`.
 - Updated dependencies.
+- Reservation and data upload during `put` operation now run concurrently. Successfully reserved pads are immediately made available for upload via an internal channel, improving performance for multi-pad uploads.
 - Pad reservation now saves the master index after *each* individual pad is successfully reserved and added to the free list, increasing robustness against failures during reservation but potentially impacting performance.
 
 ### Fixed
