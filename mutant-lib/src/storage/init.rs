@@ -7,7 +7,8 @@ use crate::events::{invoke_init_callback, InitCallback, InitProgressEvent};
 use crate::mutant::data_structures::MasterIndexStorage;
 use crate::mutant::NetworkChoice;
 use crate::mutant::DEFAULT_SCRATCHPAD_SIZE;
-use autonomi::{client::payment::PaymentOption, Client, ScratchpadAddress, SecretKey, Wallet};
+use autonomi::client::payment::PaymentOption;
+use autonomi::{Client, ScratchpadAddress, SecretKey, Wallet};
 use hex;
 use log::{debug, error, info, warn};
 use serde_cbor;
@@ -99,6 +100,8 @@ pub async fn new(
         hasher.update(&input_key_bytes);
         let hash_result = hasher.finalize();
         debug!("Hashed input key bytes. Result: {:x}", hash_result);
+
+        // Create an autonomi::SecretKey directly from the hash bytes array.
         let key_array: [u8; 32] = hash_result.into();
         SecretKey::from_bytes(key_array).map_err(|e| {
             Error::InternalError(format!(
@@ -118,7 +121,11 @@ pub async fn new(
         },
     )
     .await?;
-    let master_index_address = ScratchpadAddress::new(derived_key.public_key().into());
+
+    // Derive address from the public key corresponding to the derived autonomi::SecretKey
+    let derived_public_key = derived_key.public_key();
+    let master_index_address = ScratchpadAddress::new(derived_public_key);
+
     info!(
         "Storage::new: Determined Master Index Address from DERIVED key: {}",
         master_index_address

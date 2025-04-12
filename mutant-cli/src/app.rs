@@ -26,8 +26,6 @@ struct MutantCliConfig {
 #[derive(Debug)]
 pub enum CliError {
     WalletRead(io::Error, PathBuf),
-    NetworkInit(String),
-    WalletCreate(String),
     MutAntInit(String),
     ConfigDirNotFound,
     ConfigRead(io::Error, PathBuf),
@@ -46,8 +44,6 @@ impl std::fmt::Display for CliError {
             CliError::WalletRead(e, path) => {
                 write!(f, "Error reading private key from {:?}: {}", path, e)
             }
-            CliError::NetworkInit(e) => write!(f, "Error initializing network: {}", e),
-            CliError::WalletCreate(e) => write!(f, "Error creating wallet: {}", e),
             CliError::MutAntInit(e) => write!(f, "Error during MutAnt initialization: {}", e),
             CliError::ConfigDirNotFound => write!(f, "Could not find configuration directory."),
             CliError::ConfigRead(e, path) => {
@@ -97,20 +93,17 @@ fn load_config(config_path: &Path) -> Result<MutantCliConfig, CliError> {
 
 fn save_config(config_path: &Path, config: &MutantCliConfig) -> Result<(), CliError> {
     let content = serde_json::to_string_pretty(config)
-        .map_err(|e| CliError::ConfigParse(e, config_path.to_path_buf()))?; // Should not happen with our struct
+        .map_err(|e| CliError::ConfigParse(e, config_path.to_path_buf()))?;
     fs::write(config_path, content).map_err(|e| CliError::ConfigWrite(e, config_path.to_path_buf()))
 }
 
 fn get_autonomi_wallet_dir() -> Result<PathBuf, CliError> {
     let base_dirs = BaseDirs::new().ok_or(CliError::WalletDirNotFound)?;
-    // XDG_DATA_HOME is preferred
     let data_dir = base_dirs.data_dir();
     let wallet_dir = data_dir.join("autonomi/client/wallets");
     if wallet_dir.is_dir() {
         Ok(wallet_dir)
     } else {
-        // Fallback for non-XDG environments or different setups might be needed?
-        // For now, we'll just report the specific path wasn't found.
         warn!(
             "Standard Autonomi wallet directory not found at {:?}",
             wallet_dir
@@ -128,11 +121,8 @@ fn scan_wallet_dir(wallet_dir: &Path) -> Result<Vec<PathBuf>, CliError> {
             entry_result.map_err(|e| CliError::WalletDirRead(e, wallet_dir.to_path_buf()))?;
         let path = entry.path();
         if path.is_file() {
-            // Basic check: filename starts with 0x and has typical hex length?
-            // This is a weak check, ideally Autonomi defines a standard.
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if name.starts_with("0x") && name.len() > 40 {
-                    // Very basic heuristic
                     wallets.push(path);
                 }
             }
@@ -147,7 +137,6 @@ fn scan_wallet_dir(wallet_dir: &Path) -> Result<Vec<PathBuf>, CliError> {
 
 fn prompt_user_for_wallet(wallets: &[PathBuf]) -> Result<PathBuf, CliError> {
     if wallets.is_empty() {
-        // This case should be handled by the caller checking scan_wallet_dir result
         return Err(CliError::WalletNotSet);
     }
     if wallets.len() == 1 {
@@ -176,7 +165,7 @@ fn prompt_user_for_wallet(wallets: &[PathBuf]) -> Result<PathBuf, CliError> {
         Some(index) => Ok(wallets[index].clone()),
         None => {
             error!("No wallet selected by the user.");
-            Err(CliError::WalletNotSet) // Or a more specific "UserCancelled" error
+            Err(CliError::WalletNotSet)
         }
     }
 }
@@ -195,11 +184,10 @@ async fn initialize_wallet() -> Result<String, CliError> {
                     "Wallet path from config {:?} does not exist. Rescanning.",
                     path
                 );
-                config.wallet_path = None; // Invalidate missing path
+                config.wallet_path = None;
             }
         }
 
-        // Wallet path not in config or invalid, try scanning
         info!("No valid wallet in config, scanning Autonomi wallet directory...");
         let wallet_dir = get_autonomi_wallet_dir()?;
         let available_wallets = scan_wallet_dir(&wallet_dir)?;
@@ -207,7 +195,6 @@ async fn initialize_wallet() -> Result<String, CliError> {
         let selected_wallet = prompt_user_for_wallet(&available_wallets)?;
         info!("Selected wallet: {:?}", selected_wallet);
 
-        // Save the selection to config
         config.wallet_path = Some(selected_wallet.clone());
         save_config(&config_path, &config)?;
         info!("Saved selected wallet path to config: {:?}", config_path);
@@ -217,28 +204,11 @@ async fn initialize_wallet() -> Result<String, CliError> {
     let private_key_hex = {
         let content = fs::read_to_string(&wallet_path)
             .map_err(|e| CliError::WalletRead(e, wallet_path.clone()))?;
-        // Assuming the file *only* contains the private key string directly, not JSON
         debug!("Raw content read from wallet file: '{}'", content.trim());
         content.trim().to_string()
-        // If the wallet file *is* JSON containing a string:
-        // serde_json::from_str::<String>(&content)
-        //     .map_err(|e| CliError::WalletParse(e, wallet_path.clone()))?
     };
     debug!("Using private key hex from file: '{}'", private_key_hex);
 
-    // Remove Network and Wallet initialization from here
-    // let network = Network::new(true).map_err(|e| CliError::NetworkInit(e.to_string()))?;
-
-    // let wallet = match Wallet::new_from_private_key(network.clone(), &private_key_hex) {\
-    //     Ok(w) => w,\
-    //     Err(e) => {\
-    //         error!("Failed to initialize wallet: {}", e);\
-    //         return Err(CliError::WalletCreate(e.to_string()));\
-    //     }\
-    // };
-    // info!("Wallet created using key from {:?}", wallet_path);
-
-    // Return only the private key hex string
     Ok(private_key_hex)
 }
 
@@ -281,7 +251,6 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
 
     let cli = Cli::parse();
 
-    // Initialize wallet using the new config/scan/prompt logic
     let private_key_hex = initialize_wallet().await?;
 
     let multi_progress = MultiProgress::new();
@@ -312,7 +281,6 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         network: network_choice,
     };
 
-    // Initialize MutAnt with the correct configuration and private key
     info!("Initializing MutAnt...");
     let (mutant, mutant_init_handle) =
         match MutAnt::init_with_progress(private_key_hex.clone(), mutant_config, init_callback)
@@ -327,7 +295,6 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         };
     info!("MutAnt initialized successfully.");
 
-    // Execute the command
     let command_result = handle_command(cli.command.clone(), mutant, &multi_progress).await;
 
     info!("MutAnt CLI command finished processing.");

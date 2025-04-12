@@ -1,4 +1,4 @@
-use autonomi::{Network, Wallet};
+use autonomi::Network;
 use log::{error, info, warn};
 use mutant_lib::error::Error;
 use serial_test::serial;
@@ -195,7 +195,7 @@ async fn test_remove_item() -> Result<(), Error> {
 #[serial]
 async fn test_persistence() -> Result<(), Error> {
     info!("--- Test: Persistence ---");
-    let (_initial_mutant, network, private_key_hex) = setup_test_env().await?;
+    let (_initial_mutant, _network, private_key_hex) = setup_test_env().await?;
     info!("Initial setup for persistence test completed (network/key obtained).");
 
     let key = "persist_test_persistence_key".to_string();
