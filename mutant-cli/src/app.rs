@@ -2,7 +2,7 @@ use clap::Parser;
 use indicatif::MultiProgress;
 use log::{debug, error, info};
 use mutant_lib::autonomi::{Network, Wallet};
-use mutant_lib::{events::InitCallback, mutant::MutAnt};
+use mutant_lib::{events::InitCallback, mutant::MutAnt, mutant::MutAntConfig};
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -112,18 +112,23 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
     });
 
     info!("Initializing MutAnt layer (including Storage)...");
-    let (mutant, mutant_init_handle) =
-        match MutAnt::init_with_progress(private_key_hex, Some(init_callback)).await {
-            Ok((a, h)) => (a, h),
-            Err(e) => {
-                if !init_pb.is_finished() {
-                    init_pb.abandon_with_message("Initialization Failed".to_string());
-                }
-                mp_join_handle.abort();
-                let _ = mp_join_handle.await;
-                return Err(CliError::MutAntInit(e.to_string()));
+    let (mutant, mutant_init_handle) = match MutAnt::init_with_progress(
+        private_key_hex,
+        MutAntConfig::default(),
+        Some(init_callback),
+    )
+    .await
+    {
+        Ok((a, h)) => (a, h),
+        Err(e) => {
+            if !init_pb.is_finished() {
+                init_pb.abandon_with_message("Initialization Failed".to_string());
             }
-        };
+            mp_join_handle.abort();
+            let _ = mp_join_handle.await;
+            return Err(CliError::MutAntInit(e.to_string()));
+        }
+    };
 
     if !init_pb.is_finished() {
         init_pb.finish_and_clear();

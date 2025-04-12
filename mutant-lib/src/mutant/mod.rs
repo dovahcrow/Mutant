@@ -15,6 +15,27 @@ pub mod remove_logic;
 pub mod store_logic;
 pub mod update_logic;
 
+// --- Network Configuration ---
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkChoice {
+    Devnet,
+    Mainnet,
+}
+
+// --- MutAnt Configuration ---
+#[derive(Debug, Clone)]
+pub struct MutAntConfig {
+    pub network: NetworkChoice,
+}
+
+impl Default for MutAntConfig {
+    fn default() -> Self {
+        Self {
+            network: NetworkChoice::Devnet,
+        }
+    }
+}
+
 // --- Internal Keys for Management Data ---
 pub const MASTER_INDEX_KEY: &str = "__MUTANT_MASTER_INDEX__";
 pub const FREE_DIRECT_LIST_KEY: &str = "__mutant_free_direct_v1__";
@@ -67,20 +88,26 @@ pub struct MutAnt {
 }
 
 impl MutAnt {
-    /// Creates a new MutAnt instance without progress reporting.
-    /// Use `init_with_progress` for detailed initialization feedback.
+    /// Creates a new MutAnt instance using default configuration.
+    /// Use `init_with_progress` for detailed initialization feedback and custom config.
     pub async fn init(private_key_hex: String) -> Result<(Self, Option<JoinHandle<()>>), Error> {
-        Self::init_with_progress(private_key_hex, None).await
+        Self::init_with_progress(private_key_hex, MutAntConfig::default(), None).await
     }
 
-    /// Creates a new MutAnt instance with optional progress reporting via callback.
+    /// Creates a new MutAnt instance with optional progress reporting via callback and custom config.
     pub async fn init_with_progress(
         private_key_hex: String,
+        config: MutAntConfig,
         mut init_callback: Option<InitCallback>,
     ) -> Result<(Self, Option<JoinHandle<()>>), Error> {
-        info!("Initializing MutAnt...");
+        info!("Initializing MutAnt with config: {:?}...", config);
 
-        let network = match Network::new(true) {
+        let use_mainnet = match config.network {
+            NetworkChoice::Devnet => false,
+            NetworkChoice::Mainnet => true,
+        };
+
+        let network = match Network::new(use_mainnet) {
             Ok(n) => n,
             Err(e) => {
                 error!("Failed to initialize Autonomi network: {}", e);
