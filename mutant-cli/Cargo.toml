@@ -2,12 +2,12 @@
 name = "mutant-cli"
 version = "0.1.1"
 edition = "2024"
-license = "GPLv3"
+license = "LGPL-3.0-only"
 description = "Distributed mutable key value storage over the Autonomi network"
 repository = "https://github.com/Champii/MutAnt" 
 
 [dependencies]
-mutant-lib = { path = "../mutant-lib" }
+mutant-lib = "0.1.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
