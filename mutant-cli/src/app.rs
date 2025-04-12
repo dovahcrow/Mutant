@@ -3,7 +3,6 @@ use dialoguer::{Select, theme::ColorfulTheme};
 use directories::{BaseDirs, ProjectDirs};
 use indicatif::MultiProgress;
 use log::{debug, error, info, warn};
-use mutant_lib::autonomi::{Network, Wallet};
 use mutant_lib::{
     events::InitCallback,
     mutant::{MutAnt, MutAntConfig, NetworkChoice},
@@ -15,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use tokio::task::JoinHandle;
 
-use crate::callbacks::{StyledProgressBar, create_init_callback};
+use crate::callbacks::create_init_callback;
 use crate::cli::Cli;
 use crate::commands::handle_command;
 
@@ -182,7 +181,7 @@ fn prompt_user_for_wallet(wallets: &[PathBuf]) -> Result<PathBuf, CliError> {
     }
 }
 
-async fn initialize_wallet() -> Result<(Wallet, String), CliError> {
+async fn initialize_wallet() -> Result<String, CliError> {
     let config_path = get_config_path()?;
     let mut config = load_config(&config_path)?;
 
@@ -227,18 +226,20 @@ async fn initialize_wallet() -> Result<(Wallet, String), CliError> {
     };
     debug!("Using private key hex from file: '{}'", private_key_hex);
 
-    let network = Network::new(true).map_err(|e| CliError::NetworkInit(e.to_string()))?;
+    // Remove Network and Wallet initialization from here
+    // let network = Network::new(true).map_err(|e| CliError::NetworkInit(e.to_string()))?;
 
-    let wallet = match Wallet::new_from_private_key(network.clone(), &private_key_hex) {
-        Ok(w) => w,
-        Err(e) => {
-            error!("Failed to initialize wallet: {}", e);
-            return Err(CliError::WalletCreate(e.to_string()));
-        }
-    };
-    info!("Wallet created using key from {:?}", wallet_path);
+    // let wallet = match Wallet::new_from_private_key(network.clone(), &private_key_hex) {\
+    //     Ok(w) => w,\
+    //     Err(e) => {\
+    //         error!("Failed to initialize wallet: {}", e);\
+    //         return Err(CliError::WalletCreate(e.to_string()));\
+    //     }\
+    // };
+    // info!("Wallet created using key from {:?}", wallet_path);
 
-    Ok((wallet, private_key_hex))
+    // Return only the private key hex string
+    Ok(private_key_hex)
 }
 
 async fn cleanup_background_tasks(
@@ -278,57 +279,60 @@ async fn cleanup_background_tasks(
 pub async fn run_cli() -> Result<ExitCode, CliError> {
     info!("MutAnt CLI started processing.");
 
-    let cli_args = Cli::parse(); // Note: Cli struct needs update to remove wallet_path
+    let cli = Cli::parse();
 
     // Initialize wallet using the new config/scan/prompt logic
-    let (_wallet, private_key_hex) = initialize_wallet().await?;
+    let private_key_hex = initialize_wallet().await?;
 
     let multi_progress = MultiProgress::new();
-    let (init_pb, init_callback): (StyledProgressBar, InitCallback) =
-        create_init_callback(&multi_progress);
-
-    // This handle is just to keep the MultiProgress drawing alive until cleanup
+    let mp_clone = multi_progress.clone();
     let mp_join_handle = tokio::spawn(async move {
-        std::future::pending::<()>().await; // Keep the drawing task alive indefinitely
+        {
+            let _ = mp_clone;
+            std::future::pending::<()>().await;
+        }
     });
 
-    info!("Initializing MutAnt layer (including Storage)...");
-    let config = if cli_args.local {
-        info!("Using local (Devnet) network configuration.");
-        MutAntConfig {
-            network: NetworkChoice::Devnet,
-            ..Default::default()
-        }
+    let (_pb_init, created_init_callback) = create_init_callback(&multi_progress);
+
+    let mut init_callback: Option<InitCallback> = None;
+    if atty::is(atty::Stream::Stderr) {
+        init_callback = Some(created_init_callback);
+    }
+
+    let network_choice = if cli.local {
+        info!("Using local/devnet network configuration.");
+        NetworkChoice::Devnet
     } else {
         info!("Using Mainnet network configuration.");
-        MutAntConfig {
-            network: NetworkChoice::Mainnet,
-            ..Default::default()
-        }
+        NetworkChoice::Mainnet
     };
 
+    let mutant_config = MutAntConfig {
+        network: network_choice,
+    };
+
+    // Initialize MutAnt with the correct configuration and private key
+    info!("Initializing MutAnt...");
     let (mutant, mutant_init_handle) =
-        match MutAnt::init_with_progress(private_key_hex, config, Some(init_callback)).await {
-            Ok((a, h)) => (a, h),
+        match MutAnt::init_with_progress(private_key_hex.clone(), mutant_config, init_callback)
+            .await
+        {
+            Ok(result) => result,
             Err(e) => {
-                if !init_pb.is_finished() {
-                    init_pb.abandon_with_message("Initialization Failed".to_string());
-                }
-                // Cleanup only the mp handle as the mutant handle wasn't returned
+                error!("MutAnt initialization failed: {}", e);
                 cleanup_background_tasks(mp_join_handle, None).await;
                 return Err(CliError::MutAntInit(e.to_string()));
             }
         };
+    info!("MutAnt initialized successfully.");
 
-    if !init_pb.is_finished() {
-        init_pb.finish_and_clear();
-    }
-
-    let exit_code = handle_command(cli_args.command, mutant, &multi_progress).await;
+    // Execute the command
+    let command_result = handle_command(cli.command.clone(), mutant, &multi_progress).await;
 
     info!("MutAnt CLI command finished processing.");
 
     cleanup_background_tasks(mp_join_handle, mutant_init_handle).await;
 
-    Ok(exit_code)
+    Ok(command_result)
 }

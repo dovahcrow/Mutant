@@ -17,7 +17,7 @@ pub struct Cli {
     pub command: Commands,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
     /// Puts a key-value pair onto the network. Reads value from stdin if omitted.
     /// Use --force to overwrite an existing key.

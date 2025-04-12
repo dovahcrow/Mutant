@@ -21,6 +21,7 @@ sha256 = "1.6.0"
 hex = "0.4"
 chrono = "0.4"
 directories = "5.0"
+atty = "0.2.14"
 
 # Internal workspace dependencies
 
