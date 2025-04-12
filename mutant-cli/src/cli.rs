@@ -1,15 +1,16 @@
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+// use std::path::PathBuf;
 
+/// Mutant CLI - Interact with the Mutant network
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
-    /// Path to the wallet file.
-    #[arg(short, long, value_name = "FILE", default_value = "mutant_wallet.json")]
-    pub wallet_path: PathBuf,
+    /// Path to the wallet file (JSON containing private key string)
+    // #[arg(short, long, value_name = "FILE", default_value = "mutant_wallet.json")]
+    // pub wallet_path: PathBuf,
 
-    /// Run against a local Mutant network.
-    #[arg(long, default_value_t = false)]
+    /// Use local network (Devnet) instead of Mainnet
+    #[arg(short, long, default_value_t = false)]
     pub local: bool,
 
     #[command(subcommand)]

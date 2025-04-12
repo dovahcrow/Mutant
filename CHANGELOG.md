@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
         - `docs/mutant_lib/overview.md`: High-level architecture and concepts.
         - `docs/mutant_lib/internals.md`: Detailed explanation of data structures, component logic (PadManager, Storage), error handling, and concurrency.
         - `docs/mutant_lib/usage.md`: Practical API usage examples.
+- `--version` flag to display the crate version.
+- Basic `status` command to show MutAnt and Storage status.
+- Basic `storage nodes` command to list known storage nodes.
+- `--local` flag to connect to local devnet instead of mainnet.
+- Improved wallet handling:
+  - Removed `--wallet-path` argument.
+  - Added config file (`~/.config/mutant/mutant.json`) to store selected wallet path.
+  - Scans standard Autonomi wallet directory (`$XDG_DATA_HOME/autonomi/client/wallets`).
+  - Prompts user to select a wallet if multiple are found or config is missing.
+  - Reads private key directly from the selected wallet file.
 
 ### Changed
 - **`mutant-lib` API:** Unified key parameter types in `store`, `store_with_progress`, `update`, and `update_with_progress` to accept `&str` instead of `String` for consistency.
@@ -25,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renamed `anthill-cli` to `mutant-cli` internally and directory structure.
 - **Documentation:** Simplified usage example in `docs/mutant_lib/usage.md` by removing callbacks and progress reporting details.
 - **Documentation:** Removed all `println!` calls from the `run_mutant_examples` function in `docs/mutant_lib/usage.md`.
+- Updated dependencies.
 
 ## [0.1.0] - 2025-04-12
 
