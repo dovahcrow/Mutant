@@ -1,7 +1,6 @@
 use autonomi::{Network, Wallet};
 use log::{error, info, warn};
 use mutant_lib::error::Error;
-use mutant_lib::events::{GetCallback, InitCallback};
 use serial_test::serial;
 
 // --- Test Initialization Helper ---
@@ -42,13 +41,7 @@ async fn setup_test_env() -> Result<(mutant_lib::mutant::MutAnt, Network, String
             })?;
 
         // Call the new MutAnt::new directly
-        match mutant_lib::mutant::MutAnt::init(
-            wallet.clone(),
-            private_key_hex.clone(),
-            None::<InitCallback>,
-        )
-        .await
-        {
+        match mutant_lib::mutant::MutAnt::init(wallet.clone(), private_key_hex.clone()).await {
             // Destructure the new return tuple
             Ok((mutant_instance, _maybe_handle)) => {
                 info!(
@@ -96,11 +89,11 @@ async fn test_store_and_fetch_small() -> Result<(), Error> {
     let key = "small_test_small_key".to_string();
     let value = b"Small test value".to_vec();
 
-    mutant_instance.store(key.clone(), &value, None).await?;
+    mutant_instance.store(key.clone(), &value).await?;
     info!("Stored key: {}, value_len: {}", key, value.len());
     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
 
-    let fetched_value: Vec<u8> = mutant_instance.fetch(&key, None::<GetCallback>).await?;
+    let fetched_value: Vec<u8> = mutant_instance.fetch(&key).await?;
     assert_eq!(
         fetched_value, value,
         "Fetched value does not match stored value"
@@ -123,11 +116,11 @@ async fn test_store_and_fetch_large() -> Result<(), Error> {
     let key = "large_test_large_key".to_string();
     let value = vec![1u8; 6 * 1024 * 1024]; // 6MB
 
-    mutant_instance.store(key.clone(), &value, None).await?;
+    mutant_instance.store(key.clone(), &value).await?;
     info!("Stored key: {}, value_len: {}", key, value.len());
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    let fetched_value: Vec<u8> = mutant_instance.fetch(&key, None::<GetCallback>).await?;
+    let fetched_value: Vec<u8> = mutant_instance.fetch(&key).await?;
     assert_eq!(
         fetched_value, value,
         "Fetched large value does not match stored value"
@@ -152,9 +145,7 @@ async fn test_update_item() -> Result<(), Error> {
     let updated_value = b"Updated value".to_vec();
 
     // Store initial value
-    mutant_instance
-        .store(key.clone(), &initial_value, None)
-        .await?;
+    mutant_instance.store(key.clone(), &initial_value).await?;
     info!(
         "Stored initial key: {}, value_len: {}",
         key,
@@ -163,9 +154,7 @@ async fn test_update_item() -> Result<(), Error> {
     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
 
     // Update the value
-    mutant_instance
-        .update(key.clone(), &updated_value, None)
-        .await?;
+    mutant_instance.update(key.clone(), &updated_value).await?;
     info!(
         "Updated key: {}, new_value_len: {}",
         key,
@@ -174,7 +163,7 @@ async fn test_update_item() -> Result<(), Error> {
     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
 
     // Fetch and verify updated value
-    let fetched_updated_value: Vec<u8> = mutant_instance.fetch(&key, None::<GetCallback>).await?;
+    let fetched_updated_value: Vec<u8> = mutant_instance.fetch(&key).await?;
     assert_eq!(
         fetched_updated_value, updated_value,
         "Fetched updated value does not match"
@@ -205,11 +194,11 @@ async fn test_remove_item() -> Result<(), Error> {
 
     // Store both items
     mutant_instance
-        .store(key_to_remove.clone(), &value_to_remove, None)
+        .store(key_to_remove.clone(), &value_to_remove)
         .await?;
     info!("Stored key to remove: {}", key_to_remove);
     mutant_instance
-        .store(key_to_keep.clone(), &value_to_keep, None)
+        .store(key_to_keep.clone(), &value_to_keep)
         .await?;
     info!("Stored key to keep: {}", key_to_keep);
     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
@@ -220,10 +209,7 @@ async fn test_remove_item() -> Result<(), Error> {
     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
 
     // Verify removal of the first item
-    match mutant_instance
-        .fetch(&key_to_remove, None::<GetCallback>)
-        .await
-    {
+    match mutant_instance.fetch(&key_to_remove).await {
         Err(Error::KeyNotFound(_)) => {
             info!("Verified key '{}' is removed.", key_to_remove);
         }
@@ -235,9 +221,7 @@ async fn test_remove_item() -> Result<(), Error> {
     }
 
     // Verify the second item still exists
-    let fetched_kept_value: Vec<u8> = mutant_instance
-        .fetch(&key_to_keep, None::<GetCallback>)
-        .await?;
+    let fetched_kept_value: Vec<u8> = mutant_instance.fetch(&key_to_keep).await?;
     assert_eq!(
         fetched_kept_value, value_to_keep,
         "Kept value changed after removing another key"
@@ -267,19 +251,15 @@ async fn test_persistence() -> Result<(), Error> {
         // Create the first instance
         let wallet_initial = Wallet::new_from_private_key(network.clone(), &private_key_hex)
             .map_err(|e| Error::WalletCreationFailed(e.to_string()))?;
-        let (mutant_initial, _handle_initial) = mutant_lib::mutant::MutAnt::init(
-            wallet_initial,
-            private_key_hex.clone(),
-            None::<InitCallback>,
-        )
-        .await?;
+        let (mutant_initial, _handle_initial) =
+            mutant_lib::mutant::MutAnt::init(wallet_initial, private_key_hex.clone()).await?;
         info!("Created first MutAnt instance for persistence test.");
 
         // Use the destructured mutant_initial
-        mutant_initial.store(key.clone(), &value, None).await?;
+        mutant_initial.store(key.clone(), &value).await?;
         info!("Stored persistent key: {}", key);
         mutant_initial
-            .store(key_removed.clone(), &value_removed, None)
+            .store(key_removed.clone(), &value_removed)
             .await?;
         info!(
             "Stored key to be removed before recreation: {}",
@@ -295,14 +275,12 @@ async fn test_persistence() -> Result<(), Error> {
         .map_err(|e| Error::WalletCreationFailed(e.to_string()))?;
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let (mutant_recreate, _handle_recreate) =
-        mutant_lib::mutant::MutAnt::init(wallet_recreate, private_key_hex, None::<InitCallback>)
-            .await
-            .expect("Failed to recreate mutant");
+        mutant_lib::mutant::MutAnt::init(wallet_recreate, private_key_hex).await?;
     info!("MutAnt instance recreated.");
 
     // Fetch the persisted key from the recreated instance
     // Use the destructured mutant_recreated
-    let fetched_value_recreated: Vec<u8> = mutant_recreate.fetch(&key, None::<GetCallback>).await?;
+    let fetched_value_recreated: Vec<u8> = mutant_recreate.fetch(&key).await?;
     assert_eq!(
         fetched_value_recreated, value,
         "Value was not persisted across instances"
@@ -310,10 +288,7 @@ async fn test_persistence() -> Result<(), Error> {
     info!("Verified key '{}' persisted across instances.", key);
 
     // Verify the removed key did not reappear
-    match mutant_recreate
-        .fetch(&key_removed, None::<GetCallback>)
-        .await
-    {
+    match mutant_recreate.fetch(&key_removed).await {
         Err(Error::KeyNotFound(_)) => {
             info!("Verified removed key '{}' did not reappear.", key_removed);
         }
