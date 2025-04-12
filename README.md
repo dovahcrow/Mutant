@@ -23,20 +23,19 @@
 
 ### Installation
 
-#### Local installation for development
-
 #### Install from crates.io (Recommended)
-
 ```bash
+
 cargo install mutant
 ```
+
+#### Local installation for development
 
 ```bash
 git clone https://github.com/Champii/MutAnt.git
 cd MutAnt
 cargo install --path .
 ```
-
 
 ### Command-Line Interface (CLI)
 
