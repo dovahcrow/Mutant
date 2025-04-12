@@ -102,12 +102,12 @@ impl MutAnt {
     ) -> Result<(Self, Option<JoinHandle<()>>), Error> {
         info!("Initializing MutAnt with config: {:?}...", config);
 
-        let use_mainnet = match config.network {
-            NetworkChoice::Devnet => false,
-            NetworkChoice::Mainnet => true,
+        let use_local = match config.network {
+            NetworkChoice::Devnet => true,
+            NetworkChoice::Mainnet => false,
         };
 
-        let network = match Network::new(!use_mainnet) {
+        let network = match Network::new(use_local) {
             Ok(n) => n,
             Err(e) => {
                 error!("Failed to initialize Autonomi network: {}", e);
@@ -117,6 +117,7 @@ impl MutAnt {
                 )));
             }
         };
+
         info!("Autonomi network initialized.");
 
         let wallet = match Wallet::new_from_private_key(network.clone(), &private_key_hex) {
@@ -129,6 +130,7 @@ impl MutAnt {
                 )));
             }
         };
+
         info!("Autonomi wallet created.");
 
         {
@@ -138,7 +140,13 @@ impl MutAnt {
                 Storage,
                 Option<JoinHandle<()>>,
                 Arc<Mutex<MasterIndexStorage>>,
-            ) = match crate::storage::new(wallet, private_key_hex.clone(), &mut init_callback).await
+            ) = match crate::storage::new(
+                wallet,
+                private_key_hex.clone(),
+                config.network,
+                &mut init_callback,
+            )
+            .await
             {
                 Ok(result) => result,
                 Err(e) => {

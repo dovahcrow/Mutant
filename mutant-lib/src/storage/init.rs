@@ -5,6 +5,7 @@ use super::{ContentType, Storage};
 use crate::error::Error;
 use crate::events::{invoke_init_callback, InitCallback, InitProgressEvent};
 use crate::mutant::data_structures::MasterIndexStorage;
+use crate::mutant::NetworkChoice;
 use crate::mutant::DEFAULT_SCRATCHPAD_SIZE;
 use autonomi::{client::payment::PaymentOption, Client, ScratchpadAddress, SecretKey, Wallet};
 use hex;
@@ -18,6 +19,7 @@ use tokio::task::JoinHandle;
 pub async fn new(
     wallet: Wallet,
     private_key_hex: String,
+    network_choice: NetworkChoice,
     init_callback: &mut Option<InitCallback>,
 ) -> Result<
     (
@@ -64,9 +66,20 @@ pub async fn new(
     invoke_init_callback(init_callback, InitProgressEvent::Starting { total_steps }).await?;
 
     let client = try_step!(1, "Initializing network client", async {
-        Client::init_local()
-            .await
-            .map_err(|e| Error::NetworkConnectionFailed(e.to_string()))
+        match network_choice {
+            NetworkChoice::Devnet => {
+                info!("Initializing LOCAL network client (Devnet).");
+                Client::init_local()
+                    .await
+                    .map_err(|e| Error::NetworkConnectionFailed(e.to_string()))
+            }
+            NetworkChoice::Mainnet => {
+                info!("Initializing MAIN network client (Mainnet).");
+                Client::init()
+                    .await
+                    .map_err(|e| Error::NetworkConnectionFailed(e.to_string()))
+            }
+        }
     });
 
     let derived_key = try_step!(2, "Deriving storage key", async {
