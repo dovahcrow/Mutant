@@ -3,7 +3,6 @@ use crate::error::Error;
 use crate::events::{invoke_callback, PutCallback, PutEvent};
 use crate::mutant::data_structures::{KeyStorageInfo, MasterIndexStorage};
 use crate::storage::storage_save_mis_from_arc_static; // Import static save function
-use crate::storage::Storage;
 use autonomi::ScratchpadAddress;
 use chrono;
 use log::{debug, error, info, warn};
@@ -18,6 +17,18 @@ mod reservation;
 pub(crate) const WRITE_TASK_CONCURRENCY: usize = 20;
 
 pub(crate) type PadInfo = (ScratchpadAddress, Vec<u8>);
+
+// Helper function placed here or in util.rs
+fn calculate_needed_pads(data_size: usize, scratchpad_size: usize) -> Result<usize, Error> {
+    if scratchpad_size == 0 {
+        error!("Scratchpad size is 0, cannot calculate needed pads.");
+        return Err(Error::InternalError("Scratchpad size is zero".to_string()));
+    }
+    Ok((data_size + scratchpad_size - 1) / scratchpad_size)
+}
+
+// Import the function directly
+use self::reservation::reserve_new_pads_and_collect;
 
 impl PadManager {
     /// Acquires the necessary pad resources (reused, free, new) for a write/update.
@@ -38,80 +49,79 @@ impl PadManager {
         data_size: usize,
     ) -> Result<
         (
-            Vec<PadInfo>, // pads_to_use_immediately (kept/reused + from_free)
-            usize,        // pads_to_reserve
-            Vec<PadInfo>, // pads_taken_from_free (for failure cleanup)
+            Vec<PadInfo>, // pads_to_keep (from existing entry)
             Vec<PadInfo>, // pads_to_recycle_on_success (from shrinking update)
+            usize,        // needed_from_free (how many to take from free list later)
+            usize,        // pads_to_reserve (how many to reserve if free list is insufficient)
         ),
         Error,
     > {
         let scratchpad_size = mis_guard.scratchpad_size;
-        if scratchpad_size == 0 {
-            error!("Scratchpad size is 0, cannot allocate pads.");
-            return Err(Error::InternalError("Scratchpad size is zero".to_string()));
-        }
+        let needed_total_pads = calculate_needed_pads(data_size, scratchpad_size)?;
 
-        let needed_pads = (data_size + scratchpad_size - 1) / scratchpad_size;
         debug!(
             "AcquireResources[{}]: data_size={}, scratchpad_size={}, needed_pads={}",
-            key, data_size, scratchpad_size, needed_pads
+            key, data_size, scratchpad_size, needed_total_pads
         );
 
-        let mut pads_to_use_immediately: Vec<PadInfo> = Vec::new();
+        let mut pads_to_keep: Vec<PadInfo> = Vec::new();
+        let mut pads_to_recycle_on_success: Vec<PadInfo> = Vec::new();
+        let mut needed_from_free: usize = 0;
         #[allow(unused_assignments)]
         let mut pads_to_reserve: usize = 0;
-        let mut pads_taken_from_free: Vec<PadInfo> = Vec::new();
-        let mut pads_to_recycle_on_success: Vec<PadInfo> = Vec::new();
 
         if let Some(existing_info) = mis_guard.index.get(key).cloned() {
             let old_num_pads = existing_info.pads.len();
             debug!(
                 "AcquireResources[{}]: Update path. Existing pads: {}, Needed pads: {}",
-                key, old_num_pads, needed_pads
+                key, old_num_pads, needed_total_pads
             );
 
-            if needed_pads <= old_num_pads {
-                pads_to_use_immediately = existing_info.pads[0..needed_pads].to_vec();
-                pads_to_recycle_on_success = existing_info.pads[needed_pads..].to_vec();
+            if needed_total_pads <= old_num_pads {
+                // Shrinking or same size
+                pads_to_keep = existing_info.pads[0..needed_total_pads].to_vec();
+                pads_to_recycle_on_success = existing_info.pads[needed_total_pads..].to_vec();
+                needed_from_free = 0;
                 pads_to_reserve = 0;
             } else {
-                pads_to_use_immediately = existing_info.pads;
-                let additional_pads_required = needed_pads - old_num_pads;
+                // Growing
+                pads_to_keep = existing_info.pads; // Keep all existing
+                let additional_pads_required = needed_total_pads - old_num_pads;
+                pads_to_recycle_on_success = Vec::new(); // Not shrinking
 
-                let num_from_free =
-                    std::cmp::min(additional_pads_required, mis_guard.free_pads.len());
-                pads_taken_from_free = mis_guard.free_pads.drain(..num_from_free).collect();
-                pads_to_use_immediately.extend(pads_taken_from_free.iter().cloned());
-
-                pads_to_reserve = additional_pads_required - num_from_free;
+                // Calculate how many are needed from free/reserve
+                let available_free = mis_guard.free_pads.len();
+                needed_from_free = std::cmp::min(additional_pads_required, available_free);
+                pads_to_reserve = additional_pads_required - needed_from_free;
             }
         } else {
+            // New key path
             debug!(
                 "AcquireResources[{}]: New path. Needed pads: {}",
-                key, needed_pads
+                key, needed_total_pads
             );
-            let num_from_free = std::cmp::min(needed_pads, mis_guard.free_pads.len());
-            if num_from_free > 0 {
-                pads_taken_from_free = mis_guard.free_pads.drain(..num_from_free).collect();
-                pads_to_use_immediately.extend(pads_taken_from_free.iter().cloned());
-            }
-            pads_to_reserve = needed_pads - num_from_free;
+            pads_to_keep = Vec::new(); // No existing pads to keep
+            pads_to_recycle_on_success = Vec::new(); // No existing pads to recycle
+
+            let available_free = mis_guard.free_pads.len();
+            needed_from_free = std::cmp::min(needed_total_pads, available_free);
+            pads_to_reserve = needed_total_pads - needed_from_free;
         }
 
         debug!(
-            "AcquireResources[{}]: Results: use_immediately={}, reserve={}, taken_free={}, recycle_on_success={}",
+            "AcquireResources[{}]: Results: keep={}, recycle={}, need_from_free={}, reserve={}",
             key,
-            pads_to_use_immediately.len(),
+            pads_to_keep.len(),
+            pads_to_recycle_on_success.len(),
+            needed_from_free,
             pads_to_reserve,
-            pads_taken_from_free.len(),
-            pads_to_recycle_on_success.len()
         );
 
         Ok((
-            pads_to_use_immediately,
-            pads_to_reserve,
-            pads_taken_from_free,
+            pads_to_keep,
             pads_to_recycle_on_success,
+            needed_from_free,
+            pads_to_reserve,
         ))
     }
 
@@ -132,13 +142,11 @@ impl PadManager {
         let data_size = data.len();
         let key_owned = key.to_string();
 
-        // --- Step 1: Determine resource needs (Initial Check) ---
-        // Declare variables in the outer scope
+        // Declare variables from Step 1 results needed later
+        let initial_pads_to_keep: Vec<PadInfo>;
+        let initial_recycle_on_success: Vec<PadInfo>;
+        let initial_needed_from_free: usize;
         let initial_pads_to_reserve: usize;
-        let mut initial_taken_free: Vec<PadInfo> = Vec::new(); // Keep ownership here for potential cleanup
-                                                               // These are not needed outside the initial check's scope if the structure holds
-                                                               // let initial_pads_to_use: Vec<PadInfo>;
-                                                               // let initial_recycle_on_success: Vec<PadInfo>;
 
         {
             let mut mis_guard = self.master_index_storage.lock().await;
@@ -146,26 +154,29 @@ impl PadManager {
                 "AllocateWrite[{}]: Lock acquired for initial resource check",
                 key_owned
             );
-            let (pads_to_use, pads_to_reserve, taken_free, recycle_on_success) =
+            // Use the read-only acquire function
+            let (keep, recycle, needed_free, reserve) =
                 self.acquire_resources_for_write(&mut mis_guard, &key_owned, data_size)?;
 
             // Assign results to outer scope variables
-            initial_pads_to_reserve = pads_to_reserve;
-            initial_taken_free = taken_free; // Move happens here, variable is now owned by outer scope
-                                             // We don't strictly need the other two in the outer scope with the current logic
-                                             // initial_pads_to_use = pads_to_use;
-                                             // initial_recycle_on_success = recycle_on_success;
+            initial_pads_to_keep = keep;
+            initial_recycle_on_success = recycle;
+            initial_needed_from_free = needed_free;
+            initial_pads_to_reserve = reserve;
 
             debug!(
-                "AllocateWrite[{}]: Releasing lock after initial resource check. Need to reserve: {}",
+                "AllocateWrite[{}]: Releasing lock after initial resource check. Keep: {}, Recycle: {}, Need Free: {}, Reserve: {}",
                 key_owned,
-                initial_pads_to_reserve // Use the outer scope variable
+                initial_pads_to_keep.len(),
+                initial_recycle_on_success.len(),
+                initial_needed_from_free,
+                initial_pads_to_reserve
             );
             // mis_guard is dropped here
-        };
+        }
 
         let shared_callback = Arc::new(Mutex::new(callback.take()));
-        let newly_reserved_pads = Arc::new(Mutex::new(Vec::new())); // To collect results IF reservation succeeds
+        let newly_reserved_pads_collector = Arc::new(Mutex::new(Vec::new())); // Renamed for clarity
 
         // --- Step 2: Reserve New Pads if Needed and Save State ---
         if initial_pads_to_reserve > 0 {
@@ -174,18 +185,31 @@ impl PadManager {
                 key_owned, initial_pads_to_reserve
             );
 
-            // Call the refactored function that collects results
-            let reservation_result = self
-                .reserve_new_pads_and_collect(initial_pads_to_reserve, shared_callback.clone())
-                .await;
+            // Call the standalone function
+            let reservation_result = reserve_new_pads_and_collect(
+                &key_owned,
+                initial_pads_to_reserve,
+                shared_callback.clone(),
+                newly_reserved_pads_collector.clone(),
+                self.storage.clone(), // Pass Arc<Storage>
+            )
+            .await;
 
             match reservation_result {
-                Ok(reserved_pads) => {
+                Ok(_) => {
+                    // The collector now holds the reserved pads
+                    let reserved_pads_guard = newly_reserved_pads_collector.lock().await;
+                    let num_reserved = reserved_pads_guard.len();
                     debug!(
-                        "AllocateWrite[{}]: Successfully reserved {} pads. Saving intermediate state...",
+                        "AllocateWrite[{}]: Successfully reserved {} pads (collected). Saving intermediate state...",
                         key_owned,
-                        reserved_pads.len()
+                        num_reserved
                     );
+                    // Important: Clone the pads before extending the free list
+                    let reserved_pads_cloned = reserved_pads_guard.clone();
+                    // Drop the guard *before* locking MIS
+                    drop(reserved_pads_guard);
+
                     // Lock MIS, add reserved pads to free list, save MIS
                     {
                         let mut mis_guard = self.master_index_storage.lock().await;
@@ -193,11 +217,12 @@ impl PadManager {
                             "AllocateWrite[{}]: Lock acquired for saving reserved pads to free list",
                              key_owned
                         );
-                        mis_guard.free_pads.extend(reserved_pads.clone());
+                        // Use the cloned list
+                        mis_guard.free_pads.extend(reserved_pads_cloned);
                         debug!(
                             "AllocateWrite[{}]: Added {} reserved pads to free list (new total: {}).",
                             key_owned,
-                            reserved_pads.len(),
+                            num_reserved, // Use num_reserved here
                             mis_guard.free_pads.len()
                         );
                         // Need storage details for saving
@@ -219,51 +244,42 @@ impl PadManager {
                                 key_owned,
                                 e
                             );
-                            // Attempt to revert: This is tricky. The pads are reserved ($$ spent),
-                            // but we failed to record them. Best effort: remove them from the in-memory list.
-                            // This is not fully transactional.
+                            // Attempt to revert: Remove the pads we just tried to add.
                             {
                                 let mut mis_guard_revert = self.master_index_storage.lock().await;
-                                let original_free_count = mis_guard_revert.free_pads.len();
-                                // Simple revert: drain the last N added pads.
-                                // Might be incorrect if other operations modified free_pads concurrently (shouldn't happen if MIS lock is held correctly).
-                                let revert_count = reserved_pads.len();
-                                if original_free_count >= revert_count {
-                                    mis_guard_revert
-                                        .free_pads
-                                        .truncate(original_free_count - revert_count);
-                                    warn!("AllocateWrite[{}]: Reverted in-memory free_pads list after save failure.", key_owned);
-                                } else {
-                                    error!("AllocateWrite[{}]: Cannot revert free_pads list - inconsistent state.", key_owned);
+                                // Assume they were added at the end, revert the last N
+                                let _reserved_pads_guard =
+                                    newly_reserved_pads_collector.lock().await; // Prefix with _
+                                let revert_count = num_reserved;
+                                if mis_guard_revert.free_pads.len() >= revert_count {
+                                    let len = mis_guard_revert.free_pads.len();
+                                    mis_guard_revert.free_pads.truncate(len - revert_count);
+                                    debug!(
+                                        "AllocateWrite[{}]: Reverted adding {} pads to free list.",
+                                        key_owned, revert_count
+                                    );
                                 }
                             }
-                            // Propagate the critical save error
+                            // Even though save failed, reservation likely succeeded ($$), so we don't return the collector pads
                             return Err(e);
-                        } else {
-                            debug!(
-                                "AllocateWrite[{}]: Successfully saved intermediate state with {} new pads in free list.",
-                                key_owned,
-                                reserved_pads.len()
-                            );
                         }
+                        debug!(
+                            "AllocateWrite[{}]: Intermediate save successful after reservation.",
+                            key_owned
+                        );
                     }
-                    // Store collected pads for potential write use (although acquire_resources should get them now)
-                    let mut collector_guard = newly_reserved_pads.lock().await;
-                    *collector_guard = reserved_pads;
                 }
                 Err(e) => {
-                    error!(
-                        "AllocateWrite[{}]: Pad reservation failed: {}. Aborting write operation.",
+                    warn!(
+                        "AllocateWrite[{}]: Reservation failed: {}. Cleaning up resources.",
                         key_owned, e
                     );
-                    // Need to return the initially taken free pads back
-                    {
-                        let mut mis_guard = self.master_index_storage.lock().await;
-                        // Now use the outer scope variable which still has ownership
-                        let cleanup_count = initial_taken_free.len();
-                        mis_guard.free_pads.extend(initial_taken_free); // This should work now
-                        debug!("AllocateWrite[{}]: Returned {} initially taken free pads to free list (current total: {}) due to reservation failure.", key_owned, cleanup_count, mis_guard.free_pads.len());
-                    }
+                    // Reservation failed, no new pads were added to free list.
+                    // Cleanup: If the initial check took pads from free list (it shouldn't with new logic),
+                    // return them. Check 'initial_taken_free' (which should be empty now)
+                    // We don't need to lock MIS here as we are just checking a variable.
+                    // **NOTE:** The 'initial_taken_free' concept is removed from the new acquire_resources_for_write.
+                    // There's nothing to return here from the free list perspective for reservation failure.
                     return Err(e);
                 }
             }
@@ -271,58 +287,79 @@ impl PadManager {
             debug!("AllocateWrite[{}]: No new pads needed.", key_owned);
         }
 
-        // --- Step 3: Re-acquire resources now that reserved pads are in the free list ---
-        // This ensures we use the newly reserved pads correctly.
-        let (final_pads_to_use, _final_pads_to_reserve, final_taken_free, final_recycle_on_success) = {
+        // --- Step 3: Acquire Final Resources (Pads to Keep + Pads from Free List) ---
+        let (final_pads_to_use, final_taken_free, final_recycle_on_success_confirmed) = {
             let mut mis_guard = self.master_index_storage.lock().await;
             debug!(
                 "AllocateWrite[{}]: Lock acquired for final resource acquisition",
                 key_owned
             );
-            // Should not need to reserve any more pads here (final_pads_to_reserve should be 0)
-            let result = self.acquire_resources_for_write(&mut mis_guard, &key_owned, data_size)?;
+
+            // Take pads from free list as determined necessary in Step 1
+            let mut actual_taken_free: Vec<PadInfo> = Vec::new();
+            if initial_needed_from_free > 0 {
+                let num_available = mis_guard.free_pads.len();
+                let num_to_take = std::cmp::min(initial_needed_from_free, num_available);
+
+                if num_to_take < initial_needed_from_free {
+                    // This means free pads disappeared OR reservation didn't provide enough
+                    error!(
+                        "AllocateWrite[{}]: Logic Error! Expected {} pads from free list, but only {} available after potential reservation.",
+                        key_owned, initial_needed_from_free, num_to_take
+                    );
+                    // Attempt cleanup: Return any newly reserved pads if reservation occurred.
+                    // No need to return 'initial_taken_free' as it's gone.
+                    if initial_pads_to_reserve > 0 {
+                        let reserved_pads_guard = newly_reserved_pads_collector.lock().await;
+                        // These were already added to free_pads, but the save failed OR this logic error occurred.
+                        // We attempted removal on save failure. If we reach here, the save *might* have succeeded,
+                        // but the free count is still wrong. This is complex.
+                        // Safest: Assume they are in free_pads and log error.
+                        error!("AllocateWrite[{}]: Inconsistent state suspected after free pad count mismatch.", key_owned);
+                        // We don't explicitly return the collector pads here as they *should* be in free_pads.
+                    }
+                    return Err(Error::InternalError(
+                        "Free pad count mismatch during final acquisition".to_string(),
+                    ));
+                }
+                actual_taken_free = mis_guard.free_pads.drain(..num_to_take).collect();
+            }
+
+            // Combine kept pads (from Step 1) and newly taken free pads
+            let mut final_pads = initial_pads_to_keep; // Use variable from Step 1
+            final_pads.extend(actual_taken_free.iter().cloned());
+
             debug!(
                 "AllocateWrite[{}]: Releasing lock after final resource acquisition. Pads to use: {}, Taken free: {}, Recycle: {}",
                 key_owned,
-                result.0.len(),
-                result.2.len(),
-                result.3.len()
+                final_pads.len(),
+                actual_taken_free.len(),
+                initial_recycle_on_success.len() // Use variable from Step 1
             );
-            if result.1 != 0 {
-                // This indicates a logic error - we should have reserved enough.
-                error!("AllocateWrite[{}]: Logic Error! Still need to reserve {} pads after reservation step.", key_owned, result.1);
-                // Attempt cleanup before erroring
-                mis_guard.free_pads.extend(result.2); // Return taken free
-                mis_guard.free_pads.extend(initial_taken_free); // Also return initial ones if different
-                                                                // Also need to return the newly_reserved_pads here if we got this far?
-                                                                // This state is messy.
-                let new_pads = newly_reserved_pads.lock().await;
-                mis_guard.free_pads.extend(new_pads.iter().cloned());
-                return Err(Error::InternalError(
-                    "Pad reservation count mismatch".to_string(),
-                ));
-            }
-            result
+
+            // Confirm the recycle list from Step 1
+            (final_pads, actual_taken_free, initial_recycle_on_success)
         };
 
         // --- Step 4: Perform Concurrent Write ---
-        // Note: perform_concurrent_write doesn't need the receiver anymore
-        // It just needs the list of pads to write to (final_pads_to_use).
+        // Use the final determined list of pads
         debug!("AllocateWrite[{}]: Starting final write...", key_owned);
         let write_result = self
             .perform_concurrent_write(
                 &key_owned,
                 data,
                 final_pads_to_use.clone(), // Use the finally acquired pads
-                // Pass an empty receiver, as new pads are already collected and added to free list
+                // Pass an empty receiver if reservation happened (pads added to free list),
+                // otherwise pass the collector if reservation *didn't* happen but pads were reserved (shouldn't occur with this logic)
+                // Pass an empty receiver always now, as reserved pads go directly to free list.
                 {
-                    let (tx, rx) = mpsc::channel(1);
+                    let (tx, rx) = mpsc::channel(1); // Create a dummy channel
                     drop(tx);
                     rx
                 },
-                // This collector is now mostly irrelevant here, but concurrent write expects it.
-                // It won't collect anything new via the empty receiver.
-                Arc::new(Mutex::new(Vec::new())),
+                // Pass the collector for newly reserved pads (concurrent write needs it, though it might be empty)
+                // Let's pass an empty collector now, as reserved pads are handled before write
+                Arc::new(Mutex::new(Vec::new())), // Empty collector
                 shared_callback.clone(),
             )
             .await;
@@ -340,24 +377,24 @@ impl PadManager {
                     "AllocateWrite[{}]: Write operation failed (Error: {}). Cleaning up resources.",
                     key_owned, e
                 );
-                // Pads that were assigned for writing (final_pads_to_use) came from the free list
-                // (either originally free or newly reserved & added). Return them.
-                let num_to_return = final_pads_to_use.len();
-                mis_guard.free_pads.extend(final_pads_to_use);
-
-                // Also need to return any *other* pads taken from free list during the final acquisition
-                // if acquire_resources_for_write logic allows taking more than needed temporarily?
-                // Assuming acquire_resources_for_write only takes what's needed, so final_taken_free should be empty here?
-                // Let's add final_taken_free back just in case.
-                let num_extra_taken_free = final_taken_free.len();
+                // Return pads intended for writing (final_pads_to_use)
+                // These came from initial_pads_to_keep + actual_taken_free
+                let _num_to_return = final_pads_to_use.len(); // Prefix with _
+                                                              // We cannot just extend free_pads with final_pads_to_use directly,
+                                                              // as it contains duplicates if pads were kept.
+                                                              // We need to return the ones *taken* from the free list:
+                let num_returned_free = final_taken_free.len(); // Log length before move
                 mis_guard.free_pads.extend(final_taken_free);
-                // Do NOT return initial_taken_free here, as they were handled during reservation failure.
+                // And we need to acknowledge that the 'kept' pads remain associated with the key (even if write failed)
+                // The index wasn't updated, so the old KeyStorageInfo (with 'kept' pads) is still there.
+                // If the key didn't exist before, there are no 'kept' pads.
+
+                // Do NOT return initial_recycle_on_success pads here, as they were never removed from index.
 
                 debug!(
-                    "AllocateWrite[{}]: Cleanup complete. Returned {} pads used in failed write + {} extra taken free pads to free list.",
+                    "AllocateWrite[{}]: Cleanup complete. Returned {} pads taken from free list. Kept pads remain with key.",
                     key_owned,
-                    num_to_return,
-                    num_extra_taken_free
+                    num_returned_free, // Use the stored length
                 );
                 debug!(
                     "AllocateWrite[{}]: Releasing lock after cleanup.",
@@ -381,13 +418,16 @@ impl PadManager {
             mis_guard.index.insert(key_owned.clone(), key_info);
 
             // Recycle pads from shrinking updates (identified in final acquisition)
-            if !final_recycle_on_success.is_empty() {
+            // Use the confirmed recycle list from Step 3
+            if !final_recycle_on_success_confirmed.is_empty() {
                 debug!(
                     "AllocateWrite[{}]: Recycling {} pads from successful update.",
                     key_owned,
-                    final_recycle_on_success.len()
+                    final_recycle_on_success_confirmed.len()
                 );
-                mis_guard.free_pads.extend(final_recycle_on_success);
+                mis_guard
+                    .free_pads
+                    .extend(final_recycle_on_success_confirmed);
             }
 
             // Final save of the master index

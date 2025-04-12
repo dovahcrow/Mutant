@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Correctly use `--local` flag to select Devnet instead of always using Mainnet logic internally.
 - Initialize Autonomi network client (local or mainnet) based on configuration, not hardcoded to local.
 - When using `--local`, automatically use the hardcoded devnet/test secret key.
+- Fixed pad allocation logic error occurring after `rm` then `put` by refactoring `allocate_and_write` to correctly account for freed pads.
 
 ## [0.1.1] - 2024-04-11
 
