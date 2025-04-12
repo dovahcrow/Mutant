@@ -76,11 +76,11 @@ async fn run_mutant_examples() -> Result<(), Box<dyn std::error::Error>> {
     let wallet = Wallet::from_phrase("your twelve word mnemonic phrase here", None)?;
     let private_key_hex = "your_autonomi_account_private_key_hex_string_here".to_string(); // Ensure this matches the wallet
 
-    // Initialize with callback
+    // Initialize without callback
     let (mutant, _init_handle) = MutAnt::init(
         wallet.clone(),
         private_key_hex.clone(),
-        Some(Box::new(my_init_callback)),
+        None, // No callback
     )
     .await?;
 
@@ -97,17 +97,12 @@ async fn run_mutant_examples() -> Result<(), Box<dyn std::error::Error>> {
     mutant.store(key1.clone(), &data1, None).await?;
     println!("Stored '{}' successfully.", key1);
 
-    // Store larger data with progress callback
+    // Store larger data
     let key2 = "large_data.bin".to_string();
-    // Example: create ~10MB of data (adjust size as needed)
     let data2: Vec<u8> = (0..(10 * 1024 * 1024)).map(|i| (i % 256) as u8).collect();
 
-    println!("\nStoring '{}' ({} bytes) with progress...", key2, data2.len());
-    let progress_state = Arc::new(tokio::sync::Mutex::new(0.0f32));
-    let progress_state_clone = progress_state.clone();
-    let put_cb = Box::new(move |event| my_put_callback(event, Some(progress_state_clone.clone())));
-
-    mutant.store(key2.clone(), &data2, Some(put_cb)).await?;
+    println!("\nStoring '{}' ({} bytes)...", key2, data2.len());
+    mutant.store(key2.clone(), &data2, None).await?; // No callback
     println!("Stored '{}' successfully.", key2);
 
     // 3. Fetching Data
@@ -119,12 +114,11 @@ async fn run_mutant_examples() -> Result<(), Box<dyn std::error::Error>> {
     println!("Fetched '{}': Size {}, Content: '{}'", key1, fetched_data1.len(), String::from_utf8_lossy(&fetched_data1));
     assert_eq!(data1, fetched_data1);
 
-    // Fetch large data with progress
-    println!("\nFetching '{}' with progress...", key2);
-    let get_cb = Box::new(my_get_callback);
-    let fetched_data2 = mutant.fetch(&key2, Some(get_cb)).await?;
-    println!("Fetched '{}': Size {}", key2, fetched_data2.len());
+    // Fetch large data
+    println!("\nFetching '{}'...", key2);
+    let fetched_data2 = mutant.fetch(&key2, None).await?; // No callback
     assert_eq!(data2.len(), fetched_data2.len());
+    println!("Fetched '{}': Size {}", key2, fetched_data2.len());
     // Optionally compare content if memory allows: assert_eq!(data2, fetched_data2);
 
     // 4. Listing Keys
