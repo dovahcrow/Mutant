@@ -76,12 +76,27 @@ pub(crate) async fn storage_save_mis_from_arc_static(
     let state = &*mis_guard;
     let bytes = serde_cbor::to_vec(state).map_err(|e| Error::SerializationError(e.to_string()))?;
     debug!(
-        "Serialization complete ({} bytes). Updating scratchpad {} using provided key...",
+        "storage_save_mis_from_arc_static: Serialized MIS ({} bytes) for {}. Preparing to write.",
         bytes.len(),
         address
     );
 
-    update_scratchpad_internal_static(client, key, &bytes, ContentType::MasterIndex as u64).await?;
+    let update_result =
+        update_scratchpad_internal_static(client, key, &bytes, ContentType::MasterIndex as u64)
+            .await;
+
+    match &update_result {
+        Ok(_) => debug!(
+            "storage_save_mis_from_arc_static: update_scratchpad_internal_static succeeded for {}.",
+            address
+        ),
+        Err(e) => error!(
+            "storage_save_mis_from_arc_static: update_scratchpad_internal_static failed for {}: {}",
+            address, e
+        ),
+    }
+    update_result?; // Propagate error if it failed
+
     debug!("Successfully saved MasterIndexStorage to {}.", address);
     Ok(())
 }

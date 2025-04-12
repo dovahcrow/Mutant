@@ -77,6 +77,53 @@ pub fn create_put_callback(
         async move {
             match event {
                 PutEvent::ReservingScratchpads { needed: _ } => Ok(true),
+                PutEvent::ReservingPads { count } => {
+                    debug!("Received ReservingPads: count={}", count);
+                    let mut res_pb_opt_guard = ctx.res_pb_opt.lock().unwrap();
+                    let pb = res_pb_opt_guard.get_or_insert_with(|| {
+                        let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
+                        pb.set_message("Reserving scratchpad(s)...".to_string());
+                        pb
+                    });
+                    pb.set_length(count);
+                    pb.set_position(0);
+                    Ok(true)
+                },
+                PutEvent::PadReserved { index, total, result } => {
+                    debug!(
+                        "Received PadReserved: index={}, total={}, result={:?}",
+                        index, total, result
+                    );
+                    if let Err(e) = result {
+                        warn!("Reservation failed for pad index {}: {}", index, e);
+                    }
+                    let mut res_pb_opt_guard = ctx.res_pb_opt.lock().unwrap();
+                    if let Some(res_pb) = res_pb_opt_guard.as_mut() {
+                        let current_position = index + 1;
+                        if res_pb.length() == Some(total) {
+                            res_pb.set_position(current_position);
+                            if current_position >= total && !res_pb.is_finished() {
+                                debug!(
+                                    "Pad reservation complete ({} >= {}), finishing reservation bar.",
+                                    current_position, total
+                                );
+                                res_pb.finish_and_clear();
+                                *res_pb_opt_guard = None;
+                            }
+                        } else {
+                            warn!(
+                                "PadReserved: Progress bar length ({:?}) does not match total ({})",
+                                res_pb.length(),
+                                total
+                            );
+                            res_pb.set_length(total);
+                            res_pb.set_position(current_position);
+                        }
+                    } else {
+                        warn!("PadReserved event received but reservation progress bar does not exist.");
+                    }
+                    Ok(true)
+                },
                 PutEvent::ConfirmReservation {
                     needed,
                     data_size,

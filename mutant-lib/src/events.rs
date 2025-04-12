@@ -7,6 +7,14 @@ use serde::{Deserialize, Serialize};
 pub enum PutEvent {
     /// Indicates that the allocator needs to reserve new scratchpads.
     ReservingScratchpads { needed: u64 },
+    /// Indicates the start of the reservation process for a batch of pads.
+    ReservingPads { count: u64 },
+    /// Reports the result of reserving a single pad within a batch.
+    PadReserved {
+        index: u64,
+        total: u64,
+        result: Result<(), String>, // Ok(()) on success, Err(error_string) on failure
+    },
     /// Prompts the caller (e.g., the binary) to confirm the reservation.
     /// The callback should return `Ok(true)` to proceed, `Ok(false)` to cancel.
     ConfirmReservation {
