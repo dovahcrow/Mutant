@@ -3,7 +3,7 @@ use crate::events::{GetCallback, InitCallback, PutCallback};
 use crate::mutant::data_structures::MasterIndexStorage;
 use crate::pad_manager::PadManager;
 use crate::storage::Storage;
-use autonomi::{ScratchpadAddress, Wallet};
+use autonomi::{Network, ScratchpadAddress, Wallet};
 use chrono::{DateTime, Utc};
 use log::{debug, error, info};
 use std::sync::Arc;
@@ -69,20 +69,40 @@ pub struct MutAnt {
 impl MutAnt {
     /// Creates a new MutAnt instance without progress reporting.
     /// Use `init_with_progress` for detailed initialization feedback.
-    pub async fn init(
-        wallet: Wallet,
-        private_key_hex: String,
-    ) -> Result<(Self, Option<JoinHandle<()>>), Error> {
-        Self::init_with_progress(wallet, private_key_hex, None).await
+    pub async fn init(private_key_hex: String) -> Result<(Self, Option<JoinHandle<()>>), Error> {
+        Self::init_with_progress(private_key_hex, None).await
     }
 
     /// Creates a new MutAnt instance with optional progress reporting via callback.
     pub async fn init_with_progress(
-        wallet: Wallet,
         private_key_hex: String,
         mut init_callback: Option<InitCallback>,
     ) -> Result<(Self, Option<JoinHandle<()>>), Error> {
         info!("Initializing MutAnt...");
+
+        let network = match Network::new(true) {
+            Ok(n) => n,
+            Err(e) => {
+                error!("Failed to initialize Autonomi network: {}", e);
+                return Err(Error::NetworkInitError(format!(
+                    "Failed to initialize Autonomi network: {}",
+                    e
+                )));
+            }
+        };
+        info!("Autonomi network initialized.");
+
+        let wallet = match Wallet::new_from_private_key(network.clone(), &private_key_hex) {
+            Ok(w) => w,
+            Err(e) => {
+                error!("Failed to create wallet from private key: {}", e);
+                return Err(Error::WalletError(format!(
+                    "Failed to create wallet from private key: {}",
+                    e
+                )));
+            }
+        };
+        info!("Autonomi wallet created.");
 
         {
             info!("Initializing Storage layer...");
@@ -91,7 +111,8 @@ impl MutAnt {
                 Storage,
                 Option<JoinHandle<()>>,
                 Arc<Mutex<MasterIndexStorage>>,
-            ) = match crate::storage::new(wallet, private_key_hex, &mut init_callback).await {
+            ) = match crate::storage::new(wallet, private_key_hex.clone(), &mut init_callback).await
+            {
                 Ok(result) => result,
                 Err(e) => {
                     return Err(e);
