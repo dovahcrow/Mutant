@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initialize Autonomi network client (local or mainnet) based on configuration, not hardcoded to local.
 - When using `--local`, automatically use the hardcoded devnet/test secret key.
 - Fixed pad allocation logic error occurring after `rm` then `put` by refactoring `allocate_and_write` to correctly account for freed pads.
+- Ensure master index is saved correctly *after* data is written and index is updated in memory during `put` operation, preventing loss of key information on successful writes.
 
 ## [0.1.1] - 2024-04-11
 

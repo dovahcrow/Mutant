@@ -119,9 +119,6 @@ pub(super) async fn store_item(
         key
     );
 
-    debug!("StoreItem[{}]: Saving final master index state...", key);
-    es.save_master_index().await?;
-
     info!("StoreItem[{}]: Store operation fully completed.", key);
     Ok(())
 }
