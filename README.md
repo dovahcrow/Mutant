@@ -7,14 +7,7 @@
 
 ## Core Concepts
 
-*   **Private Mutable Key-Value Storage:** Offers a clean, asynchronous key-value interface (`store`, `fetch`, `remove`) operating on byte arrays (`Vec<u8>`).
-*   **Autonomi Integration:** Seamlessly utilizes Autonomi `Scratchpad` for data persistence, managed via the `autonomi` library's `Network` and `Wallet` components.
-*   **Callback-based Progress:** Provides hooks for asynchronous progress reporting during potentially long-running operations like `store` and `fetch`.
-
-## Key Features
-
-*   **Simplified Key-Value API:** Abstracts the complexities of direct scratchpad management.
-*   **Secure Wallet Integration:** Uses `autonomi::Wallet` derived from a user-provided private key for network interactions.
+*   **Private Mutable Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `rm`) operating on byte arrays
 *   **User-Friendly Keys:** Operates on human-readable string keys.
 *   **Asynchronous Design:** Built with `async`/`await` and `tokio` for non-blocking network operations.
 *   **Progress Reporting:** Includes callbacks for monitoring `store` and `fetch` operations (e.g., reservation, upload/download progress).
@@ -28,7 +21,7 @@
 
 ### Command-Line Interface (CLI)
 
-MutAnt includes the `mutant` command for convenient command-line access. You'll need a wallet file (e.g., `mutant_wallet.json`) containing your private key as a JSON string. By default, `mutant` looks for `mutant_wallet.json` in the current directory.
+MutAnt includes the `mutant` command for convenient command-line access.
 
 **CLI Usage Examples:**
 
@@ -43,18 +36,15 @@ mutant get mykey
 # Output: my value
 
 # Store a value from stdin (e.g., piping a file)
-cat data.txt | mutant put filekey
+cat data.txt | mutant put mykey2
 
 # Force overwrite an existing key
-echo "new content" | mutant put filekey -f
+echo "new content" | mutant put mykey2 -f
 
 # List stored keys and basic usage summary
 mutant ls
-# Output:
-# Usage: 10.00 KB / 4.00 MB (0.2%) - 1 scratchpads managed
-# Stored keys:
-# - mykey
-# - filekey
+#mykey
+#mykey2
 
 # Remove a key
 mutant rm mykey
@@ -69,90 +59,21 @@ Add `mutant_lib` and its dependencies to your `Cargo.toml`:
 This example demonstrates initializing the necessary components and performing basic store/fetch operations. It assumes you have a wallet file (`my_wallet.json`) with a private key.
 
 ```rust
-use mutant_lib::{mutant::MutAnt, storage::Storage, error::Error, events::{PutEvent, GetEvent}};
-use mutant_lib::autonomi::{Network, Wallet};
-use std::{fs, path::PathBuf, sync::Arc};
-use serde_json;
-use futures::future::FutureExt; // Required for .boxed() on callbacks
+use mutant_lib::{mutant::MutAnt, error::Error};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // --- Wallet Setup ---
-    let wallet_path = PathBuf::from("my_wallet.json"); // Replace with your wallet path
-    let private_key_hex_json = fs::read_to_string(&wallet_path)?;
-    let private_key_hex: String = serde_json::from_str(&private_key_hex_json)?;
+    let private_key_hex = '0xYOUR_PRIVATE_KEY_HERE';
 
-    // --- Network & Wallet Initialization ---
-    // Ensure you have a valid client.config for the network
-    let network = Network::new(true).await?; // Use true for testnet/local
-    let wallet = Wallet::new_from_private_key(network, &private_key_hex)?;
+    let (mutant, _init_handle) = MutAnt::init(private_key_hex).await?;
 
-    // --- Storage Initialization ---
-    // Storage::new now returns (Arc<Storage>, JoinHandle, InitialMapInfo, Arc<Mutex<MapInfo>>)
-    // We provide None for the InitCallback for simplicity here.
-    let (storage_arc, storage_init_handle, initial_map_info, map_info_mutex) =
-        Storage::new(wallet, &private_key_hex, None).await?;
+    mutant.store("hello", b"world").await?;
 
-    // --- MutAnt Initialization ---
-    // We provide None for the default Vault Key callback.
-    let mutant = MutAnt::new(storage_arc.clone(), map_info_mutex, initial_map_info, None).await?;
+    let fetched_value = mutant.fetch("hello").await?;
 
-    // --- Using MutAnt ---
-    let key = "my_library_key";
-    let value_to_store = b"some data from the library".to_vec();
+    println!("Fetched value: {:?}", fetched_value);
 
-    println!("Storing value for key: {}", key);
-    // Store requires a callback (PutCallback)
-    let put_callback = Box::new(|event: PutEvent| async move {
-        match event {
-            PutEvent::StoreComplete => println!("Put operation complete."),
-            _ => {} // Handle other events like progress if needed
-        }
-        Ok(true) // Return true to continue, false to cancel
-    }.boxed());
-    mutant.store(key.to_string(), &value_to_store, Some(put_callback)).await?;
-    println!("Stored successfully call returned.");
-
-    println!("Fetching value for key: {}", key);
-    // Fetch requires a callback (GetCallback)
-    let get_callback = Box::new(|event: GetEvent| async move {
-         match event {
-            GetEvent::DownloadFinished => println!("Get operation complete."),
-             _ => {} // Handle other events like progress if needed
-         }
-        Ok(())
-    }.boxed());
-    let fetched_value = mutant.fetch(key, Some(get_callback)).await?;
-    println!("Fetched successfully call returned.");
-
-    assert_eq!(value_to_store, fetched_value);
-    println!("Fetched value matches stored value.");
-
-    println!("Removing key: {}", key);
-    mutant.remove(key).await?;
-    println!("Removed successfully.");
-
-    // Verify removal (fetch requires a callback, even if just checking for KeyNotFound)
-    let verify_callback = Box::new(|_event: GetEvent| async { Ok(()) }.boxed());
-    match mutant.fetch(key, Some(verify_callback)).await {
-        Err(Error::KeyNotFound(_)) => {
-            println!("Verification successful: Key '{}' correctly reported as not found.", key);
-        }
-        Ok(_) => panic!("Error: Key should have been removed!"),
-        Err(e) => panic!("Unexpected error during verification: {:?}", e),
-    }
-
-    // --- Shutdown ---
-    // It's good practice to wait for background tasks if they were spawned.
-    // The storage_init_handle completes when the initial storage setup is done.
-    println!("Waiting for storage initialization task...");
-    if let Err(e) = storage_init_handle.await {
-         // Cancellation is expected if the main task finishes quickly.
-         if !e.is_cancelled() {
-             eprintln!("Background storage task join error: {}", e);
-         }
-    }
-    println!("Library example finished.");
+    mutant.remove("hello").await?;
 
     Ok(())
 }
@@ -202,7 +123,7 @@ export XDG_DATA_HOME="$(pwd)/test_network_data"
 
 # Now run your cargo command or the mutant binary
 # (Assuming mutant is built and in your PATH or target/release)
-mutant ls
+cargo run -- ls
 
 # Alternatively, use a tool like direnv to set it automatically
 # Add 'export XDG_DATA_HOME="${PWD}/test_network_data"' to a .envrc file

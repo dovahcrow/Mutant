@@ -4,6 +4,7 @@ use crate::mutant::data_structures::MasterIndexStorage;
 use crate::mutant::MASTER_INDEX_KEY;
 use crate::utils::retry::retry_operation;
 use autonomi::{client::payment::PaymentOption, Bytes, Client, ScratchpadAddress, SecretKey};
+use hex;
 use log::{debug, error, warn};
 use serde_cbor;
 use std::sync::Arc;
