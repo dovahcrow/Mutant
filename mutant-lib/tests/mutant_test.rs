@@ -1,11 +1,11 @@
-use anthill_lib::error::Error;
-use anthill_lib::events::{GetCallback, InitCallback};
 use autonomi::{Network, Wallet};
 use log::{error, info, warn};
+use mutant_lib::error::Error;
+use mutant_lib::events::{GetCallback, InitCallback};
 use serial_test::serial;
 
 // --- Test Initialization Helper ---
-async fn setup_test_env() -> Result<(anthill_lib::anthill::Anthill, Network, String), Error> {
+async fn setup_test_env() -> Result<(mutant_lib::mutant::MutAnt, Network, String), Error> {
     // Add a small delay before network init
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
@@ -26,7 +26,7 @@ async fn setup_test_env() -> Result<(anthill_lib::anthill::Anthill, Network, Str
 
     for attempt in 0..MAX_RETRIES {
         info!(
-            "Setup attempt {}/{}: Initializing Anthill (including Storage)...",
+            "Setup attempt {}/{}: Initializing MutAnt (including Storage)...",
             attempt + 1,
             MAX_RETRIES
         );
@@ -41,8 +41,8 @@ async fn setup_test_env() -> Result<(anthill_lib::anthill::Anthill, Network, Str
                 ))
             })?;
 
-        // Call the new Anthill::new directly
-        match anthill_lib::anthill::Anthill::init(
+        // Call the new MutAnt::new directly
+        match mutant_lib::mutant::MutAnt::init(
             wallet.clone(),
             private_key_hex.clone(),
             None::<InitCallback>,
@@ -50,17 +50,17 @@ async fn setup_test_env() -> Result<(anthill_lib::anthill::Anthill, Network, Str
         .await
         {
             // Destructure the new return tuple
-            Ok((anthill_instance, _maybe_handle)) => {
+            Ok((mutant_instance, _maybe_handle)) => {
                 info!(
-                    "Anthill initialized successfully on attempt {}.",
+                    "MutAnt initialized successfully on attempt {}.",
                     attempt + 1
                 );
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                // Return the Anthill instance directly
-                return Ok((anthill_instance, network, private_key_hex));
+                // Return the MutAnt instance directly
+                return Ok((mutant_instance, network, private_key_hex));
             }
             Err(e) => {
-                error!("Anthill init attempt {} failed: {}", attempt + 1, e);
+                error!("MutAnt init attempt {} failed: {}", attempt + 1, e);
                 // Retry logic remains the same
                 if (e.to_string().contains("Network error")
                     || e.to_string().contains("Failed to fetch/decrypt vault"))
@@ -68,7 +68,7 @@ async fn setup_test_env() -> Result<(anthill_lib::anthill::Anthill, Network, Str
                 {
                     last_error = Some(e);
                     warn!(
-                        "Retrying Anthill initialization after {}ms...",
+                        "Retrying MutAnt initialization after {}ms...",
                         RETRY_DELAY_MS
                     );
                     tokio::time::sleep(tokio::time::Duration::from_millis(RETRY_DELAY_MS)).await;
@@ -89,18 +89,18 @@ async fn setup_test_env() -> Result<(anthill_lib::anthill::Anthill, Network, Str
 async fn test_store_and_fetch_small() -> Result<(), Error> {
     info!("--- Test: Store and Fetch Small Item ---");
     // Adjust destructuring for the new setup_test_env return type
-    let (anthill_instance, _network, _private_key_hex) = setup_test_env().await?;
+    let (mutant_instance, _network, _private_key_hex) = setup_test_env().await?;
     info!("Test setup completed.");
 
     // Prefix key with test name for isolation
     let key = "small_test_small_key".to_string();
     let value = b"Small test value".to_vec();
 
-    anthill_instance.store(key.clone(), &value, None).await?;
+    mutant_instance.store(key.clone(), &value, None).await?;
     info!("Stored key: {}, value_len: {}", key, value.len());
     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
 
-    let fetched_value: Vec<u8> = anthill_instance.fetch(&key, None::<GetCallback>).await?;
+    let fetched_value: Vec<u8> = mutant_instance.fetch(&key, None::<GetCallback>).await?;
     assert_eq!(
         fetched_value, value,
         "Fetched value does not match stored value"
@@ -116,18 +116,18 @@ async fn test_store_and_fetch_small() -> Result<(), Error> {
 async fn test_store_and_fetch_large() -> Result<(), Error> {
     info!("--- Test: Store and Fetch Large Item ---");
     // Adjust destructuring
-    let (anthill_instance, _network, _private_key_hex) = setup_test_env().await?;
+    let (mutant_instance, _network, _private_key_hex) = setup_test_env().await?;
     info!("Test setup completed.");
 
     // Prefix key with test name for isolation
     let key = "large_test_large_key".to_string();
     let value = vec![1u8; 6 * 1024 * 1024]; // 6MB
 
-    anthill_instance.store(key.clone(), &value, None).await?;
+    mutant_instance.store(key.clone(), &value, None).await?;
     info!("Stored key: {}, value_len: {}", key, value.len());
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    let fetched_value: Vec<u8> = anthill_instance.fetch(&key, None::<GetCallback>).await?;
+    let fetched_value: Vec<u8> = mutant_instance.fetch(&key, None::<GetCallback>).await?;
     assert_eq!(
         fetched_value, value,
         "Fetched large value does not match stored value"
@@ -143,7 +143,7 @@ async fn test_store_and_fetch_large() -> Result<(), Error> {
 async fn test_update_item() -> Result<(), Error> {
     info!("--- Test: Update Item ---");
     // Adjust destructuring
-    let (anthill_instance, _network, _private_key_hex) = setup_test_env().await?;
+    let (mutant_instance, _network, _private_key_hex) = setup_test_env().await?;
     info!("Test setup completed.");
 
     // Prefix key with test name for isolation
@@ -152,7 +152,7 @@ async fn test_update_item() -> Result<(), Error> {
     let updated_value = b"Updated value".to_vec();
 
     // Store initial value
-    anthill_instance
+    mutant_instance
         .store(key.clone(), &initial_value, None)
         .await?;
     info!(
@@ -163,7 +163,7 @@ async fn test_update_item() -> Result<(), Error> {
     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
 
     // Update the value
-    anthill_instance
+    mutant_instance
         .update(key.clone(), &updated_value, None)
         .await?;
     info!(
@@ -174,7 +174,7 @@ async fn test_update_item() -> Result<(), Error> {
     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
 
     // Fetch and verify updated value
-    let fetched_updated_value: Vec<u8> = anthill_instance.fetch(&key, None::<GetCallback>).await?;
+    let fetched_updated_value: Vec<u8> = mutant_instance.fetch(&key, None::<GetCallback>).await?;
     assert_eq!(
         fetched_updated_value, updated_value,
         "Fetched updated value does not match"
@@ -194,7 +194,7 @@ async fn test_update_item() -> Result<(), Error> {
 async fn test_remove_item() -> Result<(), Error> {
     info!("--- Test: Remove Item ---");
     // Adjust destructuring
-    let (anthill_instance, _network, _private_key_hex) = setup_test_env().await?;
+    let (mutant_instance, _network, _private_key_hex) = setup_test_env().await?;
     info!("Test setup completed.");
 
     // Prefix keys with test name for isolation
@@ -204,23 +204,23 @@ async fn test_remove_item() -> Result<(), Error> {
     let value_to_keep = b"Value to keep".to_vec();
 
     // Store both items
-    anthill_instance
+    mutant_instance
         .store(key_to_remove.clone(), &value_to_remove, None)
         .await?;
     info!("Stored key to remove: {}", key_to_remove);
-    anthill_instance
+    mutant_instance
         .store(key_to_keep.clone(), &value_to_keep, None)
         .await?;
     info!("Stored key to keep: {}", key_to_keep);
     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
 
     // Remove the first item
-    anthill_instance.remove(&key_to_remove).await?;
+    mutant_instance.remove(&key_to_remove).await?;
     info!("Removed key: {}", key_to_remove);
     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
 
     // Verify removal of the first item
-    match anthill_instance
+    match mutant_instance
         .fetch(&key_to_remove, None::<GetCallback>)
         .await
     {
@@ -235,7 +235,7 @@ async fn test_remove_item() -> Result<(), Error> {
     }
 
     // Verify the second item still exists
-    let fetched_kept_value: Vec<u8> = anthill_instance
+    let fetched_kept_value: Vec<u8> = mutant_instance
         .fetch(&key_to_keep, None::<GetCallback>)
         .await?;
     assert_eq!(
@@ -253,7 +253,7 @@ async fn test_remove_item() -> Result<(), Error> {
 async fn test_persistence() -> Result<(), Error> {
     info!("--- Test: Persistence ---");
     // Use setup_test_env to get network and key, but we'll create the instances inside
-    let (_initial_anthill, network, private_key_hex) = setup_test_env().await?;
+    let (_initial_mutant, network, private_key_hex) = setup_test_env().await?;
     info!("Initial setup for persistence test completed (network/key obtained).");
 
     // Prefix keys with test name for isolation
@@ -267,43 +267,42 @@ async fn test_persistence() -> Result<(), Error> {
         // Create the first instance
         let wallet_initial = Wallet::new_from_private_key(network.clone(), &private_key_hex)
             .map_err(|e| Error::WalletCreationFailed(e.to_string()))?;
-        let (anthill_initial, _handle_initial) = anthill_lib::anthill::Anthill::init(
+        let (mutant_initial, _handle_initial) = mutant_lib::mutant::MutAnt::init(
             wallet_initial,
             private_key_hex.clone(),
             None::<InitCallback>,
         )
         .await?;
-        info!("Created first Anthill instance for persistence test.");
+        info!("Created first MutAnt instance for persistence test.");
 
-        // Use the destructured anthill_initial
-        anthill_initial.store(key.clone(), &value, None).await?;
+        // Use the destructured mutant_initial
+        mutant_initial.store(key.clone(), &value, None).await?;
         info!("Stored persistent key: {}", key);
-        anthill_initial
+        mutant_initial
             .store(key_removed.clone(), &value_removed, None)
             .await?;
         info!(
             "Stored key to be removed before recreation: {}",
             key_removed
         );
-        anthill_initial.remove(&key_removed).await?;
+        mutant_initial.remove(&key_removed).await?;
         info!("Removed key before recreation: {}", key_removed);
-    } // anthill_initial goes out of scope
+    } // mutant_initial goes out of scope
 
-    info!("Re-creating Anthill instance with the same private key...");
-    // Recreate wallet and the second Anthill instance
+    info!("Re-creating MutAnt instance with the same private key...");
+    // Recreate wallet and the second MutAnt instance
     let wallet_recreate = Wallet::new_from_private_key(network.clone(), &private_key_hex)
         .map_err(|e| Error::WalletCreationFailed(e.to_string()))?;
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-    let (anthill_recreate, _handle_recreate) =
-        anthill_lib::anthill::Anthill::init(wallet_recreate, private_key_hex, None::<InitCallback>)
+    let (mutant_recreate, _handle_recreate) =
+        mutant_lib::mutant::MutAnt::init(wallet_recreate, private_key_hex, None::<InitCallback>)
             .await
-            .expect("Failed to recreate anthill");
-    info!("Anthill instance recreated.");
+            .expect("Failed to recreate mutant");
+    info!("MutAnt instance recreated.");
 
     // Fetch the persisted key from the recreated instance
-    // Use the destructured anthill_recreated
-    let fetched_value_recreated: Vec<u8> =
-        anthill_recreate.fetch(&key, None::<GetCallback>).await?;
+    // Use the destructured mutant_recreated
+    let fetched_value_recreated: Vec<u8> = mutant_recreate.fetch(&key, None::<GetCallback>).await?;
     assert_eq!(
         fetched_value_recreated, value,
         "Value was not persisted across instances"
@@ -311,7 +310,7 @@ async fn test_persistence() -> Result<(), Error> {
     info!("Verified key '{}' persisted across instances.", key);
 
     // Verify the removed key did not reappear
-    match anthill_recreate
+    match mutant_recreate
         .fetch(&key_removed, None::<GetCallback>)
         .await
     {

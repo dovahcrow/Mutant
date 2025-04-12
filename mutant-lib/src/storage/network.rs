@@ -1,7 +1,7 @@
 use super::ContentType;
-use crate::anthill::data_structures::MasterIndexStorage;
-use crate::anthill::MASTER_INDEX_KEY;
 use crate::error::Error;
+use crate::mutant::data_structures::MasterIndexStorage;
+use crate::mutant::MASTER_INDEX_KEY;
 use crate::utils::retry::retry_operation;
 use autonomi::{client::payment::PaymentOption, Bytes, Client, ScratchpadAddress, SecretKey};
 use log::{debug, error, warn};

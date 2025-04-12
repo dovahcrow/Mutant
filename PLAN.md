@@ -2,11 +2,11 @@
 
 ## 1. Goal
 
-Improve the efficiency and robustness of the `anthill-cli put` command. Enable concurrent reservation and upload with concurrency limits. Introduce **immediate indexing of reserved scratchpads** (marking them appropriately) for fault tolerance and implement **retry mechanisms** for core operations (reservation, upload, commit, index updates). Provide three distinct progress bars: Reservation, Upload (Bytes), and Confirmed Scratchpads (Steps).
+Improve the efficiency and robustness of the `mutant-cli put` command. Enable concurrent reservation and upload with concurrency limits. Introduce **immediate indexing of reserved scratchpads** (marking them appropriately) for fault tolerance and implement **retry mechanisms** for core operations (reservation, upload, commit, index updates). Provide three distinct progress bars: Reservation, Upload (Bytes), and Confirmed Scratchpads (Steps).
 
 ## 2. Current Process Analysis
 
-Based on the `PutEvent` variants and the callback structure in `anthill-cli/src/callbacks/put.rs`, the current process appears largely sequential:
+Based on the `PutEvent` variants and the callback structure in `mutant-cli/src/callbacks/put.rs`, the current process appears largely sequential:
 
 1.  **Check Need:** Determine if scratchpads are needed (`ReservingScratchpads`).
 2.  **Confirmation:** If needed, prompt the user for confirmation (`ConfirmReservation`). This step blocks further progress until confirmed.
@@ -17,7 +17,7 @@ Based on the `PutEvent` variants and the callback structure in `anthill-cli/src/
 
 The key bottleneck is step 3 blocking step 5.
 
-## 3. Proposed Architecture (`anthill-lib`)
+## 3. Proposed Architecture (`mutant-lib`)
 
 1.  **Concurrency Control:**
     *   Use `futures::stream::StreamExt::for_each_concurrent` or similar mechanisms (like `tokio::task::JoinSet` possibly combined with `tokio::sync::Semaphore` for fine-grained limits).
@@ -72,7 +72,7 @@ The key bottleneck is step 3 blocking step 5.
         *   `StoreComplete`: Emitted only after *all* required reservation+indexing tasks and *all* required upload+commit+indexing tasks have completed successfully (within retry limits).
     *   **Completion & Error Handling:** The `put` function returns `Ok` only if all steps succeed within retry limits. Any persistent failure halts the process and returns an `Err`, leaving the index in a state reflecting the last successful operations (enabling future resume).
 
-## 4. Proposed Changes (`anthill-cli/src/callbacks/put.rs`)
+## 4. Proposed Changes (`mutant-cli/src/callbacks/put.rs`)
 
 (No significant changes from v2 needed here; the CLI callback layer reacts to the events as defined above. The complexity lies within the library emitting these events correctly based on the new indexing and retry logic).
 
@@ -84,7 +84,7 @@ The key bottleneck is step 3 blocking step 5.
 **(Current Status: Starting Step 11)**
 
 1.  **DONE: (Lib) Define/Confirm master index states (`RESERVED_PENDING_UPLOAD`, `COMMITTED`). Ensure index update functions are available.** (Commit: `337fb3c`)
-    *   [x] Located index implementation (`anthill-lib/src/anthill/data_structures.rs`).
+    *   [x] Located index implementation (`mutant-lib/src/mutant/data_structures.rs`).
     *   [x] Defined `PendingScratchpadStatus` enum with `Reserved`, `Committed`.
     *   [x] Defined `PendingScratchpadInfo` struct to hold address, key, and status.
     *   [x] Added `pending_uploads: HashMap<String, Vec<PendingScratchpadInfo>>` to `MasterIndexStorage` with `#[serde(default)]` and `secret_key_serde` helper.
@@ -92,13 +92,13 @@ The key bottleneck is step 3 blocking step 5.
     *   [x] Ran `cargo check --workspace` - Passed.
     *   [x] Committed changes.
 2.  **DONE: (Lib) Choose and integrate a retry library (like `tokio-retry`) or implement a robust retry helper.** (Commit: `54f954e`)
-    *   [x] Added `tokio-retry` dependency to `anthill-lib/Cargo.toml`.
-    *   [x] Created a helper module (`anthill-lib/src/utils/retry.rs`) with `standard_retry_strategy` and `retry_operation` function.
+    *   [x] Added `tokio-retry` dependency to `mutant-lib/Cargo.toml`.
+    *   [x] Created a helper module (`mutant-lib/src/utils/retry.rs`) with `standard_retry_strategy` and `retry_operation` function.
     *   [x] Fixed closure lifetime issues by using `Fn` instead of `FnMut`.
     *   [x] Ran `cargo check --workspace` - Passed.
     *   [x] Committed changes.
 3.  **DONE: (Lib) Implement concurrent reservation tasks.** (Commit: `8f1132e`)
-    *   [x] Refactored `anthill::store_logic::store_item` to handle concurrency.
+    *   [x] Refactored `mutant::store_logic::store_item` to handle concurrency.
     *   [x] Used `futures::stream::iter` and `buffer_unordered(RESERVATION_CONCURRENCY)` + `try_collect`.
     *   [x] Inside the concurrent task:
         *   Called `storage.create_scratchpad_internal_raw` (simplified reservation).

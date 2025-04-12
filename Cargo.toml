@@ -1,4 +1,4 @@
 [workspace]
 resolver = "3"
-members = ["anthill-lib", "anthill-cli"]
-default-members = ["anthill-cli"]
+members = ["mutant-lib", "mutant-cli"]
+default-members = ["mutant-cli"]

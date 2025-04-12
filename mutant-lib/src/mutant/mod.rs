@@ -1,6 +1,6 @@
-use crate::anthill::data_structures::MasterIndexStorage;
 use crate::error::Error;
 use crate::events::{GetCallback, InitCallback, PutCallback};
+use crate::mutant::data_structures::MasterIndexStorage;
 use crate::pad_manager::PadManager;
 use crate::storage::Storage;
 use autonomi::{ScratchpadAddress, Wallet};
@@ -16,9 +16,9 @@ pub mod store_logic;
 pub mod update_logic;
 
 // --- Internal Keys for Management Data ---
-pub const MASTER_INDEX_KEY: &str = "__ANTHILL_MASTER_INDEX__";
-pub const FREE_DIRECT_LIST_KEY: &str = "__anthill_free_direct_v1__";
-pub const FREE_CHUNK_LIST_KEY: &str = "__anthill_free_chunk_v1__";
+pub const MASTER_INDEX_KEY: &str = "__MUTANT_MASTER_INDEX__";
+pub const FREE_DIRECT_LIST_KEY: &str = "__mutant_free_direct_v1__";
+pub const FREE_CHUNK_LIST_KEY: &str = "__mutant_free_chunk_v1__";
 
 /// Actual physical size of scratchpads on the network.
 pub(crate) const PHYSICAL_SCRATCHPAD_SIZE: usize = 4 * 1024 * 1024; // 4MB
@@ -59,32 +59,35 @@ pub struct KeyDetails {
 
 /// Manages raw byte data storage using the PadManager.
 #[derive(Clone)]
-pub struct Anthill {
+pub struct MutAnt {
     pub(crate) storage: Arc<Storage>,
     master_index_addr: ScratchpadAddress,
     master_index_storage: Arc<Mutex<MasterIndexStorage>>,
     pub(crate) pad_manager: PadManager,
 }
 
-impl Anthill {
-    /// Creates a new Anthill instance.
+impl MutAnt {
+    /// Creates a new MutAnt instance.
     pub async fn init(
         wallet: Wallet,
         private_key_hex: String,
         mut init_callback: Option<InitCallback>,
     ) -> Result<(Self, Option<JoinHandle<()>>), Error> {
-        info!("Initializing Anthill...");
+        info!("Initializing MutAnt...");
 
         {
             info!("Initializing Storage layer...");
 
-            let (storage_instance, storage_init_handle, mis_mutex) =
-                match crate::storage::new(wallet, private_key_hex, &mut init_callback).await {
-                    Ok(result) => result,
-                    Err(e) => {
-                        return Err(e);
-                    }
-                };
+            let (storage_instance, storage_init_handle, mis_mutex): (
+                Storage,
+                Option<JoinHandle<()>>,
+                Arc<Mutex<MasterIndexStorage>>,
+            ) = match crate::storage::new(wallet, private_key_hex, &mut init_callback).await {
+                Ok(result) => result,
+                Err(e) => {
+                    return Err(e);
+                }
+            };
             let storage_arc = Arc::new(storage_instance);
             info!("Storage layer initialized.");
 
@@ -94,15 +97,15 @@ impl Anthill {
 
             let mis_addr_from_storage = storage_arc.get_master_index_info().0;
 
-            let anthill = Self {
+            let mutant = Self {
                 storage: storage_arc,
                 pad_manager,
                 master_index_storage: mis_mutex,
                 master_index_addr: mis_addr_from_storage,
             };
 
-            info!("Anthill initialization complete.");
-            Ok((anthill, storage_init_handle))
+            info!("MutAnt initialization complete.");
+            Ok((mutant, storage_init_handle))
         }
     }
 
@@ -128,24 +131,24 @@ impl Anthill {
         key: &str,
         mut callback: Option<GetCallback>,
     ) -> Result<Vec<u8>, Error> {
-        info!("Anthill: fetch called for key '{}'", key);
+        info!("MutAnt: fetch called for key '{}'", key);
         self.pad_manager.retrieve_data(key, &mut callback).await
     }
 
     /// Removes a user key and its associated data/metadata.
     pub async fn remove(&self, user_key: &str) -> Result<(), Error> {
-        debug!("Anthill::remove: Entered for key '{}'", user_key);
+        debug!("MutAnt::remove: Entered for key '{}'", user_key);
         if user_key == MASTER_INDEX_KEY {
             error!("Attempted to remove the master index key directly. Ignoring.");
             return Ok(());
         }
         debug!(
-            "Anthill::remove: Calling remove_logic::delete_item for key '{}'",
+            "MutAnt::remove: Calling remove_logic::delete_item for key '{}'",
             user_key
         );
         let result = remove_logic::delete_item(self, user_key).await;
         debug!(
-            "Anthill::remove: Returned from remove_logic::delete_item for key '{}'",
+            "MutAnt::remove: Returned from remove_logic::delete_item for key '{}'",
             user_key
         );
         result
@@ -160,14 +163,14 @@ impl Anthill {
         data_bytes: &[u8],
         callback: Option<PutCallback>,
     ) -> Result<(), Error> {
-        debug!("Anthill::update: Entered for key '{}'", user_key);
+        debug!("MutAnt::update: Entered for key '{}'", user_key);
         if user_key == MASTER_INDEX_KEY {
             error!("Attempted to update the master index key directly. Denying access.");
             return Err(Error::OperationNotSupported);
         }
         let result = update_logic::update_item(self, user_key.clone(), data_bytes, callback).await;
         debug!(
-            "Anthill::update: Returned from update_logic::update_item for key '{}'",
+            "MutAnt::update: Returned from update_logic::update_item for key '{}'",
             user_key
         );
         result
@@ -248,7 +251,7 @@ impl Anthill {
     }
 
     pub async fn list_keys(&self) -> Result<Vec<String>, Error> {
-        debug!("Anthill: list_keys called");
+        debug!("MutAnt: list_keys called");
         let guard = self.master_index_storage.lock().await;
         let keys = guard.index.keys().cloned().collect();
         Ok(keys)
@@ -256,7 +259,7 @@ impl Anthill {
 
     /// Retrieves a list of keys along with their size and modification time.
     pub async fn list_key_details(&self) -> Result<Vec<KeyDetails>, Error> {
-        debug!("Anthill: list_key_details called");
+        debug!("MutAnt: list_key_details called");
         let guard = self.master_index_storage.lock().await;
         let details: Vec<KeyDetails> = guard
             .index

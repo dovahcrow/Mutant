@@ -1,9 +1,9 @@
-use super::Anthill;
+use super::MutAnt;
 use crate::error::Error;
 use log::{debug, error, info, warn};
 
 /// Removes an item by user key, recycling its pads.
-pub(super) async fn delete_item(es: &Anthill, key: &str) -> Result<(), Error> {
+pub(super) async fn delete_item(es: &MutAnt, key: &str) -> Result<(), Error> {
     debug!("DeleteItem[{}]: Starting removal...", key);
 
     match es.pad_manager.release_pads(key).await {

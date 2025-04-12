@@ -89,13 +89,13 @@ else
   echo "--- Tests Failed (Exit Code: $TEST_EXIT_CODE) ---"
 fi
 
-# Test the anthill library
-if cargo test --package anthill-lib -- --nocapture --test-threads=1; then
-  TEST_EXIT_CODE=0
-  echo "--- Tests Passed ---"
+# Test the mutant library
+if cargo test --package mutant-lib -- --nocapture --test-threads=1; then
+  echo "MutAnt lib tests passed!"
 else
-  TEST_EXIT_CODE=$?
-  echo "--- Tests Failed (Exit Code: $TEST_EXIT_CODE) ---"
+  echo "MutAnt lib tests failed."
+  stop_network
+  exit 1
 fi
 
 # --- Cleanup ---

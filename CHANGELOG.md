@@ -29,7 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Store/update operations now record a modification timestamp.
 - Adjusted `ls` short format output to only list keys, one per line.
 - Refactored `PadManager::retrieve_data` into smaller helper functions for improved readability and maintainability (`get_pads_and_size`, `spawn_fetch_tasks`, `collect_fetch_results`, `update_progress`, `order_and_combine_data`).
-- Refactored `anthill-lib/src/pad_manager/write.rs` into smaller modules (`reservation.rs`, `concurrent.rs`) for better readability and maintainability.
+- Refactored `mutant-lib/src/pad_manager/write.rs` into smaller modules (`reservation.rs`, `concurrent.rs`) for better readability and maintainability.
+- Modified `MutAnt::init` to accept a `private_key_hex` string and derive the storage key internally via SHA256 hashing, ensuring deterministic storage addresses.
 - Refactored the storage module into submodules (`init`, `network`) for better organization.
 - Removed unused `ContentType::UserData` variant and `network` field from `Storage`.
 

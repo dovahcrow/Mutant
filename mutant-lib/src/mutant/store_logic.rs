@@ -1,10 +1,10 @@
-use super::Anthill;
+use super::MutAnt;
 use crate::error::Error;
 use crate::events::{invoke_callback, PutCallback, PutEvent};
 use log::{debug, error, info, warn};
 
 pub(super) async fn store_item(
-    es: &Anthill,
+    es: &MutAnt,
     key: String,
     data_bytes: &[u8],
     mut callback: Option<PutCallback>,

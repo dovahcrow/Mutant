@@ -1,9 +1,9 @@
-# Anthill: Private Mutable Key-Value Storage for Autonomi
+# MutAnt: Private Mutable Key-Value Storage for Autonomi
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) <!-- Add license badge if applicable -->
-[![Crates.io](https://img.shields.io/crates/v/anthill_lib.svg)](https://crates.io/crates/anthill_lib) <!-- Add crates.io badge if published -->
+[![Build Status](https://github.com/<YOUR_USERNAME>/MutAnt/actions/workflows/rust.yml/badge.svg)](https://github.com/<YOUR_USERNAME>/MutAnt/actions/workflows/rust.yml)
+[![Crates.io](https://img.shields.io/crates/v/mutant_lib.svg)](https://crates.io/crates/mutant_lib) <!-- Add crates.io badge if published -->
 
-**Anthill** provides a robust and asynchronous private mutable key-value storage layer built upon the Autonomi network's `Scratchpad` primitives. It simplifies interaction with the underlying network storage.
+**MutAnt** provides a robust and asynchronous private mutable key-value storage layer built upon the Autonomi network's `Scratchpad` primitives. It simplifies interaction with the underlying network storage.
 
 ## Core Concepts
 
@@ -18,7 +18,7 @@
 *   **User-Friendly Keys:** Operates on human-readable string keys.
 *   **Asynchronous Design:** Built with `async`/`await` and `tokio` for non-blocking network operations.
 *   **Progress Reporting:** Includes callbacks for monitoring `store` and `fetch` operations (e.g., reservation, upload/download progress).
-*   **CLI Tool:** Includes the `anthill` command-line tool for easy interaction with the storage layer, including progress bars.
+*   **CLI Tool:** Includes the `mutant` command-line tool for easy interaction with the storage layer, including progress bars.
 
 ## Getting Started
 
@@ -28,28 +28,28 @@
 
 ### Command-Line Interface (CLI)
 
-Anthill includes the `anthill` command for convenient command-line access. You'll need a wallet file (e.g., `anthill_wallet.json`) containing your private key as a JSON string. By default, `anthill` looks for `anthill_wallet.json` in the current directory.
+MutAnt includes the `mutant` command for convenient command-line access. You'll need a wallet file (e.g., `mutant_wallet.json`) containing your private key as a JSON string. By default, `mutant` looks for `mutant_wallet.json` in the current directory.
 
 **CLI Usage Examples:**
 
-Assuming `anthill` is in your `PATH` or you are running from `target/release/`:
+Assuming `mutant` is in your `PATH` or you are running from `target/release/`:
 
 ```bash
 # Store a value directly 
-anthill put mykey "my value"
+mutant put mykey "my value"
 
 # Get a value and print to stdout
-anthill get mykey
+mutant get mykey
 # Output: my value
 
 # Store a value from stdin (e.g., piping a file)
-cat data.txt | anthill put filekey
+cat data.txt | mutant put filekey
 
 # Force overwrite an existing key
-echo "new content" | anthill put filekey -f
+echo "new content" | mutant put filekey -f
 
 # List stored keys and basic usage summary
-anthill ls
+mutant ls
 # Output:
 # Usage: 10.00 KB / 4.00 MB (0.2%) - 1 scratchpads managed
 # Stored keys:
@@ -57,20 +57,20 @@ anthill ls
 # - filekey
 
 # Remove a key
-anthill rm mykey
+mutant rm mykey
 ```
 
 ### Library Usage
 
-Add `anthill_lib` and its dependencies to your `Cargo.toml`:
+Add `mutant_lib` and its dependencies to your `Cargo.toml`:
 
 **Library Example:**
 
 This example demonstrates initializing the necessary components and performing basic store/fetch operations. It assumes you have a wallet file (`my_wallet.json`) with a private key.
 
 ```rust
-use anthill_lib::{anthill::Anthill, storage::Storage, error::Error, events::{PutEvent, GetEvent}};
-use autonomi::{Network, Wallet};
+use mutant_lib::{mutant::MutAnt, storage::Storage, error::Error, events::{PutEvent, GetEvent}};
+use mutant_lib::autonomi::{Network, Wallet};
 use std::{fs, path::PathBuf, sync::Arc};
 use serde_json;
 use futures::future::FutureExt; // Required for .boxed() on callbacks
@@ -93,11 +93,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (storage_arc, storage_init_handle, initial_map_info, map_info_mutex) =
         Storage::new(wallet, &private_key_hex, None).await?;
 
-    // --- Anthill Initialization ---
+    // --- MutAnt Initialization ---
     // We provide None for the default Vault Key callback.
-    let anthill = Anthill::new(storage_arc.clone(), map_info_mutex, initial_map_info, None).await?;
+    let mutant = MutAnt::new(storage_arc.clone(), map_info_mutex, initial_map_info, None).await?;
 
-    // --- Using Anthill ---
+    // --- Using MutAnt ---
     let key = "my_library_key";
     let value_to_store = b"some data from the library".to_vec();
 
@@ -110,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Ok(true) // Return true to continue, false to cancel
     }.boxed());
-    anthill.store(key.to_string(), &value_to_store, Some(put_callback)).await?;
+    mutant.store(key.to_string(), &value_to_store, Some(put_callback)).await?;
     println!("Stored successfully call returned.");
 
     println!("Fetching value for key: {}", key);
@@ -122,19 +122,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
          }
         Ok(())
     }.boxed());
-    let fetched_value = anthill.fetch(key, Some(get_callback)).await?;
+    let fetched_value = mutant.fetch(key, Some(get_callback)).await?;
     println!("Fetched successfully call returned.");
 
     assert_eq!(value_to_store, fetched_value);
     println!("Fetched value matches stored value.");
 
     println!("Removing key: {}", key);
-    anthill.remove(key).await?;
+    mutant.remove(key).await?;
     println!("Removed successfully.");
 
     // Verify removal (fetch requires a callback, even if just checking for KeyNotFound)
     let verify_callback = Box::new(|_event: GetEvent| async { Ok(()) }.boxed());
-    match anthill.fetch(key, Some(verify_callback)).await {
+    match mutant.fetch(key, Some(verify_callback)).await {
         Err(Error::KeyNotFound(_)) => {
             println!("Verification successful: Key '{}' correctly reported as not found.", key);
         }
@@ -160,7 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Development and Testing
 
-Anthill relies on a running Autonomi network. For local development and running integration tests, scripts are provided to manage a self-contained test network.
+MutAnt relies on a running Autonomi network. For local development and running integration tests, scripts are provided to manage a self-contained test network.
 
 ### Local Testnet Management (`scripts/manage_local_testnet.sh`)
 
@@ -191,7 +191,7 @@ Before starting the testnet for the first time, run the setup command to clone t
 
 The management script configures the testnet to store its data within the `./test_network_data` directory in your project root by setting the `XDG_DATA_HOME` environment variable *within the script's context*.
 
-When interacting with this script-managed testnet using commands *outside* the script (e.g., running `cargo run -- ...` or the `anthill` binary directly), you **MUST** set the `XDG_DATA_HOME` environment variable manually in your shell to match the script's location, otherwise the client will not find the network configuration:
+When interacting with this script-managed testnet using commands *outside* the script (e.g., running `cargo run -- ...` or the `mutant` binary directly), you **MUST** set the `XDG_DATA_HOME` environment variable manually in your shell to match the script's location, otherwise the client will not find the network configuration:
 
 ```bash
 # Make sure the testnet is running via the script first
@@ -200,9 +200,9 @@ When interacting with this script-managed testnet using commands *outside* the s
 # Set the variable for your current shell session
 export XDG_DATA_HOME="$(pwd)/test_network_data"
 
-# Now run your cargo command or the anthill binary
-# (Assuming anthill is built and in your PATH or target/release)
-anthill ls
+# Now run your cargo command or the mutant binary
+# (Assuming mutant is built and in your PATH or target/release)
+mutant ls
 
 # Alternatively, use a tool like direnv to set it automatically
 # Add 'export XDG_DATA_HOME="${PWD}/test_network_data"' to a .envrc file
@@ -210,7 +210,7 @@ anthill ls
 
 ### Running Integration Tests (`scripts/run_tests_with_env.sh`)
 
-This script automates the process of running the integration tests (located in the `tests` directory, e.g., `tests/anthill_test.rs`):
+This script automates the process of running the integration tests (located in the `tests` directory, e.g., `tests/mutant_test.rs`):
 
 1.  Ensures dependencies are set up using `manage_local_testnet.sh setup`.
 2.  Starts the local testnet using `manage_local_testnet.sh start`.
@@ -226,16 +226,16 @@ This script automates the process of running the integration tests (located in t
 
 ## Architecture Overview
 
-Anthill leverages several components from the `autonomi` crate and its own library (`anthill_lib`):
+MutAnt leverages several components from the `autonomi` crate and its own library (`mutant_lib`):
 
 1.  **`autonomi::Network`**: Handles connection and interaction with the Autonomi network based on `client.config`.
 2.  **`autonomi::Wallet`**: Manages user identity and signing capabilities derived from a private key.
-3.  **`anthill_lib::storage::Storage`**: The foundational layer interacting directly with the Autonomi network via `autonomi::Client` (obtained from `Network` and `Wallet`). It handles:
+3.  **`mutant_lib::storage::Storage`**: The foundational layer interacting directly with the Autonomi network via `autonomi::Client` (obtained from `Network` and `Wallet`). It handles:
     *   Low-level scratchpad operations (creation, updates, fetches).
     *   Interaction with the Autonomi `Vault` for managing keys associated with scratchpads (details might be internal to `autonomi`).
     *   Maintains crucial internal state like the `MapInfo` which tracks scratchpad allocations and usage. It runs background tasks for initialization.
     *   Provides `InitCallback` for monitoring initialization progress.
-4.  **`anthill_lib::anthill::Anthill`**: The high-level abstraction layer providing the primary key-value API (`store`, `fetch`, `remove`, `get_summary`, `get_user_keys`). It:
+4.  **`mutant_lib::mutant::MutAnt`**: The high-level abstraction layer providing the primary key-value API (`store`, `fetch`, `remove`, `get_summary`, `get_user_keys`). It:
     *   Coordinates operations using the underlying `Storage` layer and shared `MapInfo`.
     *   Handles user-facing key management.
     *   Manages `PutCallback` and `GetCallback` for progress reporting during `store` and `fetch` operations.

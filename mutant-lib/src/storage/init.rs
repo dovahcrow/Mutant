@@ -2,10 +2,10 @@ use super::network::{
     create_scratchpad_static, load_master_index_storage_static, storage_save_mis_from_arc_static,
 };
 use super::{ContentType, Storage};
-use crate::anthill::data_structures::MasterIndexStorage;
-use crate::anthill::DEFAULT_SCRATCHPAD_SIZE;
 use crate::error::Error;
 use crate::events::{invoke_init_callback, InitCallback, InitProgressEvent};
+use crate::mutant::data_structures::MasterIndexStorage;
+use crate::mutant::DEFAULT_SCRATCHPAD_SIZE;
 use autonomi::{client::payment::PaymentOption, Client, ScratchpadAddress, SecretKey, Wallet};
 use hex;
 use log::{debug, error, info, warn};

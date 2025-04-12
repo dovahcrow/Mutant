@@ -2,5 +2,13 @@
 .roo/
 .roomodes
 .test_deps/
-anthill_wallet.json
-test_network_data/
+mutant_wallet.json
+/test_network_data/
+
+# Logs and PID files from testnet script
+/tmp/mutant_evm_testnet.pid
+/tmp/mutant_evm_testnet.log
+
+# IntelliJ IDEA
+.idea/
+*.iml

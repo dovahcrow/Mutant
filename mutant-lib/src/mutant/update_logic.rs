@@ -1,4 +1,4 @@
-use super::Anthill;
+use super::MutAnt;
 use crate::error::Error;
 use crate::events::{invoke_callback, PutCallback, PutEvent};
 use log::{debug, error, info, warn};
@@ -7,7 +7,7 @@ use log::{debug, error, info, warn};
 ///
 /// If the key does not exist, it returns a `KeyNotFound` error.
 pub(super) async fn update_item(
-    es: &Anthill,
+    es: &MutAnt,
     key: String,
     data_bytes: &[u8],
     mut callback: Option<PutCallback>,

@@ -93,7 +93,7 @@ pub(crate) async fn invoke_init_callback(
     }
 }
 
-/// Events emitted during the `Anthill::fetch` process.
+/// Events emitted during the `MutAnt::fetch` process.
 #[derive(Debug, Clone)]
 pub enum GetEvent {
     /// Indicates the start of the download process, providing the total size.

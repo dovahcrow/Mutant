@@ -1,4 +1,4 @@
-use crate::anthill::data_structures::MasterIndexStorage;
+use crate::mutant::data_structures::MasterIndexStorage;
 use crate::storage::Storage as BaseStorage;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -10,7 +10,7 @@ pub mod util;
 pub mod write;
 
 /// Manages scratchpad allocation, I/O, and recycling.
-#[derive(Clone)] // Clone is needed if Anthill is Clone
+#[derive(Clone)] // Clone is needed if MutAnt is Clone
 pub(crate) struct PadManager {
     storage: Arc<BaseStorage>,
     master_index_storage: Arc<Mutex<MasterIndexStorage>>,
