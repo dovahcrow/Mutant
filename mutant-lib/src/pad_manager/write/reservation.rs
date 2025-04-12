@@ -7,21 +7,22 @@ use crate::storage::Storage;
 use crate::utils::retry::retry_operation;
 use autonomi::SecretKey;
 use futures::stream::{self, StreamExt};
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
 pub(super) const MAX_CONCURRENT_RESERVATIONS: usize = 10;
 
 /// Reserves a specified number of new pads concurrently.
-/// Saves the Master Index after each successful reservation.
+/// Saves the Master Index after each successful reservation and sends PadInfo via channel.
 pub(super) async fn reserve_new_pads_and_collect(
     key_for_log: &str,
     num_pads_to_reserve: usize,
     shared_callback: Arc<Mutex<Option<PutCallback>>>,
-    collector: Arc<Mutex<Vec<PadInfo>>>, // Collector still needed to return the list
+    pad_info_tx: mpsc::Sender<Result<PadInfo, Error>>,
     storage: Arc<Storage>,
-    master_index_storage: Arc<Mutex<MasterIndexStorage>>, // Passed in
+    master_index_storage: Arc<Mutex<MasterIndexStorage>>,
 ) -> Result<(), Error> {
     info!(
         "Reservation[{}]: Reserving {} new pads (max concurrent: {})... Saving after each success...",
@@ -172,11 +173,19 @@ pub(super) async fn reserve_new_pads_and_collect(
                     key_for_log, log_index
                 );
 
-                // Add to collector *after* successful save
-                {
-                    let mut collector_guard = collector.lock().await;
-                    collector_guard.push(pad_info); // Add the original pad_info
+                // Send successful PadInfo over the channel
+                if let Err(send_err) = pad_info_tx.send(Ok(pad_info.clone())).await {
+                    error!(
+                        "Reservation[{}]: Failed to send successful PadInfo for pad #{} over channel: {}. Aborting.",
+                        key_for_log, log_index, send_err
+                    );
+                    // Treat channel send failure as critical, as the uploader won't get the pad info
+                    return Err(Error::InternalError(format!(
+                        "Channel send error: {}",
+                        send_err
+                    )));
                 }
+
                 successful_pad_count += 1;
                 // --- End of successful pad processing ---
             }
@@ -186,17 +195,11 @@ pub(super) async fn reserve_new_pads_and_collect(
                     "Reservation[{}]: Reservation task failed: {}. Aborting remaining reservations.",
                     key_for_log, reserve_err
                 );
-                // Clear collector to ensure no partial results are used
-                {
-                    let mut coll_guard = collector.lock().await;
-                    if !coll_guard.is_empty() {
-                        warn!(
-                            "Reservation[{}]: Clearing collector ({} pads) due to reservation task error.",
-                            key_for_log, coll_guard.len()
-                        );
-                        coll_guard.clear();
-                    }
-                }
+                // Send the error over the channel to signal failure to the receiver?
+                // Or just rely on the function returning Err and the channel closing implicitly?
+                // Let's just return Err. The receiver will see the channel close when tx is dropped.
+                // if let Err(send_err) = pad_info_tx.send(Err(reserve_err.clone())).await { ... }
+
                 return Err(reserve_err); // Return the reservation error
             }
         }
@@ -205,32 +208,22 @@ pub(super) async fn reserve_new_pads_and_collect(
     // Final check after processing the stream
     if successful_pad_count == num_pads_to_reserve {
         info!(
-            "Reservation[{}]: Successfully reserved and individually saved all {} required pads.",
+            "Reservation[{}]: Successfully reserved, individually saved, and sent all {} required pads.",
             key_for_log, num_pads_to_reserve
         );
+        // Dropping pad_info_tx here signals successful completion to the receiver
         Ok(())
     } else {
-        // This case implies the stream finished early without enough successful pads,
-        // potentially due to an error handled above, but check just in case.
+        // Error occurred and was returned above, or loop finished unexpectedly.
         error!(
-            "Reservation[{}]: Logic error: Finished stream with {} successful pads, but expected {}. Collector might be cleared.",
+            "Reservation[{}]: Exited reservation loop unexpectedly. Success count: {}/{}",
             key_for_log, successful_pad_count, num_pads_to_reserve
         );
-        // Ensure collector is cleared if we somehow reach here with a mismatch
-        {
-            let mut coll_guard = collector.lock().await;
-            if successful_pad_count != coll_guard.len() {
-                warn!(
-                    "Reservation[{}]: Mismatch between success count ({}) and collector len ({}). Clearing collector.",
-                    key_for_log, successful_pad_count, coll_guard.len()
-                 );
-                coll_guard.clear();
-            }
-        }
-        // Return a generic error indicating incomplete reservation
+        // Dropping pad_info_tx here signals abnormal completion
         Err(Error::InternalError(format!(
-            "Reservation incomplete: {}/{} pads",
+            "Reservation ended prematurely: {}/{} pads",
             successful_pad_count, num_pads_to_reserve
         )))
     }
+    // pad_info_tx is dropped implicitly when the function returns
 }

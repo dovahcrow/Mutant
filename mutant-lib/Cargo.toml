@@ -12,7 +12,7 @@ name = "mutant_lib"
 path = "src/lib.rs"
 
 [dependencies]
-autonomi = "0.4.3"
+autonomi = "0.4.3" # Don't touch this, ever
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
