@@ -5,11 +5,11 @@
 
 **MutAnt** provides a robust and asynchronous private mutable key-value storage layer built upon the Autonomi network's `Scratchpad` primitives. It simplifies interaction with the underlying network storage.
 
-> **⚠️ Disclaimer:** MutAnt is currently under active development and is **not ready for production use or mainnet deployment**. Use it at your own risk. Expect potential bugs, breaking changes, and incomplete features.
+> **⚠️ Disclaimer:** MutAnt is currently under active development and is **not ready for production use or mainnet deployment**. Use it at your own risk. Expect potential bugs, breaking changes, and incomplete features. Check how to spin a local testnet [here](#local-testnet-management-scriptsmanage_local_testnetsh).
 
 ## Core Concepts
 
-*   **Private Mutable Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `rm`) operating on byte arrays
+*   **Private Mutable Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `update` `rm`) operating on byte arrays
 *   **User-Friendly Keys:** Operates on human-readable string keys.
 *   **Asynchronous Design:** Built with `async`/`await` and `tokio` for non-blocking network operations.
 *   **Progress Reporting:** Includes callbacks for monitoring `store` and `fetch` operations (e.g., reservation, upload/download progress).
@@ -28,6 +28,26 @@ MutAnt includes the `mutant` command for convenient command-line access.
 **CLI Usage Examples:**
 
 Assuming `mutant` is in your `PATH` or you are running from `target/release/`:
+
+```
+Mutant CLI - Interact with the Mutant network
+
+Usage: mutant-cli [OPTIONS] <COMMAND>
+
+Commands:
+  put    Puts a key-value pair onto the network. Reads value from stdin if omitted. Use --force to overwrite an existing key
+  get    Gets the value for a given key from the network and prints it to stdout
+  rm     Deletes a key-value pair from the network
+  ls     Lists all keys stored on the network
+  stats  Get storage summary (allocator perspective)
+  reset  Resets the master index to its initial empty state. Requires confirmation
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+  -l, --local    Path to the wallet file (JSON containing private key string) Use local network (Devnet) instead of Mainnet
+  -h, --help     Print help
+  -V, --version  Print version
+```
 
 ```bash
 # Store a value directly 
