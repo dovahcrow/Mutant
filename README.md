@@ -200,7 +200,7 @@ Data is stored and retrieved as raw byte vectors (`Vec<u8>`), allowing the user 
 
 ## Configuration
 
-The primary configuration taken from your local ant wallet if existing. MutAnt will not create or manage wallets, it will propose which one you want to use if you have multiple on the first run, then save your choice in ~/.config/mutantcli/config.toml
+The primary configuration taken from your local ant wallet if existing. MutAnt will not create or manage wallets, it will propose which one you want to use if you have multiple on the first run, then save your choice in ~/.config/mutantcli/config.json
 
 ## License
 
