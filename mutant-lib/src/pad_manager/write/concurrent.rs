@@ -5,7 +5,7 @@ use crate::mutant::data_structures::MasterIndexStorage;
 use crate::storage::update_scratchpad_internal_static;
 use crate::storage::Storage as BaseStorage;
 use crate::utils::retry::retry_operation;
-use autonomi::{ScratchpadAddress, SecretKey};
+use autonomi::SecretKey;
 use log::{debug, error, warn};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -299,7 +299,7 @@ fn spawn_write_task_standalone(
     data_arc: Arc<Vec<u8>>,
     chunk_start: usize,
     chunk_end: usize,
-    scratchpad_size: usize,
+    _scratchpad_size: usize,
     successfully_written_pads: Arc<Mutex<Vec<PadInfo>>>,
     pad_info_for_task: PadInfo,
 ) {

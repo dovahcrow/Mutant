@@ -2,10 +2,8 @@ use super::PadInfo;
 use crate::error::Error;
 use crate::events::{invoke_callback, PutCallback, PutEvent};
 use crate::mutant::data_structures::MasterIndexStorage;
-use crate::storage::storage_save_mis_from_arc_static;
 use crate::storage::Storage;
 use crate::utils::retry::retry_operation;
-use autonomi::SecretKey;
 use futures::stream::{self, StreamExt};
 use log::{debug, error, info};
 use std::sync::Arc;
@@ -22,7 +20,7 @@ pub(super) async fn reserve_new_pads_and_collect(
     shared_callback: Arc<Mutex<Option<PutCallback>>>,
     pad_info_tx: mpsc::Sender<Result<PadInfo, Error>>,
     storage: Arc<Storage>,
-    master_index_storage: Arc<Mutex<MasterIndexStorage>>,
+    _master_index_storage: Arc<Mutex<MasterIndexStorage>>,
 ) -> Result<(), Error> {
     info!(
         "Reservation[{}]: Reserving {} new pads (max concurrent: {})... Saving after each success...",
@@ -89,7 +87,7 @@ pub(super) async fn reserve_new_pads_and_collect(
     // Process the results sequentially: save MIS on success, abort on failure
     let mut stream = Box::pin(results_stream.buffer_unordered(MAX_CONCURRENT_RESERVATIONS));
     let mut successful_pad_count = 0;
-    let (mis_addr, _) = storage.get_master_index_info(); // Only need address for saving
+    let (_mis_addr, _) = storage.get_master_index_info(); // Only need address for saving
 
     while let Some(result) = stream.next().await {
         match result {

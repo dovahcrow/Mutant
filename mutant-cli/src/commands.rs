@@ -8,7 +8,6 @@ use mutant_lib::{error::Error, mutant::MutAnt};
 use nu_ansi_term::{Color, Style};
 use std::io::{self, Read, Write};
 use std::process::ExitCode;
-use std::time::Duration;
 
 pub async fn handle_command(
     command: Commands,

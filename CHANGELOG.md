@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevent double-counting of scratchpads in `stats` after a `reset` then `put` by ensuring newly reserved pads are not added to the free list and saved prematurely during the reservation step.
 - Fixed pad allocation logic error occurring after `rm` then `put` by refactoring `allocate_and_write` to correctly account for freed pads.
 - Ensure master index is saved correctly *after* data is written and index is updated in memory during `put` operation, preventing loss of key information on successful writes.
+- Fixed compiler warnings related to unused imports and variables.
 
 ## [0.1.1] - 2024-04-11
 // ... rest of file ...
