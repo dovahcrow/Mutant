@@ -64,11 +64,10 @@ impl PadManager {
             key, data_size, scratchpad_size, needed_total_pads
         );
 
-        let mut pads_to_keep: Vec<PadInfo> = Vec::new();
-        let mut pads_to_recycle_on_success: Vec<PadInfo> = Vec::new();
-        let mut needed_from_free: usize = 0;
-        #[allow(unused_assignments)]
-        let mut pads_to_reserve: usize = 0;
+        let pads_to_keep: Vec<PadInfo>;
+        let pads_to_recycle_on_success: Vec<PadInfo>;
+        let needed_from_free: usize;
+        let pads_to_reserve: usize;
 
         if let Some(existing_info) = mis_guard.index.get(key).cloned() {
             let old_num_pads = existing_info.pads.len();
@@ -295,34 +294,47 @@ impl PadManager {
                 key_owned
             );
 
-            // Take pads from free list as determined necessary in Step 1
-            let mut actual_taken_free: Vec<PadInfo> = Vec::new();
-            if initial_needed_from_free > 0 {
-                let num_available = mis_guard.free_pads.len();
-                let num_to_take = std::cmp::min(initial_needed_from_free, num_available);
+            // RECALCULATE needed pads based on current state (data size and kept pads)
+            let scratchpad_size = mis_guard.scratchpad_size;
+            let total_needed = calculate_needed_pads(data_size, scratchpad_size)?;
+            let needed_now = total_needed.saturating_sub(initial_pads_to_keep.len());
+            debug!(
+                "AllocateWrite[{}]: Recalculated final needs: total={}, kept={}, need_now={}",
+                key_owned,
+                total_needed,
+                initial_pads_to_keep.len(),
+                needed_now
+            );
 
-                if num_to_take < initial_needed_from_free {
-                    // This means free pads disappeared OR reservation didn't provide enough
+            // Take pads from free list based on the RECALCULATED need
+            let mut actual_taken_free: Vec<PadInfo> = Vec::new();
+            if needed_now > 0 {
+                // Check if we actually need to take pads now
+                let num_available = mis_guard.free_pads.len();
+                let num_to_take = std::cmp::min(needed_now, num_available);
+
+                if num_to_take < needed_now {
+                    // This error condition remains relevant
                     error!(
-                        "AllocateWrite[{}]: Logic Error! Expected {} pads from free list, but only {} available after potential reservation.",
-                        key_owned, initial_needed_from_free, num_to_take
+                        "AllocateWrite[{}]: Logic Error! Expected {} pads from free list, but only {} available.",
+                        key_owned, needed_now, num_to_take
                     );
-                    // Attempt cleanup: Return any newly reserved pads if reservation occurred.
-                    // No need to return 'initial_taken_free' as it's gone.
-                    if initial_pads_to_reserve > 0 {
-                        let reserved_pads_guard = newly_reserved_pads_collector.lock().await;
-                        // These were already added to free_pads, but the save failed OR this logic error occurred.
-                        // We attempted removal on save failure. If we reach here, the save *might* have succeeded,
-                        // but the free count is still wrong. This is complex.
-                        // Safest: Assume they are in free_pads and log error.
-                        error!("AllocateWrite[{}]: Inconsistent state suspected after free pad count mismatch.", key_owned);
-                        // We don't explicitly return the collector pads here as they *should* be in free_pads.
-                    }
+                    // Attempt cleanup: Return newly reserved pads? This is tricky as they *should* be in free list now.
+                    // Best to just error out.
                     return Err(Error::InternalError(
-                        "Free pad count mismatch during final acquisition".to_string(),
+                        "Insufficient free pads during final acquisition".to_string(),
                     ));
                 }
+                debug!(
+                    "AllocateWrite[{}]: Taking {} pads from free list (available: {}).",
+                    key_owned, num_to_take, num_available
+                );
                 actual_taken_free = mis_guard.free_pads.drain(..num_to_take).collect();
+            } else {
+                debug!(
+                    "AllocateWrite[{}]: No pads needed from free list in final step.",
+                    key_owned
+                );
             }
 
             // Combine kept pads (from Step 1) and newly taken free pads

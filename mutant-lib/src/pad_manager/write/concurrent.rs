@@ -202,7 +202,16 @@ impl PadManager {
         if let Some(e) = first_error {
             Err(e)
         } else {
+            debug!(
+                "PerformWrite[{}]: Checking final byte count. Arc ptr: {:?}",
+                key_owned,
+                Arc::as_ptr(&total_bytes_uploaded)
+            );
             let final_bytes = *total_bytes_uploaded.lock().await;
+            debug!(
+                "PerformWrite[{}]: Final bytes read: {}. Expected: {}",
+                key_owned, final_bytes, total_size
+            );
             if final_bytes != total_size as u64 {
                 error!(
                     "PerformWrite[{}]: Byte count mismatch after write completion. Expected: {}, Reported: {}",
@@ -243,6 +252,11 @@ impl PadManager {
         let task_key_bytes = pad_key_bytes;
 
         join_set.spawn(async move {
+            debug!(
+                "SpawnedWriteTask[{}]: Starting task for pad index {}",
+                key_for_task, pad_index
+            );
+
             let permit = task_semaphore
                 .acquire_owned()
                 .await
@@ -351,6 +365,13 @@ impl PadManager {
         let new_total_uploaded = {
             let mut guard = total_bytes_uploaded_arc.lock().await;
             *guard += chunk_len as u64;
+            debug!(
+                "PadWriteStatic[{}]: Updated total_bytes_uploaded by {} to {}. Arc ptr: {:?}",
+                pad_log_index,
+                chunk_len,
+                *guard,
+                Arc::as_ptr(&total_bytes_uploaded_arc)
+            );
             *guard
         };
 

@@ -60,6 +60,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **`mutant-lib` API:** Modified `MutAnt::init` and `MutAnt::init_with_progress` to only require the `private_key_hex` string. The `autonomi::Wallet` is now derived internally.
 
+## [0.1.2] - 2025-04-12
+### Fixed
+- Resolved issue where `put` command failed on the first attempt due to incorrect pad accounting after reservation, causing a 'Write completion byte count mismatch' error.
+
+## [0.1.1] - 2025-04-11
+
+### Fixed
+- Fixed issue where `ls -l` would panic if storage was completely empty.
+
+## [0.1.0] - 2024-04-10
+
+### Added
+- Initial release of Mutant CLI and Library.
+- Basic PUT, GET, RM, LS commands.
+- Storage statistics command (`stats`).
+- Progress bars for network operations.
+
+### Changed
+- **`mutant-lib` API:** Modified `MutAnt::init` and `MutAnt::init_with_progress` to only require the `private_key_hex` string. The `autonomi::Wallet` is now derived internally.
+
 ## [0.1.2] - Unreleased
 
 ### Added
