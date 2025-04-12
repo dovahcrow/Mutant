@@ -31,7 +31,7 @@ pub struct MutAntConfig {
 impl Default for MutAntConfig {
     fn default() -> Self {
         Self {
-            network: NetworkChoice::Devnet,
+            network: NetworkChoice::Mainnet,
         }
     }
 }
@@ -107,7 +107,7 @@ impl MutAnt {
             NetworkChoice::Mainnet => true,
         };
 
-        let network = match Network::new(use_mainnet) {
+        let network = match Network::new(!use_mainnet) {
             Ok(n) => n,
             Err(e) => {
                 error!("Failed to initialize Autonomi network: {}", e);
