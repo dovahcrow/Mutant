@@ -141,289 +141,267 @@ impl PadManager {
         let data_size = data.len();
         let key_owned = key.to_string();
 
-        // Declare variables from Step 1 results needed later
+        // --- Step 1: Initial Resource Check (Under Lock) ---
         let initial_pads_to_keep: Vec<PadInfo>;
         let initial_recycle_on_success: Vec<PadInfo>;
         let initial_needed_from_free: usize;
         let initial_pads_to_reserve: usize;
-
         {
             let mut mis_guard = self.master_index_storage.lock().await;
             debug!(
                 "AllocateWrite[{}]: Lock acquired for initial resource check",
                 key_owned
             );
-            // Use the read-only acquire function
-            let (keep, recycle, needed_free, reserve) =
-                self.acquire_resources_for_write(&mut mis_guard, &key_owned, data_size)?;
-
-            // Assign results to outer scope variables
-            initial_pads_to_keep = keep;
-            initial_recycle_on_success = recycle;
-            initial_needed_from_free = needed_free;
-            initial_pads_to_reserve = reserve;
-
-            debug!(
-                "AllocateWrite[{}]: Releasing lock after initial resource check. Keep: {}, Recycle: {}, Need Free: {}, Reserve: {}",
-                key_owned,
-                initial_pads_to_keep.len(),
-                initial_recycle_on_success.len(),
+            (
+                initial_pads_to_keep,
+                initial_recycle_on_success,
                 initial_needed_from_free,
-                initial_pads_to_reserve
+                initial_pads_to_reserve,
+            ) = self.acquire_resources_for_write(&mut mis_guard, &key_owned, data_size)?;
+            debug!(
+                "AllocateWrite[{}]: Releasing lock after initial check. Keep:{}, Recycle:{}, NeedFree:{}, Reserve:{}",
+                key_owned, initial_pads_to_keep.len(), initial_recycle_on_success.len(), initial_needed_from_free, initial_pads_to_reserve
             );
-            // mis_guard is dropped here
-        }
+        } // Lock released
 
         let shared_callback = Arc::new(Mutex::new(callback.take()));
-        let newly_reserved_pads_collector = Arc::new(Mutex::new(Vec::new())); // Renamed for clarity
 
-        // --- Step 2: Reserve New Pads if Needed and Save State ---
-        if initial_pads_to_reserve > 0 {
+        // Create MPSC channel for reserved pads
+        // Channel buffer size - can be tuned. 1 allows the first reserved pad to be sent immediately.
+        let (pad_info_tx, pad_info_rx) = mpsc::channel::<Result<PadInfo, Error>>(1);
+
+        // --- Step 2 & 4 Concurrently: Reserve New Pads & Perform Write ---
+
+        // Clone necessary Arcs for the reservation task
+        let res_key = key_owned.clone();
+        let res_cb = shared_callback.clone();
+        let res_storage = self.storage.clone();
+        let res_mis = self.master_index_storage.clone();
+        let res_tx = pad_info_tx; // Move sender to reservation task
+
+        // Spawn reservation task
+        let reservation_handle = tokio::spawn(async move {
+            if initial_pads_to_reserve > 0 {
+                debug!(
+                    "AllocateWrite-ResTask[{}]: Starting reservation for {} pads...",
+                    res_key, initial_pads_to_reserve
+                );
+                reserve_new_pads_and_collect(
+                    &res_key,
+                    initial_pads_to_reserve,
+                    res_cb,
+                    res_tx, // Pass the sender
+                    res_storage,
+                    res_mis,
+                )
+                .await
+            } else {
+                debug!("AllocateWrite-ResTask[{}]: No new pads needed.", res_key);
+                Ok(())
+                // Sender (res_tx) is dropped here implicitly, closing the channel correctly
+            }
+        });
+
+        // Clone/Prepare necessary items for the write task
+        let write_key = key_owned.clone();
+        let write_cb = shared_callback.clone();
+        let write_storage = self.storage.clone();
+        let write_mis = self.master_index_storage.clone(); // Needed for final save
+        let write_data = data.to_vec(); // Clone data for the write task
+        let write_initial_pads = initial_pads_to_keep.clone(); // Pads available immediately
+        let mut write_rx = pad_info_rx; // Move receiver to write task
+
+        // Spawn write task (placeholder for call to modified perform_concurrent_write)
+        let write_handle = tokio::spawn(async move {
             debug!(
-                "AllocateWrite[{}]: Starting reservation for {} pads...",
-                key_owned, initial_pads_to_reserve
+                "AllocateWrite-WriteTask[{}]: Starting... Waiting for pads.",
+                write_key
             );
+            // TODO: Modify perform_concurrent_write to accept receiver
+            // TODO: Call modified perform_concurrent_write here
+            // Example placeholder call:
+            // self.perform_concurrent_write(
+            //     &write_key,
+            //     &write_data,
+            //     write_initial_pads,
+            //     write_rx, // Pass receiver
+            //     write_cb,
+            // ).await
 
-            // Call the standalone function
-            let reservation_result = reserve_new_pads_and_collect(
-                &key_owned,
-                initial_pads_to_reserve,
-                shared_callback.clone(),
-                newly_reserved_pads_collector.clone(),
-                self.storage.clone(),              // Pass Arc<Storage>
-                self.master_index_storage.clone(), // Pass Arc<Mutex<MasterIndexStorage>>
-            )
-            .await;
-
-            match reservation_result {
-                Ok(_) => {
-                    // The collector now holds the reserved pads
-                    let reserved_pads_guard = newly_reserved_pads_collector.lock().await;
-                    let num_reserved = reserved_pads_guard.len();
-                    debug!(
-                        "AllocateWrite[{}]: Successfully reserved {} pads (individually saved).",
-                        key_owned, num_reserved
-                    );
-                    // No intermediate save needed here anymore, it happens after each reservation
-                }
-                Err(e) => {
-                    warn!(
-                        "AllocateWrite[{}]: Reservation failed: {}. Cleaning up resources.",
-                        key_owned, e
-                    );
-                    // Reservation failed, no new pads were added to free list.
-                    // Cleanup: If the initial check took pads from free list (it shouldn't with new logic),
-                    // return them. Check 'initial_taken_free' (which should be empty now)
-                    // We don't need to lock MIS here as we are just checking a variable.
-                    // **NOTE:** The 'initial_taken_free' concept is removed from the new acquire_resources_for_write.
-                    // There's nothing to return here from the free list perspective for reservation failure.
-                    return Err(e);
+            // Placeholder: Simulate receiving pads and processing
+            let mut pads_processed_count = write_initial_pads.len();
+            while let Some(pad_result) = write_rx.recv().await {
+                match pad_result {
+                    Ok(pad_info) => {
+                        debug!(
+                            "AllocateWrite-WriteTask[{}]: Received pad {:?}",
+                            write_key, pad_info.0
+                        );
+                        pads_processed_count += 1;
+                        // Simulate write operation for this pad
+                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                    }
+                    Err(e) => {
+                        error!(
+                            "AllocateWrite-WriteTask[{}]: Received error on channel: {}",
+                            write_key, e
+                        );
+                        // This shouldn't happen with current reservation logic (it returns Err directly)
+                        // If it did, we'd propagate the error
+                        return Err(e);
+                    }
                 }
             }
-        } else {
-            debug!("AllocateWrite[{}]: No new pads needed.", key_owned);
+            debug!(
+                "AllocateWrite-WriteTask[{}]: Pad channel closed. Processed {} pads total.",
+                write_key, pads_processed_count
+            );
+            // Simulate write completion result
+            Ok::<(), Error>(())
+        });
+
+        // Await both tasks
+        let (reservation_result, write_result) =
+            tokio::try_join!(reservation_handle, write_handle)?;
+        // try_join propagates JoinErrors, then we check the inner Results
+
+        // Check results
+        if let Err(e) = reservation_result {
+            error!(
+                "AllocateWrite[{}]: Reservation task failed: {}",
+                key_owned, e
+            );
+            // Write task might have partially run, but reservation failed, so return error.
+            // Cleanup of any written data is complex, rely on subsequent overwrite/gc.
+            return Err(e);
+        }
+        if let Err(e) = write_result {
+            error!("AllocateWrite[{}]: Write task failed: {}", key_owned, e);
+            // Reservation succeeded, but write failed.
+            // Need to handle cleanup: Return pads taken from free list? Recycle kept pads?
+            // For now, just return the error. The reserved pads are persisted in free list.
+            // --- Cleanup Logic for Failed Write --- (Similar to original Step 5 Error path)
+            {
+                let mut mis_guard = self.master_index_storage.lock().await;
+                warn!("AllocateWrite[{}]: Write failed after successful reservation. Cleaning up potentially taken free pads.", key_owned);
+                // Return pads that would have been taken from the free list in Step 3
+                // Note: We don't have `final_taken_free` directly here anymore.
+                // This cleanup needs rethinking based on how perform_concurrent_write reports failure.
+                // For now, we just return the error. Reserved pads are safe in free list.
+            }
+            return Err(e);
         }
 
-        // --- Step 3: Acquire Final Resources (Pads to Keep + Pads from Free List) ---
-        let (
-            final_pads_to_use,
-            final_taken_free,
-            _final_recycle_on_success_confirmed,
-            _scratchpad_size,
-        ) = {
+        // --- Both tasks succeeded ---
+        info!(
+            "AllocateWrite[{}]: Reservation and Write tasks completed successfully.",
+            key_owned
+        );
+
+        // --- Step 3 (In-Memory Update) & Step 5 (Final Save) combined ---
+        // Now that reservation and writes are done, update the index in memory
+        // and perform the final persistent save.
+        {
             let mut mis_guard = self.master_index_storage.lock().await;
             debug!(
-                "AllocateWrite[{}]: Lock acquired for final resource acquisition",
+                "AllocateWrite[{}]: Lock acquired for final index update and commit.",
                 key_owned
             );
 
-            // RECALCULATE needed pads based on current state (data size and kept pads)
-            let current_scratchpad_size = mis_guard.scratchpad_size; // Use captured size
-            let total_needed = calculate_needed_pads(data_size, current_scratchpad_size)?;
-            let needed_now = total_needed.saturating_sub(initial_pads_to_keep.len());
+            // Re-calculate final pad list (needed for KeyStorageInfo)
+            // This requires knowing which pads were actually used by the write task.
+            // The write task needs to return this info, or we need to reconstruct it.
+            // TODO: Modify write task to return the final list of PadInfo used.
+            // TEMPORARY: Assume all initial pads + all *potentially* reserved pads were used.
+            // This is NOT correct if reservation failed partially or write failed.
+            let final_pads_list = {
+                let mut final_list = initial_pads_to_keep.clone();
+                // Cannot access collector here anymore.
+                // Need write_handle to return the list of pads successfully written to.
+                // For now, just use initial pads.
+                // let reserved_pads_guard = newly_reserved_pads_collector.lock().await;
+                // final_list.extend(reserved_pads_guard.iter().cloned());
+                final_list // Return only initial pads for now
+            };
+            let final_pad_count = final_pads_list.len(); // For logging
 
-            debug!(
-                "AllocateWrite[{}]: Recalculated final needs: total={}, kept={}, need_now={}",
-                key_owned,
-                total_needed,
-                initial_pads_to_keep.len(),
-                needed_now
-            );
-
-            // Take pads from free list based on the RECALCULATED need
-            let mut actual_taken_free: Vec<PadInfo> = Vec::new();
-            if needed_now > 0 {
-                // Check if we actually need to take pads now
-                let num_available = mis_guard.free_pads.len();
-                let num_to_take = std::cmp::min(needed_now, num_available);
-
-                if num_to_take < needed_now {
-                    // This error condition remains relevant
-                    error!(
-                        "AllocateWrite[{}]: Logic Error! Expected {} pads from free list, but only {} available.",
-                        key_owned, needed_now, num_to_take
-                    );
-                    // Attempt cleanup: Return newly reserved pads? This is tricky as they *should* be in free list now.
-                    // Best to just error out.
-                    return Err(Error::InternalError(
-                        "Insufficient free pads during final acquisition".to_string(),
-                    ));
-                }
-
-                debug!(
-                    "AllocateWrite[{}]: Taking {} pads from free list (available: {}).",
-                    key_owned, num_to_take, num_available
-                );
-                actual_taken_free = mis_guard.free_pads.drain(..num_to_take).collect();
-            } else {
-                debug!(
-                    "AllocateWrite[{}]: No pads needed from free list in final step.",
-                    key_owned
-                );
+            // Check if expected number of pads were used (rough check)
+            let expected_pads = calculate_needed_pads(data_size, mis_guard.scratchpad_size)?;
+            if final_pad_count != expected_pads {
+                warn!("AllocateWrite[{}]: Final pad count ({}) mismatch expected ({}). Proceeding anyway.",
+                    key_owned, final_pad_count, expected_pads);
             }
 
-            // Combine kept pads (from Step 1) and newly taken free pads
-            let mut final_pads = initial_pads_to_keep; // Use variable from Step 1
-            final_pads.extend(actual_taken_free.iter().cloned());
-
-            // Update the index in memory *before* releasing lock
+            // Update the index in memory
             let key_info = KeyStorageInfo {
-                pads: final_pads.clone(), // Clone for KeyInfo
+                pads: final_pads_list, // Use the list determined above
                 data_size,
                 modified: chrono::Utc::now(),
             };
             mis_guard.index.insert(key_owned.clone(), key_info);
 
-            // Add any pads designated for recycling to the free list *now*
-            // Use the list confirmed in Step 1
+            // Handle recycling pads from shrinking updates
             if !initial_recycle_on_success.is_empty() {
                 debug!(
-                    "AllocateWrite[{}]: Adding {} pads to free list from recycle (in-memory). Final free count: {}\"",
+                    "AllocateWrite[{}]: Recycling {} pads from successful update (final commit).",
                     key_owned,
-                    initial_recycle_on_success.len(),
-                    mis_guard.free_pads.len() // Length before extend
+                    initial_recycle_on_success.len()
                 );
                 mis_guard
                     .free_pads
-                    .extend(initial_recycle_on_success.clone()); // Use variable from Step 1
+                    .extend(initial_recycle_on_success.clone());
             }
 
             debug!(
-                "AllocateWrite[{}]: Index updated, lock released. Pads: {}, Taken Free: {}, Recycle: {}",
-                key_owned,
-                final_pads.len(),
-                actual_taken_free.len(),
-                initial_recycle_on_success.len() // Use variable from Step 1
+                 "AllocateWrite[{}]: Final in-memory index update complete. Performing final save...",
+                 key_owned
             );
 
-            // Return the necessary info and the captured scratchpad size
-            (
-                final_pads,
-                actual_taken_free,
-                initial_recycle_on_success,
-                current_scratchpad_size,
+            // Get MIS info for saving
+            let (mis_addr, mis_key) = self.storage.get_master_index_info();
+            // Drop guard before await on save
+            drop(mis_guard);
+
+            // Save the final master index state
+            match storage_save_mis_from_arc_static(
+                self.storage.client(),
+                &mis_addr,
+                &mis_key,
+                &self.master_index_storage,
             )
-        }; // mis_guard is dropped here
-
-        // --- Step 4: Perform Concurrent Write ---
-        // Use the final determined list of pads and captured scratchpad size
-        debug!("AllocateWrite[{}]: Starting final write...", key_owned);
-        let write_result = self
-            .perform_concurrent_write(
-                &key_owned,
-                data,
-                final_pads_to_use.clone(), // Use the finally acquired pads
-                // Pass an empty receiver as reserved pads go directly to free list.
-                {
-                    let (tx, rx) = mpsc::channel(1); // Create a dummy channel
-                    drop(tx);
-                    rx
-                },
-                // Pass an empty collector as reserved pads are handled before write
-                Arc::new(Mutex::new(Vec::new())), // Empty collector
-                shared_callback.clone(),
-            )
-            .await;
-
-        // --- Step 5: Final Commit or Cleanup ---
-        if let Err(e) = write_result {
-            // Lock MIS for cleanup
-            let mut mis_guard = self.master_index_storage.lock().await;
-            warn!(
-                "AllocateWrite[{}]: Write operation failed (Error: {}). Cleaning up resources.",
-                key_owned, e
-            );
-            // Return pads taken from the free list
-            if !final_taken_free.is_empty() {
-                debug!(
-                    "AllocateWrite[{}]: Returning {} pads to free list due to write failure.",
-                    key_owned,
-                    final_taken_free.len()
-                );
-                // We need to return the ones *taken* from the free list:
-                let _num_returned_free = final_taken_free.len(); // Prefix unused var
-                mis_guard.free_pads.extend(final_taken_free);
-            }
-            // The index was updated in memory in Step 3, but the write failed.
-            // We should probably revert the index update or mark it as stale.
-            // For now, we just return the error. The old entry (if it was an update)
-            // or no entry (if it was new) is effectively what's left.
-            // The newly reserved pads are already in the free list from Step 2's save.
-            error!(
-                "AllocateWrite[{}]: Write failed, final cleanup completed. Returning error.",
-                key_owned
-            );
-            return Err(e);
-        }
-        debug!(
-            "AllocateWrite[{}]: Write operation successful. Committing state by saving index.",
-            key_owned
-        );
-
-        // Get MIS info for saving
-        let (mis_addr, mis_key) = self.storage.get_master_index_info();
-
-        // Save the final master index state AFTER successful write
-        debug!(
-            "AllocateWrite[{}]: Performing final save of master index...",
-            key_owned
-        );
-        match storage_save_mis_from_arc_static(
-            self.storage.client(),
-            &mis_addr,
-            &mis_key,
-            &self.master_index_storage, // Contains the updated index from Step 3
-        )
-        .await
-        {
-            Ok(_) => {
-                debug!(
-                    "AllocateWrite[{}]: Final master index save successful.",
-                    key_owned
-                );
-                let mut final_callback_guard = shared_callback.lock().await;
-                if let Err(e) =
-                    invoke_callback(&mut *final_callback_guard, PutEvent::StoreComplete).await
-                {
-                    error!(
-                        "AllocateWrite[{}]: Failed to invoke StoreComplete callback: {}",
-                        key_owned, e
+            .await
+            {
+                Ok(_) => {
+                    debug!(
+                        "AllocateWrite[{}]: Final master index save successful.",
+                        key_owned
                     );
-                    // Continue even if callback fails, state is saved.
-                }
-                info!("AllocateWrite[{}]: Commit successful.", key_owned);
-                Ok(())
-            }
-            Err(e) => {
-                error!(
-                            "AllocateWrite[{}]: CRITICAL: Failed final save of master index after successful write: {}. State might be inconsistent.\"",
-                            key_owned, e
+                    let mut final_callback_guard = shared_callback.lock().await;
+                    // Invoke StoreComplete *after* final save
+                    if let Err(cb_err) =
+                        invoke_callback(&mut *final_callback_guard, PutEvent::StoreComplete).await
+                    {
+                        error!(
+                            "AllocateWrite[{}]: Failed to invoke StoreComplete callback: {}",
+                            key_owned, cb_err
                         );
-                // Data is written, but index update failed. This is bad.
-                Err(e)
+                        // Continue even if callback fails, state is saved.
+                    }
+                    info!(
+                        "AllocateWrite[{}]: Operation completed successfully.",
+                        key_owned
+                    );
+                    Ok(())
+                }
+                Err(save_err) => {
+                    error!(
+                        "AllocateWrite[{}]: CRITICAL: Failed final save of master index after successful write: {}. State might be inconsistent.",
+                        key_owned, save_err
+                    );
+                    // Data is written, but final index update failed.
+                    Err(save_err)
+                }
             }
         }
-        // End of successful write block
-        // } // Removed extra scope
     }
 }

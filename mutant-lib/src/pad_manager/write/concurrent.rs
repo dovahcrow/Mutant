@@ -15,25 +15,17 @@ use tokio::task::JoinSet;
 use super::WRITE_TASK_CONCURRENCY;
 
 impl PadManager {
-    /// Helper function to perform concurrent writes using immediately available pads and newly reserved pads streamed from a channel.
+    /// Performs concurrent writes using immediately available pads and pads streamed from a channel.
     pub(super) async fn perform_concurrent_write(
         &self,
         key: &str,
         data: &[u8],
-        pads_to_use_immediately: Vec<PadInfo>,
-        mut new_pad_receiver: mpsc::Receiver<Result<PadInfo, Error>>,
-        newly_reserved_pads_collector: Arc<Mutex<Vec<PadInfo>>>,
+        initial_pads: Vec<PadInfo>,
+        mut reserved_pad_rx: mpsc::Receiver<Result<PadInfo, Error>>,
         callback_arc: Arc<Mutex<Option<PutCallback>>>,
     ) -> Result<(), Error> {
         let total_size = data.len();
         let key_owned = key.to_string();
-
-        if total_size == 0 && pads_to_use_immediately.is_empty() {
-            debug!(
-                 "PerformWrite[{}]: Skipping initial write for 0 byte data and 0 immediate pads. Waiting for new pads...",
-                 key_owned
-             );
-        }
 
         let scratchpad_size = {
             let mis_guard = self.master_index_storage.lock().await;
@@ -50,6 +42,7 @@ impl PadManager {
         let mut join_set = JoinSet::new();
         let semaphore = Arc::new(Semaphore::new(WRITE_TASK_CONCURRENCY));
         let total_bytes_uploaded = Arc::new(Mutex::new(0u64));
+        let data_arc = Arc::new(data.to_vec());
         let mut bytes_assigned: usize = 0;
         let mut current_pad_index: usize = 0;
         let mut first_error: Option<Error> = None;
@@ -68,22 +61,27 @@ impl PadManager {
         debug!(
             "PerformWrite[{}]: Processing {} immediately available pads.",
             key_owned,
-            pads_to_use_immediately.len()
+            initial_pads.len()
         );
-        for (pad_address, pad_key_bytes) in pads_to_use_immediately {
+        for (pad_address, pad_key_bytes) in initial_pads {
             let chunk_start = bytes_assigned;
             let chunk_end = std::cmp::min(chunk_start + scratchpad_size, total_size);
             let chunk_len = chunk_end - chunk_start;
 
             if chunk_len == 0 && chunk_start >= total_size {
+                debug!(
+                    "PerformWrite[{}]: Reached end of data with initial pads.",
+                    key_owned
+                );
                 break;
             }
 
-            let data_chunk = data[chunk_start..chunk_end].to_vec();
+            let task_chunk_start = chunk_start;
+            let task_chunk_end = chunk_end;
             bytes_assigned = chunk_end;
 
             debug!(
-                "PerformWrite[{}]: Spawning writer for Immediate Pad Index {} ({} bytes)",
+                "PerformWrite[{}]: Spawning writer for Initial Pad Index {} ({} bytes)",
                 key_owned, current_pad_index, chunk_len
             );
             self.spawn_write_task(
@@ -95,29 +93,22 @@ impl PadManager {
                 current_pad_index,
                 pad_address,
                 pad_key_bytes,
-                data_chunk,
+                data_arc.clone(),
+                task_chunk_start,
+                task_chunk_end,
                 scratchpad_size,
-                total_size,
+                total_size as u64,
             );
             current_pad_index += 1;
         }
         debug!(
-            "PerformWrite[{}]: Finished spawning writers for immediate pads. Bytes assigned: {}",
+            "PerformWrite[{}]: Finished spawning initial writers. Bytes assigned: {}. Waiting for reserved pads...",
             key_owned, bytes_assigned
         );
 
-        debug!(
-            "PerformWrite[{}]: Waiting for newly reserved pads from channel...",
-            key_owned
-        );
-        while let Some(pad_result) = new_pad_receiver.recv().await {
+        while let Some(pad_result) = reserved_pad_rx.recv().await {
             match pad_result {
                 Ok(pad_info) => {
-                    {
-                        let mut collector_guard = newly_reserved_pads_collector.lock().await;
-                        collector_guard.push(pad_info.clone());
-                    }
-
                     let (pad_address, pad_key_bytes) = pad_info;
 
                     let chunk_start = bytes_assigned;
@@ -125,11 +116,12 @@ impl PadManager {
                     let chunk_len = chunk_end - chunk_start;
 
                     if chunk_len > 0 {
-                        let data_chunk = data[chunk_start..chunk_end].to_vec();
+                        let task_chunk_start = chunk_start;
+                        let task_chunk_end = chunk_end;
                         bytes_assigned = chunk_end;
 
                         debug!(
-                            "PerformWrite[{}]: Spawning writer for New Pad Index {} ({} bytes)",
+                            "PerformWrite[{}]: Spawning writer for Reserved Pad Index {} ({} bytes)",
                             key_owned, current_pad_index, chunk_len
                         );
                         self.spawn_write_task(
@@ -141,18 +133,20 @@ impl PadManager {
                             current_pad_index,
                             pad_address,
                             pad_key_bytes,
-                            data_chunk,
+                            data_arc.clone(),
+                            task_chunk_start,
+                            task_chunk_end,
                             scratchpad_size,
-                            total_size,
+                            total_size as u64,
                         );
                     } else if chunk_start >= total_size {
                         debug!(
-                            "PerformWrite[{}]: Received New Pad Index {} but all data already assigned.",
+                            "PerformWrite[{}]: Received Reserved Pad Index {} but all data already assigned.",
                             key_owned, current_pad_index
                         );
                     } else {
                         warn!(
-                            "PerformWrite[{}]: Received New Pad Index {} resulting in zero chunk length unexpectedly.",
+                            "PerformWrite[{}]: Received Reserved Pad Index {} unexpectedly resulted in zero chunk length.",
                             key_owned, current_pad_index
                         );
                     }
@@ -160,22 +154,21 @@ impl PadManager {
                 }
                 Err(e) => {
                     error!(
-                        "PerformWrite[{}]: Received reservation error from channel: {}",
+                        "PerformWrite[{}]: Received reservation error from channel: {}. Halting writes.",
                         key_owned, e
                     );
                     if first_error.is_none() {
                         first_error = Some(e);
                     }
+                    break;
                 }
             }
         }
-        debug!("PerformWrite[{}]: Pad receiver channel closed. Total pads processed (immediate + new): {}. Bytes assigned: {}", key_owned, current_pad_index, bytes_assigned);
-
         debug!(
-            "PerformWrite[{}]: All pads processed or channel closed. Waiting for {} write tasks...",
-            key_owned,
-            join_set.len()
+            "PerformWrite[{}]: Pad receiver channel closed. Total pads considered: {}. Bytes assigned: {}. Waiting for {} tasks...",
+            key_owned, current_pad_index, bytes_assigned, join_set.len()
         );
+
         while let Some(join_result) = join_set.join_next().await {
             match join_result {
                 Ok(task_result) => {
@@ -187,7 +180,7 @@ impl PadManager {
                     }
                 }
                 Err(join_error) => {
-                    error!("Write Task[{}]: JoinError: {}", key_owned, join_error);
+                    error!("Write Task Join[{}]: JoinError: {}", key_owned, join_error);
                     if first_error.is_none() {
                         first_error = Some(Error::from_join_error_msg(
                             &join_error,
@@ -197,24 +190,19 @@ impl PadManager {
                 }
             }
         }
-        debug!("PerformWrite[{}]: All write tasks finished.", key_owned);
+        debug!(
+            "PerformWrite[{}]: All write tasks finished processing.",
+            key_owned
+        );
 
         if let Some(e) = first_error {
+            error!("PerformWrite[{}]: Completed with error: {}", key_owned, e);
             Err(e)
         } else {
-            debug!(
-                "PerformWrite[{}]: Checking final byte count. Arc ptr: {:?}",
-                key_owned,
-                Arc::as_ptr(&total_bytes_uploaded)
-            );
             let final_bytes = *total_bytes_uploaded.lock().await;
-            debug!(
-                "PerformWrite[{}]: Final bytes read: {}. Expected: {}",
-                key_owned, final_bytes, total_size
-            );
             if final_bytes != total_size as u64 {
                 error!(
-                    "PerformWrite[{}]: Byte count mismatch after write completion. Expected: {}, Reported: {}",
+                    "PerformWrite[{}]: Byte count mismatch! Expected: {}, Reported: {}",
                     key_owned, total_size, final_bytes
                 );
                 Err(Error::InternalError(
@@ -240,75 +228,69 @@ impl PadManager {
         pad_index: usize,
         pad_address: ScratchpadAddress,
         pad_key_bytes: Vec<u8>,
-        data_chunk: Vec<u8>,
+        data_arc: Arc<Vec<u8>>,
+        chunk_start: usize,
+        chunk_end: usize,
         scratchpad_size: usize,
-        total_size: usize,
+        total_size_overall: u64,
     ) {
         let task_storage = self.storage.clone();
         let task_semaphore = semaphore;
         let task_callback = callback_arc;
         let task_bytes_uploaded = total_bytes_uploaded;
-        let task_address = pad_address;
-        let task_key_bytes = pad_key_bytes;
 
         join_set.spawn(async move {
-            debug!(
-                "SpawnedWriteTask[{}]: Starting task for pad index {}",
-                key_for_task, pad_index
-            );
-
             let permit = task_semaphore
                 .acquire_owned()
                 .await
-                .expect("Write semaphore closed");
+                .map_err(|_| Error::InternalError("Semaphore closed unexpectedly".to_string()))?;
 
-            let key_array: [u8; 32] = match task_key_bytes.as_slice().try_into() {
-                Ok(arr) => arr,
-                Err(_) => {
-                    error!(
-                        "PerformWrite[{}]: Invalid key length for pad index {}",
-                        key_for_task, pad_index
-                    );
-                    return Err(Error::InternalError("Invalid key length".to_string()));
+            let pad_secret_key = {
+                let key_array: [u8; 32] = match pad_key_bytes.as_slice().try_into() {
+                    Ok(arr) => arr,
+                    Err(_) => {
+                        return Err(Error::InternalError(format!(
+                            "WriteTask[{}]: Pad#{} key byte conversion failed (len {})",
+                            key_for_task,
+                            pad_index,
+                            pad_key_bytes.len()
+                        )));
+                    }
+                };
+                match SecretKey::from_bytes(key_array) {
+                    Ok(key) => key,
+                    Err(e) => {
+                        return Err(Error::InternalError(format!(
+                            "WriteTask[{}]: Pad#{} SecretKey creation failed: {}",
+                            key_for_task, pad_index, e
+                        )));
+                    }
                 }
             };
-            let task_key = match SecretKey::from_bytes(key_array) {
-                Ok(k) => k,
-                Err(e) => {
-                    error!(
-                        "PerformWrite[{}]: Failed to reconstruct key for pad index {}: {}",
-                        key_for_task, pad_index, e
-                    );
-                    return Err(Error::InternalError(format!(
-                        "Failed to reconstruct key: {}",
-                        e
-                    )));
-                }
-            };
 
-            let write_res = Self::perform_single_pad_write_static(
+            let data_chunk_slice = &data_arc[chunk_start..chunk_end];
+
+            let write_result = Self::perform_single_pad_write_static(
                 task_storage,
                 pad_index,
-                task_address,
-                task_key,
-                &data_chunk,
+                pad_address,
+                pad_secret_key,
+                data_chunk_slice,
                 scratchpad_size,
                 task_callback,
                 task_bytes_uploaded,
-                total_size as u64,
+                total_size_overall,
             )
             .await;
 
             drop(permit);
-            write_res
+            write_result
         });
     }
 
-    /// Static helper to perform the write operation for a single pad chunk.
-    /// Assumes the pad should be overwritten with the provided chunk data, padded with zeros.
     async fn perform_single_pad_write_static(
         storage: Arc<BaseStorage>,
-        pad_log_index: usize, // Just for logging
+        pad_log_index: usize,
         pad_address: ScratchpadAddress,
         pad_key: SecretKey,
         data_chunk: &[u8],
@@ -319,13 +301,16 @@ impl PadManager {
     ) -> Result<(), Error> {
         let chunk_len = data_chunk.len();
         debug!(
-            "PadWriteStatic[{}]: Writing {} bytes to pad {}",
-            pad_log_index, chunk_len, pad_address
+            "SinglePadWrite[Pad #{}]: Starting write for {} bytes to {:?}. Arc ptr: {:?}",
+            pad_log_index,
+            chunk_len,
+            pad_address,
+            Arc::as_ptr(&total_bytes_uploaded_arc)
         );
 
         if chunk_len > expected_pad_size {
             error!(
-                "PadWriteStatic[{}]: Chunk length {} exceeds expected pad size {}. Aborting.",
+                "SinglePadWrite[Pad #{}]: Chunk length {} exceeds expected pad size {}. Aborting.",
                 pad_log_index, chunk_len, expected_pad_size
             );
             return Err(Error::InternalError(format!(
@@ -366,7 +351,7 @@ impl PadManager {
             let mut guard = total_bytes_uploaded_arc.lock().await;
             *guard += chunk_len as u64;
             debug!(
-                "PadWriteStatic[{}]: Updated total_bytes_uploaded by {} to {}. Arc ptr: {:?}",
+                "SinglePadWrite[Pad #{}]: Updated total_bytes_uploaded by {} to {}. Arc ptr: {:?}",
                 pad_log_index,
                 chunk_len,
                 *guard,
@@ -383,7 +368,7 @@ impl PadManager {
         invoke_callback(&mut *cb_guard, event).await?;
 
         debug!(
-            "PadWriteStatic[{}]: Successfully updated pad {} and reported progress ({} bytes written).",
+            "SinglePadWrite[Pad #{}]: Successfully updated pad {} and reported progress ({} bytes written).",
             pad_log_index, pad_address, chunk_len
         );
 

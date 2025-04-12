@@ -5,6 +5,7 @@ use autonomi::client::data_types::scratchpad::ScratchpadError;
 use thiserror::Error;
 use tokio::task::JoinError;
 
+/// Errors that can occur within the mutant-lib.
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Network initialization failed: {0}")]
@@ -124,6 +125,10 @@ pub enum Error {
     UserCancelled,
     #[error("Autonomi library error: {0}")]
     AutonomiLibError(String),
+    #[error("Operation timed out: {0}")]
+    Timeout(String),
+    #[error("Tokio task join error: {0}")]
+    JoinError(String),
 }
 
 impl Error {
@@ -136,5 +141,11 @@ impl Error {
             "Unknown task failure".to_string()
         };
         Error::InternalError(format!("{}: {} ({})", context_msg, cause, join_error))
+    }
+}
+
+impl From<JoinError> for Error {
+    fn from(err: JoinError) -> Self {
+        Error::JoinError(err.to_string())
     }
 }
