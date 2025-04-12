@@ -28,7 +28,7 @@
 #### Install from crates.io (Recommended)
 
 ```bash
-cargo install mutant-cli
+cargo install mutant
 ```
 
 ```bash
