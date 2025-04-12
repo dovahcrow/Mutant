@@ -343,9 +343,15 @@ impl MutAnt {
         let mut mis_guard = self.master_index_storage.lock().await;
         info!("Acquired lock on master index storage.");
 
-        // 2. Reset the in-memory state to default
-        *mis_guard = MasterIndexStorage::default();
-        info!("In-memory master index reset to default.");
+        // 2. Reset the in-memory state to default, but set the correct scratchpad size
+        *mis_guard = MasterIndexStorage {
+            scratchpad_size: DEFAULT_SCRATCHPAD_SIZE,
+            ..Default::default() // Use default for all other fields
+        };
+        info!(
+            "In-memory master index reset. Size set to: {}",
+            DEFAULT_SCRATCHPAD_SIZE
+        );
 
         // 3. Drop the guard before saving to avoid deadlock in save_master_index
         drop(mis_guard);

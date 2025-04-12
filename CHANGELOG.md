@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Correctly use `--local` flag to select Devnet instead of always using Mainnet logic internally.
 - When using `--local`, ensure the hardcoded devnet private key is used, overriding any selected wallet file.
 - Initialize Autonomi network client (local or mainnet) based on configuration, not hardcoded to local.
+- Prevent warning about `scratchpad_size` being 0 after a `reset` by ensuring the correct default size is set during the reset operation.
 - Prevent double-counting of scratchpads in `stats` after a `reset` then `put` by ensuring newly reserved pads are not added to the free list and saved prematurely during the reservation step.
 - Fixed pad allocation logic error occurring after `rm` then `put` by refactoring `allocate_and_write` to correctly account for freed pads.
 - Ensure master index is saved correctly *after* data is written and index is updated in memory during `put` operation, preventing loss of key information on successful writes.
