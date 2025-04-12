@@ -67,8 +67,17 @@ pub struct MutAnt {
 }
 
 impl MutAnt {
-    /// Creates a new MutAnt instance.
+    /// Creates a new MutAnt instance without progress reporting.
+    /// Use `init_with_progress` for detailed initialization feedback.
     pub async fn init(
+        wallet: Wallet,
+        private_key_hex: String,
+    ) -> Result<(Self, Option<JoinHandle<()>>), Error> {
+        Self::init_with_progress(wallet, private_key_hex, None).await
+    }
+
+    /// Creates a new MutAnt instance with optional progress reporting via callback.
+    pub async fn init_with_progress(
         wallet: Wallet,
         private_key_hex: String,
         mut init_callback: Option<InitCallback>,
@@ -109,8 +118,14 @@ impl MutAnt {
         }
     }
 
-    /// Stores raw bytes under a given user key.
-    pub async fn store(
+    /// Stores raw bytes under a given user key without progress reporting.
+    /// Use `store_with_progress` for detailed feedback.
+    pub async fn store(&self, user_key: String, data_bytes: &[u8]) -> Result<(), Error> {
+        self.store_with_progress(user_key, data_bytes, None).await
+    }
+
+    /// Stores raw bytes under a given user key with optional progress reporting via callback.
+    pub async fn store_with_progress(
         &self,
         user_key: String,
         data_bytes: &[u8],
@@ -124,9 +139,14 @@ impl MutAnt {
         store_logic::store_item(self, user_key, data_bytes, callback).await
     }
 
-    /// Fetches the raw bytes associated with the given user key.
-    /// Includes an optional callback for progress reporting.
-    pub async fn fetch(
+    /// Fetches the raw bytes associated with the given user key without progress reporting.
+    /// Use `fetch_with_progress` for detailed feedback.
+    pub async fn fetch(&self, key: &str) -> Result<Vec<u8>, Error> {
+        self.fetch_with_progress(key, None).await
+    }
+
+    /// Fetches the raw bytes associated with the given user key, with optional progress reporting.
+    pub async fn fetch_with_progress(
         &self,
         key: &str,
         mut callback: Option<GetCallback>,
@@ -154,10 +174,18 @@ impl MutAnt {
         result
     }
 
-    /// Updates the raw bytes associated with an existing user key.
+    /// Updates the raw bytes associated with an existing user key without progress reporting.
+    /// Use `update_with_progress` for detailed feedback.
     ///
     /// Returns `Error::KeyNotFound` if the key does not exist.
-    pub async fn update(
+    pub async fn update(&self, user_key: String, data_bytes: &[u8]) -> Result<(), Error> {
+        self.update_with_progress(user_key, data_bytes, None).await
+    }
+
+    /// Updates the raw bytes associated with an existing user key, with optional progress reporting.
+    ///
+    /// Returns `Error::KeyNotFound` if the key does not exist.
+    pub async fn update_with_progress(
         &self,
         user_key: String,
         data_bytes: &[u8],

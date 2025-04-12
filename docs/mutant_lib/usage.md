@@ -26,7 +26,6 @@ async fn run_mutant_examples() -> Result<(), Box<dyn std::error::Error>> {
     let (mutant, _init_handle) = MutAnt::init(
         wallet.clone(),
         private_key_hex.clone(),
-        None, // No callback
     )
     .await?;
 
@@ -38,22 +37,22 @@ async fn run_mutant_examples() -> Result<(), Box<dyn std::error::Error>> {
     let data1 = b"Hello, MutAnt World!".to_vec();
 
     // Simple store
-    mutant.store(key1.clone(), &data1, None).await?;
+    mutant.store(key1.clone(), &data1).await?;
 
     // Store larger data
     let key2 = "large_data.bin".to_string();
     let data2: Vec<u8> = (0..(10 * 1024 * 1024)).map(|i| (i % 256) as u8).collect();
 
-    mutant.store(key2.clone(), &data2, None).await?; // No callback
+    mutant.store(key2.clone(), &data2).await?; // No callback
 
     // 3. Fetching Data
 
     // Fetch small data
-    let fetched_data1 = mutant.fetch(&key1, None).await?;
+    let fetched_data1 = mutant.fetch(&key1).await?;
     assert_eq!(data1, fetched_data1);
 
     // Fetch large data
-    let fetched_data2 = mutant.fetch(&key2, None).await?; // No callback
+    let fetched_data2 = mutant.fetch(&key2).await?; // No callback
     assert_eq!(data2.len(), fetched_data2.len());
     // Optionally compare content if memory allows: assert_eq!(data2, fetched_data2);
 
@@ -71,15 +70,15 @@ async fn run_mutant_examples() -> Result<(), Box<dyn std::error::Error>> {
 
     // 6. Updating Data
     let updated_data1 = b"Hello, Updated MutAnt World!".to_vec();
-    mutant.update(key1.clone(), &updated_data1, None).await?;
-    let fetched_updated_data1 = mutant.fetch(&key1, None).await?;
+    mutant.update(key1.clone(), &updated_data1).await?;
+    let fetched_updated_data1 = mutant.fetch(&key1).await?;
     assert_eq!(updated_data1, fetched_updated_data1);
 
     // 7. Removing Data
     mutant.remove(&key1).await?;
 
     // Verify removal
-    match mutant.fetch(&key1, None).await {
+    match mutant.fetch(&key1).await {
         Err(Error::KeyNotFound(_)) => { /* Expected */ }
         Ok(_) => panic!("Key should have been removed!"),
         Err(e) => return Err(e.into()),
