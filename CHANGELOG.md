@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Start of development for v0.1.1
+- **Documentation:**
+    - Replaced outdated `docs/memory_allocator_design.md` with a new set of detailed documentation for `mutant-lib`:
+        - `docs/mutant_lib/overview.md`: High-level architecture and concepts.
+        - `docs/mutant_lib/internals.md`: Detailed explanation of data structures, component logic (PadManager, Storage), error handling, and concurrency.
+        - `docs/mutant_lib/usage.md`: Practical API usage examples.
 
 ### Changed
 - Renamed `anthill-cli` to `mutant-cli` internally and directory structure.
