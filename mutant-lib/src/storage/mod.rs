@@ -11,6 +11,7 @@ use network::create_scratchpad_static;
 
 pub(crate) use network::fetch_remote_master_index_storage_static;
 pub(crate) use network::fetch_scratchpad_internal_static;
+pub(crate) use network::load_master_index_storage_static;
 pub(crate) use network::storage_save_mis_from_arc_static;
 pub(crate) use network::update_scratchpad_internal_static;
 
@@ -77,5 +78,18 @@ impl Storage {
 
     pub(crate) fn get_network_choice(&self) -> NetworkChoice {
         self.network_choice
+    }
+
+    /// Loads the master index from the network, creating and saving a default one if necessary.
+    pub(crate) async fn load_or_create_master_index(
+        &self,
+    ) -> Result<
+        std::sync::Arc<tokio::sync::Mutex<crate::mutant::data_structures::MasterIndexStorage>>,
+        Error,
+    > {
+        let client = self.get_client().await?;
+        let (address, key) = self.get_master_index_info();
+        // Call the internal network function (already re-exported in this mod)
+        load_master_index_storage_static(client, &address, &key).await
     }
 }
