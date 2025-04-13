@@ -48,7 +48,7 @@ Assuming `mutant` is in your `PATH` or you are running from `target/release/`:
 ```
 Mutant CLI - Interact with the Mutant network
 
-Usage: mutant-cli [OPTIONS] <COMMAND>
+Usage: mutant [OPTIONS] <COMMAND>
 
 Commands:
   put    Puts a key-value pair onto the network. Reads value from stdin if omitted. Use --force to overwrite an existing key
@@ -94,7 +94,7 @@ Add `mutant_lib` and its dependencies to your `Cargo.toml`:
 
 **Library Example:**
 
-This example demonstrates initializing the necessary components and performing basic store/fetch operations. It assumes you have a wallet file (`my_wallet.json`) with a private key.
+This example demonstrates initializing the necessary components and performing basic store/fetch operations. It assumes you have an ant wallet setup.
 
 ```rust
 use mutant_lib::{mutant::MutAnt, error::Error};

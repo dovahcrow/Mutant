@@ -27,6 +27,19 @@ pub enum NetworkChoice {
 pub struct MutAntConfig {
     pub network: NetworkChoice,
 }
+impl MutAntConfig {
+    pub fn local() -> Self {
+        Self {
+            network: NetworkChoice::Devnet,
+        }
+    }
+
+    pub fn mainnet() -> Self {
+        Self {
+            network: NetworkChoice::Mainnet,
+        }
+    }
+}
 
 impl Default for MutAntConfig {
     fn default() -> Self {

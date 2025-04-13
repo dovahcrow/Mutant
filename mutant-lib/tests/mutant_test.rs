@@ -1,12 +1,13 @@
 use autonomi::Network;
 use log::{error, info, warn};
-use mutant_lib::error::Error;
+use mutant_lib::{error::Error, mutant::MutAntConfig};
 use serial_test::serial;
 
 async fn setup_test_env() -> Result<(mutant_lib::mutant::MutAnt, Network, String), Error> {
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     let network = Network::new(true).map_err(|e| Error::NetworkConnectionFailed(e.to_string()))?;
+    let config = MutAntConfig::local();
 
     const PRE_FUNDED_PK: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     let private_key_hex = PRE_FUNDED_PK.to_string();
@@ -22,7 +23,13 @@ async fn setup_test_env() -> Result<(mutant_lib::mutant::MutAnt, Network, String
             MAX_RETRIES
         );
 
-        match mutant_lib::mutant::MutAnt::init(private_key_hex.clone()).await {
+        match mutant_lib::mutant::MutAnt::init_with_progress(
+            private_key_hex.clone(),
+            config.clone(),
+            None,
+        )
+        .await
+        {
             Ok((mutant_instance, _maybe_handle)) => {
                 info!(
                     "MutAnt initialized successfully on attempt {}.",
@@ -203,9 +210,15 @@ async fn test_persistence() -> Result<(), Error> {
     let key_removed = "persist_test_removed_persistence_key".to_string();
     let value_removed = b"This should not persist".to_vec();
 
+    let config = MutAntConfig::local();
+
     {
-        let (mutant_initial, _handle_initial) =
-            mutant_lib::mutant::MutAnt::init(private_key_hex.clone()).await?;
+        let (mutant_initial, _handle_initial) = mutant_lib::mutant::MutAnt::init_with_progress(
+            private_key_hex.clone(),
+            config.clone(),
+            None,
+        )
+        .await?;
         info!("Created first MutAnt instance for persistence test.");
 
         mutant_initial.store(&key, &value).await?;
@@ -220,8 +233,12 @@ async fn test_persistence() -> Result<(), Error> {
     }
 
     info!("Re-creating MutAnt instance with the same private key...");
-    let (mutant_recreate, _handle_recreate) =
-        mutant_lib::mutant::MutAnt::init(private_key_hex).await?;
+    let (mutant_recreate, _handle_recreate) = mutant_lib::mutant::MutAnt::init_with_progress(
+        private_key_hex.clone(),
+        config.clone(),
+        None,
+    )
+    .await?;
     info!("MutAnt instance recreated.");
 
     let fetched_value_recreated: Vec<u8> = mutant_recreate.fetch(&key).await?;
