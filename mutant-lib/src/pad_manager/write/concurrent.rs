@@ -48,6 +48,7 @@ pub(super) async fn perform_concurrent_write_standalone(
     let mut join_set = JoinSet::new();
     let semaphore = Arc::new(Semaphore::new(WRITE_TASK_CONCURRENCY));
     let total_bytes_uploaded = Arc::new(Mutex::new(0u64));
+    let total_pads_committed = Arc::new(Mutex::new(0u64));
     let mut bytes_assigned: usize = 0;
     let mut current_pad_index: usize = 0;
     let mut first_error: Option<Error> = None;
@@ -63,6 +64,15 @@ pub(super) async fn perform_concurrent_write_standalone(
         .await?;
     }
 
+    // --- Determine Total Expected Pads ---
+    // This is an approximation for now. A more accurate count should be passed down.
+    let total_pads_expected = (total_size + scratchpad_size - 1) / scratchpad_size;
+    debug!(
+        "PerformWrite[{}]: Estimated total pads expected: {}",
+        key_owned, total_pads_expected
+    );
+
+    // --- Process Initial/Reused Pads ---
     debug!(
         "PerformWrite[{}]: Processing {} immediately available pads.",
         key_owned,
@@ -95,6 +105,8 @@ pub(super) async fn perform_concurrent_write_standalone(
             semaphore.clone(),
             callback_arc.clone(),
             total_bytes_uploaded.clone(),
+            total_pads_committed.clone(),
+            total_pads_expected,
             total_size as u64,
             storage.clone(),
             current_pad_index,
@@ -143,6 +155,8 @@ pub(super) async fn perform_concurrent_write_standalone(
             semaphore.clone(),
             callback_arc.clone(),
             total_bytes_uploaded.clone(),
+            total_pads_committed.clone(),
+            total_pads_expected,
             total_size as u64,
             storage.clone(),
             current_pad_index,
@@ -187,6 +201,8 @@ pub(super) async fn perform_concurrent_write_standalone(
                         semaphore.clone(),
                         callback_arc.clone(),
                         total_bytes_uploaded.clone(),
+                        total_pads_committed.clone(),
+                        total_pads_expected,
                         total_size as u64,
                         storage.clone(),
                         current_pad_index,
@@ -295,6 +311,8 @@ fn spawn_write_task_standalone(
     semaphore: Arc<Semaphore>,
     callback_arc: Arc<Mutex<Option<PutCallback>>>,
     total_bytes_uploaded_arc: Arc<Mutex<u64>>,
+    total_pads_committed_arc: Arc<Mutex<u64>>,
+    total_pads_expected: usize,
     total_size_overall: u64,
     storage: Arc<BaseStorage>,
     pad_index: usize,
@@ -311,6 +329,7 @@ fn spawn_write_task_standalone(
         let semaphore_clone = semaphore.clone();
         let callback_arc_clone = callback_arc.clone();
         let total_bytes_uploaded_clone = total_bytes_uploaded_arc.clone();
+        let total_pads_committed_clone = total_pads_committed_arc.clone();
         let storage_clone = storage.clone();
         let successfully_written_pads_clone = successfully_written_pads.clone();
         let task_pad_info = pad_info_for_task.clone();
@@ -383,6 +402,27 @@ fn spawn_write_task_standalone(
                     PutEvent::UploadProgress {
                         bytes_written: current_total_uploaded,
                         total_bytes: total_size_overall,
+                    },
+                )
+                .await?;
+            }
+
+            // --- Emit CommitComplete event ---
+            let current_total_committed = {
+                let mut commit_guard = total_pads_committed_clone.lock().await;
+                *commit_guard += 1; // Increment committed pads count
+                *commit_guard
+            };
+
+            // Use the pad_index for the event, and total_pads_expected
+            // Convert usize/u64 as needed for the event fields
+            {
+                let mut cb_guard = callback_arc_clone.lock().await;
+                invoke_callback(
+                    &mut *cb_guard,
+                    PutEvent::ScratchpadCommitComplete {
+                        index: current_total_committed.saturating_sub(1) as u64, // Report 0-based index of committed pad
+                        total: total_pads_expected as u64, // Report total expected pads
                     },
                 )
                 .await?;

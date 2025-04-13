@@ -292,9 +292,14 @@ pub fn create_put_callback(
                 }
                 PutEvent::ScratchpadCommitComplete { index, total } => {
                     // Use commit_pb_opt
+                    debug!(
+                        "Callback: Received ScratchpadCommitComplete - Index: {}, Total: {}",
+                        index,
+                        total
+                    );
                     let mut commit_pb_guard = ctx.commit_pb_opt.lock().unwrap();
                     let commit_pb = commit_pb_guard.get_or_insert_with(|| {
-                        debug!("Initializing commit pads progress bar ({} total)", total);
+                        debug!("Callback: Initializing commit pads progress bar ({} total)", total);
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
                         pb.set_length(total);
                         pb.set_message("Confirming pads...".to_string());
@@ -304,7 +309,14 @@ pub fn create_put_callback(
 
                     if !commit_pb.is_finished() {
                         // Increment position (index is 0-based, progress is 1-based typically)
-                        commit_pb.set_position(index + 1); 
+                        let new_pos = index + 1;
+                        debug!(
+                            "Callback: Setting commit pads progress bar position to {}",
+                            new_pos
+                        );
+                        commit_pb.set_position(new_pos); 
+                    } else {
+                        debug!("Callback: Commit pads progress bar is already finished.");
                     }
                     // Don't finish here, wait for StoreComplete or error
                     Ok(true)
