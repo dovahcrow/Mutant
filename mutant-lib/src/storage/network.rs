@@ -456,8 +456,9 @@ pub(crate) async fn create_scratchpad_static(
                     return Ok(created_address); // Success!
                 } else {
                     debug!(
-                        "CreateStaticVerify[{}]: Data mismatch during verification (Expected len: {}, Got len: {}). Retrying...",
+                        "CreateStaticVerify[{}]: Data mismatch during verification attempt {} (Expected len: {}, Got len: {}). Retrying...",
                         created_address,
+                        attempt + 1,
                         initial_data.len(),
                         fetched_data.len()
                     );
@@ -470,6 +471,15 @@ pub(crate) async fn create_scratchpad_static(
                     created_address, attempt + 1
                 );
                 // Continue loop, waiting for propagation
+            }
+            Err(Error::AutonomiLibError(ref msg))
+                if msg.contains("Decryption failed") || msg.contains("derive CipherText") =>
+            {
+                debug!(
+                    "CreateStaticVerify[{}]: Decryption failed during verification attempt {} (likely transient): {}. Retrying...",
+                     created_address, attempt + 1, msg
+                );
+                // Continue loop, data might not be ready for decryption yet
             }
             Err(e) => {
                 error!(

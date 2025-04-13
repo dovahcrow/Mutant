@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed pad allocation logic error occurring after `rm` then `put` by refactoring `allocate_and_write` to correctly account for freed pads.
 - Ensure master index is saved correctly *after* data is written and index is updated in memory during `put` operation, preventing loss of key information on successful writes.
 - Fixed compiler warnings related to unused imports and variables.
+- Tolerate transient decryption errors during scratchpad creation verification loop, allowing retries instead of immediate failure.
 
 ## [0.1.1] - 2024-04-11
 // ... rest of file ...
