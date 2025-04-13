@@ -274,10 +274,12 @@ impl MutAnt {
                             .await?;
 
                             // Inform the user that creation is starting
+                            // --- Step 5: Create Remote Index ---
+                            current_step = 5; // Keep updating the variable for potential future use within this step
                             invoke_init_callback(
                                 &mut init_callback,
                                 InitProgressEvent::Step {
-                                    step: current_step as u64, // Now step 5
+                                    step: 5, // Explicitly set step 5 for this event
                                     message: "Creating remote master index...".to_string(),
                                 },
                             )
