@@ -45,5 +45,9 @@ pub enum Commands {
 
     /// Synchronize local index cache with remote storage
     #[command(about = "Synchronize local index cache with remote storage")]
-    Sync,
+    Sync {
+        /// Overwrite remote index with local one
+        #[arg(long, default_value_t = false)]
+        push_force: bool,
+    },
 }

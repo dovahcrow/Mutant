@@ -15,7 +15,7 @@ This document outlines the steps to implement a local cache for the `MasterIndex
 - [x] **Step 2: Cache Utilities Implementation**
 - [x] **Step 3: Modify Initialization Logic**
 - [x] **Step 4: Implement `sync` Command**
-- [ ] **Step 5: Adjust Write Operations (`store`, `update`, `remove`)**
+- [x] **Step 5: Adjust Write Operations (`store`, `update`, `remove`)**
 - [ ] **Step 6: Testing**
 - [ ] **Step 7: Final Steps (Build, Changelog, Commit)**
 
