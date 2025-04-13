@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.2] - Unreleased
 
 ### Changed
+- **Refactor:** Split `MutAnt` initialization Step 4 (Load/Create Master Index) into sub-steps for clearer progress reporting. Creating the remote index (if prompted) is now a distinct Step 5.
 - **CLI:** Reworked `put` progress display. The upload bar now shows "Upload complete. Committing..." when byte transfer finishes but remains visible. The commit bar progresses concurrently. Both bars are cleared upon final `StoreComplete` event.
 - **Performance:** Refactored `MutAnt` initialization to be lazy. Network client initialization and remote master index fetching are now deferred until the first network operation (e.g., `put`, `get`, `sync`, `import`), making local cache-only operations like `ls` and `stats` significantly faster to start.
 - Added a 5-second delay **after** static storage write operations (create/update) complete and **before** their verification loops begin.
@@ -60,7 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Ensure CLI errors are always printed to stderr in `main`
 - **CLI:** Suspend progress bar drawing during interactive prompts to prevent display corruption (e.g., when asking to create a remote index).
-- **CLI:** Update progress message to "Creating remote master index..." after user confirms creation.
+
+### Removed
+- The specific changelog entry for updating the progress message to "Creating remote master index..." as this is now covered by the refactoring of init steps.
 
 ## [Unreleased]
 

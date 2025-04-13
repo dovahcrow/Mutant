@@ -18,7 +18,7 @@ pub mod remove_logic;
 pub mod store_logic;
 pub mod update_logic;
 
-const TOTAL_INIT_STEPS: u32 = 5; // Define the constant
+const TOTAL_INIT_STEPS: u32 = 6; // Define the constant (Added step for remote MIS creation)
 
 // --- Network Configuration ---
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,7 +207,17 @@ impl MutAnt {
         info!("Storage layer initialized (lazily). Network client init deferred.");
 
         // --- Step 4: Load or Create Master Index --- (Cache -> Network -> Create)
-        let mis_mutex = try_step!(4, "Loading master index", async {
+        let mis_mutex = {
+            current_step = 4;
+            invoke_init_callback(
+                &mut init_callback,
+                InitProgressEvent::Step {
+                    step: current_step as u64,
+                    message: "Loading master index (cache)".to_string(),
+                },
+            )
+            .await?;
+
             let network_choice = config.network;
             match read_local_index(network_choice).await {
                 Ok(Some(mut cached_index)) => {
@@ -232,6 +242,15 @@ impl MutAnt {
                     info!(
                         "Local cache not found. Attempting to load from network or create new..."
                     );
+                    invoke_init_callback(
+                        &mut init_callback,
+                        InitProgressEvent::Step {
+                            step: current_step as u64, // Still step 4
+                            message: "Checking remote master index...".to_string(),
+                        },
+                    )
+                    .await?;
+
                     // Use the storage instance method to load/create from network
                     match storage_arc.load_or_create_master_index().await {
                         Ok(network_mis_arc) => {
@@ -258,17 +277,14 @@ impl MutAnt {
                             invoke_init_callback(
                                 &mut init_callback,
                                 InitProgressEvent::Step {
-                                    step: current_step as u64, // Still part of step 4
+                                    step: current_step as u64, // Now step 5
                                     message: "Creating remote master index...".to_string(),
                                 },
                             )
                             .await?;
 
-                            // The callback result determines if we proceed. The result itself
-                            // is handled by invoke_init_callback, mapping Ok(Some(false)) to Err.
-                            // If invoke_init_callback returns Ok(()), it means the user either
-                            // confirmed (Ok(Some(true))) or no callback existed (Ok(None)).
-                            // We interpret Ok(()) here as "permission granted to create".
+                            // Callback result was already handled by the invoke_init_callback
+                            // that emitted PromptCreateRemoteIndex. If we got here, user confirmed.
 
                             warn!("No remote index exists. Creating and saving a new default index locally and remotely.");
                             let default_mis = MasterIndexStorage {
@@ -331,10 +347,26 @@ impl MutAnt {
                     Ok(Arc::new(Mutex::new(default_mis)))
                 }
             }
-        });
+        };
+
+        // Now handle the result of the whole block above
+        let mis_mutex = match mis_mutex {
+            Ok(val) => val,
+            Err(e) => {
+                invoke_init_callback(
+                    &mut init_callback,
+                    InitProgressEvent::Failed {
+                        error_msg: e.to_string(),
+                    },
+                )
+                .await
+                .ok(); // Ignore error during failure reporting
+                return Err(e);
+            }
+        };
 
         // --- Step 5: Initialize PadManager --- (No network)
-        let pad_manager = try_step!(5, "Initializing pad manager", async {
+        let pad_manager = try_step!(6, "Initializing pad manager", async {
             Ok::<_, Error>(PadManager::new(storage_arc.clone(), mis_mutex.clone()))
         });
         info!("PadManager initialized.");
