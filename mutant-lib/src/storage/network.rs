@@ -7,6 +7,7 @@ use autonomi::{client::payment::PaymentOption, Bytes, Client, ScratchpadAddress,
 use log::{debug, error, warn};
 use serde_cbor;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task;
 
@@ -270,6 +271,11 @@ pub(crate) async fn update_scratchpad_internal_static(
     );
 
     for attempt in 0..VERIFICATION_RETRY_LIMIT {
+        // Introduce delay *before* the attempt (except the first one)
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+
         debug!(
             "UpdateStaticVerify[{}]: Verification attempt {}/{}...",
             address,

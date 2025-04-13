@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Performance:** Refactored `MutAnt` initialization to be lazy. Network client initialization and remote master index fetching are now deferred until the first network operation (e.g., `put`, `get`, `sync`, `import`), making local cache-only operations like `ls` and `stats` significantly faster to start.
+- Added a 5-second delay between verification attempts in static storage updates.
 
 ### Added
 - Add `--push-force` flag to `sync` command to overwrite the remote master index with the local cache.
@@ -65,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tolerate transient decryption errors during scratchpad creation verification loop, allowing retries instead of immediate failure.
 - Prevent internal fetch loop from retrying on decryption errors, allowing the outer verification loop to handle retries with appropriate delays.
 - Tolerate transient decryption errors during scratchpad update verification loop, allowing retries instead of immediate failure.
+- Correctly apply the 5-second delay in the static storage verification loop, ensuring it runs between retries.
 
 
 ## [0.1.1] - 2024-04-11
