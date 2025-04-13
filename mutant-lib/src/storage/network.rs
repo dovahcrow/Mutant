@@ -16,109 +16,112 @@ const VERIFICATION_RETRY_LIMIT: u32 = 360; // 360 retries (was 1 hour timeout wi
 
 use crate::mutant::DEFAULT_SCRATCHPAD_SIZE;
 
-pub(crate) async fn load_master_index_storage_static(
+// --- Internal Helper ---
+
+/// Fetches and deserializes the MasterIndexStorage, returning KeyNotFound if empty or not found.
+async fn _fetch_and_deserialize_mis_static(
     client: &Client,
     address: &ScratchpadAddress,
     key: &SecretKey,
-) -> Result<Arc<Mutex<MasterIndexStorage>>, Error> {
-    debug!(
-        "Attempting to load Master Index Storage from address {} using provided key...",
-        address
-    );
+) -> Result<MasterIndexStorage, Error> {
     match fetch_scratchpad_internal_static(client, address, key).await {
         Ok(bytes) => {
             if bytes.is_empty() {
-                warn!(
-                    "Master Index scratchpad {} exists but is empty. Creating default.",
-                    address
-                );
-                // Create and save a default index
-                let default_mis = MasterIndexStorage {
-                    scratchpad_size: DEFAULT_SCRATCHPAD_SIZE,
-                    ..Default::default()
-                };
-                let mis_arc = Arc::new(Mutex::new(default_mis));
-                match storage_save_mis_from_arc_static(client, address, key, &mis_arc).await {
-                    Ok(_) => {
-                        info!(
-                            "Successfully created and saved default Master Index Storage to {}.",
-                            address
-                        );
-                        Ok(mis_arc)
-                    }
-                    Err(e) => {
-                        error!(
-                            "Failed to save newly created default Master Index Storage to {}: {}",
-                            address, e
-                        );
-                        Err(e) // Return the save error
-                    }
-                }
+                warn!("Master Index scratchpad {} exists but is empty.", address);
+                // Treat empty as not found for simplicity in callers
+                Err(Error::KeyNotFound(MASTER_INDEX_KEY.to_string()))
             } else {
-                // Attempt to deserialize existing data
                 match serde_cbor::from_slice::<MasterIndexStorage>(&bytes) {
                     Ok(mis) => {
                         debug!(
                             "Successfully deserialized MasterIndexStorage from {}.",
                             address
                         );
-                        Ok(Arc::new(Mutex::new(mis)))
+                        Ok(mis)
                     }
                     Err(e) => {
                         error!(
-                            "Failed to deserialize MasterIndexStorage from {}: {}. Creating default.",
+                            "Failed to deserialize MasterIndexStorage from {}: {}",
                             address, e
                         );
-                        // Create and save a default index
-                        let default_mis = MasterIndexStorage {
-                            scratchpad_size: DEFAULT_SCRATCHPAD_SIZE,
-                            ..Default::default()
-                        };
-                        let mis_arc = Arc::new(Mutex::new(default_mis));
-                        match storage_save_mis_from_arc_static(client, address, key, &mis_arc).await
-                        {
-                            Ok(_) => {
-                                info!("Successfully created and saved default Master Index Storage to {}.", address);
-                                Ok(mis_arc)
-                            }
-                            Err(e_save) => {
-                                error!("Failed to save newly created default Master Index Storage after deserialization error {}: {}", address, e_save);
-                                Err(e_save) // Return the save error
-                            }
-                        }
+                        Err(Error::Cbor(e)) // Return specific Cbor error
                     }
                 }
             }
         }
-        Err(Error::KeyNotFound(_)) | Err(Error::AutonomiClient(_)) => {
-            // Treat KeyNotFound and RecordNotFound within AutonomiClient error as 'needs creation'
-            debug!("Master Index scratchpad not found at {} or network error indicates absence. Creating default.", address);
-            // Create and save a default index
+        Err(Error::KeyNotFound(_)) => {
+            debug!("Master Index scratchpad not found at {}.", address);
+            Err(Error::KeyNotFound(MASTER_INDEX_KEY.to_string()))
+        }
+        Err(Error::AutonomiClient(se)) => {
+            // Only map RecordNotFound to KeyNotFound, propagate others
+            if se.to_string().contains("RecordNotFound") {
+                debug!(
+                    "Master Index scratchpad RecordNotFound at {} (treating as KeyNotFound).",
+                    address
+                );
+                Err(Error::KeyNotFound(MASTER_INDEX_KEY.to_string()))
+            } else {
+                error!("Autonomi Error fetching Master Index {}: {}", address, se);
+                Err(Error::AutonomiClient(se))
+            }
+        }
+        Err(e) => {
+            // Propagate other errors (JoinError, etc.)
+            error!("Unexpected error during MIS fetch {}: {}", address, e);
+            Err(e)
+        }
+    }
+}
+
+// --- Public Crate Functions ---
+
+pub(crate) async fn load_master_index_storage_static(
+    client: &Client,
+    address: &ScratchpadAddress,
+    key: &SecretKey,
+) -> Result<Arc<Mutex<MasterIndexStorage>>, Error> {
+    debug!(
+        "load_master_index_storage_static: Attempting to load/create MIS from address {}...",
+        address
+    );
+    match _fetch_and_deserialize_mis_static(client, address, key).await {
+        Ok(mis) => {
+            // Successfully fetched and deserialized
+            Ok(Arc::new(Mutex::new(mis)))
+        }
+        Err(Error::KeyNotFound(_)) | Err(Error::Cbor(_)) => {
+            // Not found, empty, or failed to deserialize -> Create default
+            debug!("load_master_index_storage_static: MIS not found or invalid at {}. Creating default.", address);
             let default_mis = MasterIndexStorage {
                 scratchpad_size: DEFAULT_SCRATCHPAD_SIZE,
                 ..Default::default()
             };
             let mis_arc = Arc::new(Mutex::new(default_mis));
+            // Attempt to save the new default index back to the network
             match storage_save_mis_from_arc_static(client, address, key, &mis_arc).await {
                 Ok(_) => {
                     info!(
-                        "Successfully created and saved default Master Index Storage to {}.",
+                        "load_master_index_storage_static: Successfully created and saved default MIS to {}.",
                         address
                     );
                     Ok(mis_arc)
                 }
-                Err(e) => {
+                Err(e_save) => {
                     error!(
-                        "Failed to save newly created default Master Index Storage to {}: {}",
-                        address, e
+                        "load_master_index_storage_static: Failed to save newly created default MIS to {}: {}",
+                        address, e_save
                     );
-                    Err(e) // Return the save error
+                    Err(e_save) // Return the save error
                 }
             }
         }
         Err(e) => {
-            // Handle other unexpected errors
-            error!("Unexpected error fetching Master Index {}: {}", address, e);
+            // Propagate other errors (AutonomiClient other than RecordNotFound, JoinError, etc.)
+            error!(
+                "load_master_index_storage_static: Unexpected error fetching/deserializing MIS {}: {}",
+                address, e
+            );
             Err(e)
         }
     }
@@ -550,56 +553,9 @@ pub(crate) async fn fetch_remote_master_index_storage_static(
     key: &SecretKey,
 ) -> Result<MasterIndexStorage, Error> {
     debug!(
-        "Attempting to fetch REMOTE Master Index Storage from address {} using provided key...",
+        "fetch_remote_master_index_storage_static: Attempting fetch from {}...",
         address
     );
-    match fetch_scratchpad_internal_static(client, address, key).await {
-        Ok(bytes) => {
-            if bytes.is_empty() {
-                warn!(
-                    "REMOTE Master Index scratchpad {} exists but is empty.",
-                    address
-                );
-                // Return a default/empty index in this case, as the scratchpad exists but is unusable.
-                // Or should this be an error? Let's treat it as effectively not found for now.
-                return Err(Error::KeyNotFound(MASTER_INDEX_KEY.to_string()));
-            }
-            match serde_cbor::from_slice::<MasterIndexStorage>(&bytes) {
-                Ok(mis) => {
-                    debug!(
-                        "Successfully deserialized REMOTE MasterIndexStorage from {}.",
-                        address
-                    );
-                    Ok(mis)
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to deserialize REMOTE MasterIndexStorage from {}: {}",
-                        address, e
-                    );
-                    // Wrap the serde error
-                    Err(Error::Cbor(e))
-                }
-            }
-        }
-        Err(Error::KeyNotFound(_)) => {
-            debug!("REMOTE Master Index scratchpad not found at {}.", address);
-            Err(Error::KeyNotFound(MASTER_INDEX_KEY.to_string()))
-        }
-        Err(Error::AutonomiClient(se)) => {
-            error!(
-                "Autonomi Error fetching REMOTE Master Index {}: {}",
-                address, se
-            );
-            if se.to_string().contains("RecordNotFound") {
-                Err(Error::KeyNotFound(MASTER_INDEX_KEY.to_string()))
-            } else {
-                Err(Error::AutonomiClient(se))
-            }
-        }
-        Err(e) => {
-            error!("Error fetching REMOTE Master Index {}: {}", address, e);
-            Err(e)
-        }
-    }
+    // Just call the shared helper and return its result directly
+    _fetch_and_deserialize_mis_static(client, address, key).await
 }
