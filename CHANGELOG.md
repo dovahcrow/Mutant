@@ -59,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Ensure CLI errors are always printed to stderr in `main`
+- **CLI:** Suspend progress bar drawing during interactive prompts to prevent display corruption (e.g., when asking to create a remote index).
 
 ## [Unreleased]
 

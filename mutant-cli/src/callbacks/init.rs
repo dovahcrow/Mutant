@@ -70,10 +70,15 @@ pub fn create_init_callback(
                 InitProgressEvent::PromptCreateRemoteIndex => {
                     // Important: Drop the progress bar lock *before* blocking on Confirm
                     drop(pb_guard);
-                    let confirmation = Confirm::new()
-                        .with_prompt("No local cache found, and no remote index exists. Create remote index now?")
-                        .interact()
-                        .map_err(|e| Error::DialoguerError(format!("Dialoguer error: {}", e)))?;
+
+                    // Suspend the MultiProgress to prevent it from overwriting the prompt
+                    let confirmation = multi_progress.suspend(|| {
+                         Confirm::new()
+                            .with_prompt("No local cache found, and no remote index exists. Create remote index now?")
+                            .interact()
+                            .map_err(|e| mutant_lib::error::Error::DialoguerError(format!("Dialoguer error: {}", e)))
+                    })?;
+
                     Ok(Some(confirmation))
                 }
             }
