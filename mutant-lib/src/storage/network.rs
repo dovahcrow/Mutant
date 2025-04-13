@@ -197,7 +197,10 @@ pub(crate) async fn fetch_scratchpad_internal_static(
 
             Ok(decrypted_bytes.to_vec())
         },
-        |e: &Error| !matches!(e, Error::KeyNotFound(_)),
+        |e: &Error| {
+            matches!(e, Error::AutonomiClient(s) if !s.to_string().contains("RecordNotFound"))
+                || matches!(e, Error::TaskJoinError(_))
+        },
     )
     .await;
 
@@ -317,8 +320,9 @@ pub(crate) async fn update_scratchpad_internal_static(
                             return Ok(()); // Data matches!
                         } else {
                             debug!(
-                                "UpdateStaticVerify[{}]: Data mismatch (Expected len: {}, Got len: {}). Retrying...",
+                                "UpdateStaticVerify[{}]: Data mismatch during verification attempt {} (Expected len: {}, Got len: {}). Retrying...",
                                 address,
+                                attempt + 1,
                                 data.len(),
                                 decrypted_bytes.len()
                             );
@@ -326,15 +330,13 @@ pub(crate) async fn update_scratchpad_internal_static(
                         }
                     }
                     Ok(Err(e)) => {
-                        // Decryption error is serious, likely wrong key or data corruption
-                        error!(
-                            "UpdateStaticVerify[{}]: Decryption failed during verification: {}. Aborting verification.",
-                             address, e
+                        // Decryption error might be transient right after update
+                        debug!(
+                            "UpdateStaticVerify[{}]: Decryption failed during verification attempt {} (likely transient): {}. Retrying...",
+                             address, attempt + 1, e
                         );
-                        return Err(Error::AutonomiLibError(format!(
-                            "Verification decryption failed: {}",
-                            e
-                        )));
+                        // return Err(Error::AutonomiLibError(format!("Verification decryption failed: {}", e))); // Don't abort, retry
+                        continue;
                     }
                     Err(join_error) => {
                         // Task failure is serious
@@ -435,58 +437,40 @@ pub(crate) async fn create_scratchpad_static(
         created_address, VERIFICATION_RETRY_LIMIT, VERIFICATION_RETRY_DELAY
     );
 
-    // Verification Loop
+    // Verification Loop - Check only for existence, not content (decryption fails on newly created empty pads)
     for attempt in 0..VERIFICATION_RETRY_LIMIT {
         sleep(VERIFICATION_RETRY_DELAY).await;
         debug!(
-            "CreateStaticVerify[{}]: Verification attempt {}/{}...",
+            "CreateStaticVerify[{}]: Verification attempt {}/{} (checking existence)...",
             created_address,
             attempt + 1,
             VERIFICATION_RETRY_LIMIT
         );
 
-        match fetch_scratchpad_internal_static(client, &created_address, owner_key).await {
-            Ok(fetched_data) => {
-                if fetched_data == initial_data {
-                    debug!(
-                        "CreateStaticVerify[{}]: Verification successful on attempt {}.",
-                        created_address,
-                        attempt + 1
-                    );
-                    return Ok(created_address); // Success!
-                } else {
-                    debug!(
-                        "CreateStaticVerify[{}]: Data mismatch during verification attempt {} (Expected len: {}, Got len: {}). Retrying...",
-                        created_address,
-                        attempt + 1,
-                        initial_data.len(),
-                        fetched_data.len()
-                    );
-                    // Continue loop, data might not be fully propagated/consistent yet
-                }
-            }
-            Err(Error::KeyNotFound(_)) => {
+        match client.scratchpad_get(&created_address).await {
+            Ok(_) => {
                 debug!(
-                    "CreateStaticVerify[{}]: KeyNotFound during verification attempt {}. Retrying...",
-                    created_address, attempt + 1
+                    "CreateStaticVerify[{}]: Existence verified on attempt {}.",
+                    created_address,
+                    attempt + 1
                 );
-                // Continue loop, waiting for propagation
-            }
-            Err(Error::AutonomiLibError(ref msg))
-                if msg.contains("Decryption failed") || msg.contains("derive CipherText") =>
-            {
-                debug!(
-                    "CreateStaticVerify[{}]: Decryption failed during verification attempt {} (likely transient): {}. Retrying...",
-                     created_address, attempt + 1, msg
-                );
-                // Continue loop, data might not be ready for decryption yet
+                return Ok(created_address); // Success! Record exists.
             }
             Err(e) => {
-                error!(
-                    "CreateStaticVerify[{}]: Unexpected error during verification attempt {}: {}. Aborting verification.",
-                     created_address, attempt + 1, e
-                );
-                return Err(e); // Propagate other unexpected errors
+                let e_str = e.to_string();
+                if e_str.contains("RecordNotFound") {
+                    debug!(
+                        "CreateStaticVerify[{}]: RecordNotFound during existence check attempt {}. Retrying...",
+                        created_address, attempt + 1
+                    );
+                    // Continue loop, waiting for propagation
+                } else {
+                    error!(
+                        "CreateStaticVerify[{}]: Unexpected error during existence check attempt {}: {}. Aborting verification.",
+                        created_address, attempt + 1, e
+                    );
+                    return Err(Error::AutonomiClient(e)); // Propagate other client errors
+                }
             }
         }
     }
