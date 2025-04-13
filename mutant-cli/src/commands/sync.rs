@@ -1,9 +1,10 @@
 use crate::app::CliError;
 use log::{debug, error, info, trace, warn};
+use mutant_lib::autonomi::ScratchpadAddress;
 use mutant_lib::cache::{read_local_index, write_local_index};
 use mutant_lib::mutant::MutAnt;
 use mutant_lib::mutant::data_structures::MasterIndexStorage;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliError> {
     info!("Starting synchronization process...");
@@ -105,27 +106,72 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
             }
         }
 
-        // Merge free pads (simple union, remove duplicates)
-        let mut remote_pads_set: HashSet<_> = remote_index
+        // --- Corrected Free Pad Merging Logic ---
+        // 1. Collect all occupied pad addresses from the merged index
+        let occupied_pads: HashSet<ScratchpadAddress> = merged_index
+            .index
+            .values()
+            .flat_map(|key_info| key_info.pads.iter().map(|(addr, _)| *addr))
+            .collect();
+        debug!(
+            "Sync: Found {} occupied pads in merged index.",
+            occupied_pads.len()
+        );
+
+        // 2. Create a combined map of potential free pads (local + remote), prioritizing remote keys if duplicates exist
+        //    Using a map ensures duplicate addresses are handled (last write wins, so remote wins).
+        let mut potential_free_pads_map: HashMap<ScratchpadAddress, Vec<u8>> = HashMap::new();
+        // Add local free pads first
+        potential_free_pads_map.extend(local_index.free_pads.iter().cloned());
+        // Add remote free pads, overwriting local entries if addresses conflict (remote is source of truth for keys)
+        potential_free_pads_map.extend(remote_index.free_pads.iter().cloned());
+
+        let combined_candidates_count = potential_free_pads_map.len(); // Get count before move
+
+        // 3. Filter the potential free pads, keeping only those not occupied
+        let final_free_pads: Vec<(ScratchpadAddress, Vec<u8>)> = potential_free_pads_map
+            .into_iter()
+            .filter(|(addr, _)| !occupied_pads.contains(addr))
+            .collect();
+
+        let original_remote_free_count = remote_index.free_pads.len();
+        let final_free_count = final_free_pads.len();
+        let local_pads_actually_occupied = local_index
+            .free_pads
+            .iter()
+            .filter(|(addr, _)| occupied_pads.contains(addr))
+            .count();
+
+        debug!(
+            "Sync: Merged free pads. Started with {} remote, {} combined candidates. Filtered out {} occupied. Final free count: {}.",
+            original_remote_free_count,
+            combined_candidates_count, // Use the stored count
+            combined_candidates_count - final_free_count,
+            final_free_count
+        );
+
+        // Update the merged index's free pad list
+        merged_index.free_pads = final_free_pads;
+
+        // Recalculate local_pads_added based on the final list compared to the initial remote list's addresses
+        let remote_pads_addr_set: HashSet<_> = remote_index
             .free_pads
             .iter()
             .map(|(addr, _)| *addr)
             .collect();
-        let mut local_pads_added = 0;
-        for (addr, key_bytes) in local_index.free_pads.iter() {
-            if remote_pads_set.insert(*addr) {
-                // insert returns true if value was not present
-                merged_index.free_pads.push((*addr, key_bytes.clone()));
-                local_pads_added += 1;
-                debug!("Sync: Adding free pad {} from local.", addr);
-            }
-        }
+        let local_pads_added = merged_index
+            .free_pads
+            .iter()
+            .filter(|(addr, _)| !remote_pads_addr_set.contains(addr))
+            .count();
+
         info!(
-            "Merged index: {} total keys ({} from local added), {} total free pads ({} from local added).",
+            "Merged index: {} total keys ({} from local added), {} final free pads ({} added vs remote, {} local pads were actually occupied/removed).",
             merged_index.index.len(),
             local_keys_added,
-            merged_index.free_pads.len(),
-            local_pads_added
+            final_free_count,
+            local_pads_added,
+            local_pads_actually_occupied
         );
 
         // Ensure scratchpad size consistency (remote wins)

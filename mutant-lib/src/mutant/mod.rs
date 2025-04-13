@@ -13,7 +13,6 @@ use log::{debug, error, info, warn};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
 
 pub mod data_structures;
 pub mod remove_logic;

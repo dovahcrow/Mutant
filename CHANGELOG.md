@@ -68,7 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevent internal fetch loop from retrying on decryption errors, allowing the outer verification loop to handle retries with appropriate delays.
 - Tolerate transient decryption errors during scratchpad update verification loop, allowing retries instead of immediate failure.
 - Correctly apply the 5-second delay in the static storage verification loop, ensuring it runs between retries.
-
+- Fixed incorrect free pad calculation during `sync` by ensuring the merged free pad list only contains pads that are not occupied by keys in the *final* merged index.
 
 ## [0.1.1] - 2024-04-11
 

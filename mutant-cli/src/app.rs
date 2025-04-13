@@ -282,7 +282,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
 
     let mp = MultiProgress::new();
     let _mp_clone_for_task = mp.clone();
-    let (pb, init_callback_fn): (_, InitCallback) = create_init_callback(&mp);
+    let (_, init_callback_fn): (_, InitCallback) = create_init_callback(&mp);
 
     let config = MutAntConfig {
         network: network_choice,
