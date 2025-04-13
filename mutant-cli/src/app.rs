@@ -16,7 +16,6 @@ use tokio::task::JoinHandle;
 
 use crate::callbacks::create_init_callback;
 use crate::cli::{Cli, Commands};
-use crate::commands::handle_command;
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 struct MutantCliConfig {
@@ -69,6 +68,15 @@ impl std::fmt::Display for CliError {
 }
 
 impl std::error::Error for CliError {}
+
+// Implement conversion from the library error type
+impl From<mutant_lib::error::Error> for CliError {
+    fn from(lib_err: mutant_lib::error::Error) -> Self {
+        // You might want more sophisticated mapping here later,
+        // but for now, just wrap the display output.
+        CliError::MutAntInit(lib_err.to_string()) // Reusing MutAntInit for simplicity
+    }
+}
 
 fn get_config_path() -> Result<PathBuf, CliError> {
     let proj_dirs =
@@ -297,40 +305,31 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         std::future::pending::<()>().await;
     });
 
-    let command_result = match cli.command {
-        Commands::Reset => {
-            println!("This command will completely reset the Mutant master index.");
-            println!("All stored data associations will be lost.");
-            println!("This operation is irreversible.");
-            println!("To confirm, please type 'reset' and press Enter:");
-
-            let mut confirmation = String::new();
-            match io::stdin().read_line(&mut confirmation) {
-                Ok(_) => {
-                    if confirmation.trim() == "reset" {
-                        info!("User confirmed reset operation.");
-                        match mutant.reset_master_index().await {
-                            Ok(_) => {
-                                info!("Master index reset successfully.");
-                                Ok(ExitCode::SUCCESS)
-                            }
-                            Err(e) => {
-                                error!("Failed to reset master index: {}", e);
-                                Ok(ExitCode::FAILURE)
-                            }
-                        }
-                    } else {
-                        warn!("Reset confirmation failed. Aborting operation.");
-                        Ok(ExitCode::FAILURE)
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to read confirmation input: {}", e);
-                    Ok(ExitCode::FAILURE)
-                }
-            }
+    let command_result: Result<ExitCode, CliError> = match cli.command {
+        Commands::Import { private_key } => {
+            Ok(crate::commands::import::handle_import(mutant, private_key.clone()).await)
         }
-        _ => Ok(handle_command(cli.command, mutant, &mp).await),
+        Commands::Stats => Ok(crate::commands::stats::handle_stats(mutant).await),
+        Commands::Reset => match crate::commands::reset::handle_reset(mutant).await {
+            Ok(exit_code) => Ok(exit_code),
+            Err(e) => {
+                error!("Reset command failed: {}", e);
+                Ok(ExitCode::FAILURE)
+            }
+        },
+        Commands::Sync => match crate::commands::sync::handle_sync(mutant).await {
+            Ok(_) => Ok(ExitCode::SUCCESS),
+            Err(e) => {
+                error!("Sync command failed: {}", e);
+                Ok(ExitCode::FAILURE)
+            }
+        },
+        Commands::Put { key, value, force } => {
+            Ok(crate::commands::put::handle_put(mutant, key, value, force, &mp).await)
+        }
+        Commands::Get { key } => Ok(crate::commands::get::handle_get(mutant, key, &mp).await),
+        Commands::Rm { key } => Ok(crate::commands::remove::handle_rm(mutant, key).await),
+        Commands::Ls { long } => Ok(crate::commands::ls::handle_ls(mutant, long).await),
     };
 
     info!("Command handling finished, cleaning up background tasks...");

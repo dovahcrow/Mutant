@@ -1,15 +1,15 @@
 use super::PadManager;
+use crate::cache::write_local_index;
 use crate::error::Error;
-use crate::events::{invoke_callback, PutCallback, PutEvent};
+use crate::events::PutCallback;
 use crate::mutant::data_structures::{KeyStorageInfo, MasterIndexStorage};
-use crate::storage::storage_save_mis_from_arc_static; // Import static save function
 use autonomi::ScratchpadAddress;
 use chrono;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
-use tokio::sync::MutexGuard;
+use tokio::sync::MutexGuard; // Added
 
 mod concurrent;
 mod reservation;
@@ -248,168 +248,103 @@ impl PadManager {
         let write_pads_from_free = pads_taken_from_free; // Pads taken from free list
         let write_rx = pad_info_rx; // Pads from reservation channel
 
-        // Spawn the actual concurrent write task using the standalone function
+        // Spawn the write task
         let write_handle = tokio::spawn(async move {
-            debug!(
-                "AllocateWrite-WriteTask[{}]: Starting concurrent write processing...",
-                write_key
-            );
-            // Call the standalone function from the concurrent module
             concurrent::perform_concurrent_write_standalone(
                 &write_key,
                 data_arc,
                 write_initial_pads,
-                write_pads_from_free, // Pass free pads
-                write_rx,
+                write_pads_from_free,
+                write_rx, // Pass receiver to write task
                 write_storage,
-                write_mis,
+                write_mis, // Pass MIS for final update
                 write_cb,
             )
             .await
         });
 
-        // Await both tasks and handle potential JoinError first
-        let (reservation_result_inner, write_result_inner) =
-            match tokio::try_join!(reservation_handle, write_handle) {
-                Ok((res_inner, write_inner)) => (res_inner, write_inner),
-                Err(join_err) => {
-                    error!(
-                        "AllocateWrite[{}]: Task join error: {}",
-                        key_owned, join_err
-                    );
-                    return Err(Error::from_join_error_msg(
-                        &join_err,
-                        "Task join error during allocate_and_write".to_string(),
-                    ));
-                }
-            };
+        // --- Step 5: Wait for Results and Finalize --- //
+        let reservation_result = reservation_handle.await.map_err(|e| {
+            Error::from_join_error_msg(&e, format!("Reservation task failed for {}", key_owned))
+        })?;
 
-        // --- Handle Individual Task Results ---
+        let write_result = write_handle.await.map_err(|e| {
+            Error::from_join_error_msg(&e, format!("Write task failed for {}", key_owned))
+        })?;
 
-        // Check reservation result (inner Result<Ok(()), Error>)
-        match reservation_result_inner {
-            Ok(_) => {} // Reservation task succeeded
+        if let Err(e) = reservation_result {
+            error!(
+                "AllocateWrite[{}]: Reservation task returned error: {}",
+                key_owned, e
+            );
+            return Err(e);
+        }
+
+        let written_pads = match write_result {
+            Ok(pads) => {
+                debug!(
+                    "AllocateWrite[{}]: Write task successful. {} pads written/reused.",
+                    key_owned,
+                    pads.len()
+                );
+                pads
+            }
             Err(e) => {
-                // Reservation task completed but returned an internal error
                 error!(
-                    "AllocateWrite[{}]: Reservation task failed internally: {}",
+                    "AllocateWrite[{}]: Write task returned error: {}",
                     key_owned, e
                 );
                 return Err(e);
             }
         };
 
-        // Check write result (inner Result<Ok(pads), Error>)
-        let successfully_written_pads = match write_result_inner {
-            Ok(pads) => pads, // Write task succeeded and returned Ok(pads)
-            Err(e) => {
-                // Write task completed but returned an internal error
-                error!(
-                    "AllocateWrite[{}]: Write task failed internally: {}",
-                    key_owned, e
-                );
-                return Err(e);
-            }
-        };
-
-        // --- Both tasks succeeded internally ---
-        info!(
-            "AllocateWrite[{}]: Reservation and Write tasks completed successfully.",
-            key_owned
-        );
-
-        // --- Step 3 (In-Memory Update) & Step 5 (Final Save) combined ---
+        // --- Step 6: Update Master Index (Under Lock) ---
         {
             let mut mis_guard = self.master_index_storage.lock().await;
             debug!(
-                "AllocateWrite[{}]: Lock acquired for final index update and commit.",
+                "AllocateWrite[{}]: Lock acquired for final MIS update",
                 key_owned
             );
 
-            // Use the list returned by the successful write task.
-            let final_pads_list = successfully_written_pads;
+            // Add/Update the key entry
+            mis_guard.index.insert(
+                key_owned.clone(),
+                KeyStorageInfo {
+                    pads: written_pads,
+                    data_size,
+                    modified: chrono::Utc::now(),
+                },
+            );
+            debug!("AllocateWrite[{}]: Updated index entry.", key_owned);
 
-            let final_pad_count = final_pads_list.len(); // For logging
-
-            // Check if expected number of pads were used (rough check)
-            let expected_pads = calculate_needed_pads(data_size, mis_guard.scratchpad_size)?;
-            if final_pad_count != expected_pads {
-                warn!(
-                    "AllocateWrite[{}]: Final pad count ({}) mismatch expected ({}). Proceeding anyway.",
-                    key_owned, final_pad_count, expected_pads
-                );
-            }
-
-            // Update the index in memory
-            let key_info = KeyStorageInfo {
-                pads: final_pads_list, // Use the list determined above
-                data_size,
-                modified: chrono::Utc::now(),
-            };
-            mis_guard.index.insert(key_owned.clone(), key_info);
-
-            // Handle recycling pads from shrinking updates
+            // Add any pads that were kept but originally marked for recycling back to free list
             if !initial_recycle_on_success.is_empty() {
                 debug!(
-                    "AllocateWrite[{}]: Recycling {} pads from successful update (final commit).",
+                    "AllocateWrite[{}]: Adding {} originally recycled pads back to free list.",
                     key_owned,
                     initial_recycle_on_success.len()
                 );
-                mis_guard
-                    .free_pads
-                    .extend(initial_recycle_on_success.clone());
+                mis_guard.free_pads.extend(initial_recycle_on_success);
             }
 
             debug!(
-                 "AllocateWrite[{}]: Final in-memory index update complete. Performing final save...",
-                 key_owned
+                "AllocateWrite[{}]: Releasing lock after final MIS update.",
+                key_owned
             );
+        } // Lock released
 
-            // Get MIS info for saving
-            let (mis_addr, mis_key) = self.storage.get_master_index_info();
-            // Drop guard before await on save
-            drop(mis_guard);
+        // --- Step 7: Write to Local Cache (Instead of Remote) ---
+        info!(
+            "AllocateWrite[{}]: Persisting updated index to local cache...",
+            key_owned
+        );
+        // Call write_local_index AFTER the lock is released
+        write_local_index(&*self.master_index_storage.lock().await).await?; // Added await
 
-            // Save the final master index state
-            match storage_save_mis_from_arc_static(
-                self.storage.client(),
-                &mis_addr,
-                &mis_key,
-                &self.master_index_storage,
-            )
-            .await
-            {
-                Ok(_) => {
-                    debug!(
-                        "AllocateWrite[{}]: Final master index save successful.",
-                        key_owned
-                    );
-                    let mut final_callback_guard = shared_callback.lock().await;
-                    // Invoke StoreComplete *after* final save
-                    if let Err(cb_err) =
-                        invoke_callback(&mut *final_callback_guard, PutEvent::StoreComplete).await
-                    {
-                        error!(
-                            "AllocateWrite[{}]: Failed to invoke StoreComplete callback: {}",
-                            key_owned, cb_err
-                        );
-                        // Continue even if callback fails, state is saved.
-                    }
-                    info!(
-                        "AllocateWrite[{}]: Operation completed successfully.",
-                        key_owned
-                    );
-                    Ok(())
-                }
-                Err(save_err) => {
-                    error!(
-                        "AllocateWrite[{}]: CRITICAL: Failed final save of master index after successful write: {}. State might be inconsistent.",
-                        key_owned, save_err
-                    );
-                    // Data is written, but final index update failed.
-                    Err(save_err)
-                }
-            }
-        }
+        info!(
+            "PadManager::AllocateWrite[{}]: Operation completed successfully.",
+            key_owned
+        );
+        Ok(())
     }
 }

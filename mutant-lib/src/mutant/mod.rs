@@ -338,7 +338,8 @@ impl MutAnt {
         })
     }
 
-    async fn save_master_index(&self) -> Result<(), Error> {
+    /// Saves the current in-memory master index to the remote backend.
+    pub async fn save_master_index(&self) -> Result<(), Error> {
         crate::storage::storage_save_mis_from_arc_static(
             &self.storage.client(),
             &self.master_index_addr,
@@ -492,5 +493,29 @@ impl MutAnt {
             })
             .collect();
         Ok(details)
+    }
+
+    /// Internal method to update the in-memory master index storage.
+    /// Used primarily by the sync command.
+    pub async fn update_internal_master_index(
+        &self,
+        new_index: MasterIndexStorage,
+    ) -> Result<(), Error> {
+        debug!("MutAnt: Updating internal master index storage directly.");
+        let mut guard = self.master_index_storage.lock().await;
+        *guard = new_index;
+        Ok(())
+    }
+
+    /// Fetches the MasterIndexStorage directly from the remote backend, bypassing the local cache.
+    pub async fn fetch_remote_master_index(&self) -> Result<MasterIndexStorage, Error> {
+        debug!("MutAnt: Fetching remote master index directly...");
+        let (address, key) = self.storage.get_master_index_info();
+        crate::storage::fetch_remote_master_index_storage_static(
+            self.storage.client(),
+            &address,
+            &key,
+        )
+        .await // Return the result directly
     }
 }

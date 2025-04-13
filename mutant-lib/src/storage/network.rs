@@ -481,3 +481,64 @@ pub(crate) async fn create_scratchpad_static(
         created_address
     )))
 }
+
+/// Fetches and deserializes the MasterIndexStorage from the network without cache interaction.
+pub(crate) async fn fetch_remote_master_index_storage_static(
+    client: &Client,
+    address: &ScratchpadAddress,
+    key: &SecretKey,
+) -> Result<MasterIndexStorage, Error> {
+    debug!(
+        "Attempting to fetch REMOTE Master Index Storage from address {} using provided key...",
+        address
+    );
+    match fetch_scratchpad_internal_static(client, address, key).await {
+        Ok(bytes) => {
+            if bytes.is_empty() {
+                warn!(
+                    "REMOTE Master Index scratchpad {} exists but is empty.",
+                    address
+                );
+                // Return a default/empty index in this case, as the scratchpad exists but is unusable.
+                // Or should this be an error? Let's treat it as effectively not found for now.
+                return Err(Error::KeyNotFound(MASTER_INDEX_KEY.to_string()));
+            }
+            match serde_cbor::from_slice::<MasterIndexStorage>(&bytes) {
+                Ok(mis) => {
+                    debug!(
+                        "Successfully deserialized REMOTE MasterIndexStorage from {}.",
+                        address
+                    );
+                    Ok(mis)
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to deserialize REMOTE MasterIndexStorage from {}: {}",
+                        address, e
+                    );
+                    // Wrap the serde error
+                    Err(Error::Cbor(e))
+                }
+            }
+        }
+        Err(Error::KeyNotFound(_)) => {
+            debug!("REMOTE Master Index scratchpad not found at {}.", address);
+            Err(Error::KeyNotFound(MASTER_INDEX_KEY.to_string()))
+        }
+        Err(Error::AutonomiClient(se)) => {
+            error!(
+                "Autonomi Error fetching REMOTE Master Index {}: {}",
+                address, se
+            );
+            if se.to_string().contains("RecordNotFound") {
+                Err(Error::KeyNotFound(MASTER_INDEX_KEY.to_string()))
+            } else {
+                Err(Error::AutonomiClient(se))
+            }
+        }
+        Err(e) => {
+            error!("Error fetching REMOTE Master Index {}: {}", address, e);
+            Err(e)
+        }
+    }
+}

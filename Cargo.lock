@@ -2177,6 +2177,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dirs"
+version = "5.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
 name = "dirs-next"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4250,12 +4259,14 @@ dependencies = [
 name = "mutant-lib"
 version = "0.1.1"
 dependencies = [
+ "async-stream",
  "async-trait",
  "autonomi",
  "bytes",
  "chrono",
  "clap",
  "dialoguer",
+ "dirs",
  "env_logger 0.11.8",
  "futures",
  "hex",
@@ -4275,6 +4286,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tokio-retry",
+ "tokio-util",
 ]
 
 [[package]]

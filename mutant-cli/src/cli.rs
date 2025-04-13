@@ -42,4 +42,8 @@ pub enum Commands {
     Reset,
     /// Imports a free scratchpad using its private key.
     Import { private_key: String },
+
+    /// Synchronize local index cache with remote storage
+    #[command(about = "Synchronize local index cache with remote storage")]
+    Sync,
 }

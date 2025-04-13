@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Reads private key directly from the selected wallet file.
 - Added a disclaimer to the README regarding production readiness.
 - Verification loop with 1-hour timeout for static scratchpad create and update operations to ensure data propagation before returning.
+- Implemented local caching for the master index (`~/.local/share/mutant/index.cbor`).
+- Reads/writes use the local cache first, reducing network requests for most operations.
+- Added a new `sync` command to reconcile the local cache with the remote master index.
+- Write operations (`put`, `rm`, `update`) now update the local cache immediately and require `sync` to push changes remotely.
 
 ### Changed
 - **`mutant-lib` API:** Unified key parameter types in `store`, `store_with_progress`, `update`, and `update_with_progress` to accept `&str` instead of `String` for consistency.

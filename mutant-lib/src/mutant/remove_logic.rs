@@ -1,4 +1,5 @@
 use super::MutAnt;
+use crate::cache::write_local_index;
 use crate::error::Error;
 use log::{debug, error, info, warn};
 
@@ -26,23 +27,36 @@ pub(super) async fn delete_item(es: &MutAnt, key: &str) -> Result<(), Error> {
         }
     }
 
-    debug!("DeleteItem[{}]: Saving updated master index...", key);
-    match es.save_master_index().await {
+    debug!(
+        "DeleteItem[{}]: Saving updated index to local cache...",
+        key
+    );
+    let mis_guard = es.master_index_storage.lock().await;
+    let index_to_cache = mis_guard.clone();
+    drop(mis_guard);
+
+    match write_local_index(&index_to_cache).await {
         Ok(_) => {
             debug!(
-                "DeleteItem[{}]: Successfully persisted master index removal.",
+                "DeleteItem[{}]: Successfully wrote index to local cache after removal.",
                 key
             );
         }
         Err(e) => {
             error!(
-                "DeleteItem[{}]: CRITICAL: Failed to persist master index removal: {}. State might be inconsistent.",
+                "DeleteItem[{}]: Failed to write index to local cache after removal: {}",
                 key, e
             );
-            return Err(e);
+            warn!(
+                "Proceeding after failing to write local cache for key '{}' removal.",
+                key
+            );
         }
     }
 
-    info!("DeleteItem[{}]: Removal successful.", key);
+    info!(
+        "DeleteItem[{}]: Removal successful (in memory and cache attempted).",
+        key
+    );
     Ok(())
 }

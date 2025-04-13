@@ -133,6 +133,10 @@ pub enum Error {
     JoinError(String),
     #[error("Verification failed after timeout: {0}")]
     VerificationTimeout(String),
+    #[error("Pad Manager internal error: {0}")]
+    PadManagerError(String),
+    #[error("Local cache operation failed: {0}")]
+    CacheError(String),
 }
 
 impl Error {

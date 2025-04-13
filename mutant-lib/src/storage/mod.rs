@@ -6,6 +6,7 @@ use autonomi::{Client, ScratchpadAddress, SecretKey, Wallet};
 
 use network::create_scratchpad_static;
 
+pub(crate) use network::fetch_remote_master_index_storage_static;
 pub(crate) use network::fetch_scratchpad_internal_static;
 pub(crate) use network::storage_save_mis_from_arc_static;
 pub(crate) use network::update_scratchpad_internal_static;

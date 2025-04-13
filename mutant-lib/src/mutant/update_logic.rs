@@ -125,9 +125,6 @@ pub(super) async fn update_item(
         key
     );
 
-    debug!("UpdateItem[{}]: Saving final master index state...", key);
-    es.save_master_index().await?;
-
     info!("UpdateItem[{}]: Update operation fully completed.", key);
     Ok(())
 }
