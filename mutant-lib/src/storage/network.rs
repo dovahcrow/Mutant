@@ -9,10 +9,9 @@ use serde_cbor;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task;
-use tokio::time::{sleep, Duration};
 
-const VERIFICATION_RETRY_DELAY: Duration = Duration::from_secs(10);
-const VERIFICATION_RETRY_LIMIT: u32 = 360; // 360 * 10s = 1 hour timeout
+// const VERIFICATION_RETRY_DELAY: Duration = Duration::from_secs(10); // Removed
+const VERIFICATION_RETRY_LIMIT: u32 = 360; // 360 retries (was 1 hour timeout with delay)
 
 pub(crate) async fn load_master_index_storage_static(
     client: &Client,
@@ -266,12 +265,11 @@ pub(crate) async fn update_scratchpad_internal_static(
     .await?;
 
     debug!(
-        "UpdateStatic[{}]: Update operation successful. Starting verification loop ({} attempts, {:?} delay).",
-        address, VERIFICATION_RETRY_LIMIT, VERIFICATION_RETRY_DELAY
+        "UpdateStatic[{}]: Update operation successful. Starting verification loop ({} attempts, no delay).",
+        address, VERIFICATION_RETRY_LIMIT
     );
 
     for attempt in 0..VERIFICATION_RETRY_LIMIT {
-        sleep(VERIFICATION_RETRY_DELAY).await;
         debug!(
             "UpdateStaticVerify[{}]: Verification attempt {}/{}...",
             address,
@@ -433,13 +431,12 @@ pub(crate) async fn create_scratchpad_static(
         ));
     }
     debug!(
-        "CreateStatic[{}]: Static scratchpad creation reported successful. Starting verification loop ({} attempts, {:?} delay).",
-        created_address, VERIFICATION_RETRY_LIMIT, VERIFICATION_RETRY_DELAY
+        "CreateStatic[{}]: Static scratchpad creation reported successful. Starting verification loop ({} attempts, no delay).",
+        created_address, VERIFICATION_RETRY_LIMIT
     );
 
     // Verification Loop - Check only for existence, not content (decryption fails on newly created empty pads)
     for attempt in 0..VERIFICATION_RETRY_LIMIT {
-        sleep(VERIFICATION_RETRY_DELAY).await;
         debug!(
             "CreateStaticVerify[{}]: Verification attempt {}/{} (checking existence)...",
             created_address,

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.2] - Unreleased
 
 ### Added
 - Start of development for v0.1.1
@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated dependencies.
 - Reservation and data upload during `put` operation now run concurrently. Successfully reserved pads are immediately made available for upload via an internal channel, improving performance for multi-pad uploads.
 - Pad reservation now saves the master index after *each* individual pad is successfully reserved and added to the free list, increasing robustness against failures during reservation but potentially impacting performance.
+- Removed 10-second delay from scratchpad verification loops, allowing faster retries.
 
 ### Fixed
 - Ensure CLI errors are always printed to stderr in `main` in addition to being logged.
@@ -56,15 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevent internal fetch loop from retrying on decryption errors, allowing the outer verification loop to handle retries with appropriate delays.
 - Tolerate transient decryption errors during scratchpad update verification loop, allowing retries instead of immediate failure.
 
-## [0.1.2] - Unreleased
-
-### Added
-- Added `--local` flag to `mutant-cli` to explicitly use the Devnet configuration.
 
 ## [0.1.1] - 2024-04-11
 
 ### Changed
 - **`mutant-lib` API:** Modified `MutAnt::init` and `MutAnt::init_with_progress` to only require the `private_key_hex` string. The `autonomi::Wallet` is now derived internally.
+- Added `--local` flag to `mutant-cli` to explicitly use the Devnet configuration.
 
 ## [0.1.0] - 2025-04-12
 
