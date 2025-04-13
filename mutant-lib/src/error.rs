@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use autonomi::scratchpad::ScratchpadError;
-use autonomi::ScratchpadAddress;
 // use std::error::Error as StdError; // Unused
 // use crate::mutant::data_structures::ScratchpadRef;
 // use crate::mutant::PadId;
 // use crate::pad_manager::SlotId;
-use std::fmt;
 use thiserror::Error;
 use tokio::task::JoinError;
 

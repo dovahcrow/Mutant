@@ -1,14 +1,11 @@
 use crate::cache::{read_local_index, write_local_index};
 use crate::error::Error;
 use crate::events::{invoke_init_callback, GetCallback, InitCallback, PutCallback};
-use crate::mutant::data_structures::{KeyStorageInfo, MasterIndexStorage};
+use crate::mutant::data_structures::MasterIndexStorage;
 use crate::pad_manager::PadManager;
-use crate::storage::{
-    fetch_remote_master_index_storage_static, load_master_index_storage_static,
-    storage_save_mis_from_arc_static, Storage,
-};
+use crate::storage::{storage_create_mis_from_arc_static, Storage};
 use crate::InitProgressEvent;
-use autonomi::{Client, Network, ScratchpadAddress, SecretKey, Wallet};
+use autonomi::{Network, ScratchpadAddress, SecretKey, Wallet};
 use chrono::{DateTime, Utc};
 use hex;
 use log::{debug, error, info, warn};
@@ -273,8 +270,10 @@ impl MutAnt {
                             // Attempt to save the new default index remotely
                             let (master_addr, master_key) = storage_arc.get_master_index_info();
                             let client = storage_arc.get_client().await?; // Ensure client is initialized
-                            match storage_save_mis_from_arc_static(
+                            let wallet_instance = storage_arc.wallet(); // Use the getter
+                            match storage_create_mis_from_arc_static(
                                 client,
+                                wallet_instance, // Pass the wallet reference
                                 &master_addr,
                                 &master_key,
                                 &mis_arc,
@@ -282,7 +281,9 @@ impl MutAnt {
                             .await
                             {
                                 Ok(_) => {
-                                    info!("Successfully saved new default master index remotely.");
+                                    info!(
+                                        "Successfully created new default master index remotely."
+                                    );
                                     // Also save locally
                                     let mis_guard = mis_arc.lock().await;
                                     if let Err(e) =
@@ -293,9 +294,9 @@ impl MutAnt {
                                     drop(mis_guard);
                                 }
                                 Err(e) => {
-                                    // If saving remotely fails, still proceed with the in-memory index
+                                    // If creating remotely fails, still proceed with the in-memory index
                                     // but log the error. The cache won't be written in this case.
-                                    error!("Failed to save newly created default index to remote: {}. Proceeding with in-memory index only.", e);
+                                    error!("Failed to create default index on remote: {}. Proceeding with in-memory index only.", e);
                                 }
                             }
                             Ok(mis_arc)

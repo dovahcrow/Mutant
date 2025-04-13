@@ -12,6 +12,7 @@ use network::create_scratchpad_static;
 pub(crate) use network::fetch_remote_master_index_storage_static;
 pub(crate) use network::fetch_scratchpad_internal_static;
 pub(crate) use network::load_master_index_storage_static;
+pub(crate) use network::storage_create_mis_from_arc_static;
 pub(crate) use network::storage_save_mis_from_arc_static;
 pub(crate) use network::update_scratchpad_internal_static;
 
@@ -49,6 +50,10 @@ impl Storage {
                 }
             })
             .await
+    }
+
+    pub(crate) fn wallet(&self) -> &Wallet {
+        &self.wallet
     }
 
     pub(crate) async fn create_scratchpad_internal_raw(

@@ -1,10 +1,11 @@
 use super::ContentType;
 use crate::error::Error;
 use crate::mutant::data_structures::MasterIndexStorage;
-use crate::mutant::MASTER_INDEX_KEY;
 use crate::utils::retry::retry_operation;
-use autonomi::{client::payment::PaymentOption, Bytes, Client, ScratchpadAddress, SecretKey};
-use log::{debug, error, info, warn};
+use autonomi::{
+    client::payment::PaymentOption, Bytes, Client, ScratchpadAddress, SecretKey, Wallet,
+};
+use log::{debug, error, warn};
 use serde_cbor;
 use std::sync::Arc;
 use std::time::Duration;
@@ -153,6 +154,76 @@ pub(crate) async fn storage_save_mis_from_arc_static(
 
     debug!("Successfully saved MasterIndexStorage to {}.", address);
     Ok(())
+}
+
+/// Creates the Master Index Storage scratchpad for the first time.
+/// Serializes the provided MIS and uses `create_scratchpad_static`.
+pub(crate) async fn storage_create_mis_from_arc_static(
+    client: &Client,
+    wallet: &Wallet,
+    address: &ScratchpadAddress,
+    key: &SecretKey,
+    mis_arc: &Arc<Mutex<MasterIndexStorage>>,
+) -> Result<(), Error> {
+    debug!(
+        "Attempting to create initial Master Index Storage at {}...",
+        address
+    );
+    let mis_guard = mis_arc.lock().await;
+    let state = &*mis_guard;
+    let bytes = serde_cbor::to_vec(state).map_err(|e| Error::SerializationError(e.to_string()))?;
+    drop(mis_guard); // Release lock before network call
+
+    debug!(
+        "storage_create_mis_from_arc_static: Serialized MIS ({} bytes) for {}. Preparing to create.",
+        bytes.len(),
+        address
+    );
+
+    // Use create_scratchpad_static instead of update
+    let payment_option = PaymentOption::from(wallet);
+    let create_result = create_scratchpad_static(
+        client,
+        key,
+        &bytes,
+        ContentType::MasterIndex as u64,
+        payment_option,
+    )
+    .await;
+
+    match &create_result {
+        Ok(created_addr) => {
+            // Verify the address matches the expected one derived from the key
+            if created_addr != address {
+                error!(
+                    "storage_create_mis_from_arc_static: Mismatch! Expected address {} but creation returned {}.",
+                    address, created_addr
+                );
+                Err(Error::InternalError(format!(
+                    "Created MIS address {} does not match expected address {}",
+                    created_addr, address
+                )))
+            } else {
+                debug!(
+                    "storage_create_mis_from_arc_static: create_scratchpad_static succeeded for {}.",
+                    address
+                );
+                Ok(()) // Return Ok(()) on success
+            }
+        }
+        Err(e) => {
+            error!(
+                "storage_create_mis_from_arc_static: create_scratchpad_static failed for {}: {}",
+                address, e
+            );
+            // Map the error instead of cloning
+            Err(Error::InternalError(format!(
+                "Failed to create scratchpad {}: {}",
+                address,
+                e.to_string()
+            )))
+        }
+    }
 }
 
 pub(crate) async fn fetch_scratchpad_internal_static(

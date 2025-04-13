@@ -72,11 +72,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Correctly apply the 5-second delay in the static storage verification loop, ensuring it runs between retries.
 - Fixed incorrect free pad calculation during `sync` by ensuring the merged free pad list only contains pads that are not occupied by keys in the *final* merged index.
 
-## [0.1.1] - 2024-04-11
+## [0.1.1] - 2025-04-13
+
+### Fixed
+
+- Fix hang during initial master index creation when no local cache or remote index exists by using `create_scratchpad_static` instead of `update_scratchpad_internal_static`.
+- Use wallet for payment when creating the initial master index scratchpad.
 
 ### Changed
-- **`mutant-lib` API:** Modified `MutAnt::init` and `MutAnt::init_with_progress` to only require the `private_key_hex` string. The `autonomi::Wallet` is now derived internally.
-- Added `--local` flag to `mutant-cli` to explicitly use the Devnet configuration.
+
+- Improved error handling and logging during master index loading and creation.
 
 ## [0.1.0] - 2025-04-12
 
