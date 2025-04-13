@@ -16,7 +16,6 @@ struct PutCallbackContext {
     upload_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     commit_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     res_confirmed_and_needed: Arc<Mutex<bool>>,
-    last_displayed_reservation_progress: Arc<Mutex<u64>>,
     total_bytes_for_upload: Arc<Mutex<u64>>,
     multi_progress: MultiProgress,
     cyan: Style,
@@ -39,8 +38,6 @@ pub fn create_put_callback(
     Arc<Mutex<Option<StyledProgressBar>>>,
     // Flag indicating if reservation was confirmed and needed
     Arc<Mutex<bool>>,
-    // Last displayed reservation progress value (internal detail)
-    Arc<Mutex<u64>>,
     // The actual callback closure
     PutCallback,
 ) {
@@ -48,7 +45,6 @@ pub fn create_put_callback(
     let upload_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let commit_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let reservation_confirmed_and_needed = Arc::new(Mutex::new(false));
-    let last_displayed_reservation_progress = Arc::new(Mutex::new(0u64));
     let total_bytes_for_upload = Arc::new(Mutex::new(0u64));
 
     // Create the context instance
@@ -57,7 +53,6 @@ pub fn create_put_callback(
         upload_pb_opt: upload_pb_opt.clone(),
         commit_pb_opt: commit_pb_opt.clone(),
         res_confirmed_and_needed: reservation_confirmed_and_needed.clone(),
-        last_displayed_reservation_progress: last_displayed_reservation_progress.clone(),
         total_bytes_for_upload: total_bytes_for_upload.clone(),
         multi_progress: multi_progress.clone(),
         cyan: Style::new().fg(Color::Cyan),
@@ -103,7 +98,7 @@ pub fn create_put_callback(
                     if let Some(res_pb) = res_pb_opt_guard.as_mut() {
                         let current_position = index + 1;
                         if res_pb.length() == Some(total) {
-                            res_pb.set_position(current_position);
+                            res_pb.inc(1);
                             if current_position >= total && !res_pb.is_finished() {
                                 debug!(
                                     "Pad reservation complete ({} >= {}), finishing reservation bar.",
@@ -119,7 +114,7 @@ pub fn create_put_callback(
                                 total
                             );
                             res_pb.set_length(total);
-                            res_pb.set_position(current_position);
+                            res_pb.inc(1);
                         }
                     } else {
                         warn!("PadReserved event received but reservation progress bar does not exist.");
@@ -189,8 +184,6 @@ pub fn create_put_callback(
                     if confirmation {
                         let mut confirmed_needed_guard = ctx.res_confirmed_and_needed.lock().unwrap();
                         *confirmed_needed_guard = true;
-                        let mut last_progress_guard = ctx.last_displayed_reservation_progress.lock().unwrap();
-                        *last_progress_guard = 0;
 
                         let mut res_pb_opt_guard = ctx.res_pb_opt.lock().unwrap();
                         res_pb_opt_guard.get_or_insert_with(|| {
@@ -331,7 +324,6 @@ pub fn create_put_callback(
         upload_pb_opt,
         commit_pb_opt,
         reservation_confirmed_and_needed,
-        last_displayed_reservation_progress,
         callback,
     )
 }
