@@ -3,7 +3,10 @@ use crate::error::Error;
 use crate::events::{invoke_init_callback, GetCallback, InitCallback, PutCallback};
 use crate::mutant::data_structures::{KeyStorageInfo, MasterIndexStorage};
 use crate::pad_manager::PadManager;
-use crate::storage::{load_master_index_storage_static, Storage};
+use crate::storage::{
+    fetch_remote_master_index_storage_static, load_master_index_storage_static,
+    storage_save_mis_from_arc_static, Storage,
+};
 use crate::InitProgressEvent;
 use autonomi::{Client, Network, ScratchpadAddress, SecretKey, Wallet};
 use chrono::{DateTime, Utc};
@@ -235,8 +238,8 @@ impl MutAnt {
                     // Use the storage instance method to load/create from network
                     match storage_arc.load_or_create_master_index().await {
                         Ok(network_mis_arc) => {
-                            info!("Successfully loaded/created index from network.");
-                            // Save the newly loaded/created index back to local cache
+                            info!("Successfully loaded index from network.");
+                            // Save the newly loaded index back to local cache
                             let mis_guard = network_mis_arc.lock().await;
                             if let Err(e) = write_local_index(&*mis_guard, network_choice).await {
                                 warn!("Failed to write network-loaded index to local cache: {}", e);
@@ -244,8 +247,62 @@ impl MutAnt {
                             drop(mis_guard);
                             Ok(network_mis_arc)
                         }
+                        Err(Error::MasterIndexNotFound) => {
+                            // Network load explicitly failed because index doesn't exist.
+                            // Prompt the user via callback.
+                            info!("Master index not found on network. Prompting user...");
+                            invoke_init_callback(
+                                &mut init_callback,
+                                InitProgressEvent::PromptCreateRemoteIndex,
+                            )
+                            .await?;
+
+                            // The callback result determines if we proceed. The result itself
+                            // is handled by invoke_init_callback, mapping Ok(Some(false)) to Err.
+                            // If invoke_init_callback returns Ok(()), it means the user either
+                            // confirmed (Ok(Some(true))) or no callback existed (Ok(None)).
+                            // We interpret Ok(()) here as "permission granted to create".
+
+                            warn!("No remote index exists. Creating and saving a new default index locally and remotely.");
+                            let default_mis = MasterIndexStorage {
+                                scratchpad_size: DEFAULT_SCRATCHPAD_SIZE,
+                                ..Default::default()
+                            };
+                            let mis_arc = Arc::new(Mutex::new(default_mis));
+
+                            // Attempt to save the new default index remotely
+                            let (master_addr, master_key) = storage_arc.get_master_index_info();
+                            let client = storage_arc.get_client().await?; // Ensure client is initialized
+                            match storage_save_mis_from_arc_static(
+                                client,
+                                &master_addr,
+                                &master_key,
+                                &mis_arc,
+                            )
+                            .await
+                            {
+                                Ok(_) => {
+                                    info!("Successfully saved new default master index remotely.");
+                                    // Also save locally
+                                    let mis_guard = mis_arc.lock().await;
+                                    if let Err(e) =
+                                        write_local_index(&*mis_guard, network_choice).await
+                                    {
+                                        warn!("Failed to write newly created index to local cache: {}", e);
+                                    }
+                                    drop(mis_guard);
+                                }
+                                Err(e) => {
+                                    // If saving remotely fails, still proceed with the in-memory index
+                                    // but log the error. The cache won't be written in this case.
+                                    error!("Failed to save newly created default index to remote: {}. Proceeding with in-memory index only.", e);
+                                }
+                            }
+                            Ok(mis_arc)
+                        }
                         Err(e) => {
-                            error!("Failed to load/create index from network: {}. Initializing empty default index in memory.", e);
+                            // Other errors during network load (e.g., Cbor, connection issues)
+                            error!("Failed to load index from network: {}. Initializing empty default index in memory only.", e);
                             let default_mis = MasterIndexStorage {
                                 scratchpad_size: DEFAULT_SCRATCHPAD_SIZE,
                                 ..Default::default()

@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use autonomi::client::data_types::scratchpad::ScratchpadError;
+use autonomi::scratchpad::ScratchpadError;
+use autonomi::ScratchpadAddress;
 // use std::error::Error as StdError; // Unused
+// use crate::mutant::data_structures::ScratchpadRef;
+// use crate::mutant::PadId;
+// use crate::pad_manager::SlotId;
+use std::fmt;
 use thiserror::Error;
 use tokio::task::JoinError;
 
@@ -91,12 +96,12 @@ pub enum Error {
     ItemNotInPack,
     #[error("Feature not implemented: {0}")]
     NotImplemented(String),
-    #[error("Invalid data location found in index")]
-    InvalidDataLocation,
     #[error("CBOR serialization/deserialization error: {0}")]
     Cbor(#[from] serde_cbor::Error),
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
+    /// Specific error indicating the Master Index was not found remotely (distinct from transient network errors).
+    #[error("Master index not found on the network.")]
+    MasterIndexNotFound,
+    /// Error originating from the Autonomi SDK client library.
     #[error("Autonomi scratchpad client error: {0}")]
     AutonomiClient(#[from] ScratchpadError),
     #[error("Task join error: {0}")]
@@ -137,6 +142,26 @@ pub enum Error {
     PadManagerError(String),
     #[error("Local cache operation failed: {0}")]
     CacheError(String),
+    #[error("Required scratchpad not found: {0}")]
+    ScratchpadNotFound(String),
+    #[error("Failed to decrypt data for scratchpad {0}: {1}")]
+    DecryptionError(String, String),
+    #[error("Failed to encrypt data for scratchpad {0}: {1}")]
+    EncryptionError(String, String),
+    #[error("Failed to allocate space for {0} bytes")]
+    AllocationError(usize),
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
+    #[error("Pad operation failed: {0}")]
+    PadError(String),
+    #[error("Chunk index {chunk_idx} out of bounds for key {key} (total chunks: {total_chunks})")]
+    ChunkIndexOutOfBounds {
+        key: String,
+        chunk_idx: usize,
+        total_chunks: usize,
+    },
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 impl Error {
@@ -149,6 +174,14 @@ impl Error {
             "Unknown task failure".to_string()
         };
         Error::InternalError(format!("{}: {} ({})", context_msg, cause, join_error))
+    }
+
+    pub fn is_key_not_found(&self) -> bool {
+        matches!(self, Error::KeyNotFound(_))
+    }
+
+    pub fn is_operation_cancelled(&self) -> bool {
+        matches!(self, Error::OperationCancelled)
     }
 }
 

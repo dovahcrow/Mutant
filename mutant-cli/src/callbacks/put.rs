@@ -82,7 +82,7 @@ pub fn create_put_callback(
                     let mut res_pb_opt_guard = ctx.res_pb_opt.lock().unwrap();
                     let pb = res_pb_opt_guard.get_or_insert_with(|| {
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
-                        pb.set_message("Reserving scratchpad(s)...".to_string());
+                        pb.set_message("Reserving scratchpad(s)... (Don't panic, might take a while)".to_string());
                         pb
                     });
                     pb.set_length(count);

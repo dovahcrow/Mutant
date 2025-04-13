@@ -28,8 +28,8 @@ async fn _fetch_and_deserialize_mis_static(
         Ok(bytes) => {
             if bytes.is_empty() {
                 warn!("Master Index scratchpad {} exists but is empty.", address);
-                // Treat empty as not found for simplicity in callers
-                Err(Error::KeyNotFound(MASTER_INDEX_KEY.to_string()))
+                // Treat empty as not found, specifically MasterIndexNotFound
+                Err(Error::MasterIndexNotFound)
             } else {
                 match serde_cbor::from_slice::<MasterIndexStorage>(&bytes) {
                     Ok(mis) => {
@@ -51,16 +51,18 @@ async fn _fetch_and_deserialize_mis_static(
         }
         Err(Error::KeyNotFound(_)) => {
             debug!("Master Index scratchpad not found at {}.", address);
-            Err(Error::KeyNotFound(MASTER_INDEX_KEY.to_string()))
+            // Specific error for not found
+            Err(Error::MasterIndexNotFound)
         }
         Err(Error::AutonomiClient(se)) => {
-            // Only map RecordNotFound to KeyNotFound, propagate others
+            // Only map RecordNotFound to MasterIndexNotFound, propagate others
             if se.to_string().contains("RecordNotFound") {
                 debug!(
-                    "Master Index scratchpad RecordNotFound at {} (treating as KeyNotFound).",
+                    "Master Index scratchpad RecordNotFound at {} (treating as MasterIndexNotFound).",
                     address
                 );
-                Err(Error::KeyNotFound(MASTER_INDEX_KEY.to_string()))
+                // Specific error for not found
+                Err(Error::MasterIndexNotFound)
             } else {
                 error!("Autonomi Error fetching Master Index {}: {}", address, se);
                 Err(Error::AutonomiClient(se))
@@ -90,31 +92,21 @@ pub(crate) async fn load_master_index_storage_static(
             // Successfully fetched and deserialized
             Ok(Arc::new(Mutex::new(mis)))
         }
-        Err(Error::KeyNotFound(_)) | Err(Error::Cbor(_)) => {
-            // Not found, empty, or failed to deserialize -> Create default
-            debug!("load_master_index_storage_static: MIS not found or invalid at {}. Creating default.", address);
+        Err(Error::MasterIndexNotFound) => {
+            // Specifically handle MasterIndexNotFound - DO NOT create default here anymore.
+            // The caller (MutAnt::init) will now handle this case and potentially prompt the user.
+            debug!("load_master_index_storage_static: Master index not found at {}. Returning specific error.", address);
+            Err(Error::MasterIndexNotFound)
+        }
+        Err(Error::Cbor(e)) => {
+            // Invalid format, still create default locally but log error
+            error!("load_master_index_storage_static: Found index at {} but failed to deserialize: {}. Creating default.", address, e);
             let default_mis = MasterIndexStorage {
                 scratchpad_size: DEFAULT_SCRATCHPAD_SIZE,
                 ..Default::default()
             };
-            let mis_arc = Arc::new(Mutex::new(default_mis));
-            // Attempt to save the new default index back to the network
-            match storage_save_mis_from_arc_static(client, address, key, &mis_arc).await {
-                Ok(_) => {
-                    info!(
-                        "load_master_index_storage_static: Successfully created and saved default MIS to {}.",
-                        address
-                    );
-                    Ok(mis_arc)
-                }
-                Err(e_save) => {
-                    error!(
-                        "load_master_index_storage_static: Failed to save newly created default MIS to {}: {}",
-                        address, e_save
-                    );
-                    Err(e_save) // Return the save error
-                }
-            }
+            // Do NOT attempt to save the default back in this specific error case.
+            Ok(Arc::new(Mutex::new(default_mis)))
         }
         Err(e) => {
             // Propagate other errors (AutonomiClient other than RecordNotFound, JoinError, etc.)

@@ -1,6 +1,7 @@
 use crate::error::Error;
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Events emitted during the 'put' (store) operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,13 +81,15 @@ pub enum InitProgressEvent {
     Failed { error_msg: String },
     /// An existing configuration was found and loaded (skipping first-run).
     ExistingLoaded { message: String },
+    /// Prompt the user whether to create the remote index.
+    PromptCreateRemoteIndex,
 }
 
 /// Type alias for the callback function used during library initialization.
 /// The callback returns a simple Result to indicate success or failure, but
 /// doesn't need to return a boolean like PutCallback.
 pub type InitCallback =
-    Box<dyn FnMut(InitProgressEvent) -> BoxFuture<'static, Result<(), Error>> + Send + Sync>;
+    Arc<dyn Fn(InitProgressEvent) -> BoxFuture<'static, Result<Option<bool>, Error>> + Send + Sync>;
 
 #[inline]
 pub(crate) async fn invoke_init_callback(
@@ -95,9 +98,13 @@ pub(crate) async fn invoke_init_callback(
 ) -> Result<(), Error> {
     if let Some(cb) = callback {
         let fut = cb(event);
-        fut.await
+        match fut.await {
+            Ok(Some(true)) | Ok(None) => Ok(()), // Confirmed or no decision needed = Success for invoker
+            Ok(Some(false)) => Err(Error::OperationCancelled), // Declined = Cancellation
+            Err(e) => Err(e),                    // Propagate callback error
+        }
     } else {
-        Ok(())
+        Ok(()) // No callback, always success
     }
 }
 

@@ -109,6 +109,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Prompt user to create remote index if local cache and remote index are missing.
+
 ### Changed
 - Modified `load_master_index_storage_static` in `mutant-lib` to automatically create and save a default Master Index Storage on the network if it's not found, empty, or fails to deserialize.
 - Refactored network storage functions (`load_master_index_storage_static`, `fetch_remote_master_index_storage_static`) to reduce redundancy by extracting common fetch/deserialize logic.
