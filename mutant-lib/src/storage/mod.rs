@@ -2,7 +2,10 @@ mod init;
 mod network;
 
 use crate::error::Error;
+use crate::mutant::NetworkChoice;
 use autonomi::{Client, ScratchpadAddress, SecretKey, Wallet};
+use log::info;
+use tokio::sync::OnceCell;
 
 use network::create_scratchpad_static;
 
@@ -19,7 +22,8 @@ pub(super) enum ContentType {
 #[derive(Clone)]
 pub struct Storage {
     wallet: Wallet,
-    client: Client,
+    client: OnceCell<Client>,
+    network_choice: NetworkChoice,
     master_index_address: ScratchpadAddress,
     master_index_key: SecretKey,
 }
@@ -27,16 +31,36 @@ pub struct Storage {
 pub use init::new;
 
 impl Storage {
+    pub(crate) async fn get_client(&self) -> Result<&Client, Error> {
+        self.client
+            .get_or_try_init(|| async {
+                info!(
+                    "Initializing Autonomi client for network: {:?}",
+                    self.network_choice
+                );
+                match self.network_choice {
+                    NetworkChoice::Devnet => Client::init_local()
+                        .await
+                        .map_err(|e| Error::NetworkConnectionFailed(e.to_string())),
+                    NetworkChoice::Mainnet => Client::init()
+                        .await
+                        .map_err(|e| Error::NetworkConnectionFailed(e.to_string())),
+                }
+            })
+            .await
+    }
+
     pub(crate) async fn create_scratchpad_internal_raw(
         &self,
         initial_data: &[u8],
         content_type: u64,
     ) -> Result<(ScratchpadAddress, SecretKey), Error> {
+        let client = self.get_client().await?;
         let owner_key = SecretKey::random();
         let payment_option = autonomi::client::payment::PaymentOption::from(&self.wallet);
 
         let address = create_scratchpad_static(
-            &self.client,
+            client,
             &owner_key,
             initial_data,
             content_type,
@@ -45,10 +69,6 @@ impl Storage {
         .await?;
 
         Ok((address, owner_key))
-    }
-
-    pub(crate) fn client(&self) -> &Client {
-        &self.client
     }
 
     pub(crate) fn get_master_index_info(&self) -> (ScratchpadAddress, SecretKey) {

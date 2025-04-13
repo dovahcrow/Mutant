@@ -2,7 +2,6 @@ use super::PadInfo;
 use crate::error::Error;
 use crate::events::{invoke_callback, PutCallback, PutEvent};
 use crate::mutant::data_structures::MasterIndexStorage;
-use crate::storage::update_scratchpad_internal_static;
 use crate::storage::Storage as BaseStorage;
 use crate::utils::retry::retry_operation;
 use autonomi::SecretKey;
@@ -106,6 +105,7 @@ pub(super) async fn perform_concurrent_write_standalone(
             scratchpad_size,
             successfully_written_pads.clone(),
             current_pad_info,
+            key_owned.clone(),
         );
         current_pad_index += 1;
     }
@@ -153,6 +153,7 @@ pub(super) async fn perform_concurrent_write_standalone(
             scratchpad_size,
             successfully_written_pads.clone(),
             current_pad_info,
+            key_owned.clone(),
         );
         current_pad_index += 1;
     }
@@ -196,6 +197,7 @@ pub(super) async fn perform_concurrent_write_standalone(
                         scratchpad_size,
                         successfully_written_pads.clone(),
                         current_pad_info,
+                        key_owned.clone(),
                     );
                 } else if chunk_start >= total_size {
                     debug!(
@@ -302,75 +304,89 @@ fn spawn_write_task_standalone(
     _scratchpad_size: usize,
     successfully_written_pads: Arc<Mutex<Vec<PadInfo>>>,
     pad_info_for_task: PadInfo,
+    key_str: String,
 ) {
     join_set.spawn(async move {
-        let _permit = semaphore
-            .acquire_owned()
-            .await
-            .map_err(|_| Error::InternalError("Semaphore closed unexpectedly".to_string()))?;
+        let semaphore_clone = semaphore.clone();
+        let callback_arc_clone = callback_arc.clone();
+        let total_bytes_uploaded_clone = total_bytes_uploaded.clone();
+        let storage_clone = storage.clone();
+        let successfully_written_pads_clone = successfully_written_pads.clone();
+        let task_pad_info = pad_info_for_task.clone();
+        let permit = semaphore_clone.acquire_owned().await.unwrap();
 
-        let pad_secret_key = {
+        let pad_key = {
             let key_array: [u8; 32] = match pad_key_bytes.as_slice().try_into() {
                 Ok(arr) => arr,
                 Err(_) => {
+                    error!(
+                        "PadWrite[{}]: Invalid key bytes slice length for pad index {}",
+                        key_str, pad_index
+                    );
                     return Err(Error::InternalError(
                         "Pad key bytes have incorrect length".to_string(),
-                    ))
+                    ));
                 }
             };
-            SecretKey::from_bytes(key_array)
-                .map_err(|e| Error::InternalError(format!("Failed to create SecretKey: {}", e)))?
+            match SecretKey::from_bytes(key_array) {
+                Ok(k) => k,
+                Err(e) => {
+                    error!(
+                        "PadWrite[{}]: Failed to create SecretKey from bytes for pad index {}: {}",
+                        key_str, pad_index, e
+                    );
+                    return Err(Error::InternalError(format!(
+                        "Failed to create SecretKey: {}",
+                        e
+                    )));
+                }
+            }
         };
 
-        let data_chunk = data_arc
-            .get(chunk_start..chunk_end)
-            .ok_or_else(|| Error::InternalError("Data chunk slicing failed".to_string()))?;
-
-        let data_to_write = data_chunk.to_vec();
+        let data_to_write = data_arc[chunk_start..chunk_end].to_vec();
         let bytes_in_chunk = data_to_write.len() as u64;
 
-        let write_result = retry_operation(
-            &format!("Write Pad #{}", pad_index),
-            || {
-                update_scratchpad_internal_static(
-                    storage.client(),
-                    &pad_secret_key,
-                    &data_to_write,
-                    0,
-                )
+        let upload_result = retry_operation(
+            &format!("PadWrite[{}]: Upload Pad {}", key_str, pad_index),
+            || async {
+                let data_slice = &data_to_write;
+                let client = storage_clone.get_client().await?;
+                crate::storage::update_scratchpad_internal_static(client, &pad_key, data_slice, 0)
+                    .await
             },
-            |e| {
+            |e: &Error| {
                 warn!(
-                    "Retrying scratchpad write for pad #{} due to error: {}",
-                    pad_index, e
+                    "PadWrite[{}]: Retrying upload for pad #{} due to error: {}",
+                    key_str, pad_index, e
                 );
                 true
             },
         )
         .await;
 
-        if write_result.is_ok() {
+        drop(permit);
+
+        if upload_result.is_ok() {
             let current_total_bytes = {
-                let mut total_guard = total_bytes_uploaded.lock().await;
+                let mut total_guard = total_bytes_uploaded_clone.lock().await;
                 *total_guard += bytes_in_chunk;
                 *total_guard
             };
-            {
-                let mut cb_guard = callback_arc.lock().await;
-                invoke_callback(
-                    &mut *cb_guard,
-                    PutEvent::UploadProgress {
-                        bytes_written: current_total_bytes,
-                        total_bytes: total_size_overall,
-                    },
-                )
-                .await?;
-            }
 
-            let mut pads_guard = successfully_written_pads.lock().await;
-            pads_guard.push(pad_info_for_task);
+            let mut cb_guard = callback_arc_clone.lock().await;
+            invoke_callback(
+                &mut *cb_guard,
+                PutEvent::UploadProgress {
+                    bytes_written: current_total_bytes,
+                    total_bytes: total_size_overall,
+                },
+            )
+            .await?;
+
+            let mut pads_guard = successfully_written_pads_clone.lock().await;
+            pads_guard.push(task_pad_info);
         }
 
-        write_result
+        upload_result
     });
 }

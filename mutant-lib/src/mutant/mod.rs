@@ -1,12 +1,16 @@
+use crate::cache::{read_local_index, write_local_index};
 use crate::error::Error;
-use crate::events::{GetCallback, InitCallback, PutCallback};
+use crate::events::{
+    invoke_init_callback, GetCallback, InitCallback, InitProgressEvent, PutCallback,
+};
 use crate::mutant::data_structures::MasterIndexStorage;
 use crate::pad_manager::PadManager;
 use crate::storage::Storage;
 use autonomi::{Network, ScratchpadAddress, SecretKey, Wallet};
 use chrono::{DateTime, Utc};
 use hex;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -104,7 +108,7 @@ pub struct MutAnt {
 impl MutAnt {
     /// Creates a new MutAnt instance using default configuration.
     /// Use `init_with_progress` for detailed initialization feedback and custom config.
-    pub async fn init(private_key_hex: String) -> Result<(Self, Option<JoinHandle<()>>), Error> {
+    pub async fn init(private_key_hex: String) -> Result<Self, Error> {
         Self::init_with_progress(private_key_hex, MutAntConfig::default(), None).await
     }
 
@@ -113,79 +117,169 @@ impl MutAnt {
         private_key_hex: String,
         config: MutAntConfig,
         mut init_callback: Option<InitCallback>,
-    ) -> Result<(Self, Option<JoinHandle<()>>), Error> {
-        info!("Initializing MutAnt with config: {:?}...", config);
+    ) -> Result<Self, Error> {
+        info!(
+            "Initializing MutAnt (lazy network) with config: {:?}...",
+            config
+        );
 
-        let use_local = match config.network {
-            NetworkChoice::Devnet => true,
-            NetworkChoice::Mainnet => false,
-        };
+        let total_steps = 5; // Reduced steps as network init is deferred
+        #[allow(unused_assignments)]
+        let mut current_step = 0;
 
-        let network = match Network::new(use_local) {
-            Ok(n) => n,
-            Err(e) => {
-                error!("Failed to initialize Autonomi network: {}", e);
-                return Err(Error::NetworkInitError(format!(
-                    "Failed to initialize Autonomi network: {}",
-                    e
-                )));
-            }
-        };
+        macro_rules! try_step {
+            ($step:expr, $message:expr, $action:expr) => {{
+                current_step = $step;
+                invoke_init_callback(
+                    &mut init_callback,
+                    InitProgressEvent::Step {
+                        step: current_step,
+                        message: $message.to_string(),
+                    },
+                )
+                .await?;
+                match $action.await {
+                    Ok(val) => val,
+                    Err(e) => {
+                        invoke_init_callback(
+                            &mut init_callback,
+                            InitProgressEvent::Failed {
+                                error_msg: e.to_string(),
+                            },
+                        )
+                        .await
+                        .ok(); // Ignore error during failure reporting
+                        return Err(e);
+                    }
+                }
+            }};
+        }
 
-        info!("Autonomi network initialized.");
+        invoke_init_callback(
+            &mut init_callback,
+            InitProgressEvent::Starting { total_steps },
+        )
+        .await?;
 
-        let wallet = match Wallet::new_from_private_key(network.clone(), &private_key_hex) {
-            Ok(w) => w,
-            Err(e) => {
-                error!("Failed to create wallet from private key: {}", e);
-                return Err(Error::WalletError(format!(
-                    "Failed to create wallet from private key: {}",
-                    e
-                )));
-            }
-        };
-
+        // --- Step 1: Create Wallet ---
+        let wallet = try_step!(1, "Creating wallet", async {
+            let network = Network::new(config.network == NetworkChoice::Devnet)
+                .map_err(|e| Error::NetworkInitError(format!("Network init failed: {}", e)))?;
+            Wallet::new_from_private_key(network, &private_key_hex)
+                .map_err(|e| Error::WalletError(format!("Failed to create wallet: {}", e)))
+        });
         info!("Autonomi wallet created.");
 
-        {
-            info!("Initializing Storage layer...");
+        // --- Step 2: Derive MIS Key and Address --- (No network needed)
+        let (master_index_address, master_index_key) =
+            try_step!(2, "Deriving storage key and address", async {
+                let trimmed_hex = private_key_hex.trim();
+                let hex_to_decode = if trimmed_hex.starts_with("0x") {
+                    &trimmed_hex[2..]
+                } else {
+                    trimmed_hex
+                };
+                let input_key_bytes = hex::decode(hex_to_decode).map_err(|e| {
+                    Error::InvalidInput(format!("Failed to decode private key hex: {}", e))
+                })?;
+                let mut hasher = Sha256::new();
+                hasher.update(&input_key_bytes);
+                let hash_result = hasher.finalize();
+                let key_array: [u8; 32] = hash_result.into();
+                let derived_key = SecretKey::from_bytes(key_array).map_err(|e| {
+                    Error::InternalError(format!("Failed to create SecretKey from HASH: {:?}", e))
+                })?;
+                let derived_public_key = derived_key.public_key();
+                let address = ScratchpadAddress::new(derived_public_key);
+                info!("Derived Master Index Address: {}", address);
+                Ok::<_, Error>((address, derived_key))
+            });
 
-            let (storage_instance, storage_init_handle, mis_mutex): (
-                Storage,
-                Option<JoinHandle<()>>,
-                Arc<Mutex<MasterIndexStorage>>,
-            ) = match crate::storage::new(
-                wallet,
-                private_key_hex.clone(),
-                config.network,
-                &mut init_callback,
-            )
-            .await
-            {
-                Ok(result) => result,
-                Err(e) => {
-                    return Err(e);
+        // --- Step 3: Load Master Index from Cache or Create Default --- (Local disk only)
+        let mis_mutex = try_step!(3, "Loading local index cache", async {
+            match read_local_index().await {
+                Ok(Some(mut cached_index)) => {
+                    info!("Loaded index from local cache.");
+                    // Ensure scratchpad size is set (important if cache was from older version)
+                    if cached_index.scratchpad_size == 0 {
+                        warn!(
+                            "Cached index has scratchpad_size 0, setting to default: {}",
+                            DEFAULT_SCRATCHPAD_SIZE
+                        );
+                        cached_index.scratchpad_size = DEFAULT_SCRATCHPAD_SIZE;
+                        // Persist the fix back to cache
+                        if let Err(e) = write_local_index(&cached_index).await {
+                            warn!(
+                                "Failed to write updated cache after fixing scratchpad_size: {}",
+                                e
+                            );
+                        }
+                    }
+                    Ok::<_, Error>(Arc::new(Mutex::new(cached_index)))
                 }
-            };
-            let storage_arc = Arc::new(storage_instance);
-            info!("Storage layer initialized.");
+                Ok(None) => {
+                    info!("Local cache not found. Initializing default index.");
+                    // Create a default MIS, ensuring scratchpad size is set
+                    let default_mis = MasterIndexStorage {
+                        scratchpad_size: DEFAULT_SCRATCHPAD_SIZE,
+                        ..Default::default()
+                    };
+                    // Attempt to write the new default index to cache immediately
+                    if let Err(e) = write_local_index(&default_mis).await {
+                        warn!("Failed to write initial default index to cache: {}", e);
+                    }
+                    Ok::<_, Error>(Arc::new(Mutex::new(default_mis)))
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to read local cache: {}. Initializing default index.",
+                        e
+                    );
+                    // Create a default MIS on error too
+                    let default_mis = MasterIndexStorage {
+                        scratchpad_size: DEFAULT_SCRATCHPAD_SIZE,
+                        ..Default::default()
+                    };
+                    // Don't attempt to write cache here as the read failed
+                    Ok::<_, Error>(Arc::new(Mutex::new(default_mis)))
+                }
+            }
+        });
 
-            info!("Initializing PadManager...");
-            let pad_manager = PadManager::new(storage_arc.clone(), mis_mutex.clone());
-            info!("PadManager initialized.");
+        // --- Step 4: Initialize Storage Layer (Lazy) --- (No network)
+        let storage_instance = try_step!(4, "Initializing storage layer (lazy)", async {
+            crate::storage::new(
+                wallet, // Pass the created wallet
+                config.network,
+                master_index_address, // Pass derived address
+                master_index_key,     // Pass derived key
+            )
+        });
+        let storage_arc = Arc::new(storage_instance);
+        info!("Storage layer initialized (lazily). Carrier network init deferred.");
 
-            let mis_addr_from_storage = storage_arc.get_master_index_info().0;
+        // --- Step 5: Initialize PadManager --- (No network)
+        let pad_manager = try_step!(5, "Initializing pad manager", async {
+            Ok::<_, Error>(PadManager::new(storage_arc.clone(), mis_mutex.clone()))
+        });
+        info!("PadManager initialized.");
 
-            let mutant = Self {
-                storage: storage_arc,
-                pad_manager,
-                master_index_storage: mis_mutex,
-                master_index_addr: mis_addr_from_storage,
-            };
+        let mutant = Self {
+            storage: storage_arc,
+            pad_manager,
+            master_index_storage: mis_mutex,
+            master_index_addr: master_index_address, // Store the derived address
+        };
 
-            info!("MutAnt initialization complete.");
-            Ok((mutant, storage_init_handle))
-        }
+        info!("MutAnt initialization complete (lazy network).");
+        invoke_init_callback(
+            &mut init_callback,
+            InitProgressEvent::Complete {
+                message: "Initialization complete (lazy network).".to_string(),
+            },
+        )
+        .await?;
+        Ok(mutant)
     }
 
     /// Stores raw bytes under a given user key without progress reporting.
@@ -340,13 +434,18 @@ impl MutAnt {
 
     /// Saves the current in-memory master index to the remote backend.
     pub async fn save_master_index(&self) -> Result<(), Error> {
+        debug!("MutAnt: Saving master index remotely...");
+        // --- LAZY CLIENT GET & CALL ---
+        let client = self.storage.get_client().await?;
+        let (address, key) = self.storage.get_master_index_info();
         crate::storage::storage_save_mis_from_arc_static(
-            &self.storage.client(),
-            &self.master_index_addr,
-            &self.storage.get_master_index_info().1,
+            client, // Pass the obtained client
+            &address,
+            &key,
             &self.master_index_storage,
         )
         .await
+        // --- END ---
     }
 
     /// Imports a free scratchpad using its private key hex string.
@@ -510,12 +609,14 @@ impl MutAnt {
     /// Fetches the MasterIndexStorage directly from the remote backend, bypassing the local cache.
     pub async fn fetch_remote_master_index(&self) -> Result<MasterIndexStorage, Error> {
         debug!("MutAnt: Fetching remote master index directly...");
+        // --- LAZY CLIENT GET & CALL ---
+        let client = self.storage.get_client().await?;
         let (address, key) = self.storage.get_master_index_info();
         crate::storage::fetch_remote_master_index_storage_static(
-            self.storage.client(),
-            &address,
-            &key,
+            client, // Pass the obtained client
+            &address, &key,
         )
-        .await // Return the result directly
+        .await
+        // --- END ---
     }
 }

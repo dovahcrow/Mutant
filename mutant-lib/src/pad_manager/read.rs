@@ -57,42 +57,55 @@ impl PadManager {
                 key_for_task, index, address_clone
             );
             join_set.spawn(async move {
-                let secret_key = match key_bytes_clone
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| Error::InternalError("Invalid key length".to_string()))
-                    .and_then(|arr| {
-                        SecretKey::from_bytes(arr).map_err(|e| {
-                            Error::InternalError(format!("Key reconstruction failed: {}", e))
-                        })
-                    }) {
-                    Ok(k) => k,
-                    Err(e) => {
-                        error!(
-                            "RetrieveTask[{}]: Key error for pad index {}: {}",
-                            key_for_task, index, e
-                        );
-                        return Err((index, e));
+                let secret_key = {
+                    let key_array: [u8; 32] = match key_bytes_clone
+                        .as_slice()
+                        .try_into()
+                     {
+                         Ok(arr) => arr,
+                         Err(_) => {
+                             error!(
+                                "RetrieveTask[{}]: Invalid key bytes slice length for pad index {}: {}",
+                                key_for_task, index, Error::InternalError("Pad key bytes have incorrect length".to_string())
+                             );
+                             return Err((index, Error::InternalError("Pad key bytes have incorrect length".to_string())));
+                         }
+                     };
+                    match SecretKey::from_bytes(key_array) {
+                        Ok(k) => k,
+                        Err(e) => {
+                            error!(
+                                "RetrieveTask[{}]: Failed to create SecretKey from bytes for pad index {}: {}",
+                                key_for_task, index, e
+                            );
+                            return Err((index, Error::InternalError(format!("Failed to create SecretKey: {}", e))));
+                        }
                     }
                 };
 
                 let fetch_desc = format!("Fetch pad {} - {}", index, address_clone);
                 let fetch_result = retry_operation(
                     &fetch_desc,
-                    || {
+                    || async {
                         let storage_inner = storage_clone.clone();
                         let addr_inner = address_clone.clone();
                         let key_inner = secret_key.clone();
-                        async move {
-                            crate::storage::fetch_scratchpad_internal_static(
-                                &storage_inner.client(),
-                                &addr_inner,
-                                &key_inner,
-                            )
-                            .await
-                        }
+
+                        let client = storage_inner.get_client().await?;
+                        crate::storage::fetch_scratchpad_internal_static(
+                            client,
+                            &addr_inner,
+                            &key_inner,
+                        )
+                        .await
                     },
-                    |_e: &Error| true,
+                    |e: &Error| {
+                        warn!(
+                            "RetrieveTask[{}]: Retrying fetch for pad #{} due to error: {}",
+                            key_for_task, index, e
+                        );
+                        true
+                    },
                 )
                 .await;
                 let fetched_data = fetch_result.map_err(|e| (index, e))?;

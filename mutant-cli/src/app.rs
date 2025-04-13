@@ -282,23 +282,23 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
 
     let mp = MultiProgress::new();
     let _mp_clone_for_task = mp.clone();
-    let (_pb, init_callback_fn): (_, InitCallback) = create_init_callback(&mp);
+    let (pb, init_callback_fn): (_, InitCallback) = create_init_callback(&mp);
 
     let config = MutAntConfig {
         network: network_choice,
     };
 
-    let (mutant, init_handle) =
-        match MutAnt::init_with_progress(private_key, config, Some(init_callback_fn)).await {
-            Ok(m) => m,
-            Err(e) => {
-                error!("Failed to initialize MutAnt: {}", e);
-                mp.clear().unwrap_or_else(|e| {
-                    error!("Failed to clear MultiProgress: {}", e);
-                });
-                return Err(CliError::MutAntInit(e.to_string()));
-            }
-        };
+    let mutant = match MutAnt::init_with_progress(private_key, config, Some(init_callback_fn)).await
+    {
+        Ok(m) => m,
+        Err(e) => {
+            error!("Failed to initialize MutAnt: {}", e);
+            mp.clear().unwrap_or_else(|e| {
+                error!("Failed to clear MultiProgress: {}", e);
+            });
+            return Err(CliError::MutAntInit(e.to_string()));
+        }
+    };
 
     let mp_join_handle = tokio::spawn(async move {
         let _keep_alive = _mp_clone_for_task;
@@ -336,7 +336,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
 
     info!("Command handling finished, cleaning up background tasks...");
 
-    cleanup_background_tasks(mp_join_handle, init_handle).await;
+    cleanup_background_tasks(mp_join_handle, None).await;
 
     info!("Cleanup complete.");
 
