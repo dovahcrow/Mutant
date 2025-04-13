@@ -9,6 +9,10 @@ use serde_cbor;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task;
+use tokio::time::{sleep, Duration};
+
+const VERIFICATION_RETRY_DELAY: Duration = Duration::from_secs(10);
+const VERIFICATION_RETRY_LIMIT: u32 = 360; // 360 * 10s = 1 hour timeout
 
 pub(crate) async fn load_master_index_storage_static(
     client: &Client,
@@ -226,8 +230,28 @@ pub(crate) async fn update_scratchpad_internal_static(
 ) -> Result<(), Error> {
     let data_bytes = Bytes::from(data.to_vec());
     let owner_pubkey = owner_key.public_key();
+    let address = ScratchpadAddress::new(owner_pubkey.into());
+    let data_len = data.len(); // For logging
+
+    // Get initial state for verification later
+    let initial_counter = match client.scratchpad_get(&address).await {
+        Ok(s) => Some(s.counter()),
+        Err(e) => {
+            warn!(
+                "UpdateStaticVerify[{}]: Failed to get initial counter before update: {}. Proceeding with update.",
+                address, e
+            );
+            None // May not exist yet, or network error
+        }
+    };
+
+    debug!(
+        "UpdateStatic[{}]: Starting update operation. Data size: {}, Content type: {}",
+        address, data_len, content_type
+    );
+
     retry_operation(
-        &format!("Update scratchpad owned by {:?}", owner_pubkey),
+        &format!("Update scratchpad {}", address),
         || async {
             client
                 .scratchpad_update(owner_key, content_type, &data_bytes)
@@ -236,7 +260,121 @@ pub(crate) async fn update_scratchpad_internal_static(
         },
         |_e: &Error| true,
     )
-    .await
+    .await?;
+
+    debug!(
+        "UpdateStatic[{}]: Update operation successful. Starting verification loop ({} attempts, {:?} delay).",
+        address, VERIFICATION_RETRY_LIMIT, VERIFICATION_RETRY_DELAY
+    );
+
+    for attempt in 0..VERIFICATION_RETRY_LIMIT {
+        sleep(VERIFICATION_RETRY_DELAY).await;
+        debug!(
+            "UpdateStaticVerify[{}]: Verification attempt {}/{}...",
+            address,
+            attempt + 1,
+            VERIFICATION_RETRY_LIMIT
+        );
+
+        match client.scratchpad_get(&address).await {
+            Ok(scratchpad) => {
+                debug!(
+                    "UpdateStaticVerify[{}]: Fetched scratchpad. Counter: {}, PayloadSize: {}",
+                    address,
+                    scratchpad.counter(),
+                    scratchpad.payload_size()
+                );
+
+                // 1. Check counter increment (if initial counter was available)
+                let counter_check_passed = match initial_counter {
+                    Some(initial) => scratchpad.counter() > initial,
+                    None => true, // Cannot verify counter if initial fetch failed
+                };
+
+                if !counter_check_passed {
+                    debug!(
+                        "UpdateStaticVerify[{}]: Counter check failed (Initial: {:?}, Current: {}). Retrying...",
+                        address, initial_counter, scratchpad.counter()
+                    );
+                    continue; // Counter hasn't incremented yet
+                }
+
+                // 3. Decrypt and compare data (Now step 2)
+                debug!(
+                    "UpdateStaticVerify[{}]: Counter check passed. Proceeding to decryption check.",
+                    address
+                );
+                let key_clone = owner_key.clone();
+                // let address_clone = address.clone(); // Unused, decryption errors use `address`
+                match task::spawn_blocking(move || scratchpad.decrypt_data(&key_clone)).await {
+                    Ok(Ok(decrypted_bytes)) => {
+                        if decrypted_bytes.as_ref() == data {
+                            debug!(
+                                "UpdateStaticVerify[{}]: Verification successful on attempt {}.",
+                                address,
+                                attempt + 1
+                            );
+                            return Ok(()); // Data matches!
+                        } else {
+                            debug!(
+                                "UpdateStaticVerify[{}]: Data mismatch (Expected len: {}, Got len: {}). Retrying...",
+                                address,
+                                data.len(),
+                                decrypted_bytes.len()
+                            );
+                            continue; // Data doesn't match yet
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        // Decryption error is serious, likely wrong key or data corruption
+                        error!(
+                            "UpdateStaticVerify[{}]: Decryption failed during verification: {}. Aborting verification.",
+                             address, e
+                        );
+                        return Err(Error::AutonomiLibError(format!(
+                            "Verification decryption failed: {}",
+                            e
+                        )));
+                    }
+                    Err(join_error) => {
+                        // Task failure is serious
+                        error!(
+                            "UpdateStaticVerify[{}]: Spawn_blocking failed during verification: {}. Aborting verification.",
+                             address, join_error
+                        );
+                        return Err(Error::from_join_error_msg(
+                            &join_error,
+                            format!("Verification task failed for {}", address),
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                if e.to_string().contains("RecordNotFound") {
+                    debug!(
+                        "UpdateStaticVerify[{}]: RecordNotFound during verification attempt {}. Retrying...",
+                        address, attempt + 1
+                    );
+                    // Continue loop, waiting for propagation
+                } else {
+                    error!(
+                        "UpdateStaticVerify[{}]: Unexpected error during verification attempt {}: {}. Aborting verification.",
+                        address, attempt + 1, e
+                    );
+                    return Err(Error::AutonomiClient(e)); // Propagate other client errors
+                }
+            }
+        }
+    }
+
+    error!(
+        "UpdateStaticVerify[{}]: Verification timed out after {} attempts.",
+        address, VERIFICATION_RETRY_LIMIT
+    );
+    Err(Error::VerificationTimeout(format!(
+        "Update verification timed out for {}",
+        address
+    )))
 }
 
 pub(crate) async fn create_scratchpad_static(
@@ -248,11 +386,15 @@ pub(crate) async fn create_scratchpad_static(
 ) -> Result<ScratchpadAddress, Error> {
     let data_bytes = Bytes::from(initial_data.to_vec());
     let expected_address = ScratchpadAddress::new(owner_key.public_key().into());
+    let initial_data_len = initial_data.len(); // For logging
 
     debug!(
-        "Attempting static scratchpad creation for owner {:?} at expected address {}",
+        "CreateStatic[{}]: Attempting static scratchpad creation for owner {:?} at expected address {}. Data size: {}, ContentType: {}",
+        expected_address,
         owner_key.public_key(),
-        expected_address
+        expected_address,
+        initial_data_len,
+        content_type,
     );
 
     let created_address = retry_operation(
@@ -289,8 +431,62 @@ pub(crate) async fn create_scratchpad_static(
         ));
     }
     debug!(
-        "Static scratchpad creation successful at {}",
-        created_address
+        "CreateStatic[{}]: Static scratchpad creation reported successful. Starting verification loop ({} attempts, {:?} delay).",
+        created_address, VERIFICATION_RETRY_LIMIT, VERIFICATION_RETRY_DELAY
     );
-    Ok(created_address)
+
+    // Verification Loop
+    for attempt in 0..VERIFICATION_RETRY_LIMIT {
+        sleep(VERIFICATION_RETRY_DELAY).await;
+        debug!(
+            "CreateStaticVerify[{}]: Verification attempt {}/{}...",
+            created_address,
+            attempt + 1,
+            VERIFICATION_RETRY_LIMIT
+        );
+
+        match fetch_scratchpad_internal_static(client, &created_address, owner_key).await {
+            Ok(fetched_data) => {
+                if fetched_data == initial_data {
+                    debug!(
+                        "CreateStaticVerify[{}]: Verification successful on attempt {}.",
+                        created_address,
+                        attempt + 1
+                    );
+                    return Ok(created_address); // Success!
+                } else {
+                    debug!(
+                        "CreateStaticVerify[{}]: Data mismatch during verification (Expected len: {}, Got len: {}). Retrying...",
+                        created_address,
+                        initial_data.len(),
+                        fetched_data.len()
+                    );
+                    // Continue loop, data might not be fully propagated/consistent yet
+                }
+            }
+            Err(Error::KeyNotFound(_)) => {
+                debug!(
+                    "CreateStaticVerify[{}]: KeyNotFound during verification attempt {}. Retrying...",
+                    created_address, attempt + 1
+                );
+                // Continue loop, waiting for propagation
+            }
+            Err(e) => {
+                error!(
+                    "CreateStaticVerify[{}]: Unexpected error during verification attempt {}: {}. Aborting verification.",
+                     created_address, attempt + 1, e
+                );
+                return Err(e); // Propagate other unexpected errors
+            }
+        }
+    }
+
+    error!(
+        "CreateStaticVerify[{}]: Verification timed out after {} attempts.",
+        created_address, VERIFICATION_RETRY_LIMIT
+    );
+    Err(Error::VerificationTimeout(format!(
+        "Create verification timed out for {}",
+        created_address
+    )))
 }

@@ -129,6 +129,8 @@ pub enum Error {
     Timeout(String),
     #[error("Tokio task join error: {0}")]
     JoinError(String),
+    #[error("Verification failed after timeout: {0}")]
+    VerificationTimeout(String),
 }
 
 impl Error {
