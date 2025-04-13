@@ -315,10 +315,15 @@ pub(crate) async fn update_scratchpad_internal_static(
     )
     .await?;
 
+    // --- Add delay before starting verification ---
     debug!(
-        "UpdateStatic[{}]: Update operation successful. Starting verification loop ({} attempts, no delay).",
-        address, VERIFICATION_RETRY_LIMIT
+        "UpdateStatic[{}]: Update successful. Waiting 5 seconds before starting verification loop...",
+        address
     );
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    // ------------------------------------------
+
+    debug!("UpdateStatic[{}]: Starting verification loop...", address);
 
     for attempt in 0..VERIFICATION_RETRY_LIMIT {
         // Introduce delay *before* the attempt (except the first one)
@@ -489,6 +494,19 @@ pub(crate) async fn create_scratchpad_static(
     debug!(
         "CreateStatic[{}]: Static scratchpad creation reported successful. Starting verification loop ({} attempts, no delay).",
         created_address, VERIFICATION_RETRY_LIMIT
+    );
+
+    // --- Add delay before starting verification ---
+    debug!(
+        "CreateStatic[{}]: Create successful. Waiting 5 seconds before starting verification loop...",
+        created_address
+    );
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    // ------------------------------------------
+
+    debug!(
+        "CreateStatic[{}]: Starting verification loop...",
+        created_address
     );
 
     // Verification Loop - Check only for existence, not content (decryption fails on newly created empty pads)
