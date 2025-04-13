@@ -32,7 +32,7 @@ pub async fn handle_put(
     };
 
     let put_multi_progress = multi_progress.clone();
-    let (reservation_pb, upload_pb, _res_confirmed, _last_progress, callback) =
+    let (reservation_pb, upload_pb, commit_pb, _res_confirmed, _last_progress, callback) =
         create_put_callback(&put_multi_progress);
 
     let result = if force {
@@ -57,16 +57,18 @@ pub async fn handle_put(
         }
         Err(Error::OperationCancelled) => {
             eprintln!("Operation cancelled.");
-            if let Some(pb) = reservation_pb.lock().unwrap().take() {
-                if !pb.is_finished() {
-                    pb.finish_and_clear();
+            let clear_pb = |pb_opt: &std::sync::Arc<
+                std::sync::Mutex<Option<crate::callbacks::StyledProgressBar>>,
+            >| {
+                if let Some(pb) = pb_opt.lock().unwrap().take() {
+                    if !pb.is_finished() {
+                        pb.finish_and_clear();
+                    }
                 }
-            }
-            if let Some(pb) = upload_pb.lock().unwrap().take() {
-                if !pb.is_finished() {
-                    pb.finish_and_clear();
-                }
-            }
+            };
+            clear_pb(&reservation_pb);
+            clear_pb(&upload_pb);
+            clear_pb(&commit_pb);
             ExitCode::FAILURE
         }
         Err(Error::KeyAlreadyExists(_)) if !force => {
@@ -87,16 +89,18 @@ pub async fn handle_put(
                 e
             );
             let fail_msg = "Operation Failed".to_string();
-            if let Some(pb) = (*reservation_pb.lock().unwrap()).take() {
-                if !pb.is_finished() {
-                    pb.abandon_with_message(fail_msg.clone());
+            let abandon_pb = |pb_opt: &std::sync::Arc<
+                std::sync::Mutex<Option<crate::callbacks::StyledProgressBar>>,
+            >| {
+                if let Some(pb) = pb_opt.lock().unwrap().take() {
+                    if !pb.is_finished() {
+                        pb.abandon_with_message(fail_msg.clone());
+                    }
                 }
-            }
-            if let Some(pb) = (*upload_pb.lock().unwrap()).take() {
-                if !pb.is_finished() {
-                    pb.abandon_with_message(fail_msg.clone());
-                }
-            }
+            };
+            abandon_pb(&reservation_pb);
+            abandon_pb(&upload_pb);
+            abandon_pb(&commit_pb);
             ExitCode::FAILURE
         }
     }

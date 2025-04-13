@@ -108,7 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-
+- Display separate progress bars for chunk upload/confirmation (`Uploading...`) and final pad commit (`Confirming pads...`) during `put` operations.
 - Prompt user to create remote index if local cache and remote index are missing.
 
 ### Changed

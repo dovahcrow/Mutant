@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
-pub(super) const MAX_CONCURRENT_RESERVATIONS: usize = 10;
+pub(super) const MAX_CONCURRENT_RESERVATIONS: usize = 100;
 
 /// Reserves a specified number of new pads concurrently.
 /// Saves the Master Index after each successful reservation and sends PadInfo via channel.

@@ -30,7 +30,7 @@ pub enum PutEvent {
     ReservationProgress { current: u64, total: u64 },
     /// Indicates that the data upload process is starting.
     StartingUpload { total_bytes: u64 },
-    /// Reports progress during data upload.
+    /// Reports progress of bytes confirmed after chunk upload and initial verification.
     UploadProgress {
         bytes_written: u64,
         total_bytes: u64,

@@ -12,12 +12,12 @@ use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-pub(super) const WRITE_TASK_CONCURRENCY: usize = 20;
+pub(super) const WRITE_TASK_CONCURRENCY: usize = 100;
 
 // --- Standalone Concurrent Write Logic ---
 
 /// Performs concurrent writes using immediately available pads and pads streamed from a channel.
-/// Returns a list of PadInfo for all pads successfully written to.
+/// Returns a list of PadInfo for all pads successfully written to
 pub(super) async fn perform_concurrent_write_standalone(
     key: &str,
     data_arc: Arc<Vec<u8>>,
@@ -259,11 +259,11 @@ pub(super) async fn perform_concurrent_write_standalone(
         error!("PerformWrite[{}]: Completed with error: {}", key_owned, e);
         Err(e)
     } else {
-        let final_bytes = *total_bytes_uploaded.lock().await;
-        if final_bytes != total_size as u64 {
+        let final_bytes_uploaded = *total_bytes_uploaded.lock().await;
+        if final_bytes_uploaded != total_size as u64 {
             error!(
-                "PerformWrite[{}]: Byte count mismatch! Expected: {}, Reported: {}",
-                key_owned, total_size, final_bytes
+                "PerformWrite[{}]: Byte count mismatch! Expected: {}, Reported Uploaded: {}",
+                key_owned, total_size, final_bytes_uploaded
             );
             Err(Error::InternalError(
                 "Write completion byte count mismatch".to_string(),
@@ -280,7 +280,7 @@ pub(super) async fn perform_concurrent_write_standalone(
             debug!(
                 "PerformWrite[{}]: Completed successfully. {} bytes written across {} pads.",
                 key_owned,
-                final_bytes,
+                final_bytes_uploaded,
                 final_pads.len()
             );
             Ok(final_pads)
@@ -289,11 +289,12 @@ pub(super) async fn perform_concurrent_write_standalone(
 }
 
 /// Spawns a single write task. (Standalone function version)
+#[allow(clippy::too_many_arguments)]
 fn spawn_write_task_standalone(
     join_set: &mut JoinSet<Result<(), Error>>,
     semaphore: Arc<Semaphore>,
     callback_arc: Arc<Mutex<Option<PutCallback>>>,
-    total_bytes_uploaded: Arc<Mutex<u64>>,
+    total_bytes_uploaded_arc: Arc<Mutex<u64>>,
     total_size_overall: u64,
     storage: Arc<BaseStorage>,
     pad_index: usize,
@@ -309,7 +310,7 @@ fn spawn_write_task_standalone(
     join_set.spawn(async move {
         let semaphore_clone = semaphore.clone();
         let callback_arc_clone = callback_arc.clone();
-        let total_bytes_uploaded_clone = total_bytes_uploaded.clone();
+        let total_bytes_uploaded_clone = total_bytes_uploaded_arc.clone();
         let storage_clone = storage.clone();
         let successfully_written_pads_clone = successfully_written_pads.clone();
         let task_pad_info = pad_info_for_task.clone();
@@ -346,9 +347,11 @@ fn spawn_write_task_standalone(
         let data_to_write = data_arc[chunk_start..chunk_end].to_vec();
         let bytes_in_chunk = data_to_write.len() as u64;
 
+        // --- Perform Upload ---
         let upload_result = retry_operation(
             &format!("PadWrite[{}]: Upload Pad {}", key_str, pad_index),
             || async {
+                // --- Actual Network Call ---
                 let data_slice = &data_to_write;
                 let client = storage_clone.get_client().await?;
                 crate::storage::update_scratchpad_internal_static(client, &pad_key, data_slice, 0)
@@ -367,21 +370,23 @@ fn spawn_write_task_standalone(
         drop(permit);
 
         if upload_result.is_ok() {
-            let current_total_bytes = {
-                let mut total_guard = total_bytes_uploaded_clone.lock().await;
-                *total_guard += bytes_in_chunk;
-                *total_guard
+            let current_total_uploaded = {
+                let mut uploaded_guard = total_bytes_uploaded_clone.lock().await;
+                *uploaded_guard += bytes_in_chunk;
+                *uploaded_guard
             };
 
-            let mut cb_guard = callback_arc_clone.lock().await;
-            invoke_callback(
-                &mut *cb_guard,
-                PutEvent::UploadProgress {
-                    bytes_written: current_total_bytes,
-                    total_bytes: total_size_overall,
-                },
-            )
-            .await?;
+            {
+                let mut cb_guard = callback_arc_clone.lock().await;
+                invoke_callback(
+                    &mut *cb_guard,
+                    PutEvent::UploadProgress {
+                        bytes_written: current_total_uploaded,
+                        total_bytes: total_size_overall,
+                    },
+                )
+                .await?;
+            }
 
             let mut pads_guard = successfully_written_pads_clone.lock().await;
             pads_guard.push(task_pad_info);

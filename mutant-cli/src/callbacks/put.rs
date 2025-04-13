@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 struct PutCallbackContext {
     res_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
-    sp_up_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
-    cf_pd_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
+    upload_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
+    commit_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     res_confirmed_and_needed: Arc<Mutex<bool>>,
     last_displayed_reservation_progress: Arc<Mutex<u64>>,
     total_bytes_for_upload: Arc<Mutex<u64>>,
@@ -33,7 +33,9 @@ pub fn create_put_callback(
 ) -> (
     // Reservation progress bar (used before confirmation)
     Arc<Mutex<Option<StyledProgressBar>>>,
-    // Scratchpad upload progress bar
+    // Upload progress bar (Tracks UploadProgress)
+    Arc<Mutex<Option<StyledProgressBar>>>,
+    // Commit progress bar (Tracks ScratchpadCommitComplete)
     Arc<Mutex<Option<StyledProgressBar>>>,
     // Flag indicating if reservation was confirmed and needed
     Arc<Mutex<bool>>,
@@ -43,8 +45,8 @@ pub fn create_put_callback(
     PutCallback,
 ) {
     let reservation_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
-    let scratchpad_upload_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
-    let confirmed_pads_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
+    let upload_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
+    let commit_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let reservation_confirmed_and_needed = Arc::new(Mutex::new(false));
     let last_displayed_reservation_progress = Arc::new(Mutex::new(0u64));
     let total_bytes_for_upload = Arc::new(Mutex::new(0u64));
@@ -52,8 +54,8 @@ pub fn create_put_callback(
     // Create the context instance
     let context = PutCallbackContext {
         res_pb_opt: reservation_pb_opt.clone(),
-        sp_up_pb_opt: scratchpad_upload_pb_opt.clone(),
-        cf_pd_pb_opt: confirmed_pads_pb_opt.clone(),
+        upload_pb_opt: upload_pb_opt.clone(),
+        commit_pb_opt: commit_pb_opt.clone(),
         res_confirmed_and_needed: reservation_confirmed_and_needed.clone(),
         last_displayed_reservation_progress: last_displayed_reservation_progress.clone(),
         total_bytes_for_upload: total_bytes_for_upload.clone(),
@@ -232,35 +234,55 @@ pub fn create_put_callback(
                 PutEvent::StartingUpload { total_bytes } => {
                     *ctx.total_bytes_for_upload.lock().unwrap() = total_bytes;
 
-                    let mut sp_up_pb_guard = ctx.sp_up_pb_opt.lock().unwrap();
-                    let sp_up_pb = sp_up_pb_guard.get_or_insert_with(|| {
+                    // Initialize Upload Bar
+                    let mut upload_pb_guard = ctx.upload_pb_opt.lock().unwrap();
+                    let upload_pb = upload_pb_guard.get_or_insert_with(|| {
                         StyledProgressBar::new(&ctx.multi_progress)
                     });
-
-                    sp_up_pb.set_style(super::progress::get_default_bytes_style());
-                    sp_up_pb.set_length(total_bytes);
-                    sp_up_pb.set_position(0);
-                    sp_up_pb.set_message("Uploading...".to_string());
+                    upload_pb.set_style(super::progress::get_default_bytes_style());
+                    upload_pb.set_length(total_bytes);
+                    upload_pb.set_position(0);
+                    upload_pb.set_message("Uploading...".to_string());
 
                     Ok(true)
                 }
                 PutEvent::UploadProgress { bytes_written, total_bytes: _ } => {
-                    if let Some(sp_up_pb) = ctx.sp_up_pb_opt.lock().unwrap().as_mut() {
-                        if !sp_up_pb.is_finished() {
-                            sp_up_pb.set_position(bytes_written);
+                    if let Some(upload_pb) = ctx.upload_pb_opt.lock().unwrap().as_mut() {
+                        if !upload_pb.is_finished() {
+                            upload_pb.set_position(bytes_written);
                         }
                     } else {
                         warn!("UploadProgress event received but upload progress bar does not exist.");
                     }
                     Ok(true)
                 }
-                PutEvent::UploadFinished => Ok(true),
-                PutEvent::StoreComplete => {
-                    if let Some(sp_up_pb) = ctx.sp_up_pb_opt.lock().unwrap().take() {
-                        sp_up_pb.finish_and_clear();
+                PutEvent::UploadFinished => {
+                    // Mark upload as complete but keep bar visible for context
+                    if let Some(upload_pb) = ctx.upload_pb_opt.lock().unwrap().as_mut() { // Use as_mut() to keep the Arc alive
+                        if !upload_pb.is_finished() {
+                           // Just update the message, don't finish or clear yet
+                           upload_pb.set_message("Upload complete. Finalizing...".to_string()); 
+                           // Ensure it's visually at 100% if it wasn't already
+                           if let Some(len) = upload_pb.length() {
+                               upload_pb.set_position(len);
+                           } 
+                           // We don't call finish() here, let StoreComplete handle final cleanup
+                        }
                     }
-                    if let Some(cf_pd_pb) = ctx.cf_pd_pb_opt.lock().unwrap().take() {
-                        cf_pd_pb.finish_and_clear();
+                    Ok(true)
+                }
+                PutEvent::StoreComplete => {
+                    // Finish Upload bar (if not already)
+                    if let Some(upload_pb) = ctx.upload_pb_opt.lock().unwrap().take() {
+                        if !upload_pb.is_finished() {
+                            upload_pb.finish_and_clear();
+                        }
+                    }
+                    // Finish Commit bar
+                    if let Some(commit_pb) = ctx.commit_pb_opt.lock().unwrap().take() {
+                        if !commit_pb.is_finished() {
+                            commit_pb.finish_and_clear();
+                        }
                     }
                     Ok(true)
                 }
@@ -269,9 +291,10 @@ pub fn create_put_callback(
                     Ok(true)
                 }
                 PutEvent::ScratchpadCommitComplete { index, total } => {
-                    let mut cf_pd_pb_guard = ctx.cf_pd_pb_opt.lock().unwrap();
-                    let cf_pd_pb = cf_pd_pb_guard.get_or_insert_with(|| {
-                        debug!("Initializing confirmed pads progress bar ({} total)", total);
+                    // Use commit_pb_opt
+                    let mut commit_pb_guard = ctx.commit_pb_opt.lock().unwrap();
+                    let commit_pb = commit_pb_guard.get_or_insert_with(|| {
+                        debug!("Initializing commit pads progress bar ({} total)", total);
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
                         pb.set_length(total);
                         pb.set_message("Confirming pads...".to_string());
@@ -279,9 +302,11 @@ pub fn create_put_callback(
                         pb
                     });
 
-                    if !cf_pd_pb.is_finished() {
-                        cf_pd_pb.set_position(index);
+                    if !commit_pb.is_finished() {
+                        // Increment position (index is 0-based, progress is 1-based typically)
+                        commit_pb.set_position(index + 1); 
                     }
+                    // Don't finish here, wait for StoreComplete or error
                     Ok(true)
                 }
             }
@@ -291,7 +316,8 @@ pub fn create_put_callback(
 
     (
         reservation_pb_opt,
-        scratchpad_upload_pb_opt,
+        upload_pb_opt,
+        commit_pb_opt,
         reservation_confirmed_and_needed,
         last_displayed_reservation_progress,
         callback,
