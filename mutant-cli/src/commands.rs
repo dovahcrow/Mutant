@@ -230,25 +230,18 @@ async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
         }
     } else {
         info!("Fetching key list...");
-        match mutant.list_keys().await {
-            Ok(keys) => {
-                let mut keys = keys;
-                keys.sort();
+        let keys = mutant.list_keys().await;
+        let mut keys = keys;
+        keys.sort();
 
-                if keys.is_empty() {
-                    println!("No keys stored.");
-                } else {
-                    for key in keys {
-                        println!("{}", key);
-                    }
-                }
-                ExitCode::SUCCESS
-            }
-            Err(e) => {
-                eprintln!("Error fetching key list: {}", e);
-                ExitCode::FAILURE
+        if keys.is_empty() {
+            println!("No keys stored.");
+        } else {
+            for key in keys {
+                println!("{}", key);
             }
         }
+        ExitCode::SUCCESS
     }
 }
 
