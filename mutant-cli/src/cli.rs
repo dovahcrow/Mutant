@@ -40,4 +40,6 @@ pub enum Commands {
     Stats,
     /// Resets the master index to its initial empty state. Requires confirmation.
     Reset,
+    /// Imports a free scratchpad using its private key.
+    Import { private_key: String },
 }

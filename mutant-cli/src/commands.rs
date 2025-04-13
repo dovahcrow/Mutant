@@ -26,6 +26,7 @@ pub async fn handle_command(
             error!("Internal error: Reset command reached handle_command");
             unreachable!("Reset command should be handled before handle_command");
         }
+        Commands::Import { private_key } => handle_import(mutant, private_key).await,
     }
 }
 
@@ -353,4 +354,18 @@ fn create_text_gauge(percentage: f64, width: usize, color: Color) -> (String, St
     let percentage_text = format!("{:>6.2}%", percentage * 100.0);
 
     (gauge_bar, percentage_text, color)
+}
+
+async fn handle_import(mutant: MutAnt, private_key: String) -> ExitCode {
+    debug!("CLI: Handling Import command: key={}", private_key);
+    match mutant.import_free_pad(&private_key).await {
+        Ok(_) => {
+            println!("Successfully imported scratchpad.");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Error importing scratchpad: {}", e);
+            ExitCode::FAILURE
+        }
+    }
 }

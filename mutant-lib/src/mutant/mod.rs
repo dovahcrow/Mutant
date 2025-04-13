@@ -3,8 +3,9 @@ use crate::events::{GetCallback, InitCallback, PutCallback};
 use crate::mutant::data_structures::MasterIndexStorage;
 use crate::pad_manager::PadManager;
 use crate::storage::Storage;
-use autonomi::{Network, ScratchpadAddress, Wallet};
+use autonomi::{Network, ScratchpadAddress, SecretKey, Wallet};
 use chrono::{DateTime, Utc};
+use hex;
 use log::{debug, error, info};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -347,6 +348,86 @@ impl MutAnt {
         .await
     }
 
+    /// Imports a free scratchpad using its private key hex string.
+    /// The pad must not already be tracked (either as free or occupied).
+    pub async fn import_free_pad(&self, private_key_hex: &str) -> Result<(), Error> {
+        info!(
+            "Importing free pad with key starting: {}...",
+            &private_key_hex[..8]
+        );
+
+        // 1. Parse the private key
+        let key_bytes = hex::decode(private_key_hex)
+            .map_err(|e| Error::InvalidInput(format!("Invalid private key hex: {}", e)))?;
+        // Ensure the key has the correct length (32 bytes)
+        let key_array: [u8; 32] = key_bytes.as_slice().try_into().map_err(|_| {
+            Error::InvalidInput(format!(
+                "Private key has incorrect length. Expected 32 bytes, got {}",
+                key_bytes.len()
+            ))
+        })?;
+        let secret_key = SecretKey::from_bytes(key_array) // Use the array directly, not a reference
+            .map_err(|e| Error::InvalidInput(format!("Invalid private key: {}", e)))?;
+        let public_key = secret_key.public_key();
+        let pad_address = ScratchpadAddress::new(public_key);
+
+        info!("Derived address for import: {}", pad_address);
+
+        // 2. Lock Master Index and check for conflicts
+        let mut mis_guard = self.master_index_storage.lock().await;
+        debug!("ImportPad[{}]: Master index lock acquired.", pad_address);
+
+        // Check if already in free pads
+        if mis_guard
+            .free_pads
+            .iter()
+            .any(|(addr, _)| *addr == pad_address)
+        {
+            debug!(
+                "ImportPad[{}]: Pad already exists in free list. Aborting.",
+                pad_address
+            );
+            return Err(Error::PadAlreadyExists(format!(
+                "Pad {} is already in the free list.",
+                pad_address
+            )));
+        }
+
+        // Check if used by any key
+        if mis_guard
+            .index
+            .values()
+            .any(|key_info| key_info.pads.iter().any(|(addr, _)| *addr == pad_address))
+        {
+            debug!(
+                "ImportPad[{}]: Pad is currently occupied by a key. Aborting.",
+                pad_address
+            );
+            return Err(Error::PadAlreadyExists(format!(
+                "Pad {} is currently occupied by a key.",
+                pad_address
+            )));
+        }
+
+        // 3. Add to free pads list
+        info!("ImportPad[{}]: Adding pad to free list.", pad_address);
+        mis_guard.free_pads.push((pad_address, key_bytes));
+
+        // 4. Save Master Index
+        // Drop the lock before saving to avoid holding it during potentially long I/O
+        drop(mis_guard);
+        debug!("ImportPad[{}]: Master index lock released.", pad_address);
+
+        info!("ImportPad[{}]: Saving updated master index...", pad_address);
+        self.save_master_index().await?;
+        info!(
+            "ImportPad[{}]: Successfully imported and saved master index.",
+            pad_address
+        );
+
+        Ok(())
+    }
+
     /// Resets the master index to its initial empty state.
     /// WARNING: This is a destructive operation and will orphan existing data pads.
     pub async fn reset_master_index(&self) -> Result<(), Error> {
@@ -385,11 +466,16 @@ impl MutAnt {
     }
 
     /// Lists all user keys currently tracked in the master index.
-    pub async fn list_keys(&self) -> Result<Vec<String>, Error> {
-        debug!("MutAnt: list_keys called");
-        let guard = self.master_index_storage.lock().await;
-        let keys = guard.index.keys().cloned().collect();
-        Ok(keys)
+    pub async fn list_keys(&self) -> Vec<String> {
+        let mis_guard = self.master_index_storage.lock().await;
+        let all_user_keys: Vec<String> = mis_guard
+            .index
+            .keys()
+            .filter(|k| *k != MASTER_INDEX_KEY)
+            .cloned()
+            .collect();
+        drop(mis_guard);
+        all_user_keys
     }
 
     /// Retrieves a list of keys along with their size and modification time.

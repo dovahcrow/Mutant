@@ -53,6 +53,8 @@ pub enum Error {
     InvalidInput(String),
     #[error("Scratchpad fetch failed: {0}")]
     ScratchpadFetchFailed(String),
+    #[error("Pad already exists (either free or occupied): {0}")]
+    PadAlreadyExists(String),
     #[error("Scratchpad read failed: {0}")]
     ScratchpadReadFailed(String),
     #[error("Invalid read range requested for scratchpad: {0}")]
