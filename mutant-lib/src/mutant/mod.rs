@@ -275,7 +275,6 @@ impl MutAnt {
 
                             // Inform the user that creation is starting
                             // --- Step 5: Create Remote Index ---
-                            current_step = 5; // Keep updating the variable for potential future use within this step
                             invoke_init_callback(
                                 &mut init_callback,
                                 InitProgressEvent::Step {

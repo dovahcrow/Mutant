@@ -2,7 +2,6 @@ use super::progress::StyledProgressBar;
 use dialoguer::Confirm;
 use futures::future::FutureExt;
 use indicatif::MultiProgress;
-use mutant_lib::error::Error;
 use mutant_lib::events::{InitCallback, InitProgressEvent};
 use std::sync::{Arc, Mutex};
 

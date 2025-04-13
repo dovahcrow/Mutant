@@ -14,7 +14,6 @@ pub(crate) use network::fetch_scratchpad_internal_static;
 pub(crate) use network::load_master_index_storage_static;
 pub(crate) use network::storage_create_mis_from_arc_static;
 pub(crate) use network::storage_save_mis_from_arc_static;
-pub(crate) use network::update_scratchpad_internal_static;
 pub(crate) use network::update_scratchpad_internal_static_with_progress;
 
 #[repr(u64)]
