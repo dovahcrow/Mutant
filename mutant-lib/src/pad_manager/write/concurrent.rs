@@ -118,6 +118,7 @@ pub(super) async fn perform_concurrent_write_standalone(
             successfully_written_pads.clone(),
             current_pad_info,
             key_owned.clone(),
+            false, // Not newly reserved
         );
         current_pad_index += 1;
     }
@@ -168,6 +169,7 @@ pub(super) async fn perform_concurrent_write_standalone(
             successfully_written_pads.clone(),
             current_pad_info,
             key_owned.clone(),
+            false, // Not newly reserved
         );
         current_pad_index += 1;
     }
@@ -214,6 +216,7 @@ pub(super) async fn perform_concurrent_write_standalone(
                         successfully_written_pads.clone(),
                         current_pad_info,
                         key_owned.clone(),
+                        true, // Newly reserved
                     );
                 } else if chunk_start >= total_size {
                     debug!(
@@ -324,6 +327,7 @@ fn spawn_write_task_standalone(
     successfully_written_pads: Arc<Mutex<Vec<PadInfo>>>,
     pad_info_for_task: PadInfo,
     key_str: String,
+    is_newly_reserved: bool,
 ) {
     join_set.spawn(async move {
         let semaphore_clone = semaphore.clone();
@@ -407,25 +411,34 @@ fn spawn_write_task_standalone(
                 .await?;
             }
 
-            // --- Emit CommitComplete event ---
-            let current_total_committed = {
-                let mut commit_guard = total_pads_committed_clone.lock().await;
-                *commit_guard += 1; // Increment committed pads count
-                *commit_guard
-            };
+            // --- Commit Progress (only for newly reserved pads) ---
+            if is_newly_reserved {
+                let mut total_pads_committed = total_pads_committed_clone.lock().await;
+                *total_pads_committed += 1;
+                let current_committed = *total_pads_committed;
+                // Use total_pads_expected which reflects the number of pads needed for the *data size*
+                let total_for_commit_event = total_pads_expected as u64;
+                drop(total_pads_committed); // Release lock before callback
 
-            // Use the pad_index for the event, and total_pads_expected
-            // Convert usize/u64 as needed for the event fields
-            {
+                debug!(
+                    "Task[{}][Pad {}]: ScratchpadCommitComplete (newly reserved): Pad {} / {}",
+                    key_str, pad_index, current_committed, total_for_commit_event
+                );
                 let mut cb_guard = callback_arc_clone.lock().await;
                 invoke_callback(
                     &mut *cb_guard,
                     PutEvent::ScratchpadCommitComplete {
-                        index: current_total_committed.saturating_sub(1) as u64, // Report 0-based index of committed pad
-                        total: total_pads_expected as u64, // Report total expected pads
+                        index: current_committed.saturating_sub(1), // event uses 0-based index
+                        total: total_for_commit_event,
                     },
                 )
                 .await?;
+            } else {
+                // Still log success for reused/free pads, but don't send commit event
+                debug!(
+                    "Task[{}][Pad {}]: Successfully wrote to reused/free pad.",
+                    key_str, pad_index
+                );
             }
 
             let mut pads_guard = successfully_written_pads_clone.lock().await;

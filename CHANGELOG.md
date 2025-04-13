@@ -59,3 +59,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Ensure CLI errors are always printed to stderr in `main`
+
+## [Unreleased]
+
+### Changed
+- Fix the progress bar for confirmation, which was showing the same progress as the upload bar.
+
+### Added
+- `mutant list-details` command to show more information about stored keys.
