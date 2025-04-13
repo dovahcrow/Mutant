@@ -63,7 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Fix the progress bar for confirmation, which was showing the same progress as the upload bar.
+- Fix the commit progress bar to only track newly reserved pads.
+- Ensure upload progress bar completion reflects data write finalization before commit steps.
 
 ### Added
 - `mutant list-details` command to show more information about stored keys.

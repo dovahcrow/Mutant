@@ -302,6 +302,17 @@ pub(super) async fn perform_concurrent_write_standalone(
                 final_bytes_uploaded,
                 final_pads.len()
             );
+
+            // Send UploadFinished event
+            debug!(
+                "PerformWrite[{}]: Emitting UploadFinished event.",
+                key_owned
+            );
+            {
+                let mut cb_guard = callback_arc.lock().await;
+                invoke_callback(&mut *cb_guard, PutEvent::UploadFinished).await?;
+            }
+
             Ok(final_pads)
         }
     }

@@ -252,16 +252,14 @@ pub fn create_put_callback(
                     if let Some(upload_pb) = ctx.upload_pb_opt.lock().unwrap().as_mut() {
                         if !upload_pb.is_finished() {
                             upload_pb.set_message("Upload complete. Committing...".to_string());
-                            // Ensure it shows 100%
+                            // Ensure it shows 100% - get length and set position
                             if let Some(len) = upload_pb.length() {
                                 upload_pb.set_position(len);
-                            } else {
-                                // If length is None, just update the message. StoreComplete will clear it.
-                                debug!("UploadFinished: Length is None, only updating message.");
                             }
+                            // Do not finish or clear here, StoreComplete will handle it.
                             debug!("UploadFinished event: Marked upload bar as finished, but kept visible.");
                         } else {
-                             debug!("UploadFinished event: Upload progress bar was already finished.");
+                            debug!("UploadFinished event: Upload progress bar was already finished.");
                         }
                     } else {
                         warn!("UploadFinished event received but upload progress bar was already removed/gone.");
@@ -269,7 +267,7 @@ pub fn create_put_callback(
                     Ok(true)
                 }
                 PutEvent::StoreComplete => {
-                    // Finish and clear Upload bar (if it exists and isn't finished)
+                    // Finish and clear Upload bar (if it exists)
                     if let Some(upload_pb) = ctx.upload_pb_opt.lock().unwrap().take() {
                         if !upload_pb.is_finished() {
                             upload_pb.finish_and_clear();
@@ -280,14 +278,14 @@ pub fn create_put_callback(
                             debug!("StoreComplete event: Cleared finished upload bar.");
                         }
                     }
-                    // Finish and clear Commit bar
+                    // Finish and clear Commit bar (if it exists)
                     if let Some(commit_pb) = ctx.commit_pb_opt.lock().unwrap().take() {
                         if !commit_pb.is_finished() {
                             commit_pb.finish_and_clear();
                             debug!("StoreComplete event: Finished and cleared commit progress bar.");
                         } else {
                             // Already finished (e.g. last commit event), just clear
-                            commit_pb.finish_and_clear(); 
+                            commit_pb.finish_and_clear();
                             debug!("StoreComplete event: Cleared finished commit progress bar.");
                         }
                     }
