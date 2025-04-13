@@ -254,6 +254,16 @@ impl MutAnt {
                             )
                             .await?;
 
+                            // Inform the user that creation is starting
+                            invoke_init_callback(
+                                &mut init_callback,
+                                InitProgressEvent::Step {
+                                    step: current_step as u64, // Still part of step 4
+                                    message: "Creating remote master index...".to_string(),
+                                },
+                            )
+                            .await?;
+
                             // The callback result determines if we proceed. The result itself
                             // is handled by invoke_init_callback, mapping Ok(Some(false)) to Err.
                             // If invoke_init_callback returns Ok(()), it means the user either
