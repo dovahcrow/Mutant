@@ -1,11 +1,12 @@
 use super::ContentType;
 use crate::error::Error;
+use crate::events::{invoke_callback, PutCallback, PutEvent};
 use crate::mutant::data_structures::MasterIndexStorage;
 use crate::utils::retry::retry_operation;
 use autonomi::{
     client::payment::PaymentOption, Bytes, Client, ScratchpadAddress, SecretKey, Wallet,
 };
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use serde_cbor;
 use std::sync::Arc;
 use std::time::Duration;
@@ -136,6 +137,7 @@ pub(crate) async fn storage_save_mis_from_arc_static(
         address
     );
 
+    // Call the wrapper function that handles non-progress updates
     let update_result =
         update_scratchpad_internal_static(client, key, &bytes, ContentType::MasterIndex as u64)
             .await;
@@ -346,11 +348,22 @@ pub(crate) async fn fetch_scratchpad_internal_static(
     result
 }
 
-pub(crate) async fn update_scratchpad_internal_static(
+/// Internal helper with progress reporting arguments
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn update_scratchpad_internal_static_with_progress(
     client: &Client,
     owner_key: &SecretKey,
     data: &[u8],
     content_type: u64,
+    key_str: &str,
+    pad_index: usize,
+    callback_arc: &Arc<Mutex<Option<PutCallback>>>,
+    total_bytes_uploaded_arc: &Arc<Mutex<u64>>,
+    bytes_in_chunk: u64,
+    total_size_overall: u64,
+    is_newly_reserved: bool,
+    total_pads_committed_arc: &Arc<Mutex<u64>>,
+    total_pads_expected: usize,
 ) -> Result<(), Error> {
     let data_bytes = Bytes::from(data.to_vec());
     let owner_pubkey = owner_key.public_key();
@@ -362,20 +375,20 @@ pub(crate) async fn update_scratchpad_internal_static(
         Ok(s) => Some(s.counter()),
         Err(e) => {
             warn!(
-                "UpdateStaticVerify[{}]: Failed to get initial counter before update: {}. Proceeding with update.",
-                address, e
+                "UpdateStaticVerify[{}][{}][Pad {}]: Failed to get initial counter before update: {}. Proceeding with update.",
+                key_str, address, pad_index, e
             );
             None // May not exist yet, or network error
         }
     };
 
     debug!(
-        "UpdateStatic[{}]: Starting update operation. Data size: {}, Content type: {}",
-        address, data_len, content_type
+        "UpdateStatic[{}][{}][Pad {}]: Starting update operation. Data size: {}, Content type: {}",
+        key_str, address, pad_index, data_len, content_type
     );
 
     retry_operation(
-        &format!("Update scratchpad {}", address),
+        &format!("Update scratchpad {} ({})", key_str, address),
         || async {
             client
                 .scratchpad_update(owner_key, content_type, &data_bytes)
@@ -386,15 +399,46 @@ pub(crate) async fn update_scratchpad_internal_static(
     )
     .await?;
 
+    info!(
+        "UpdateStatic[{}][{}][Pad {}]: Put successful. Emitting UploadProgress.",
+        key_str, address, pad_index
+    );
+    // --- Emit UploadProgress ---
+    let current_total_bytes = {
+        let mut guard = total_bytes_uploaded_arc.lock().await;
+        *guard += bytes_in_chunk;
+        *guard
+    };
+    debug!(
+        "UpdateStatic[{}][{}][Pad {}]: Upload progress updated: {} / {}",
+        key_str, address, pad_index, current_total_bytes, total_size_overall
+    );
+    {
+        // Scope for callback lock
+        let mut cb_guard = callback_arc.lock().await;
+        invoke_callback(
+            &mut *cb_guard,
+            PutEvent::UploadProgress {
+                bytes_written: current_total_bytes,
+                total_bytes: total_size_overall,
+            },
+        )
+        .await?;
+    } // Callback lock released
+      // --- End Emit UploadProgress ---
+
     // --- Add delay before starting verification ---
     debug!(
-        "UpdateStatic[{}]: Update successful. Waiting 5 seconds before starting verification loop...",
-        address
+        "UpdateStatic[{}][{}][Pad {}]: Waiting 5 seconds before starting verification loop...",
+        key_str, address, pad_index
     );
     tokio::time::sleep(Duration::from_secs(5)).await;
     // ------------------------------------------
 
-    debug!("UpdateStatic[{}]: Starting verification loop...", address);
+    debug!(
+        "UpdateStatic[{}][{}][Pad {}]: Starting verification loop...",
+        key_str, address, pad_index
+    );
 
     for attempt in 0..VERIFICATION_RETRY_LIMIT {
         // Introduce delay *before* the attempt (except the first one)
@@ -403,8 +447,10 @@ pub(crate) async fn update_scratchpad_internal_static(
         }
 
         debug!(
-            "UpdateStaticVerify[{}]: Verification attempt {}/{}...",
+            "UpdateStaticVerify[{}][{}][Pad {}]: Verification attempt {}/{}...",
+            key_str,
             address,
+            pad_index,
             attempt + 1,
             VERIFICATION_RETRY_LIMIT
         );
@@ -412,8 +458,10 @@ pub(crate) async fn update_scratchpad_internal_static(
         match client.scratchpad_get(&address).await {
             Ok(scratchpad) => {
                 debug!(
-                    "UpdateStaticVerify[{}]: Fetched scratchpad. Counter: {}, PayloadSize: {}",
+                    "UpdateStaticVerify[{}][{}][Pad {}]: Fetched scratchpad. Counter: {}, PayloadSize: {}",
+                    key_str,
                     address,
+                    pad_index,
                     scratchpad.counter(),
                     scratchpad.payload_size()
                 );
@@ -426,16 +474,16 @@ pub(crate) async fn update_scratchpad_internal_static(
 
                 if !counter_check_passed {
                     debug!(
-                        "UpdateStaticVerify[{}]: Counter check failed (Initial: {:?}, Current: {}). Retrying...",
-                        address, initial_counter, scratchpad.counter()
+                        "UpdateStaticVerify[{}][{}][Pad {}]: Counter check failed (Initial: {:?}, Current: {}). Retrying...",
+                        key_str, address, pad_index, initial_counter, scratchpad.counter()
                     );
                     continue; // Counter hasn't incremented yet
                 }
 
                 // 3. Decrypt and compare data (Now step 2)
                 debug!(
-                    "UpdateStaticVerify[{}]: Counter check passed. Proceeding to decryption check.",
-                    address
+                    "UpdateStaticVerify[{}][{}][Pad {}]: Counter check passed. Proceeding to decryption check.",
+                    key_str, address, pad_index
                 );
                 let key_clone = owner_key.clone();
                 // let address_clone = address.clone(); // Unused, decryption errors use `address`
@@ -443,15 +491,52 @@ pub(crate) async fn update_scratchpad_internal_static(
                     Ok(Ok(decrypted_bytes)) => {
                         if decrypted_bytes.as_ref() == data {
                             debug!(
-                                "UpdateStaticVerify[{}]: Verification successful on attempt {}.",
-                                address,
-                                attempt + 1
+                                "UpdateStaticVerify[{}][{}][Pad {}]: Verification successful on attempt {}.",
+                                key_str, address, pad_index, attempt + 1
                             );
+
+                            // --- Emit ScratchpadCommitComplete (if applicable) ---
+                            if is_newly_reserved {
+                                info!(
+                                    "UpdateStaticVerify[{}][{}][Pad {}]: Emitting ScratchpadCommitComplete.",
+                                    key_str, address, pad_index
+                                );
+                                let current_committed_pads = {
+                                    let mut guard = total_pads_committed_arc.lock().await;
+                                    *guard += 1;
+                                    *guard
+                                };
+                                debug!(
+                                    "UpdateStaticVerify[{}][{}][Pad {}]: Commit progress updated: {} / {}",
+                                    key_str, address, pad_index, current_committed_pads, total_pads_expected
+                                );
+                                {
+                                    // Scope for callback lock
+                                    let mut cb_guard = callback_arc.lock().await;
+                                    invoke_callback(
+                                        &mut *cb_guard,
+                                        PutEvent::ScratchpadCommitComplete {
+                                            index: current_committed_pads.saturating_sub(1), // 0-based index
+                                            total: total_pads_expected as u64,
+                                        },
+                                    )
+                                    .await?;
+                                } // Callback lock released
+                            } else {
+                                debug!(
+                                    "UpdateStaticVerify[{}][{}][Pad {}]: Verification ok, but pad not newly reserved. No commit event.",
+                                    key_str, address, pad_index
+                                );
+                            }
+                            // --- End Emit ScratchpadCommitComplete ---
+
                             return Ok(()); // Data matches!
                         } else {
                             debug!(
-                                "UpdateStaticVerify[{}]: Data mismatch during verification attempt {} (Expected len: {}, Got len: {}). Retrying...",
+                                "UpdateStaticVerify[{}][{}][Pad {}]: Data mismatch during verification attempt {} (Expected len: {}, Got len: {}). Retrying...",
+                                key_str,
                                 address,
+                                pad_index,
                                 attempt + 1,
                                 data.len(),
                                 decrypted_bytes.len()
@@ -462,8 +547,8 @@ pub(crate) async fn update_scratchpad_internal_static(
                     Ok(Err(e)) => {
                         // Decryption error might be transient right after update
                         debug!(
-                            "UpdateStaticVerify[{}]: Decryption failed during verification attempt {} (likely transient): {}. Retrying...",
-                             address, attempt + 1, e
+                            "UpdateStaticVerify[{}][{}][Pad {}]: Decryption failed during verification attempt {} (likely transient): {}. Retrying...",
+                             key_str, address, pad_index, attempt + 1, e
                         );
                         // return Err(Error::AutonomiLibError(format!("Verification decryption failed: {}", e))); // Don't abort, retry
                         continue;
@@ -471,12 +556,12 @@ pub(crate) async fn update_scratchpad_internal_static(
                     Err(join_error) => {
                         // Task failure is serious
                         error!(
-                            "UpdateStaticVerify[{}]: Spawn_blocking failed during verification: {}. Aborting verification.",
-                             address, join_error
+                            "UpdateStaticVerify[{}][{}][Pad {}]: Spawn_blocking failed during verification: {}. Aborting verification.",
+                             key_str, address, pad_index, join_error
                         );
                         return Err(Error::from_join_error_msg(
                             &join_error,
-                            format!("Verification task failed for {}", address),
+                            format!("Verification task failed for {}[{}]", key_str, address),
                         ));
                     }
                 }
@@ -484,14 +569,14 @@ pub(crate) async fn update_scratchpad_internal_static(
             Err(e) => {
                 if e.to_string().contains("RecordNotFound") {
                     debug!(
-                        "UpdateStaticVerify[{}]: RecordNotFound during verification attempt {}. Retrying...",
-                        address, attempt + 1
+                        "UpdateStaticVerify[{}][{}][Pad {}]: RecordNotFound during verification attempt {}. Retrying...",
+                        key_str, address, pad_index, attempt + 1
                     );
                     // Continue loop, waiting for propagation
                 } else {
                     error!(
-                        "UpdateStaticVerify[{}]: Unexpected error during verification attempt {}: {}. Aborting verification.",
-                        address, attempt + 1, e
+                        "UpdateStaticVerify[{}][{}][Pad {}]: Unexpected error during verification attempt {}: {}. Aborting verification.",
+                        key_str, address, pad_index, attempt + 1, e
                     );
                     return Err(Error::AutonomiClient(e)); // Propagate other client errors
                 }
@@ -500,13 +585,46 @@ pub(crate) async fn update_scratchpad_internal_static(
     }
 
     error!(
-        "UpdateStaticVerify[{}]: Verification timed out after {} attempts.",
-        address, VERIFICATION_RETRY_LIMIT
+        "UpdateStaticVerify[{}][{}][Pad {}]: Verification timed out after {} attempts.",
+        key_str, address, pad_index, VERIFICATION_RETRY_LIMIT
     );
     Err(Error::VerificationTimeout(format!(
-        "Update verification timed out for {}",
-        address
+        "Update verification timed out for {} ({})",
+        key_str, address
     )))
+}
+
+/// Public wrapper for internal updates that don't need progress reporting (e.g., MIS save).
+/// Calls the _with_progress version with dummy/None values.
+pub(crate) async fn update_scratchpad_internal_static(
+    client: &Client,
+    owner_key: &SecretKey,
+    data: &[u8],
+    content_type: u64,
+) -> Result<(), Error> {
+    // Create dummy values for progress reporting context
+    let dummy_callback: Arc<Mutex<Option<PutCallback>>> = Arc::new(Mutex::new(None));
+    let dummy_bytes_uploaded: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
+    let dummy_pads_committed: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
+    let data_len = data.len() as u64;
+
+    // Call the detailed function
+    update_scratchpad_internal_static_with_progress(
+        client,
+        owner_key,
+        data,
+        content_type,
+        "_internal_update_", // key_str (internal context)
+        0,                   // pad_index (internal context)
+        &dummy_callback,     // Use ref to Arc
+        &dummy_bytes_uploaded,
+        data_len, // bytes_in_chunk (assume single chunk for MIS)
+        data_len, // total_size_overall
+        false,    // is_newly_reserved (MIS update never counts as new user pad)
+        &dummy_pads_committed,
+        1, // total_pads_expected (assume 1 for MIS)
+    )
+    .await
 }
 
 pub(crate) async fn create_scratchpad_static(

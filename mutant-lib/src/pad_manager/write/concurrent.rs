@@ -340,122 +340,99 @@ fn spawn_write_task_standalone(
     key_str: String,
     is_newly_reserved: bool,
 ) {
+    // Capture necessary Arcs and variables for the async block
+    let task_storage = storage.clone();
+    let task_pad_key_bytes = pad_key_bytes;
+    let task_data_arc = data_arc.clone();
+    let task_chunk_start = chunk_start;
+    let task_chunk_end = chunk_end;
+    let task_pad_info = pad_info_for_task;
+    let task_successfully_written_pads = successfully_written_pads.clone();
+    // --- Variables needed for internal progress reporting ---
+    let task_key_str = key_str.clone();
+    let task_pad_index = pad_index;
+    let task_callback_arc = callback_arc.clone();
+    let task_total_bytes_uploaded_arc = total_bytes_uploaded_arc.clone();
+    let task_bytes_in_chunk = (chunk_end - chunk_start) as u64;
+    let task_total_size_overall = total_size_overall;
+    let task_is_newly_reserved = is_newly_reserved;
+    let task_total_pads_committed_arc = total_pads_committed_arc.clone();
+    let task_total_pads_expected = total_pads_expected;
+    // --- End variables needed ---
+
     join_set.spawn(async move {
-        let semaphore_clone = semaphore.clone();
-        let callback_arc_clone = callback_arc.clone();
-        let total_bytes_uploaded_clone = total_bytes_uploaded_arc.clone();
-        let total_pads_committed_clone = total_pads_committed_arc.clone();
-        let storage_clone = storage.clone();
-        let successfully_written_pads_clone = successfully_written_pads.clone();
-        let task_pad_info = pad_info_for_task.clone();
-        let permit = semaphore_clone.acquire_owned().await.unwrap();
+        // Acquire semaphore permit
+        let _permit = semaphore
+            .acquire()
+            .await
+            .map_err(|_| Error::InternalError("Semaphore closed unexpectedly".to_string()))?;
 
-        let pad_key = {
-            let key_array: [u8; 32] = match pad_key_bytes.as_slice().try_into() {
-                Ok(arr) => arr,
-                Err(_) => {
-                    error!(
-                        "PadWrite[{}]: Invalid key bytes slice length for pad index {}",
-                        key_str, pad_index
-                    );
-                    return Err(Error::InternalError(
-                        "Pad key bytes have incorrect length".to_string(),
-                    ));
-                }
-            };
-            match SecretKey::from_bytes(key_array) {
-                Ok(k) => k,
-                Err(e) => {
-                    error!(
-                        "PadWrite[{}]: Failed to create SecretKey from bytes for pad index {}: {}",
-                        key_str, pad_index, e
-                    );
-                    return Err(Error::InternalError(format!(
-                        "Failed to create SecretKey: {}",
-                        e
-                    )));
-                }
-            }
-        };
+        // Decode the SecretKey
+        let key_array: [u8; 32] = task_pad_key_bytes.as_slice().try_into().map_err(|_| {
+            Error::InvalidInput(format!(
+                "Pad key has incorrect length. Expected 32 bytes, got {}",
+                task_pad_key_bytes.len()
+            ))
+        })?;
+        let owner_key = SecretKey::from_bytes(key_array)
+            .map_err(|e| Error::InvalidInput(format!("Invalid pad key bytes: {}", e)))?;
 
-        let data_to_write = data_arc[chunk_start..chunk_end].to_vec();
-        let bytes_in_chunk = data_to_write.len() as u64;
+        // Prepare data chunk
+        let chunk_data = &task_data_arc[task_chunk_start..task_chunk_end];
 
-        // --- Perform Upload ---
-        let upload_result = retry_operation(
-            &format!("PadWrite[{}]: Upload Pad {}", key_str, pad_index),
+        debug!(
+            "Task[{}][Pad {}]: Starting verified write via retry_operation ({} bytes)",
+            task_key_str,
+            task_pad_index,
+            chunk_data.len()
+        );
+
+        // --- Perform the verified write using retry_operation --- //
+        // The storage function now handles internal progress reporting
+        retry_operation(
+            &format!("Verified write for {} Pad {}", task_key_str, task_pad_index),
+            // Closure captures necessary variables and calls the _with_progress storage func
             || async {
-                // --- Actual Network Call ---
-                let data_slice = &data_to_write;
-                let client = storage_clone.get_client().await?;
-                crate::storage::update_scratchpad_internal_static(client, &pad_key, data_slice, 0)
-                    .await
+                // Note: We capture Arcs and clone them *inside* the closure if needed by the function
+                // But storage::update_scratchpad_internal_static_with_progress takes refs to Arcs,
+                // so capturing the Arcs directly is fine.
+                let storage_client = task_storage.get_client().await?;
+                crate::storage::update_scratchpad_internal_static_with_progress(
+                    storage_client,
+                    &owner_key,
+                    chunk_data,
+                    0, // Assuming content_type 0 for now
+                    &task_key_str,
+                    task_pad_index,
+                    &task_callback_arc,
+                    &task_total_bytes_uploaded_arc,
+                    task_bytes_in_chunk,
+                    task_total_size_overall,
+                    task_is_newly_reserved,
+                    &task_total_pads_committed_arc,
+                    task_total_pads_expected,
+                )
+                .await
             },
-            |e: &Error| {
-                warn!(
-                    "PadWrite[{}]: Retrying upload for pad #{} due to error: {}",
-                    key_str, pad_index, e
-                );
-                true
-            },
+            |_e: &Error| true, // Retry on any error for now
         )
-        .await;
+        .await?;
+        // --- Verified write successful --- //
 
-        drop(permit);
+        // --- OLD Progress reporting logic removed --- //
+        // UploadProgress and ScratchpadCommitComplete events are now emitted
+        // *inside* update_scratchpad_internal_static_with_progress.
 
-        if upload_result.is_ok() {
-            let current_total_uploaded = {
-                let mut uploaded_guard = total_bytes_uploaded_clone.lock().await;
-                *uploaded_guard += bytes_in_chunk;
-                *uploaded_guard
-            };
+        // Add successfully written pad info
+        let mut success_guard = task_successfully_written_pads.lock().await;
+        success_guard.push(task_pad_info);
+        drop(success_guard);
 
-            {
-                let mut cb_guard = callback_arc_clone.lock().await;
-                invoke_callback(
-                    &mut *cb_guard,
-                    PutEvent::UploadProgress {
-                        bytes_written: current_total_uploaded,
-                        total_bytes: total_size_overall,
-                    },
-                )
-                .await?;
-            }
+        debug!(
+            "Task[{}][Pad {}]: Write task completed successfully.",
+            task_key_str, task_pad_index
+        );
 
-            // --- Commit Progress (only for newly reserved pads) ---
-            if is_newly_reserved {
-                let mut total_pads_committed = total_pads_committed_clone.lock().await;
-                *total_pads_committed += 1;
-                let current_committed = *total_pads_committed;
-                // Use total_pads_expected which reflects the number of pads needed for the *data size*
-                let total_for_commit_event = total_pads_expected as u64;
-                drop(total_pads_committed); // Release lock before callback
-
-                debug!(
-                    "Task[{}][Pad {}]: ScratchpadCommitComplete (newly reserved): Pad {} / {}",
-                    key_str, pad_index, current_committed, total_for_commit_event
-                );
-                let mut cb_guard = callback_arc_clone.lock().await;
-                invoke_callback(
-                    &mut *cb_guard,
-                    PutEvent::ScratchpadCommitComplete {
-                        index: current_committed.saturating_sub(1), // event uses 0-based index
-                        total: total_for_commit_event,
-                    },
-                )
-                .await?;
-            } else {
-                // Still log success for reused/free pads, but don't send commit event
-                debug!(
-                    "Task[{}][Pad {}]: Successfully wrote to reused/free pad.",
-                    key_str, pad_index
-                );
-            }
-
-            let mut pads_guard = successfully_written_pads_clone.lock().await;
-            pads_guard.push(task_pad_info);
-        }
-
-        upload_result
+        Ok(())
     });
 }
