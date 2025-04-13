@@ -250,31 +250,47 @@ pub fn create_put_callback(
                     Ok(true)
                 }
                 PutEvent::UploadFinished => {
-                    // Mark upload as complete but keep bar visible for context
-                    if let Some(upload_pb) = ctx.upload_pb_opt.lock().unwrap().as_mut() { // Use as_mut() to keep the Arc alive
+                    // Mark upload bar as complete but keep it visible until StoreComplete.
+                    if let Some(upload_pb) = ctx.upload_pb_opt.lock().unwrap().as_mut() {
                         if !upload_pb.is_finished() {
-                           // Just update the message, don't finish or clear yet
-                           upload_pb.set_message("Upload complete. Finalizing...".to_string()); 
-                           // Ensure it's visually at 100% if it wasn't already
-                           if let Some(len) = upload_pb.length() {
-                               upload_pb.set_position(len);
-                           } 
-                           // We don't call finish() here, let StoreComplete handle final cleanup
+                            upload_pb.set_message("Upload complete. Committing...".to_string());
+                            // Ensure it shows 100%
+                            if let Some(len) = upload_pb.length() {
+                                upload_pb.set_position(len);
+                            } else {
+                                // If length is None, just update the message. StoreComplete will clear it.
+                                debug!("UploadFinished: Length is None, only updating message.");
+                            }
+                            debug!("UploadFinished event: Marked upload bar as finished, but kept visible.");
+                        } else {
+                             debug!("UploadFinished event: Upload progress bar was already finished.");
                         }
+                    } else {
+                        warn!("UploadFinished event received but upload progress bar was already removed/gone.");
                     }
                     Ok(true)
                 }
                 PutEvent::StoreComplete => {
-                    // Finish Upload bar (if not already)
+                    // Finish and clear Upload bar (if it exists and isn't finished)
                     if let Some(upload_pb) = ctx.upload_pb_opt.lock().unwrap().take() {
                         if !upload_pb.is_finished() {
                             upload_pb.finish_and_clear();
+                            debug!("StoreComplete event: Force-finished and cleared upload bar.");
+                        } else {
+                            // Already finished by UploadFinished, just clear it
+                            upload_pb.finish_and_clear(); // Ensures clearance even if finish() was called without clear
+                            debug!("StoreComplete event: Cleared finished upload bar.");
                         }
                     }
-                    // Finish Commit bar
+                    // Finish and clear Commit bar
                     if let Some(commit_pb) = ctx.commit_pb_opt.lock().unwrap().take() {
                         if !commit_pb.is_finished() {
                             commit_pb.finish_and_clear();
+                            debug!("StoreComplete event: Finished and cleared commit progress bar.");
+                        } else {
+                            // Already finished (e.g. last commit event), just clear
+                            commit_pb.finish_and_clear(); 
+                            debug!("StoreComplete event: Cleared finished commit progress bar.");
                         }
                     }
                     Ok(true)
@@ -284,7 +300,6 @@ pub fn create_put_callback(
                     Ok(true)
                 }
                 PutEvent::ScratchpadCommitComplete { index, total } => {
-                    // Use commit_pb_opt
                     debug!(
                         "Callback: Received ScratchpadCommitComplete - Index: {}, Total: {}",
                         index,
@@ -296,7 +311,7 @@ pub fn create_put_callback(
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
                         pb.set_length(total);
                         pb.set_message("Confirming pads...".to_string());
-                        pb.reset();
+                        pb.reset(); // Ensure position starts at 0
                         pb
                     });
 
