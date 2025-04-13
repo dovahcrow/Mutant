@@ -101,11 +101,9 @@ pub fn create_put_callback(
                             res_pb.inc(1);
                             if current_position >= total && !res_pb.is_finished() {
                                 debug!(
-                                    "Pad reservation complete ({} >= {}), finishing reservation bar.",
+                                    "Pad reservation complete ({} >= {}), allowing ReservationProgress to finish the bar.",
                                     current_position, total
                                 );
-                                res_pb.finish_and_clear();
-                                *res_pb_opt_guard = None;
                             }
                         } else {
                             warn!(
