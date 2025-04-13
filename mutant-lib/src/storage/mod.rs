@@ -74,4 +74,8 @@ impl Storage {
     pub(crate) fn get_master_index_info(&self) -> (ScratchpadAddress, SecretKey) {
         (self.master_index_address, self.master_index_key.clone())
     }
+
+    pub(crate) fn get_network_choice(&self) -> NetworkChoice {
+        self.network_choice
+    }
 }

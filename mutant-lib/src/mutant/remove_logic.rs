@@ -35,7 +35,8 @@ pub(super) async fn delete_item(es: &MutAnt, key: &str) -> Result<(), Error> {
     let index_to_cache = mis_guard.clone();
     drop(mis_guard);
 
-    match write_local_index(&index_to_cache).await {
+    let network = es.get_network_choice();
+    match write_local_index(&index_to_cache, network).await {
         Ok(_) => {
             debug!(
                 "DeleteItem[{}]: Successfully wrote index to local cache after removal.",

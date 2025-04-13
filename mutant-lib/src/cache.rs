@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::mutant::data_structures::MasterIndexStorage;
+use crate::mutant::NetworkChoice;
 use dirs;
 use log::{debug, error, info};
 use serde_cbor;
@@ -8,17 +9,24 @@ use std::path::PathBuf;
 use tokio::fs::{self, File};
 use tokio::io::{AsyncWriteExt, BufWriter};
 
-const CACHE_DIR_NAME: &str = "mutant";
+const CACHE_BASE_DIR_NAME: &str = "mutant";
 const CACHE_FILE_NAME: &str = "index.cbor";
 
-/// Returns the platform-specific data directory path for the mutant cache.
+/// Returns the platform-specific data directory path for the mutant cache,
+/// including a network-specific subdirectory.
 /// Creates the directory if it doesn't exist.
-async fn get_cache_dir() -> Result<PathBuf, Error> {
+async fn get_cache_dir(network: NetworkChoice) -> Result<PathBuf, Error> {
     let data_dir = dirs::data_dir().ok_or_else(|| {
         error!("Could not determine user data directory");
         Error::CacheError("Could not determine user data directory".to_string())
     })?;
-    let cache_path = data_dir.join(CACHE_DIR_NAME);
+
+    let network_subdir = match network {
+        NetworkChoice::Devnet => "devnet",
+        NetworkChoice::Mainnet => "mainnet",
+    };
+
+    let cache_path = data_dir.join(CACHE_BASE_DIR_NAME).join(network_subdir);
 
     if !cache_path.exists() {
         debug!("Cache directory does not exist, creating: {:?}", cache_path);
@@ -31,17 +39,20 @@ async fn get_cache_dir() -> Result<PathBuf, Error> {
     Ok(cache_path)
 }
 
-/// Returns the full path to the cache file.
-async fn get_cache_path() -> Result<PathBuf, Error> {
-    let cache_dir = get_cache_dir().await?;
+/// Returns the full path to the cache file for the specified network.
+async fn get_cache_path(network: NetworkChoice) -> Result<PathBuf, Error> {
+    let cache_dir = get_cache_dir(network).await?;
     Ok(cache_dir.join(CACHE_FILE_NAME))
 }
 
-/// Reads the local index cache from the XDG data directory.
+/// Reads the local index cache for the specified network from the XDG data directory.
 /// Returns `Ok(None)` if the cache file does not exist.
-pub async fn read_local_index() -> Result<Option<MasterIndexStorage>, Error> {
-    let path = get_cache_path().await?;
-    debug!("Attempting to read local index cache from: {:?}", path);
+pub async fn read_local_index(network: NetworkChoice) -> Result<Option<MasterIndexStorage>, Error> {
+    let path = get_cache_path(network).await?;
+    debug!(
+        "Attempting to read {:?} local index cache from: {:?}",
+        network, path
+    );
 
     match File::open(&path).await {
         Ok(_file) => {
@@ -54,33 +65,43 @@ pub async fn read_local_index() -> Result<Option<MasterIndexStorage>, Error> {
 
             match serde_cbor::from_slice(&contents) {
                 Ok(index) => {
-                    info!("Successfully read local index cache from: {:?}", path);
+                    info!(
+                        "Successfully read {:?} local index cache from: {:?}",
+                        network, path
+                    );
                     Ok(Some(index))
                 }
                 Err(e) => {
                     error!(
-                        "Failed to deserialize cache file {:?}: {}. Cache might be corrupted.",
-                        path, e
+                        "Failed to deserialize {:?} cache file {:?}: {}. Cache might be corrupted.",
+                        network, path, e
                     );
                     Err(Error::Cbor(e))
                 }
             }
         }
         Err(e) if e.kind() == ErrorKind::NotFound => {
-            info!("Local index cache file not found at: {:?}", path);
+            info!(
+                "{:?} local index cache file not found at: {:?}",
+                network, path
+            );
             Ok(None)
         }
         Err(e) => {
-            error!("Failed to open cache file {:?}: {}", path, e);
+            error!("Failed to open {:?} cache file {:?}: {}", network, path, e);
             Err(Error::Io(e))
         }
     }
 }
 
-/// Writes the given index to the local cache file in the XDG data directory.
+/// Writes the given index to the local cache file for the specified network
+/// in the XDG data directory.
 /// Attempts atomic write by writing to a temporary file first.
-pub async fn write_local_index(index: &MasterIndexStorage) -> Result<(), Error> {
-    let final_path = get_cache_path().await?;
+pub async fn write_local_index(
+    index: &MasterIndexStorage,
+    network: NetworkChoice,
+) -> Result<(), Error> {
+    let final_path = get_cache_path(network).await?;
     let cache_dir = final_path.parent().ok_or_else(|| {
         Error::CacheError("Could not determine parent directory for cache file".to_string())
     })?;
@@ -89,8 +110,8 @@ pub async fn write_local_index(index: &MasterIndexStorage) -> Result<(), Error> 
     let temp_path = cache_dir.join(&temp_file_name);
 
     debug!(
-        "Attempting to write local index cache to temp file: {:?}",
-        temp_path
+        "Attempting to write {:?} local index cache to temp file: {:?}",
+        network, temp_path
     );
 
     let data_bytes = serde_cbor::to_vec(index).map_err(Error::Cbor)?;
@@ -130,8 +151,8 @@ pub async fn write_local_index(index: &MasterIndexStorage) -> Result<(), Error> 
     }
 
     debug!(
-        "Renaming temp cache file {:?} to {:?}",
-        temp_path, final_path
+        "Renaming temp {:?} cache file {:?} to {:?}",
+        network, temp_path, final_path
     );
     fs::rename(&temp_path, &final_path).await.map_err(|e| {
         error!(
@@ -146,7 +167,10 @@ pub async fn write_local_index(index: &MasterIndexStorage) -> Result<(), Error> 
         Error::Io(e)
     })?;
 
-    info!("Successfully wrote local index cache to: {:?}", final_path);
+    info!(
+        "Successfully wrote {:?} local index cache to: {:?}",
+        network, final_path
+    );
     Ok(())
 }
 

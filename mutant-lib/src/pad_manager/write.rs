@@ -339,7 +339,8 @@ impl PadManager {
             key_owned
         );
         // Call write_local_index AFTER the lock is released
-        write_local_index(&*self.master_index_storage.lock().await).await?; // Added await
+        let network = self.storage.get_network_choice(); // Get network choice from storage
+        write_local_index(&*self.master_index_storage.lock().await, network).await?; // Pass network
 
         info!(
             "PadManager::AllocateWrite[{}]: Operation completed successfully.",

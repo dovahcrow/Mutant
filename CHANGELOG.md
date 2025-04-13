@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a 5-second delay between verification attempts in static storage updates.
 
 ### Added
+- Differentiate local index cache based on network choice (Devnet vs Mainnet). Cache files are now stored in `~/.local/share/mutant/{devnet,mainnet}/index.cbor`.
 - Add `--push-force` flag to `sync` command to overwrite the remote master index with the local cache.
 - `mutant import <private_key>` command to add an existing free scratchpad (specified by its private key hex) to the `free_pads` list in the Master Index. This allows transferring or recovering unused pads.
 - Start of development for v0.1.1

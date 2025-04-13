@@ -7,13 +7,14 @@ use std::collections::HashSet;
 
 pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliError> {
     info!("Starting synchronization process...");
+    let network = mutant.get_network_choice();
 
     if push_force {
         info!("Push-force sync initiated: Overwriting remote index with local cache.");
 
         // 1. Read local cache
         info!("Reading local index cache...");
-        let local_index = read_local_index()
+        let local_index = read_local_index(network)
             .await
             .map_err(|e| {
                 error!("Failed to read local cache for push-force sync: {}", e);
@@ -34,13 +35,15 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
 
         // 3. Write local cache (optional, but good for consistency)
         info!("Rewriting local index cache...");
-        write_local_index(&local_index).await.map_err(|e| {
-            error!(
-                "Failed to rewrite local cache during push-force sync: {}",
-                e
-            );
-            CliError::from(e)
-        })?;
+        write_local_index(&local_index, network)
+            .await
+            .map_err(|e| {
+                error!(
+                    "Failed to rewrite local cache during push-force sync: {}",
+                    e
+                );
+                CliError::from(e)
+            })?;
 
         // 4. Save remote index (Force overwrite)
         info!("Saving local index to remote storage (force push)...");
@@ -64,7 +67,7 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
 
         // 1. Read local cache
         info!("Reading local index cache...");
-        let local_index_opt = read_local_index().await.map_err(|e| {
+        let local_index_opt = read_local_index(network).await.map_err(|e| {
             error!("Failed to read local cache during sync: {}", e);
             CliError::from(e) // Convert LibError to CliError
         })?;
@@ -147,10 +150,12 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
 
         // 5. Write local cache
         info!("Writing merged index to local cache...");
-        write_local_index(&merged_index).await.map_err(|e| {
-            error!("Failed to write merged index to local cache: {}", e);
-            CliError::from(e)
-        })?;
+        write_local_index(&merged_index, network)
+            .await
+            .map_err(|e| {
+                error!("Failed to write merged index to local cache: {}", e);
+                CliError::from(e)
+            })?;
 
         // 6. Save remote index
         info!("Saving merged index to remote storage...");

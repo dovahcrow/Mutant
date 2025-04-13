@@ -197,7 +197,9 @@ impl MutAnt {
 
         // --- Step 3: Load Master Index from Cache or Create Default --- (Local disk only)
         let mis_mutex = try_step!(3, "Loading local index cache", async {
-            match read_local_index().await {
+            let network_choice = config.network; // Get network choice from config
+            match read_local_index(network_choice).await {
+                // Pass network_choice
                 Ok(Some(mut cached_index)) => {
                     info!("Loaded index from local cache.");
                     // Ensure scratchpad size is set (important if cache was from older version)
@@ -208,7 +210,8 @@ impl MutAnt {
                         );
                         cached_index.scratchpad_size = DEFAULT_SCRATCHPAD_SIZE;
                         // Persist the fix back to cache
-                        if let Err(e) = write_local_index(&cached_index).await {
+                        if let Err(e) = write_local_index(&cached_index, network_choice).await {
+                            // Pass network_choice
                             warn!(
                                 "Failed to write updated cache after fixing scratchpad_size: {}",
                                 e
@@ -225,7 +228,8 @@ impl MutAnt {
                         ..Default::default()
                     };
                     // Attempt to write the new default index to cache immediately
-                    if let Err(e) = write_local_index(&default_mis).await {
+                    if let Err(e) = write_local_index(&default_mis, network_choice).await {
+                        // Pass network_choice
                         warn!("Failed to write initial default index to cache: {}", e);
                     }
                     Ok::<_, Error>(Arc::new(Mutex::new(default_mis)))
@@ -618,5 +622,10 @@ impl MutAnt {
         )
         .await
         // --- END ---
+    }
+
+    /// Retrieves the network choice (Devnet or Mainnet) this MutAnt instance is configured for.
+    pub fn get_network_choice(&self) -> NetworkChoice {
+        self.storage.get_network_choice()
     }
 }
