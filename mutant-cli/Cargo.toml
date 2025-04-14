@@ -11,11 +11,11 @@ mutant-lib = { path = "../mutant-lib", version = "0.1.1" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
-log = "0.4.22"
+log = "0.4"
 env_logger = "0.11.3"
 futures = "0.3"
 clap = { version = "4.5.9", features = ["derive"] }
-indicatif = "0.17.8"
+indicatif = { version = "0.17", features = ["tokio"] }
 dialoguer = "0.11"
 humansize = "2.1.0"
 nu-ansi-term = "0.50.0"

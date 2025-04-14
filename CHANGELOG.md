@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a new `sync` command to reconcile the local cache with the remote master index.
 - Write operations (`put`, `rm`, `update`) now update the local cache immediately and require `sync` to push changes remotely.
 - Show completion percentage for incomplete uploads in `mutant ls` output (both standard and long formats).
+- **CLI:** Added progress spinners to the `sync` command for better visual feedback during network operations (fetching/saving index) and local processing (reading/writing cache, merging).
 
 ### Changed
 - **`mutant-lib` API:** Unified key parameter types in `store`, `store_with_progress`, `update`, and `update_with_progress` to accept `&str` instead of `String` for consistency.
