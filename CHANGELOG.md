@@ -77,6 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed upload progress bar logic in `put` callback. Switched the internal aggregate byte counter in `mutant-lib` from `Arc<Mutex<u64>>` to `Arc<AtomicU64>` to ensure correct and consistent progress reporting in the `UploadProgress` event, even with highly concurrent pad updates. The CLI callback now reliably reflects the total uploaded bytes.
 - Handle "Scratchpad already exists" errors gracefully during pad creation in `create_scratchpad_static`.
   This prevents failures when resuming an interrupted upload where some pads were created but not yet marked as completed locally.
+- Handle `RecordNotFound` error when attempting to update a reused scratchpad (`is_new: false`) that doesn't actually exist on the network. The `write_chunk` function now checks for the pad's existence and attempts to create it if it's missing, preventing hangs during `put` operations involving reused pads.
 
 ### Removed
 - The specific changelog entry for updating the progress message to "Creating remote master index..." as this is now covered by the refactoring of init steps.
