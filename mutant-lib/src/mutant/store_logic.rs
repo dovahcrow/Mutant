@@ -11,6 +11,8 @@ use log::{debug, error, info, trace, warn};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::sync::Mutex; // Correct import for async Mutex
+use tokio::sync::Semaphore; // Added
+use tokio::task::JoinSet; // Added
 
 /// Calculates the SHA256 checksum of the data and returns it as a hex string.
 fn calculate_checksum(data: &[u8]) -> String {
@@ -255,6 +257,8 @@ pub(super) async fn store_data(
     .await
 }
 
+const MAX_CONCURRENT_WRITES: usize = 10;
+
 /// Handles the iterative process of uploading data chunks based on PadInfo status.
 async fn execute_upload_phase(
     ma: &MutAnt,
@@ -264,9 +268,9 @@ async fn execute_upload_phase(
     callback: Option<PutCallback>,
     total_new_pads_to_reserve: usize,
 ) -> Result<(), Error> {
-    let key_owned = key.to_string(); // Clone for async boundaries if needed
+    let key_owned = key.to_string();
     let data_chunks = Arc::new(chunk_data(data_bytes, scratchpad_size));
-    let total_pads_expected = data_chunks.len(); // Total pads for confirmation
+    let total_pads_expected = data_chunks.len();
 
     // --- Create Shared state for callbacks ---
     let callback_arc = Arc::new(Mutex::new(callback));
@@ -276,7 +280,6 @@ async fn execute_upload_phase(
     // Emit StartingUpload event
     let total_bytes_expected = data_bytes.len() as u64;
     invoke_callback(
-        // Use the Arc/Mutex version of the callback from now on
         &mut *callback_arc.lock().await,
         PutEvent::StartingUpload {
             total_bytes: total_bytes_expected,
@@ -284,267 +287,318 @@ async fn execute_upload_phase(
     )
     .await?;
 
-    let _total_pads = total_pads_expected; // Use the calculated total pads
-    let mut pads_processed = 0;
+    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_WRITES));
+    let mut join_set: JoinSet<Result<usize, Error>> = JoinSet::new();
     let mut generated_pads_processed_count = 0; // Counter for reservation progress
     let mut bytes_written_during_create: u64 = 0; // Counter for upload progress during create phase
+    let mut first_error: Option<Error> = None;
 
-    // --- Phase 1: Process Generated Pads (Create + Write) ---
+    // --- Phase 1: Process Generated Pads (Create + Write Concurrently) ---
     debug!(
         "ExecuteUpload[{}]: Processing 'Generated' pads...",
         key_owned
     );
-    loop {
-        let pad_to_process: Option<(usize, PadInfo)>;
-        {
-            let mis_guard = ma.master_index_storage.lock().await;
-            // Find the *first* 'Generated' pad in the current list
-            pad_to_process = mis_guard.index.get(&key_owned).and_then(|ki| {
-                ki.pads.iter().enumerate().find_map(|(idx, pi)| {
-                    if pi.status == PadUploadStatus::Generated {
-                        Some((idx, pi.clone())) // Clone needed PadInfo
-                    } else {
-                        None
-                    }
-                })
-            });
-        } // Lock released
+    let generated_pads_to_process: Vec<(usize, PadInfo)> = {
+        let mis_guard = ma.master_index_storage.lock().await;
+        mis_guard
+            .index
+            .get(&key_owned)
+            .map(|ki| {
+                ki.pads
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, pi)| pi.status == PadUploadStatus::Generated)
+                    .map(|(idx, pi)| (idx, pi.clone())) // Clone needed info
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
 
-        if let Some((pad_index, pad_info)) = pad_to_process {
-            if pad_index >= data_chunks.len() {
-                error!(
-                    "ExecuteUpload[{}]: Pad index {} out of bounds for data chunks (len {}). Aborting.",
-                    key_owned, pad_index, data_chunks.len()
-                );
-                return Err(Error::InternalError(format!(
-                    "Data chunk index out of bounds for key {}",
-                    key_owned
-                )));
-            }
-            let chunk = &data_chunks[pad_index];
+    for (pad_index, pad_info) in generated_pads_to_process {
+        if pad_index >= data_chunks.len() {
+            error!(
+                "ExecuteUpload[{}]: Pad index {} out of bounds for data chunks (len {}). Skipping.",
+                key_owned,
+                pad_index,
+                data_chunks.len()
+            );
+            continue; // Should not happen if planning was correct
+        }
+        let chunk = data_chunks[pad_index].clone(); // Clone chunk for task
+        let ma_storage = ma.storage.clone();
+        let key_for_task = key_owned.clone();
+        let cb_arc_clone = callback_arc.clone();
+        let commit_arc_clone = total_pads_committed_arc.clone();
+        let sem_clone = semaphore.clone();
+
+        join_set.spawn(async move {
+            let permit = sem_clone.acquire_owned().await.expect("Semaphore closed");
             debug!(
-                "ExecuteUpload[{}]: Attempting write_chunk (create) for pad index {} (Address: {}).",
-                key_owned, pad_index, pad_info.address
+                "ExecuteUploadTask[{}][Generated]: Acquired permit. Writing pad index {}",
+                key_for_task, pad_index
             );
 
-            // Pass down callback infrastructure
-            match pad_manager::write::write_chunk(
-                &ma.storage,
+            let write_result = pad_manager::write::write_chunk(
+                &ma_storage,
                 pad_info.address,
                 &pad_info.key,
-                chunk,
-                pad_info.is_new,           // Should be true for Generated
-                &key_owned,                // Pass key_str
-                pad_index,                 // Pass pad_index
-                &callback_arc,             // Pass callback Arc
-                &total_pads_committed_arc, // Pass commit counter Arc
-                total_pads_expected,       // Pass total expected pads
-                scratchpad_size,           // Pass scratchpad_size
+                &chunk,
+                true, // is_new is true for Generated
+                &key_for_task,
+                pad_index,
+                &cb_arc_clone,
+                &commit_arc_clone,
+                total_pads_expected,
+                scratchpad_size,
             )
-            .await
-            {
-                Ok(_) => {
-                    info!(
-                        "ExecuteUpload[{}]: write_chunk (create) succeeded for pad index {}. Updating status to Free.",
-                        key_owned, pad_index
-                    );
-                    // Update status in MIS and persist
-                    let mut mis_guard = ma.master_index_storage.lock().await;
-                    let chunk_size_for_progress = chunk.len() as u64; // Get chunk size for progress
-                    if let Some(key_info) = mis_guard.index.get_mut(&key_owned) {
-                        if let Some(pi_mut) = key_info.pads.get_mut(pad_index) {
-                            pi_mut.status = PadUploadStatus::Free;
-                            key_info.modified = Utc::now();
-                            // Increment counters after successful creation
-                            generated_pads_processed_count += 1;
-                            bytes_written_during_create += chunk_size_for_progress;
-                        // Add bytes written
-                        } else {
-                            error!(
-                                "ExecuteUpload[{}]: Pad index {} not found during status update (Generated -> Free). Inconsistency?",
-                                key_owned, pad_index
-                            );
-                            // Continue for now, but log error
-                        }
-                        // Clone MIS data before releasing lock
-                        let mis_data_to_write = mis_guard.clone();
-                        // Get network choice before releasing lock
-                        let network_choice = ma.storage.get_network_choice();
-                        // Drop lock before emitting callback and persisting
-                        drop(mis_guard);
+            .await;
 
-                        // Emit ReservationProgress *here*
-                        if total_new_pads_to_reserve > 0 {
-                            // Only emit if reservations were needed
-                            invoke_callback(
-                                &mut *callback_arc.lock().await,
-                                PutEvent::ReservationProgress {
-                                    current: generated_pads_processed_count as u64,
-                                    total: total_new_pads_to_reserve as u64,
-                                },
-                            )
-                            .await?;
-                        }
+            drop(permit);
 
-                        // Emit UploadProgress
-                        invoke_callback(
-                            &mut *callback_arc.lock().await,
-                            PutEvent::UploadProgress {
-                                bytes_written: bytes_written_during_create,
-                                total_bytes: total_bytes_expected,
-                            },
-                        )
-                        .await?;
-
-                        // Persist after update & callback
-                        if let Err(e) = write_local_index(&mis_data_to_write, network_choice).await
-                        {
-                            error!(
-                                "ExecuteUpload[{}]: Failed to persist state after pad {} status update (Generated -> Free): {}. Continuing...",
-                                key_owned, pad_index, e
-                            );
-                        }
-                    } else {
-                        error!(
-                            "ExecuteUpload[{}]: Key not found during status update (Generated -> Free). Inconsistency?",
-                            key_owned
-                        );
-                        // Drop lock if held
-                    }
-                }
+            match write_result {
+                Ok(_) => Ok(pad_index), // Return index on success
                 Err(e) => {
                     error!(
-                        "ExecuteUpload[{}]: write_chunk (create) failed for pad index {}: {}. Aborting.",
-                        key_owned, pad_index, e
+                        "ExecuteUploadTask[{}][Generated]: write_chunk failed for index {}: {}",
+                        key_for_task, pad_index, e
                     );
-                    // TODO: Implement retry logic or better error handling?
-                    return Err(e); // Abort on first failure for now
+                    Err(e)
                 }
             }
-        } else {
-            debug!(
-                "ExecuteUpload[{}]: No more 'Generated' pads found.",
-                key_owned
-            );
-            break; // Exit loop when no more Generated pads are found
+        });
+    }
+
+    // Collect results for Generated phase
+    let mut successfully_created_indices = Vec::new();
+    while let Some(res) = join_set.join_next().await {
+        match res {
+            Ok(Ok(pad_index)) => {
+                successfully_created_indices.push(pad_index);
+                // Update counters for progress reporting AFTER the batch
+                generated_pads_processed_count += 1;
+                if pad_index < data_chunks.len() {
+                    // Check bounds
+                    bytes_written_during_create += data_chunks[pad_index].len() as u64;
+                }
+            }
+            Ok(Err(e)) => {
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+                join_set.abort_all(); // Abort others on first error
+            }
+            Err(je) => {
+                error!("ExecuteUpload[{}][Generated]: JoinError: {}", key_owned, je);
+                if first_error.is_none() {
+                    first_error = Some(Error::JoinError(je.to_string()));
+                }
+                join_set.abort_all();
+            }
         }
     }
 
-    // --- Phase 2: Process Free Pads (Update + Write) ---
-    debug!("ExecuteUpload[{}]: Processing 'Free' pads...", key_owned);
-    loop {
-        let pad_to_process: Option<(usize, PadInfo)>;
-        {
-            let mis_guard = ma.master_index_storage.lock().await;
-            pad_to_process = mis_guard.index.get(&key_owned).and_then(|ki| {
-                ki.pads.iter().enumerate().find_map(|(idx, pi)| {
-                    if pi.status == PadUploadStatus::Free {
-                        Some((idx, pi.clone()))
-                    } else {
-                        None
+    if let Some(e) = first_error.take() {
+        return Err(e);
+    }
+
+    // Batch update status and persist after successful Generated phase
+    if !successfully_created_indices.is_empty() {
+        debug!(
+            "ExecuteUpload[{}][Generated]: Batch updating status for {} pads...",
+            key_owned,
+            successfully_created_indices.len()
+        );
+        let mut mis_guard = ma.master_index_storage.lock().await;
+        let mut modified = false;
+        if let Some(key_info) = mis_guard.index.get_mut(&key_owned) {
+            for idx in successfully_created_indices {
+                if let Some(pi_mut) = key_info.pads.get_mut(idx) {
+                    if pi_mut.status == PadUploadStatus::Generated {
+                        // Avoid double update
+                        pi_mut.status = PadUploadStatus::Free;
+                        modified = true;
                     }
-                })
-            });
-        } // Lock released
-
-        if let Some((pad_index, pad_info)) = pad_to_process {
-            if pad_index >= data_chunks.len() {
-                error!(
-                    "ExecuteUpload[{}]: Pad index {} out of bounds for data chunks (len {}). Aborting.",
-                    key_owned, pad_index, data_chunks.len()
-                );
-                return Err(Error::InternalError(format!(
-                    "Data chunk index out of bounds for key {}",
-                    key_owned
-                )));
+                }
             }
-            let chunk = &data_chunks[pad_index];
-            debug!(
-                "ExecuteUpload[{}]: Attempting write_chunk (update) for pad index {} (Address: {}).",
-                key_owned, pad_index, pad_info.address
-            );
+            if modified {
+                key_info.modified = Utc::now();
+            }
+        }
+        if modified {
+            let network_choice = ma.storage.get_network_choice();
+            let mis_data_to_write = mis_guard.clone();
+            drop(mis_guard); // Drop lock before write
+            if let Err(e) = write_local_index(&mis_data_to_write, network_choice).await {
+                error!(
+                    "ExecuteUpload[{}][Generated]: Failed to persist state after batch update: {}. Continuing...",
+                    key_owned, e
+                );
+            }
+            // Emit batch progress after update
+            if total_new_pads_to_reserve > 0 {
+                invoke_callback(
+                    &mut *callback_arc.lock().await,
+                    PutEvent::ReservationProgress {
+                        current: generated_pads_processed_count as u64,
+                        total: total_new_pads_to_reserve as u64,
+                    },
+                )
+                .await?;
+            }
+            invoke_callback(
+                &mut *callback_arc.lock().await,
+                PutEvent::UploadProgress {
+                    bytes_written: bytes_written_during_create,
+                    total_bytes: total_bytes_expected,
+                },
+            )
+            .await?;
+        }
+    }
 
-            // Pass down callback infrastructure
-            match pad_manager::write::write_chunk(
-                &ma.storage,
+    // --- Phase 2: Process Free Pads (Update + Write Concurrently) ---
+    debug!("ExecuteUpload[{}]: Processing 'Free' pads...", key_owned);
+    let free_pads_to_process: Vec<(usize, PadInfo)> = {
+        let mis_guard = ma.master_index_storage.lock().await;
+        mis_guard
+            .index
+            .get(&key_owned)
+            .map(|ki| {
+                ki.pads
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, pi)| pi.status == PadUploadStatus::Free)
+                    .map(|(idx, pi)| (idx, pi.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    let mut pads_processed_in_update = 0; // Counter for this phase
+
+    for (pad_index, pad_info) in free_pads_to_process {
+        if pad_index >= data_chunks.len() {
+            error!(
+                "ExecuteUpload[{}][Free]: Pad index {} out of bounds for data chunks (len {}). Skipping.",
+                key_owned, pad_index, data_chunks.len()
+            );
+            continue;
+        }
+        let chunk = data_chunks[pad_index].clone();
+        let ma_storage = ma.storage.clone();
+        let key_for_task = key_owned.clone();
+        let cb_arc_clone = callback_arc.clone();
+        let commit_arc_clone = total_pads_committed_arc.clone();
+        let sem_clone = semaphore.clone();
+
+        join_set.spawn(async move {
+            let permit = sem_clone.acquire_owned().await.expect("Semaphore closed");
+            debug!(
+                "ExecuteUploadTask[{}][Free]: Acquired permit. Writing pad index {}",
+                key_for_task, pad_index
+            );
+            let write_result = pad_manager::write::write_chunk(
+                &ma_storage,
                 pad_info.address,
                 &pad_info.key,
-                chunk,
-                false,         // Explicitly pass false for is_new when status is Free
-                &key_owned,    // Pass key_str
-                pad_index,     // Pass pad_index
-                &callback_arc, // Pass callback Arc
-                &total_pads_committed_arc, // Pass commit counter Arc
-                total_pads_expected, // Pass total expected pads
-                scratchpad_size, // Pass scratchpad_size
+                &chunk,
+                false, // is_new is false for Free
+                &key_for_task,
+                pad_index,
+                &cb_arc_clone,
+                &commit_arc_clone,
+                total_pads_expected,
+                scratchpad_size,
             )
-            .await
-            {
-                Ok(_) => {
-                    info!(
-                        "ExecuteUpload[{}]: write_chunk (update) succeeded for pad index {}. Updating status to Populated.",
-                        key_owned, pad_index
-                    );
-                    pads_processed += 1;
-                    // Calculate bytes written based on pads processed and scratchpad size
-                    // This is an approximation, assumes full pads except maybe the last.
-                    let bytes_written = std::cmp::min(
-                        bytes_written_during_create + (pads_processed * scratchpad_size as u64),
-                        total_bytes_expected,
-                    );
-
-                    // Use correct fields for UploadProgress
-                    invoke_callback(
-                        // Use Arc/Mutex callback
-                        &mut *callback_arc.lock().await,
-                        PutEvent::UploadProgress {
-                            bytes_written, // Use combined bytes written
-                            total_bytes: total_bytes_expected,
-                        },
-                    )
-                    .await?;
-
-                    // Update status in MIS and persist
-                    let mut mis_guard = ma.master_index_storage.lock().await;
-                    if let Some(key_info) = mis_guard.index.get_mut(&key_owned) {
-                        if let Some(pi_mut) = key_info.pads.get_mut(pad_index) {
-                            pi_mut.status = PadUploadStatus::Populated;
-                            key_info.modified = Utc::now();
-                        } else {
-                            error!(
-                                "ExecuteUpload[{}]: Pad index {} not found during status update (Free -> Populated). Inconsistency?",
-                                key_owned, pad_index
-                            );
-                        }
-                        // Persist after update
-                        let network_choice = ma.storage.get_network_choice();
-                        let mis_data_to_write = mis_guard.clone();
-                        drop(mis_guard);
-                        if let Err(e) = write_local_index(&mis_data_to_write, network_choice).await
-                        {
-                            error!(
-                                "ExecuteUpload[{}]: Failed to persist state after pad {} status update (Free -> Populated): {}. Continuing...",
-                                key_owned, pad_index, e
-                            );
-                        }
-                    } else {
-                        error!(
-                            "ExecuteUpload[{}]: Key not found during status update (Free -> Populated). Inconsistency?",
-                            key_owned
-                        );
-                    }
-                }
+            .await;
+            drop(permit);
+            match write_result {
+                Ok(_) => Ok(pad_index),
                 Err(e) => {
                     error!(
-                        "ExecuteUpload[{}]: write_chunk (update) failed for pad index {}: {}. Aborting.",
-                        key_owned, pad_index, e
+                        "ExecuteUploadTask[{}][Free]: write_chunk failed for index {}: {}",
+                        key_for_task, pad_index, e
                     );
-                    return Err(e); // Abort on first failure
+                    Err(e)
                 }
             }
-        } else {
-            debug!("ExecuteUpload[{}]: No more 'Free' pads found.", key_owned);
-            break; // Exit loop
+        });
+    }
+
+    // Collect results for Free phase
+    let mut successfully_updated_indices = Vec::new();
+    let mut total_bytes_written_in_update: u64 = 0;
+    while let Some(res) = join_set.join_next().await {
+        match res {
+            Ok(Ok(pad_index)) => {
+                successfully_updated_indices.push(pad_index);
+                if pad_index < data_chunks.len() {
+                    total_bytes_written_in_update += data_chunks[pad_index].len() as u64;
+                }
+            }
+            Ok(Err(e)) => {
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+                join_set.abort_all();
+            }
+            Err(je) => {
+                error!("ExecuteUpload[{}][Free]: JoinError: {}", key_owned, je);
+                if first_error.is_none() {
+                    first_error = Some(Error::JoinError(je.to_string()));
+                }
+                join_set.abort_all();
+            }
+        }
+    }
+
+    if let Some(e) = first_error.take() {
+        return Err(e);
+    }
+
+    // Batch update status and persist after successful Free phase
+    if !successfully_updated_indices.is_empty() {
+        debug!(
+            "ExecuteUpload[{}][Free]: Batch updating status for {} pads...",
+            key_owned,
+            successfully_updated_indices.len()
+        );
+        let mut mis_guard = ma.master_index_storage.lock().await;
+        let mut modified = false;
+        if let Some(key_info) = mis_guard.index.get_mut(&key_owned) {
+            for idx in successfully_updated_indices {
+                if let Some(pi_mut) = key_info.pads.get_mut(idx) {
+                    if pi_mut.status == PadUploadStatus::Free {
+                        // Avoid double update
+                        pi_mut.status = PadUploadStatus::Populated;
+                        modified = true;
+                    }
+                }
+            }
+            if modified {
+                key_info.modified = Utc::now();
+            }
+        }
+        if modified {
+            let network_choice = ma.storage.get_network_choice();
+            let mis_data_to_write = mis_guard.clone();
+            drop(mis_guard);
+            if let Err(e) = write_local_index(&mis_data_to_write, network_choice).await {
+                error!(
+                    "ExecuteUpload[{}][Free]: Failed to persist state after batch update: {}. Continuing...",
+                    key_owned, e
+                );
+            }
+            // Emit batch progress after update
+            let final_bytes_written = bytes_written_during_create + total_bytes_written_in_update;
+            invoke_callback(
+                &mut *callback_arc.lock().await,
+                PutEvent::UploadProgress {
+                    bytes_written: final_bytes_written,
+                    total_bytes: total_bytes_expected,
+                },
+            )
+            .await?;
         }
     }
 
