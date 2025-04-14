@@ -131,3 +131,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - CLI callback logic updated to handle the new event structure and manage reservation, upload (bytes), and confirmation (count) bars correctly.
 
 - **Fixed reservation bar progress:** Introduced a dedicated counter for successful pad creations (`create_counter_arc`) and updated `PadCreateSuccess` event and handler to use this count, preventing the progress bar from jumping positions.
+
+- **Fixed confirmation bar initial display:** The confirmation bar now shows the correct total number of pads immediately upon starting the upload phase, instead of displaying `[0/0]` initially.
