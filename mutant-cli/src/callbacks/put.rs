@@ -195,12 +195,15 @@ pub fn create_put_callback(
                     debug!("Received ScratchpadUploadComplete (ignored)");
                     Ok(true)
                 },
-                PutEvent::ScratchpadCommitComplete { index: _, total } => {
+                PutEvent::ScratchpadCommitComplete { index, total } => {
                     // Use the shared commit counter from context
                     let current_committed = *ctx.commit_counter_arc.lock().await;
+                    // DEBUG: Log counter value and Arc address received by callback
                     debug!(
-                        "Callback: Received ScratchpadCommitComplete - Current: {}, Total: {}",
+                        "Callback: Received ScratchpadCommitComplete - Counter Arc Ptr: {:?}, Counter Read: {}, Event Index: {}, Event Total: {}",
+                        Arc::as_ptr(&ctx.commit_counter_arc),
                         current_committed,
+                        index,
                         total
                     );
                     let mut commit_pb_guard = ctx.commit_pb_opt.lock().await;

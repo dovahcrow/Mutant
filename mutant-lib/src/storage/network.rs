@@ -366,7 +366,7 @@ pub(crate) async fn update_scratchpad_internal_static_with_progress(
     total_bytes_uploaded_arc: &Arc<Mutex<u64>>,
     bytes_in_chunk: u64,
     total_size_overall: u64,
-    _is_newly_reserved: bool,
+    is_newly_reserved: bool,
     total_pads_committed_arc: &Arc<Mutex<u64>>,
     total_pads_expected: usize,
 ) -> Result<(), Error> {
@@ -505,15 +505,16 @@ pub(crate) async fn update_scratchpad_internal_static_with_progress(
                                 "UpdateStaticVerify[{}][{}][Pad {}]: Emitting ScratchpadCommitComplete.",
                                 key_str, address, pad_index
                             );
-                            let current_committed_pads = {
+                            let _current_committed_pads = {
                                 let mut guard = total_pads_committed_arc.lock().await;
                                 *guard += 1;
-                                *guard
+                                // DEBUG: Log counter value and Arc address before emitting event
+                                debug!(
+                                    "UpdateStaticVerify[{}][Pad {}]: Counter Arc Ptr: {:?}, Value Before Emit: {}",
+                                    key_str, pad_index, Arc::as_ptr(total_pads_committed_arc), *guard
+                                );
+                                *guard // Return value
                             };
-                            debug!(
-                                "UpdateStaticVerify[{}][{}][Pad {}]: Commit progress updated: {} / {}",
-                                key_str, address, pad_index, current_committed_pads, total_pads_expected
-                            );
                             {
                                 // Scope for callback lock
                                 let mut cb_guard = callback_arc.lock().await;
