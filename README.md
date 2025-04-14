@@ -29,13 +29,15 @@ Before using `mutant`, you need to have an `ant` wallet configured for the targe
 antup client
 ```
 
-Once `ant` is installed, if you haven't already, you can import your existing wallet's private key using the `ant` CLI:
+Once `ant` is installed, if you haven't already, you can import your existing Ethereum/ANT wallet's private key using the `ant` CLI:
 
 ```bash
 ant wallet import YOUR_PRIVATE_KEY_HERE
 ```
 
 Replace `YOUR_PRIVATE_KEY_HERE` with your actual private key. `mutant` will automatically detect and use this wallet.
+
+Alternatively, you can create a new empty wallet using `ant wallet create` and fund it with the necessary ANT or ETH later.
 
 ### Installation
 

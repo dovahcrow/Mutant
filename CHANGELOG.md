@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Configuration:** Added `MutAntConfig` struct and `NetworkChoice` enum (Devnet/Mainnet) to allow configuring the MutAnt instance upon initialization. The `init` method now uses default configuration, while `init_with_progress` accepts a `MutAntConfig`.
 - **Documentation:** Added a "Setup" section to `README.md` explaining the `ant wallet import` prerequisite.
 - **Documentation:** Added `antup` installation instructions to the "Setup" section in `README.md`.
+- **Documentation:** Clarified in `README.md` that users can also create a new wallet with `ant wallet create`.
 - **Documentation:**
     - Replaced outdated `docs/memory_allocator_design.md` with a new set of detailed documentation for `mutant-lib`:
         - `docs/mutant_lib/overview.md`: High-level architecture and concepts.
