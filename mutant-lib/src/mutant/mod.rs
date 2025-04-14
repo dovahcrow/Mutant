@@ -13,8 +13,11 @@ use chrono::{DateTime, Utc};
 use hex;
 use log::{debug, error, info, warn};
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use tokio::sync::mpsc; // For signaling completion from tasks
 use tokio::sync::Mutex;
+use tokio::task::JoinSet;
 
 // Bring the autonomi crate into scope to potentially resolve trait methods
 use crate::autonomi;
@@ -766,7 +769,7 @@ impl MutAnt {
         // --- END ---
     }
 
-    /// Purges pads listed in `pending_verification_pads` by checking their existence.
+    /// Purges pads listed in `pending_verification_pads` by checking their existence concurrently.
     /// Attempts to fetch metadata for each pad. Successfully fetched pads are moved to `free_pads`.
     /// Failed pads (e.g., not found) are discarded.
     /// Saves the updated master index ONLY to the local cache.
@@ -775,15 +778,15 @@ impl MutAnt {
         &self,
         mut callback: Option<PurgeCallback>,
     ) -> Result<(), Error> {
-        info!("Starting local purge of unverified pads...");
+        info!("Starting concurrent local purge of unverified pads...");
 
         let network_choice = self.storage.get_network_choice();
         let mut master_index_storage = self.master_index_storage.lock().await;
 
         let pads_to_verify = std::mem::take(&mut master_index_storage.pending_verification_pads);
         let initial_count = pads_to_verify.len();
-        let mut verified_pads = Vec::new();
-        let mut failed_pads_count = 0;
+        let verified_pads_arc = Arc::new(Mutex::new(Vec::new())); // Collect verified pads concurrently
+        let failed_pads_count_arc = Arc::new(AtomicUsize::new(0)); // Count failures concurrently
 
         // Emit Starting event
         invoke_purge_callback(
@@ -795,49 +798,99 @@ impl MutAnt {
         .await?;
 
         info!(
-            "Found {} pads pending verification. Attempting to fetch metadata...",
+            "Found {} pads pending verification. Starting concurrent fetch attempts...",
             initial_count
         );
 
+        let mut first_error: Option<Error> = None;
+        let mut callback_cancelled = false;
+
         if initial_count > 0 {
             let client = self.storage.get_client().await?;
+            let client_arc = Arc::new(client.clone()); // Clone client for tasks
+            let mut join_set = JoinSet::new();
 
-            for (address, key) in &pads_to_verify {
-                debug!("Verifying pad at address: {}", address);
-                let verified = match client.scratchpad_get(address).await {
-                    Ok(_) => {
-                        info!("Successfully verified pad at address: {}", address);
-                        verified_pads.push((address.clone(), key.clone()));
-                        true
-                    }
-                    Err(e) => {
-                        if e.to_string().contains("RecordNotFound") {
-                            info!(
-                                "Pad at address {} not found. Discarding. Error: {}",
-                                address, e
-                            );
-                        } else {
-                            warn!(
-                                "Failed to get pad at address {}: {}. Discarding.",
-                                address, e
-                            );
+            for (address, key) in pads_to_verify {
+                let client_clone = Arc::clone(&client_arc);
+                let verified_pads_clone = Arc::clone(&verified_pads_arc);
+                let failed_count_clone = Arc::clone(&failed_pads_count_arc);
+
+                join_set.spawn(async move {
+                    debug!("Verifying pad task starting for address: {}", address);
+                    match client_clone.scratchpad_get(&address).await {
+                        Ok(_) => {
+                            info!("Successfully verified pad at address: {}", address);
+                            let mut verified_guard = verified_pads_clone.lock().await;
+                            verified_guard.push((address.clone(), key.clone()));
+                            // Signal success (no specific data needed, just the outcome)
+                            Ok(true) // Indicate success
                         }
-                        failed_pads_count += 1;
-                        false
+                        Err(e) => {
+                            if e.to_string().contains("RecordNotFound") {
+                                info!(
+                                    "Pad at address {} not found. Discarding. Error: {}",
+                                    address, e
+                                );
+                            } else {
+                                warn!(
+                                    "Failed to get pad at address {}: {}. Discarding.",
+                                    address, e
+                                );
+                            }
+                            failed_count_clone.fetch_add(1, Ordering::SeqCst);
+                            // Signal failure, potentially returning the error if needed later
+                            Err(e) // Indicate failure with error
+                        }
                     }
-                };
-                // Emit PadProcessed event regardless of success/failure
-                if !invoke_purge_callback(&mut callback, PurgeEvent::PadProcessed).await? {
-                    return Err(Error::OperationCancelled);
+                });
+            }
+
+            // Collect results and emit PadProcessed
+            let mut processed_count = 0;
+            while let Some(res) = join_set.join_next().await {
+                processed_count += 1;
+                debug!("Processed task {}/{}", processed_count, initial_count);
+                match res {
+                    Ok(task_result) => {
+                        if let Err(task_err) = task_result {
+                            if first_error.is_none() {
+                                // Convert ScratchpadError to mutant_lib::Error
+                                first_error = Some(Error::AutonomiClient(task_err));
+                            }
+                        }
+                    }
+                    Err(join_error) => {
+                        // Task panicked or was cancelled
+                        error!("JoinError during pad verification: {}", join_error);
+                        failed_pads_count_arc.fetch_add(1, Ordering::SeqCst); // Count join errors as failures
+                        if first_error.is_none() {
+                            first_error = Some(Error::from_join_error_msg(
+                                &join_error,
+                                "Pad verification task failed".to_string(),
+                            ));
+                        }
+                    }
+                }
+                // Emit PadProcessed event after each task finishes (success or failure)
+                if !callback_cancelled {
+                    if !invoke_purge_callback(&mut callback, PurgeEvent::PadProcessed).await? {
+                        callback_cancelled = true;
+                        if first_error.is_none() {
+                            first_error = Some(Error::OperationCancelled);
+                        }
+                        join_set.abort_all(); // Cancel remaining tasks if callback requests it
+                    }
                 }
             }
         }
 
-        let verified_count = verified_pads.len();
-        master_index_storage.free_pads.extend(verified_pads);
+        let final_failed_count = failed_pads_count_arc.load(Ordering::SeqCst);
+        let verified_pads = Arc::try_unwrap(verified_pads_arc)
+            .map_err(|_| Error::InternalError("Failed to unwrap verified pads Arc".to_string()))?
+            .into_inner();
+        let final_verified_count = verified_pads.len();
 
-        let final_verified_count = verified_count;
-        let final_failed_count = failed_pads_count;
+        master_index_storage.free_pads.extend(verified_pads);
 
         info!(
             "Purge check complete. Verified: {}, Discarded: {}",
@@ -851,9 +904,13 @@ impl MutAnt {
                 "Writing updated index to local cache ({:?})...",
                 network_choice
             );
-            write_local_index(&*master_index_storage, network_choice).await?;
+            // Clone the data to write *after* releasing the lock
+            let data_to_write = master_index_storage.clone();
+            drop(master_index_storage); // Release lock before write
+            write_local_index(&data_to_write, network_choice).await?;
             info!("Local cache updated after purge.");
         } else {
+            drop(master_index_storage); // Release lock even if no write
             info!("No pending pads found, local cache unchanged.");
         }
 
@@ -867,8 +924,12 @@ impl MutAnt {
         )
         .await?;
 
-        drop(master_index_storage);
-        Ok(())
+        // Return the first error encountered, if any
+        if let Some(e) = first_error {
+            Err(e)
+        } else {
+            Ok(())
+        }
     }
 
     /// Retrieves the network choice (Devnet or Mainnet) this MutAnt instance is configured for.
