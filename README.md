@@ -13,6 +13,7 @@
 *   **Private Mutable Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `update` `rm`) operating on byte arrays
 *   **Reuse your storage space for free:** MutAnt will reuse your free storage space for new data, so you only pay when growing your storage space.
 *   **User-Friendly Keys:** Operates on human-readable string keys.
+*   **Resumable Uploads:** MutAnt will resume an upload if it is interrupted, so you can put a file and walk away.
 *   **Asynchronous Design:** Built with `async`/`await` and `tokio` for non-blocking network operations.
 *   **Local Cache Index:** MutAnt will keep track of the keys you've stored locally on your machine, and sync it with the remote storage.
 *   **CLI tool and Rust Library:** MutAnt provides a CLI tool and a Rust library for easy integration into your projects.
