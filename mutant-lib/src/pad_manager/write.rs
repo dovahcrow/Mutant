@@ -38,6 +38,7 @@ pub(crate) type PadInfoAlias = (ScratchpadAddress, Vec<u8>);
 ///
 /// # Returns
 /// Returns `Ok(())` on successful write and confirmation, otherwise a `crate::error::Error`.
+#[allow(clippy::too_many_arguments)]
 pub async fn write_chunk(
     storage: &Storage,
     address: ScratchpadAddress,
@@ -49,15 +50,15 @@ pub async fn write_chunk(
     callback_arc: &Arc<Mutex<Option<PutCallback>>>,
     total_pads_committed_arc: &Arc<Mutex<u64>>,
     total_pads_expected: usize,
-    scratchpad_size: usize,
+    scratchpad_size: usize, // Use this parameter again
 ) -> Result<(), Error> {
     debug!(
-        "write_chunk[{}][Pad {}]: Address={}, Key=<{} bytes>, Chunk=<{} bytes>, IsNew={}",
+        "write_chunk[{}][Pad {}]: Address={}, IsNew={}",
         key_str,
         pad_index,
         address,
-        key_bytes.len(),
-        data_chunk.len(),
+        // key_bytes.len(), // Removed for brevity
+        // data_chunk.len(), // Removed for brevity
         is_new_pad
     );
 
@@ -73,55 +74,29 @@ pub async fn write_chunk(
     let client = storage.get_client().await?;
 
     if is_new_pad {
-        // 1. Create the empty pad first
+        // Call create, which now handles its own verification and commit event
         let wallet = storage.wallet();
         let payment_option = autonomi::client::payment::PaymentOption::from(wallet);
-        // Call create without callbacks (it no longer emits them)
         network::create_scratchpad_static(
             client,
             &secret_key,
-            &[],                           // Create with empty data
-            ContentType::DataChunk as u64, // Use DataChunk content type
+            data_chunk, // Pass initial data directly
+            ContentType::DataChunk as u64,
             payment_option,
             key_str,
             pad_index,
-            &Arc::new(Mutex::new(None)), // Dummy callback
-            &Arc::new(Mutex::new(0)),    // Dummy counter
-            total_pads_expected,         // Still needed for logging in create?
-        )
-        .await?;
-        debug!(
-            "write_chunk[{}][Pad {}]: Initial create call finished.",
-            key_str, pad_index
-        );
-
-        // 2. Now perform an UPDATE to write the actual data and trigger verification/commit event
-        debug!(
-            "write_chunk[{}][Pad {}]: Performing update to write data and verify...",
-            key_str, pad_index
-        );
-        let bytes_in_chunk = data_chunk.len() as u64;
-        let total_size_overall = scratchpad_size as u64 * total_pads_expected as u64; // Estimate total size
-        network::update_scratchpad_internal_static_with_progress(
-            client,
-            &secret_key,
-            data_chunk,
-            ContentType::DataChunk as u64,
-            key_str,
-            pad_index,
-            callback_arc,             // Pass real callback arc
-            &Arc::new(Mutex::new(0)), // Dummy total_bytes_uploaded
-            bytes_in_chunk,
-            total_size_overall,
-            true,                     // Pass true for is_newly_reserved for the commit event
-            total_pads_committed_arc, // Pass real commit counter arc
+            callback_arc,
+            total_pads_committed_arc,
             total_pads_expected,
         )
-        .await
+        .await?;
+        // create returns address, we discard it and return Ok(()) on success
+        Ok(())
     } else {
-        // This is an update for a previously created (Free) pad
+        // Call update with progress, which handles verification and commit event
         let bytes_in_chunk = data_chunk.len() as u64;
-        let total_size_overall = scratchpad_size as u64 * total_pads_expected as u64; // Estimate total size
+        // Estimate total size using passed scratchpad_size
+        let total_size_overall = scratchpad_size as u64 * total_pads_expected as u64;
         network::update_scratchpad_internal_static_with_progress(
             client,
             &secret_key,
@@ -133,7 +108,7 @@ pub async fn write_chunk(
             &Arc::new(Mutex::new(0)), // Dummy total_bytes_uploaded
             bytes_in_chunk,
             total_size_overall,
-            false, // is_newly_reserved is false for subsequent updates
+            false, // is_new_pad is false for updates
             total_pads_committed_arc,
             total_pads_expected,
         )
