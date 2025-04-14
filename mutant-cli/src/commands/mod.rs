@@ -2,6 +2,7 @@
 pub mod get;
 pub mod import;
 pub mod ls;
+pub mod purge;
 pub mod put;
 pub mod remove;
 pub mod reset;

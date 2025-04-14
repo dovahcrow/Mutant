@@ -13,6 +13,9 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+// Bring the autonomi crate into scope to potentially resolve trait methods
+use crate::autonomi;
+
 pub mod data_structures;
 pub mod remove_logic;
 pub mod store_logic;
@@ -753,6 +756,76 @@ impl MutAnt {
         )
         .await
         // --- END ---
+    }
+
+    /// Purges pads listed in `pending_verification_pads`.
+    /// Attempts to fetch each pad. Successfully fetched pads are moved to `free_pads`.
+    /// Failed pads are discarded.
+    /// Saves the updated master index afterwards.
+    pub async fn purge_unverified_pads(&self) -> Result<(), Error> {
+        info!("Starting purge of unverified pads...");
+
+        let mut master_index_storage = self.master_index_storage.lock().await;
+
+        let pads_to_verify = std::mem::take(&mut master_index_storage.pending_verification_pads);
+        let mut verified_pads = Vec::new();
+        let mut failed_pads_count = 0;
+
+        info!(
+            "Found {} pads pending verification. Attempting to fetch...",
+            pads_to_verify.len()
+        );
+
+        // Get the client instance first
+        let client = self.storage.get_client().await?;
+
+        // Iterate over a reference to avoid moving pads_to_verify
+        for (address, key) in &pads_to_verify {
+            debug!("Verifying pad at address: {}", address);
+            // Use the obtained client instance and the correct method
+            match client.scratchpad_get(address).await {
+                // Pass address by reference
+                Ok(_) => {
+                    info!("Successfully verified pad at address: {}", address);
+                    // Since we iterate by reference, address and key are references.
+                    // Clone them to store owned values in verified_pads.
+                    verified_pads.push((address.clone(), key.clone()));
+                }
+                Err(e) => {
+                    // Log specific autonomi errors if needed, otherwise just note failure
+                    info!(
+                        "Failed to verify pad at address: {}. Discarding. Error: {}",
+                        address, e
+                    );
+                    failed_pads_count += 1;
+                    // Pad is discarded as it failed verification
+                }
+            }
+        }
+
+        let verified_count = verified_pads.len();
+
+        // Add successfully verified pads back to the free list
+        master_index_storage.free_pads.extend(verified_pads);
+
+        info!(
+            "Purge check complete. {} pads successfully verified and moved to free list.",
+            verified_count
+        );
+        info!(
+            "{} pads failed verification and were discarded.",
+            failed_pads_count
+        );
+
+        // Drop the lock before saving, as save_master_index might need it.
+        drop(master_index_storage);
+
+        // Save the changes (writes to cache and potentially network)
+        self.save_master_index().await?;
+
+        info!("Master index updated after purge.");
+
+        Ok(())
     }
 
     /// Retrieves the network choice (Devnet or Mainnet) this MutAnt instance is configured for.
