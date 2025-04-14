@@ -57,6 +57,8 @@ Commands:
   ls     Lists all keys stored on the network
   stats  Get storage summary (allocator perspective)
   reset  Resets the master index to its initial empty state. Requires confirmation
+  import Import a free pad using its private key
+  sync   Synchronize the local index cache with the remote index. Use --push-force to overwrite remote with local
   help   Print this message or the help of the given subcommand(s)
 
 Options:
