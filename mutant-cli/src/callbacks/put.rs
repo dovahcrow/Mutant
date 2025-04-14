@@ -104,9 +104,32 @@ pub fn create_put_callback(
                     Ok(true)
                 },
                 PutEvent::UploadProgress { bytes_written, total_bytes: _ } => {
+                    debug!(
+                        "Callback: Received UploadProgress - bytes_written: {}",
+                        bytes_written
+                    );
                     if let Some(upload_pb) = ctx.upload_pb_opt.lock().await.as_mut() {
                         if !upload_pb.is_finished() {
-                            upload_pb.set_position(bytes_written);
+                            let old_pos = upload_pb.position();
+                            // Only update if the new aggregate is not less than the current position
+                            if bytes_written >= old_pos {
+                                upload_pb.set_position(bytes_written);
+                                let new_pos = upload_pb.position();
+                                debug!(
+                                    "Callback: UploadProgress updated - Old Pos: {}, New Pos: {}, Event Bytes: {}",
+                                    old_pos,
+                                    new_pos,
+                                    bytes_written
+                                );
+                            } else {
+                                debug!(
+                                    "Callback: UploadProgress skipped update - Old Pos: {}, Event Bytes: {} (ignored)",
+                                    old_pos,
+                                    bytes_written
+                                );
+                            }
+                        } else {
+                            debug!("Callback: Upload bar is already finished.");
                         }
                     } else {
                         warn!("UploadProgress event received but upload progress bar does not exist.");
