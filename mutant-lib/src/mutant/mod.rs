@@ -394,7 +394,7 @@ impl MutAnt {
     /// Use `store_with_progress` for detailed feedback.
     pub async fn store(&self, user_key: &str, data_bytes: &[u8]) -> Result<(), Error> {
         // Create a dummy counter Arc for the call, as it won't be observed
-        let commit_counter_arc = Arc::new(Mutex::new(0u64));
+        let commit_counter_arc = Arc::new(tokio::sync::Mutex::new(0u64));
         self.store_with_progress(user_key, data_bytes, None, commit_counter_arc)
             .await
     }
@@ -405,7 +405,7 @@ impl MutAnt {
         user_key: &str,
         data_bytes: &[u8],
         callback: Option<PutCallback>,
-        commit_counter_arc: Arc<Mutex<u64>>, // Correct parameter
+        commit_counter_arc: Arc<tokio::sync::Mutex<u64>>,
     ) -> Result<(), Error> {
         if user_key == MASTER_INDEX_KEY {
             return Err(Error::InvalidInput(

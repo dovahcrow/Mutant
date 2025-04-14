@@ -362,12 +362,12 @@ pub(crate) async fn update_scratchpad_internal_static_with_progress(
     content_type: u64,
     key_str: &str,
     pad_index: usize,
-    callback_arc: &Arc<Mutex<Option<PutCallback>>>,
+    callback_arc: &Arc<tokio::sync::Mutex<Option<PutCallback>>>,
     total_bytes_uploaded_arc: &Arc<Mutex<u64>>,
     bytes_in_chunk: u64,
     total_size_overall: u64,
     is_newly_reserved: bool,
-    total_pads_committed_arc: &Arc<Mutex<u64>>,
+    total_pads_committed_arc: &Arc<tokio::sync::Mutex<u64>>,
     total_pads_expected: usize,
 ) -> Result<(), Error> {
     let data_bytes = Bytes::from(data.to_vec());
@@ -600,9 +600,10 @@ pub(crate) async fn update_scratchpad_internal_static(
     content_type: u64,
 ) -> Result<(), Error> {
     // Create dummy values for progress reporting context
-    let dummy_callback: Arc<Mutex<Option<PutCallback>>> = Arc::new(Mutex::new(None));
+    let dummy_callback: Arc<tokio::sync::Mutex<Option<PutCallback>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
     let dummy_bytes_uploaded: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
-    let dummy_pads_committed: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
+    let dummy_pads_committed: Arc<tokio::sync::Mutex<u64>> = Arc::new(tokio::sync::Mutex::new(0));
     let data_len = data.len() as u64;
 
     // Call the detailed function
@@ -632,8 +633,8 @@ pub(crate) async fn create_scratchpad_static(
     payment_option: PaymentOption,
     key_str: &str,
     pad_index: usize,
-    _callback_arc: &Arc<Mutex<Option<PutCallback>>>,
-    _total_pads_committed_arc: &Arc<Mutex<u64>>,
+    _callback_arc: &Arc<tokio::sync::Mutex<Option<PutCallback>>>,
+    _total_pads_committed_arc: &Arc<tokio::sync::Mutex<u64>>,
     _total_pads_expected: usize,
 ) -> Result<ScratchpadAddress, Error> {
     let data_bytes = Bytes::from(initial_data.to_vec());

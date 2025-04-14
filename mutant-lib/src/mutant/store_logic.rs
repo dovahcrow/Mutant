@@ -39,7 +39,7 @@ pub(super) async fn store_data(
     key: &str,
     data_bytes: &[u8],
     mut callback: Option<PutCallback>,
-    commit_counter_arc: Arc<Mutex<u64>>,
+    commit_counter_arc: Arc<tokio::sync::Mutex<u64>>,
 ) -> Result<(), Error> {
     let data_size = data_bytes.len();
     let key_owned = key.to_string();
@@ -270,7 +270,7 @@ async fn execute_upload_phase(
     scratchpad_size: usize,
     callback: Option<PutCallback>,
     total_new_pads_to_reserve: usize, // Use this for ReservationProgress total
-    commit_counter_arc: Arc<Mutex<u64>>, // Use this parameter
+    commit_counter_arc: Arc<tokio::sync::Mutex<u64>>, // Use this parameter
 ) -> Result<(), Error> {
     let key_owned = key.to_string();
     let data_chunks = Arc::new(chunk_data(data_bytes, scratchpad_size));
