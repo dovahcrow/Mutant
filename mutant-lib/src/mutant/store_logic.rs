@@ -426,30 +426,6 @@ async fn execute_upload_phase(
             Ok(Ok((pad_index, _chunk_size))) => {
                 successful_updates += 1;
 
-                // Determine if this was originally a 'Generated' pad
-                let was_generated = {
-                    let mis_guard = ma.master_index_storage.lock().await;
-                    mis_guard
-                        .index
-                        .get(&key_owned)
-                        .and_then(|ki| ki.pads.get(pad_index))
-                        .map_or(false, |pi| pi.is_new)
-                };
-                if was_generated {
-                    pads_reserved_count += 1;
-                    // Emit PadWriteConfirmed for reservation progress
-                    if total_new_pads_to_reserve > 0 {
-                        invoke_callback(
-                            &mut *callback_arc.lock().await,
-                            PutEvent::PadWriteConfirmed {
-                                current: pads_reserved_count as u64,
-                                total: total_new_pads_to_reserve as u64,
-                            },
-                        )
-                        .await?;
-                    }
-                }
-
                 // Update status for this specific pad
                 let mut mis_guard = ma.master_index_storage.lock().await;
                 if let Some(key_info) = mis_guard.index.get_mut(&key_owned) {
@@ -505,7 +481,6 @@ async fn execute_upload_phase(
             "ExecuteUpload[{}]: All {} pads processed successfully. Upload complete.",
             key_owned, successful_updates
         );
-        invoke_callback(&mut *callback_arc.lock().await, PutEvent::UploadFinished).await?;
         invoke_callback(&mut *callback_arc.lock().await, PutEvent::StoreComplete).await?;
         Ok(())
     } else {

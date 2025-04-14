@@ -114,3 +114,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [Unreleased]: https://github.com/Champii/MutAnt/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/Champii/MutAnt/compare/v0.1.0...v0.1.1
+
+### Changed
+
+- **Refactored `PutEvent` enum and progress bars:**
+  - Simplified `PutEvent` variants for clearer progress reporting (`ReservingPads`, `StartingUpload`, `UploadProgress`, `PadConfirmed`, `StoreComplete`).
+  - Removed redundant/confusing events (`PadWriteConfirmed`, `ScratchpadCommitComplete`, `PadWriteProgress`, `UploadFinished`).
+  - Introduced a dedicated "Confirmation" progress bar in the CLI, updated by `PadConfirmed` events.
+  - CLI callback logic updated to handle the new event structure and manage reservation, upload (bytes), and confirmation (count) bars correctly.

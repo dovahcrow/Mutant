@@ -500,33 +500,26 @@ pub(crate) async fn update_scratchpad_internal_static_with_progress(
                                 key_str, address, pad_index, attempt + 1
                             );
 
-                            // --- Emit ScratchpadCommitComplete (ALWAYS emit on successful verification) ---
-                            info!(
-                                "UpdateStaticVerify[{}][{}][Pad {}]: Emitting ScratchpadCommitComplete.",
-                                key_str, address, pad_index
-                            );
-                            let _current_committed_pads = {
-                                let mut guard = total_pads_committed_arc.lock().await;
-                                *guard += 1;
-                                // DEBUG: Log counter value and Arc address before emitting event
+                            // --- Emit PadConfirmed (ALWAYS emit on successful verification) ---
+                            let current_confirmed = {
+                                let mut counter = total_pads_committed_arc.lock().await;
+                                *counter += 1;
                                 debug!(
-                                    "UpdateStaticVerify[{}][Pad {}]: Counter Arc Ptr: {:?}, Value Before Emit: {}",
-                                    key_str, pad_index, Arc::as_ptr(total_pads_committed_arc), *guard
+                                    "UpdateStaticVerify[{}][{}][Pad {}]: Incrementing commit counter to {}. Emitting PadConfirmed.",
+                                    key_str, address, pad_index, *counter
                                 );
-                                *guard // Return value
+                                *counter // Return the incremented value
                             };
-                            {
-                                // Scope for callback lock
-                                let mut cb_guard = callback_arc.lock().await;
-                                invoke_callback(
-                                    &mut *cb_guard,
-                                    PutEvent::ScratchpadCommitComplete {
-                                        index: pad_index as u64,
-                                        total: total_pads_expected as u64,
-                                    },
-                                )
-                                .await?;
-                            } // Callback lock released
+
+                            invoke_callback(
+                                &mut *callback_arc.lock().await,
+                                PutEvent::PadConfirmed {
+                                    current: current_confirmed,
+                                    total: total_pads_expected as u64,
+                                },
+                            )
+                            .await?;
+
                             return Ok(()); // Verification successful
                         } else {
                             debug!(

@@ -10,19 +10,15 @@ pub enum PutEvent {
     ReservingPads { count: u64 },
     /// Indicates that the data upload process is starting.
     StartingUpload { total_bytes: u64 },
-    /// Reports progress of bytes confirmed after chunk upload and initial verification.
+    /// Reports byte-level progress of the overall data upload.
     UploadProgress {
         bytes_written: u64,
         total_bytes: u64,
     },
-    /// Indicates that the data upload process has finished.
-    UploadFinished,
+    /// Indicates that a single pad has been successfully verified and confirmed.
+    PadConfirmed { current: u64, total: u64 },
     /// Indicates the entire store operation (allocation, write, metadata update) is complete.
     StoreComplete,
-    /// Indicates that a single *new* pad write task (create+write+verify) has completed successfully.
-    PadWriteConfirmed { current: u64, total: u64 },
-    /// Indicates that a single scratchpad write (initial or subsequent) has been fully committed/finalized after verification.
-    ScratchpadCommitComplete { index: u64, total: u64 },
 }
 
 /// Type alias for the callback function used during the 'put' operation.
