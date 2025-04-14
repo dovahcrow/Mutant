@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a 5-second delay **after** static storage write operations (create/update) complete and **before** their verification loops begin.
 - Modified `load_master_index_storage_static` in `mutant-lib` to automatically create and save a default Master Index Storage on the network if it's not found, empty, or fails to deserialize.
 - Fixed an issue where the reservation progress bar could be cleared prematurely, causing warnings.
+- **CLI:** Refactored `sync` command progress display to use a single step-based progress bar instead of multiple spinners.
+- **CLI:** Mark incomplete uploads with `*` in `mutant ls` output (both standard and long formats).
+- **Sync:** Fixed an issue where the `sync` command (and other operations that save the index) would fail if the remote master index scratchpad did not exist. The save logic now checks for existence and calls the appropriate create or update function.
+- Fixed a data corruption issue during `get` caused by the list of storage pads (`PadInfo`) not being saved in the correct chunk order during `put`/`update`. The `perform_concurrent_write_standalone` function now collects `(index, PadInfo)` pairs, sorts them by index, and stores the correctly ordered list in the master index.
 
 ### Added
 - Differentiate local index cache based on network choice (Devnet vs Mainnet). Cache files are now stored in `~/.local/share/mutant/{devnet,mainnet}/index.cbor`.

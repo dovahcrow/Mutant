@@ -1,5 +1,6 @@
 use crate::app::CliError;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use crate::callbacks::progress::StyledProgressBar;
+use indicatif::MultiProgress;
 use log::{debug, error, info, trace, warn};
 use mutant_lib::autonomi::ScratchpadAddress;
 use mutant_lib::cache::{read_local_index, write_local_index};
@@ -12,79 +13,68 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
     info!("Starting synchronization process...");
     let network = mutant.get_network_choice();
     let mp = MultiProgress::new();
-    let spinner_style = ProgressStyle::default_spinner()
-        .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
-        .template("{prefix:.bold.dim} {spinner} {wide_msg}")
-        .expect("Invalid progress style template");
+    let pb = StyledProgressBar::new_for_steps(&mp);
 
     if push_force {
-        let pb_read = mp.add(ProgressBar::new_spinner());
-        pb_read.set_style(spinner_style.clone());
-        pb_read.set_prefix("1/4");
-        pb_read.set_message("Reading local index cache...");
-        pb_read.enable_steady_tick(Duration::from_millis(100));
+        let total_steps = 4;
+        pb.set_length(total_steps);
+        pb.set_position(0);
+        pb.set_message("Starting push-force sync...".to_string());
 
+        // --- Step 1: Read local cache ---
+        pb.set_position(1);
+        pb.set_message("Reading local index cache...".to_string());
         let local_index = read_local_index(network)
             .await
             .map_err(|e| {
-                error!("Failed to read local cache for push-force sync: {}", e);
-                pb_read.finish_with_message("Failed to read local cache.");
+                let msg = format!("Failed to read local cache: {}", e);
+                error!("{}", msg);
+                pb.abandon_with_message(msg.clone());
                 CliError::from(e)
             })?
             .ok_or_else(|| {
-                error!("Local cache not found or empty. Cannot push-force an empty index.");
-                pb_read.finish_with_message("Local cache empty.");
-                CliError::MutAntInit("Local cache is empty, cannot push-force.".to_string())
+                let msg = "Local cache not found or empty. Cannot push-force.".to_string();
+                error!("{}", msg);
+                pb.abandon_with_message(msg.clone());
+                CliError::MutAntInit(msg)
             })?;
-        pb_read.finish_with_message("Read local index cache.");
 
-        let pb_update_mem = mp.add(ProgressBar::new_spinner());
-        pb_update_mem.set_style(spinner_style.clone());
-        pb_update_mem.set_prefix("2/4");
-        pb_update_mem.set_message("Updating in-memory index...");
-        pb_update_mem.enable_steady_tick(Duration::from_millis(100));
+        // --- Step 2: Update in-memory state ---
+        pb.set_position(2);
+        pb.set_message("Updating in-memory index...".to_string());
         mutant
             .update_internal_master_index(local_index.clone())
             .await
             .map_err(|e| {
-                pb_update_mem.finish_with_message("Failed to update in-memory index.");
+                let msg = format!("Failed to update in-memory index: {}", e);
+                error!("{}", msg);
+                pb.abandon_with_message(msg.clone());
                 CliError::from(e)
             })?;
-        pb_update_mem.finish_with_message("Updated in-memory index.");
 
-        let pb_write_cache = mp.add(ProgressBar::new_spinner());
-        pb_write_cache.set_style(spinner_style.clone());
-        pb_write_cache.set_prefix("3/4");
-        pb_write_cache.set_message("Rewriting local index cache...");
-        pb_write_cache.enable_steady_tick(Duration::from_millis(100));
+        // --- Step 3: Write local cache ---
+        pb.set_position(3);
+        pb.set_message("Rewriting local index cache...".to_string());
         write_local_index(&local_index, network)
             .await
             .map_err(|e| {
-                error!(
-                    "Failed to rewrite local cache during push-force sync: {}",
-                    e
-                );
-                pb_write_cache.finish_with_message("Failed to rewrite local cache.");
+                let msg = format!("Failed to rewrite local cache: {}", e);
+                error!("{}", msg);
+                pb.abandon_with_message(msg.clone());
                 CliError::from(e)
             })?;
-        pb_write_cache.finish_with_message("Rewrote local index cache.");
 
-        let pb_save_remote = mp.add(ProgressBar::new_spinner());
-        pb_save_remote.set_style(spinner_style.clone());
-        pb_save_remote.set_prefix("4/4");
-        pb_save_remote.set_message("Saving index to remote (force)...");
-        pb_save_remote.enable_steady_tick(Duration::from_millis(100));
+        // --- Step 4: Save remote index (Force overwrite) ---
+        pb.set_position(4);
+        pb.set_message("Saving index to remote (force)...".to_string());
         mutant.save_master_index().await.map_err(|e| {
-            error!(
-                "Failed to save index to remote storage during push-force sync: {}",
-                e
-            );
-            pb_save_remote.finish_with_message("Failed to save remote index.");
+            let msg = format!("Failed to save index to remote: {}", e);
+            error!("{}", msg);
+            pb.abandon_with_message(msg.clone());
             CliError::from(e)
         })?;
-        pb_save_remote.finish_with_message("Saved index to remote.");
 
-        mp.clear().expect("Failed to clear multi progress bar");
+        pb.finish_and_clear();
         println!("Push-force synchronization complete. Remote index overwritten with local cache.");
         println!("  Total keys: {}", local_index.index.len());
         println!("  Total free pads: {}", local_index.free_pads.len());
@@ -92,77 +82,66 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
         Ok(())
     } else {
         // --- Regular Sync Logic ---
-        let pb_read = mp.add(ProgressBar::new_spinner());
-        pb_read.set_style(spinner_style.clone());
-        pb_read.set_prefix("1/6");
-        pb_read.set_message("Reading local index cache...");
-        pb_read.enable_steady_tick(Duration::from_millis(100));
+        let total_steps = 6;
+        pb.set_length(total_steps);
+        pb.set_position(0);
+        pb.set_message("Starting regular sync...".to_string());
+
+        // --- Step 1: Read local cache ---
+        pb.set_position(1);
+        pb.set_message("Reading local index cache...".to_string());
         let local_index_opt = read_local_index(network).await.map_err(|e| {
-            error!("Failed to read local cache during sync: {}", e);
-            pb_read.finish_with_message("Failed to read local cache.");
+            let msg = format!("Failed to read local cache: {}", e);
+            error!("{}", msg);
+            pb.abandon_with_message(msg.clone());
             CliError::from(e)
         })?;
         let local_index = local_index_opt.unwrap_or_else(|| {
             warn!("Local cache not found or empty, starting sync with default empty index.");
             MasterIndexStorage::default()
         });
-        pb_read.finish_with_message("Read local index cache.");
 
-        let pb_fetch = mp.add(ProgressBar::new_spinner());
-        pb_fetch.set_style(spinner_style.clone());
-        pb_fetch.set_prefix("2/6");
-        pb_fetch.set_message("Fetching remote index...");
-        pb_fetch.enable_steady_tick(Duration::from_millis(100));
+        // --- Step 2: Fetch remote index (or create if not found) ---
+        pb.set_position(2);
+        pb.set_message("Fetching remote index...".to_string());
         let remote_index = match mutant.fetch_remote_master_index().await {
             Ok(index) => {
-                pb_fetch.finish_with_message("Fetched remote index.");
+                info!("Successfully fetched remote index.");
                 index
             }
             Err(mutant_lib::error::Error::MasterIndexNotFound) => {
-                pb_fetch.set_message("Remote index not found, creating...");
                 warn!("Remote master index not found. Creating remote index from current state.");
-                // The MutAnt instance should already hold the correct default index
-                // (including size) from initialization.
-                // Save the current state to create the remote index.
+                pb.set_message("Remote index not found, creating...".to_string());
                 if let Err(e) = mutant.save_master_index().await {
-                    error!(
-                        "Failed to create default remote index from current state during sync: {}",
-                        e
-                    );
-                    pb_fetch.finish_with_message("Failed to create remote index.");
+                    let msg = format!("Failed to create remote index: {}", e);
+                    error!("{}", msg);
+                    pb.abandon_with_message(msg.clone());
                     return Err(CliError::from(e));
                 }
-                pb_fetch.set_message("Created remote index, fetching again...");
-
-                // Now that it's created, fetch it again to use for the merge.
+                info!("Successfully created remote index.");
+                pb.set_message("Fetching newly created index...".to_string());
+                // Fetch it again to use for the merge
                 match mutant.fetch_remote_master_index().await {
-                    Ok(newly_created_index) => {
-                        pb_fetch.finish_with_message("Fetched newly created remote index.");
-                        newly_created_index
-                    }
+                    Ok(newly_created_index) => newly_created_index,
                     Err(e) => {
-                        error!(
-                            "Failed to fetch the newly created remote index during sync: {}",
-                            e
-                        );
-                        pb_fetch.finish_with_message("Failed to fetch created remote index.");
+                        let msg = format!("Failed to fetch newly created remote index: {}", e);
+                        error!("{}", msg);
+                        pb.abandon_with_message(msg.clone());
                         return Err(CliError::from(e));
                     }
                 }
             }
             Err(e) => {
-                error!("Failed to fetch remote index during sync: {}", e);
-                pb_fetch.finish_with_message("Failed to fetch remote index.");
+                let msg = format!("Failed to fetch remote index: {}", e);
+                error!("{}", msg);
+                pb.abandon_with_message(msg.clone());
                 return Err(CliError::from(e));
             }
         };
-        pb_fetch.finish_with_message("Fetched remote index."); // Ensure finish in case of success path
 
-        let pb_merge = mp.add(ProgressBar::new_spinner());
-        pb_merge.set_style(spinner_style.clone());
-        pb_merge.set_prefix("3/6");
-        pb_merge.set_message("Merging local and remote indices...");
-        pb_merge.enable_steady_tick(Duration::from_millis(100));
+        // --- Step 3: Merge indices ---
+        pb.set_position(3);
+        pb.set_message("Merging local and remote indices...".to_string());
 
         let mut merged_index = remote_index.clone();
         let mut local_keys_added = 0;
@@ -263,49 +242,7 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
         }
         // merged_index already has the remote size due to clone
 
-        pb_merge.finish_with_message("Merged indices.");
-
-        let pb_update_mem = mp.add(ProgressBar::new_spinner());
-        pb_update_mem.set_style(spinner_style.clone());
-        pb_update_mem.set_prefix("4/6");
-        pb_update_mem.set_message("Updating in-memory index...");
-        pb_update_mem.enable_steady_tick(Duration::from_millis(100));
-        mutant
-            .update_internal_master_index(merged_index.clone())
-            .await
-            .map_err(|e| {
-                pb_update_mem.finish_with_message("Failed to update in-memory index.");
-                CliError::from(e)
-            })?;
-        pb_update_mem.finish_with_message("Updated in-memory index.");
-
-        let pb_write_cache = mp.add(ProgressBar::new_spinner());
-        pb_write_cache.set_style(spinner_style.clone());
-        pb_write_cache.set_prefix("5/6");
-        pb_write_cache.set_message("Writing merged index to local cache...");
-        pb_write_cache.enable_steady_tick(Duration::from_millis(100));
-        write_local_index(&merged_index, network)
-            .await
-            .map_err(|e| {
-                error!("Failed to write merged index to local cache: {}", e);
-                pb_write_cache.finish_with_message("Failed to write local cache.");
-                CliError::from(e)
-            })?;
-        pb_write_cache.finish_with_message("Wrote merged index to local cache.");
-
-        let pb_save_remote = mp.add(ProgressBar::new_spinner());
-        pb_save_remote.set_style(spinner_style.clone());
-        pb_save_remote.set_prefix("6/6");
-        pb_save_remote.set_message("Saving merged index to remote storage...");
-        pb_save_remote.enable_steady_tick(Duration::from_millis(100));
-        mutant.save_master_index().await.map_err(|e| {
-            error!("Failed to save merged index to remote storage: {}", e);
-            pb_save_remote.finish_with_message("Failed to save merged index.");
-            CliError::from(e)
-        })?;
-        pb_save_remote.finish_with_message("Saved merged index to remote.");
-
-        mp.clear().expect("Failed to clear multi progress bar");
+        pb.finish_and_clear();
         println!("Synchronization complete.");
         println!(
             "  {} keys added from local cache to remote.",

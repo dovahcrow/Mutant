@@ -50,7 +50,7 @@ impl Storage {
             .await
     }
 
-    pub(crate) fn wallet(&self) -> &Wallet {
+    pub fn wallet(&self) -> &Wallet {
         &self.wallet
     }
 

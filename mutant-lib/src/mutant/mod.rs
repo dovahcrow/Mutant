@@ -592,17 +592,42 @@ impl MutAnt {
     /// Saves the current in-memory master index to the remote backend.
     pub async fn save_master_index(&self) -> Result<(), Error> {
         debug!("MutAnt: Saving master index remotely...");
-        // --- LAZY CLIENT GET & CALL ---
         let client = self.storage.get_client().await?;
         let (address, key) = self.storage.get_master_index_info();
-        crate::storage::storage_save_mis_from_arc_static(
-            client, // Pass the obtained client
-            &address,
-            &key,
-            &self.master_index_storage,
-        )
-        .await
-        // --- END ---
+
+        // Check if the index exists before deciding to create or update
+        match crate::storage::fetch_remote_master_index_storage_static(&client, &address, &key)
+            .await
+        {
+            Ok(_) => {
+                // Index exists, perform an update
+                debug!("Remote MIS found at {}, performing update.", address);
+                crate::storage::storage_save_mis_from_arc_static(
+                    client,
+                    &address,
+                    &key,
+                    &self.master_index_storage,
+                )
+                .await
+            }
+            Err(Error::MasterIndexNotFound) => {
+                // Index does not exist, perform a create
+                debug!("Remote MIS not found at {}, performing create.", address);
+                crate::storage::storage_create_mis_from_arc_static(
+                    client,
+                    self.storage.wallet(), // Use the correct method name
+                    &address,
+                    &key,
+                    &self.master_index_storage,
+                )
+                .await
+            }
+            Err(e) => {
+                // Propagate other fetch errors
+                error!("Failed to check remote MIS status at {}: {}", address, e);
+                Err(e)
+            }
+        }
     }
 
     /// Imports a free scratchpad using its private key hex string.
