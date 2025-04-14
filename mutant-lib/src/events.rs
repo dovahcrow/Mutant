@@ -6,28 +6,8 @@ use std::sync::Arc;
 /// Events emitted during the 'put' (store) operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PutEvent {
-    /// Indicates that the allocator needs to reserve new scratchpads.
-    ReservingScratchpads { needed: u64 },
     /// Indicates the start of the reservation process for a batch of pads.
     ReservingPads { count: u64 },
-    /// Reports the result of reserving a single pad within a batch.
-    PadReserved {
-        index: u64,
-        total: u64,
-        result: Result<(), String>, // Ok(()) on success, Err(error_string) on failure
-    },
-    /// Prompts the caller (e.g., the binary) to confirm the reservation.
-    /// The callback should return `Ok(true)` to proceed, `Ok(false)` to cancel.
-    ConfirmReservation {
-        needed: u64,
-        data_size: u64,
-        total_space: u64,
-        free_space: u64,
-        current_scratchpads: usize,
-        estimated_cost: Option<String>,
-    },
-    /// Reports progress during scratchpad reservation.
-    ReservationProgress { current: u64, total: u64 },
     /// Indicates that the data upload process is starting.
     StartingUpload { total_bytes: u64 },
     /// Reports progress of bytes confirmed after chunk upload and initial verification.
@@ -39,11 +19,9 @@ pub enum PutEvent {
     UploadFinished,
     /// Indicates the entire store operation (allocation, write, metadata update) is complete.
     StoreComplete,
-    /// Indicates that a single pad write task (create or update) has completed successfully.
+    /// Indicates that a single *new* pad write task (create+write+verify) has completed successfully.
     PadWriteConfirmed { current: u64, total: u64 },
-    /// Indicates that a single scratchpad's worth of data has been successfully uploaded.
-    ScratchpadUploadComplete { index: u64, total: u64 },
-    /// Indicates that a single scratchpad has been fully committed/finalized after upload.
+    /// Indicates that a single scratchpad write (initial or subsequent) has been fully committed/finalized after verification.
     ScratchpadCommitComplete { index: u64, total: u64 },
 }
 

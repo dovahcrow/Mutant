@@ -70,7 +70,6 @@ pub fn create_put_callback(
 
         async move {
             match event {
-                PutEvent::ReservingScratchpads { needed: _ } => Ok(true),
                 PutEvent::ReservingPads { count } => {
                     debug!("Received ReservingPads: count={}", count);
                     let mut res_pb_opt_guard = ctx.res_pb_opt.lock().await;
@@ -81,43 +80,6 @@ pub fn create_put_callback(
                     });
                     pb.set_length(count);
                     pb.set_position(0);
-                    Ok(true)
-                },
-                PutEvent::PadReserved { index: _, total: _, result: _ } => {
-                    debug!("Received PadReserved (ignored by progress bar)");
-                    Ok(true)
-                },
-                PutEvent::ConfirmReservation {..} => {
-                    warn!("Received ConfirmReservation event, but it is no longer handled by the CLI callback.");
-                    Ok(true)
-                },
-                PutEvent::ReservationProgress { current, total } => {
-                    debug!("Received ReservationProgress: current={}, total={}", current, total);
-
-                    let mut res_pb_opt_guard = ctx.res_pb_opt.lock().await;
-                    if let Some(res_pb) = res_pb_opt_guard.as_mut() {
-                        if res_pb.length() != Some(total) {
-                            warn!("ReservationProgress: Bar length ({:?}) differs from event total ({}). Resetting length.", res_pb.length(), total);
-                            res_pb.set_length(total);
-                        }
-
-                        if total > 0 {
-                            debug!("Setting reservation bar position to {}", current);
-                            res_pb.set_position(current);
-                            if current >= total && !res_pb.is_finished() {
-                                debug!("Initialization progress complete ({} >= {}), setting final message.", current, total);
-                                res_pb.set_message("Initialization complete.".to_string());
-                                // Don't finish or clear yet
-                            }
-                        } else if !res_pb.is_finished() {
-                            // If total is 0, set final message immediately
-                            debug!("InitializationProgress: Total is 0, setting final message.");
-                            res_pb.set_message("Initialization complete (0 needed).".to_string());
-                            // Don't finish or clear yet
-                        }
-                    } else {
-                         warn!("ReservationProgress event received but reservation progress bar does not exist.");
-                    }
                     Ok(true)
                 },
                 PutEvent::StartingUpload { total_bytes } => {
@@ -191,10 +153,6 @@ pub fn create_put_callback(
                     }
                     Ok(true)
                 },
-                PutEvent::ScratchpadUploadComplete { index: _, total: _ } => {
-                    debug!("Received ScratchpadUploadComplete (ignored)");
-                    Ok(true)
-                },
                 PutEvent::ScratchpadCommitComplete { index, total } => {
                     // Use the shared commit counter from context
                     let current_committed = *ctx.commit_counter_arc.lock().await;
@@ -236,7 +194,6 @@ pub fn create_put_callback(
                     }
                     Ok(true)
                 },
-                // Handle the new event for reservation progress
                 PutEvent::PadWriteConfirmed { current, total } => {
                     debug!(
                         "Callback: Received PadWriteConfirmed - Current: {}, Total: {}",
