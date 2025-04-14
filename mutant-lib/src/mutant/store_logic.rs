@@ -300,6 +300,7 @@ async fn execute_upload_phase(
         &mut *callback_arc.lock().await,
         PutEvent::StartingUpload {
             total_bytes: total_bytes_expected,
+            total_pads: total_pads_expected as u64,
         },
     )
     .await?;

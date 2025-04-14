@@ -15,7 +15,6 @@ struct PutCallbackContext {
     confirm_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     total_bytes_for_upload: Arc<Mutex<u64>>,
     confirm_counter_arc: Arc<Mutex<u64>>,
-    total_pads: Arc<Mutex<u64>>,
     multi_progress: MultiProgress,
 }
 
@@ -38,7 +37,6 @@ pub fn create_put_callback(
     let confirm_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let total_bytes_for_upload = Arc::new(Mutex::new(0u64));
     let confirm_counter_arc = Arc::new(Mutex::new(0u64));
-    let total_pads = Arc::new(Mutex::new(0u64));
 
     // Create the context instance
     let context = PutCallbackContext {
@@ -47,7 +45,6 @@ pub fn create_put_callback(
         confirm_pb_opt: confirm_pb_opt.clone(),
         total_bytes_for_upload: total_bytes_for_upload.clone(),
         confirm_counter_arc: confirm_counter_arc.clone(),
-        total_pads: total_pads.clone(),
         multi_progress: multi_progress.clone(),
     };
 
@@ -61,7 +58,6 @@ pub fn create_put_callback(
             match event {
                 PutEvent::ReservingPads { count } => {
                     debug!("Received ReservingPads: count={}", count);
-                    *ctx.total_pads.lock().await = count;
                     let mut res_pb_opt_guard = ctx.res_pb_opt.lock().await;
                     let pb = res_pb_opt_guard.get_or_insert_with(|| {
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
@@ -72,7 +68,7 @@ pub fn create_put_callback(
                     pb.set_position(0);
                     Ok(true)
                 },
-                PutEvent::StartingUpload { total_bytes } => {
+                PutEvent::StartingUpload { total_bytes, total_pads } => {
                     *ctx.total_bytes_for_upload.lock().await = total_bytes;
 
                     // Initialize Upload Bar
@@ -85,16 +81,14 @@ pub fn create_put_callback(
                     upload_pb.set_position(0);
                     upload_pb.set_message("Uploading...".to_string());
 
-                    // Initialize Confirmation Bar
-                    let total_pads_count = *ctx.total_pads.lock().await;
+                    // Initialize Confirmation Bar using total_pads from the event
                     *ctx.confirm_counter_arc.lock().await = 0;
                     let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
                     let confirm_pb = confirm_pb_guard.get_or_insert_with(|| {
                         StyledProgressBar::new_for_steps(&ctx.multi_progress)
                     });
                     confirm_pb.set_message("Confirming...".to_string());
-                    // Set length based on known count, default to 0 if no ReservingPads event occurred
-                    confirm_pb.set_length(total_pads_count);
+                    confirm_pb.set_length(total_pads);
                     confirm_pb.set_position(0);
 
                     Ok(true)

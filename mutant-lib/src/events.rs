@@ -9,7 +9,7 @@ pub enum PutEvent {
     /// Indicates the start of the reservation process for a batch of pads.
     ReservingPads { count: u64 },
     /// Indicates that the data upload process is starting.
-    StartingUpload { total_bytes: u64 },
+    StartingUpload { total_bytes: u64, total_pads: u64 },
     /// Reports byte-level progress of the overall data upload.
     UploadProgress {
         bytes_written: u64,
