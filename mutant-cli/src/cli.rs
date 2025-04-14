@@ -46,4 +46,6 @@ pub enum Commands {
         #[arg(long, default_value_t = false)]
         push_force: bool,
     },
+    /// Verify pending pads, moving valid ones to the free list
+    Purge,
 }

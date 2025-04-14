@@ -288,17 +288,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         network: network_choice,
     };
 
-    let mutant = match MutAnt::init_with_progress(private_key, config, Some(init_callback_fn)).await
-    {
-        Ok(m) => m,
-        Err(e) => {
-            error!("Failed to initialize MutAnt: {}", e);
-            mp.clear().unwrap_or_else(|e| {
-                error!("Failed to clear MultiProgress: {}", e);
-            });
-            return Err(CliError::MutAntInit(e.to_string()));
-        }
-    };
+    let mutant = MutAnt::init_with_progress(private_key, config, Some(init_callback_fn)).await?;
 
     let mp_join_handle = tokio::spawn(async move {
         let _keep_alive = _mp_clone_for_task;
@@ -306,17 +296,19 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
     });
 
     let command_result: Result<ExitCode, CliError> = match cli.command {
-        Commands::Import { private_key } => {
-            Ok(crate::commands::import::handle_import(mutant, private_key.clone()).await)
+        Commands::Put { key, value, force } => {
+            Ok(crate::commands::put::handle_put(mutant, key, value, force, &mp).await)
         }
+        Commands::Get { key } => Ok(crate::commands::get::handle_get(mutant, key, &mp).await),
+        Commands::Rm { key } => Ok(crate::commands::remove::handle_rm(mutant, key).await),
+        Commands::Ls { long } => Ok(crate::commands::ls::handle_ls(mutant, long).await),
         Commands::Stats => Ok(crate::commands::stats::handle_stats(mutant).await),
-        Commands::Reset => match crate::commands::reset::handle_reset(mutant).await {
-            Ok(exit_code) => Ok(exit_code),
-            Err(e) => {
-                error!("Reset command failed: {}", e);
-                Ok(ExitCode::FAILURE)
-            }
-        },
+        Commands::Reset => crate::commands::reset::handle_reset(mutant)
+            .await
+            .map_err(|e| CliError::MutAntInit(e.to_string())),
+        Commands::Import { private_key } => {
+            Ok(crate::commands::import::handle_import(mutant, private_key).await)
+        }
         Commands::Sync { push_force } => {
             match crate::commands::sync::handle_sync(mutant, push_force).await {
                 Ok(_) => Ok(ExitCode::SUCCESS),
@@ -326,12 +318,25 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
                 }
             }
         }
-        Commands::Put { key, value, force } => {
-            Ok(crate::commands::put::handle_put(mutant, key, value, force, &mp).await)
+        Commands::Purge => {
+            match crate::commands::purge::run(crate::commands::purge::PurgeArgs {}, mutant, &mp)
+                .await
+            {
+                Ok(_) => Ok(ExitCode::SUCCESS),
+                Err(e) => {
+                    error!("Purge command failed: {}", e);
+                    Err(CliError::MutAntInit(e.to_string()))
+                }
+            }
         }
-        Commands::Get { key } => Ok(crate::commands::get::handle_get(mutant, key, &mp).await),
-        Commands::Rm { key } => Ok(crate::commands::remove::handle_rm(mutant, key).await),
-        Commands::Ls { long } => Ok(crate::commands::ls::handle_ls(mutant, long).await),
+    };
+
+    let exit_code = match command_result {
+        Ok(code) => code,
+        Err(e) => {
+            error!("Command execution failed: {}", e);
+            return Err(e);
+        }
     };
 
     info!("Command handling finished, cleaning up background tasks...");
@@ -340,5 +345,5 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
 
     info!("Cleanup complete.");
 
-    command_result
+    Ok(exit_code)
 }

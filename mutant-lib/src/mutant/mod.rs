@@ -73,12 +73,14 @@ pub(crate) const DEFAULT_SCRATCHPAD_SIZE: usize = PHYSICAL_SCRATCHPAD_SIZE - 512
 pub struct StorageStats {
     /// The configured size of each individual scratchpad in bytes.
     pub scratchpad_size: usize,
-    /// The total number of scratchpads managed (occupied + free).
+    /// The total number of scratchpads managed (occupied + free + pending).
     pub total_pads: usize,
     /// The number of scratchpads currently holding data.
     pub occupied_pads: usize,
     /// The number of scratchpads available for reuse.
     pub free_pads: usize,
+    /// The number of scratchpads pending verification.
+    pub pending_verification_pads: usize,
     /// The total storage capacity across all managed scratchpads (total_pads * scratchpad_size).
     pub total_space_bytes: u64,
     /// The storage capacity currently used by occupied scratchpads (occupied_pads * scratchpad_size).
@@ -514,6 +516,7 @@ impl MutAnt {
         }
 
         let free_pads_count = mis_guard.free_pads.len();
+        let pending_verification_pads_count = mis_guard.pending_verification_pads.len();
         let mut occupied_pads_count = 0;
         let mut occupied_data_size_total: u64 = 0;
 
@@ -522,7 +525,8 @@ impl MutAnt {
             occupied_data_size_total += key_info.data_size as u64;
         }
 
-        let total_pads_count = occupied_pads_count + free_pads_count;
+        let total_pads_count =
+            occupied_pads_count + free_pads_count + pending_verification_pads_count;
 
         let scratchpad_size_u64 = scratchpad_size as u64;
         let occupied_pad_space_bytes = occupied_pads_count as u64 * scratchpad_size_u64;
@@ -532,8 +536,8 @@ impl MutAnt {
         let wasted_space_bytes = occupied_pad_space_bytes.saturating_sub(occupied_data_size_total);
 
         debug!(
-            "Stats calculated: total_pads={}, occupied_pads={}, free_pads={}, total_space={}, data_size={}",
-            total_pads_count, occupied_pads_count, free_pads_count, total_space_bytes, occupied_data_size_total
+            "Stats calculated: total={}, occupied={}, free={}, pending={}, total_space={}, data_size={}",
+            total_pads_count, occupied_pads_count, free_pads_count, pending_verification_pads_count, total_space_bytes, occupied_data_size_total
         );
         debug!("Master index lock released after stats.");
 
@@ -542,6 +546,7 @@ impl MutAnt {
             total_pads: total_pads_count,
             occupied_pads: occupied_pads_count,
             free_pads: free_pads_count,
+            pending_verification_pads: pending_verification_pads_count,
             total_space_bytes,
             occupied_pad_space_bytes,
             free_pad_space_bytes,
@@ -758,74 +763,90 @@ impl MutAnt {
         // --- END ---
     }
 
-    /// Purges pads listed in `pending_verification_pads`.
-    /// Attempts to fetch each pad. Successfully fetched pads are moved to `free_pads`.
-    /// Failed pads are discarded.
-    /// Saves the updated master index afterwards.
-    pub async fn purge_unverified_pads(&self) -> Result<(), Error> {
-        info!("Starting purge of unverified pads...");
+    /// Purges pads listed in `pending_verification_pads` by checking their existence.
+    /// Attempts to fetch metadata for each pad. Successfully fetched pads are moved to `free_pads`.
+    /// Failed pads (e.g., not found) are discarded.
+    /// Saves the updated master index ONLY to the local cache.
+    /// Returns tuple (initial_count, verified_count, failed_count).
+    pub async fn purge_unverified_pads(&self) -> Result<(usize, usize, usize), Error> {
+        info!("Starting local purge of unverified pads...");
 
+        // Get the network choice for cache saving
+        let network_choice = self.storage.get_network_choice();
+
+        // Lock the master index for modification
         let mut master_index_storage = self.master_index_storage.lock().await;
 
         let pads_to_verify = std::mem::take(&mut master_index_storage.pending_verification_pads);
+        let initial_count = pads_to_verify.len();
         let mut verified_pads = Vec::new();
         let mut failed_pads_count = 0;
 
         info!(
-            "Found {} pads pending verification. Attempting to fetch...",
-            pads_to_verify.len()
+            "Found {} pads pending verification. Attempting to fetch metadata...",
+            initial_count
         );
 
-        // Get the client instance first
-        let client = self.storage.get_client().await?;
+        if initial_count > 0 {
+            let client = self.storage.get_client().await?;
 
-        // Iterate over a reference to avoid moving pads_to_verify
-        for (address, key) in &pads_to_verify {
-            debug!("Verifying pad at address: {}", address);
-            // Use the obtained client instance and the correct method
-            match client.scratchpad_get(address).await {
-                // Pass address by reference
-                Ok(_) => {
-                    info!("Successfully verified pad at address: {}", address);
-                    // Since we iterate by reference, address and key are references.
-                    // Clone them to store owned values in verified_pads.
-                    verified_pads.push((address.clone(), key.clone()));
-                }
-                Err(e) => {
-                    // Log specific autonomi errors if needed, otherwise just note failure
-                    info!(
-                        "Failed to verify pad at address: {}. Discarding. Error: {}",
-                        address, e
-                    );
-                    failed_pads_count += 1;
-                    // Pad is discarded as it failed verification
+            for (address, key) in &pads_to_verify {
+                debug!("Verifying pad at address: {}", address);
+                match client.scratchpad_get(address).await {
+                    Ok(_) => {
+                        info!("Successfully verified pad at address: {}", address);
+                        verified_pads.push((address.clone(), key.clone()));
+                    }
+                    Err(e) => {
+                        // Only log RecordNotFound as info, others as warn/error?
+                        if e.to_string().contains("RecordNotFound") {
+                            info!(
+                                "Pad at address {} not found. Discarding. Error: {}",
+                                address, e
+                            );
+                        } else {
+                            warn!(
+                                "Failed to get pad at address {}: {}. Discarding.",
+                                address, e
+                            );
+                        }
+                        failed_pads_count += 1;
+                    }
                 }
             }
         }
 
         let verified_count = verified_pads.len();
-
-        // Add successfully verified pads back to the free list
         master_index_storage.free_pads.extend(verified_pads);
 
+        // Update counts before logging and saving
+        let final_verified_count = verified_count;
+        let final_failed_count = failed_pads_count;
+
         info!(
-            "Purge check complete. {} pads successfully verified and moved to free list.",
-            verified_count
-        );
-        info!(
-            "{} pads failed verification and were discarded.",
-            failed_pads_count
+            "Purge check complete. Verified: {}, Discarded: {}",
+            final_verified_count, final_failed_count
         );
 
-        // Drop the lock before saving, as save_master_index might need it.
+        // Save ONLY to local cache
+        if initial_count > 0 {
+            // Only write if changes were potentially made
+            debug!(
+                "Writing updated index to local cache ({:?})...",
+                network_choice
+            );
+            // Pass a reference to the locked data
+            write_local_index(&*master_index_storage, network_choice).await?;
+            info!("Local cache updated after purge.");
+        } else {
+            info!("No pending pads found, local cache unchanged.");
+        }
+
+        // Explicitly drop the lock before returning
         drop(master_index_storage);
 
-        // Save the changes (writes to cache and potentially network)
-        self.save_master_index().await?;
-
-        info!("Master index updated after purge.");
-
-        Ok(())
+        // Return initial_count, verified_count, failed_count
+        Ok((initial_count, final_verified_count, final_failed_count))
     }
 
     /// Retrieves the network choice (Devnet or Mainnet) this MutAnt instance is configured for.

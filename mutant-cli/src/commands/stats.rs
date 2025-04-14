@@ -18,6 +18,7 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
             println!("Total Pads:            {}", stats.total_pads);
             println!("  Occupied Pads:       {}", stats.occupied_pads);
             println!("  Free Pads:           {}", stats.free_pads);
+            println!("  Pending Verify Pads: {}", stats.pending_verification_pads);
             println!("-------------------");
             println!(
                 "Total Space:           {}",
@@ -85,6 +86,17 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
                 free_text,
                 stats.free_pads
             );
+
+            // Add notice if there are pending pads
+            if stats.pending_verification_pads > 0 {
+                println!(
+                    "\n{}",
+                    Color::Yellow.paint(format!(
+                        "Note: {} pads are pending verification. Run 'mutant purge' to process them.",
+                        stats.pending_verification_pads
+                    ))
+                );
+            }
 
             println!("\nSpace Usage Breakdown (based on Total Space):");
             let (used_gauge, used_text, used_color) =
