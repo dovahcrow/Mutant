@@ -5,10 +5,6 @@ use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
-    /// Path to the wallet file (JSON containing private key string)
-    // #[arg(short, long, value_name = "FILE", default_value = "mutant_wallet.json")]
-    // pub wallet_path: PathBuf,
-
     /// Use local network (Devnet) instead of Mainnet
     #[arg(short, long, default_value_t = false)]
     pub local: bool,

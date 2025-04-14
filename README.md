@@ -21,6 +21,16 @@
 
 *   Rust Toolchain (latest stable recommended)
 
+### Setup
+
+Before using `mutant`, you need to have an `ant` wallet configured for the target network (Mainnet by default, or Devnet if using the `--local` flag). If you haven't already, you can import your existing wallet's private key using the `ant` CLI:
+
+```bash
+ant wallet import YOUR_PRIVATE_KEY_HERE
+```
+
+Replace `YOUR_PRIVATE_KEY_HERE` with your actual private key. `mutant` will automatically detect and use this wallet.
+
 ### Installation
 
 #### Install from crates.io (Recommended)
@@ -46,23 +56,23 @@ MutAnt includes the `mutant` command for convenient command-line access.
 Assuming `mutant` is in your `PATH` or you are running from `target/release/`:
 
 ```
-Mutant CLI - Interact with the Mutant network
+Distributed mutable key value storage over the Autonomi network
 
 Usage: mutant [OPTIONS] <COMMAND>
 
 Commands:
-  put    Puts a key-value pair onto the network. Reads value from stdin if omitted. Use --force to overwrite an existing key
-  get    Gets the value for a given key from the network and prints it to stdout
-  rm     Deletes a key-value pair from the network
-  ls     Lists all keys stored on the network
-  stats  Get storage summary (allocator perspective)
-  reset  Resets the master index to its initial empty state. Requires confirmation
-  import Import a free pad using its private key
-  sync   Synchronize the local index cache with the remote index. Use --push-force to overwrite remote with local
-  help   Print this message or the help of the given subcommand(s)
+  put     Puts a key-value pair onto the network. Reads value from stdin if omitted. Use --force to overwrite an existing key
+  get     Gets the value for a given key from the network and prints it to stdout
+  rm      Deletes a key-value pair from the network
+  ls      Lists all keys stored on the network
+  stats   Get storage summary (allocator perspective)
+  reset   Resets the master index to its initial empty state. Requires confirmation
+  import  Imports a free scratchpad using its private key
+  sync    Synchronize local index cache with remote storage
+  help    Print this message or the help of the given subcommand(s)
 
 Options:
-  -l, --local    Path to the wallet file (JSON containing private key string) Use local network (Devnet) instead of Mainnet
+  -l, --local    Use local network (Devnet) instead of Mainnet
   -h, --help     Print help
   -V, --version  Print version
 ```
