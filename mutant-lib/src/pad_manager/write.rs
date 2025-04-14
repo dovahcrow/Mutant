@@ -9,6 +9,7 @@ use log::{debug, error, warn};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::time::{sleep, Duration};
 
 // mod concurrent; // Removed module
 // mod reservation; // Removed module
@@ -101,71 +102,89 @@ pub async fn write_chunk(
             create_counter_arc,
         )
         .await?;
-        // create returns address, we discard it and return Ok(()) on success
-        Ok(())
+        return Ok(());
     } else {
-        // Check if the pad actually exists before trying to update
-        match client.scratchpad_get(&address).await {
-            Ok(_) => {
-                // Pad exists, proceed with update
-                debug!(
-                    "write_chunk[{}][Pad {}]: Pad found. Calling update_scratchpad_internal_static_with_progress...",
-                    key_str, pad_index
-                );
-                let bytes_in_chunk = data_chunk.len() as u64;
-                network::update_scratchpad_internal_static_with_progress(
-                    client,
-                    &secret_key,
-                    data_chunk,
-                    ContentType::DataChunk as u64,
-                    key_str,
-                    pad_index,
-                    callback_arc,
-                    total_bytes_uploaded_arc,
-                    bytes_in_chunk,
-                    total_size_overall,
-                    false, // is_new_pad is false for updates
-                    total_pads_committed_arc,
-                    total_pads_expected,
-                )
-                .await
-            }
-            Err(e) => {
-                // Check if the error is RecordNotFound
-                if e.to_string().contains("RecordNotFound") {
-                    warn!(
-                        "write_chunk[{}][Pad {}]: Pad marked for update not found (Error: {}). Attempting to create instead.",
-                        key_str, pad_index, e
+        const MAX_RETRIES: u32 = 3;
+        let mut retries = 0;
+        loop {
+            // Check if the pad actually exists before trying to update
+            match client.scratchpad_get(&address).await {
+                Ok(_) => {
+                    // Pad exists, proceed with update
+                    debug!(
+                        "write_chunk[{}][Pad {}]: Pad found. Calling update_scratchpad_internal_static_with_progress...",
+                        key_str, pad_index
                     );
-                    // Pad doesn't exist, attempt to create it instead
-                    let wallet = storage.wallet();
-                    let payment_option = autonomi::client::payment::PaymentOption::from(wallet);
-                    network::create_scratchpad_static(
+                    let bytes_in_chunk = data_chunk.len() as u64;
+                    return network::update_scratchpad_internal_static_with_progress(
                         client,
                         &secret_key,
                         data_chunk,
                         ContentType::DataChunk as u64,
-                        payment_option,
                         key_str,
                         pad_index,
                         callback_arc,
-                        total_pads_committed_arc, // Should this use create_counter_arc instead?
-                        // Let's keep total_pads_committed_arc for now, as it tracks overall confirmation.
-                        total_pads_expected,
                         total_bytes_uploaded_arc,
+                        bytes_in_chunk,
                         total_size_overall,
-                        create_counter_arc, // Use the create counter here
+                        false, // is_new_pad is false for updates
+                        total_pads_committed_arc,
+                        total_pads_expected,
                     )
-                    .await?;
-                    // create returns address, we discard it and return Ok(()) on success
-                    Ok(())
-                } else {
-                    // Propagate other errors
-                    error!(
-                        "write_chunk[{}][Pad {}]: Failed to get scratchpad state before update attempt: {}",
-                        key_str, pad_index, e
-                    );
-                    Err(Error::AutonomiClient(e))
+                    .await;
+                }
+                Err(e) => {
+                    // Check if the error is a QueryTimeout
+                    if e.to_string().contains("QueryTimeout") {
+                        retries += 1;
+                        if retries > MAX_RETRIES {
+                            error!(
+                                "write_chunk[{}][Pad {}]: Failed to get scratchpad state after {} retries due to timeout: {}",
+                                key_str, pad_index, MAX_RETRIES, e
+                            );
+                            return Err(Error::AutonomiClient(e));
+                        }
+                        warn!(
+                            "write_chunk[{}][Pad {}]: Network timeout getting scratchpad state (Attempt {}/{}). Retrying in 1s... Error: {}",
+                            key_str, pad_index, retries, MAX_RETRIES, e
+                        );
+                        sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                    // Check if the error is RecordNotFound
+                    else if e.to_string().contains("RecordNotFound") {
+                        warn!(
+                            "write_chunk[{}][Pad {}]: Pad marked for update not found (Error: {}). Attempting to create instead.",
+                            key_str, pad_index, e
+                        );
+                        // Pad doesn't exist, attempt to create it instead
+                        let wallet = storage.wallet();
+                        let payment_option = autonomi::client::payment::PaymentOption::from(wallet);
+                        network::create_scratchpad_static(
+                            client,
+                            &secret_key,
+                            data_chunk,
+                            ContentType::DataChunk as u64,
+                            payment_option,
+                            key_str,
+                            pad_index,
+                            callback_arc,
+                            total_pads_committed_arc,
+                            total_pads_expected,
+                            total_bytes_uploaded_arc,
+                            total_size_overall,
+                            create_counter_arc,
+                        )
+                        .await?;
+                        return Ok(());
+                    } else {
+                        // Propagate other errors
+                        error!(
+                            "write_chunk[{}][Pad {}]: Failed to get scratchpad state before update attempt: {}",
+                            key_str, pad_index, e
+                        );
+                        return Err(Error::AutonomiClient(e));
+                    }
                 }
             }
         }

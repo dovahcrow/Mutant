@@ -106,6 +106,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactored `pad_manager` to support the new resumable logic and `PadInfo` struct.
 - Introduced `pad_manager::write::write_chunk` to handle individual pad creation/updates.
 
+### Fixed
+- Handle `QueryTimeout` errors during scratchpad state checks (`scratchpad_get`) in the `write_chunk` function. Added a retry mechanism (up to 3 attempts with 1-second delay) to improve robustness during network instability when resuming uploads.
+
 ## [0.1.1] - 2024-04-10
 
 ### Fixed
