@@ -5,7 +5,8 @@ use crate::error::Error;
 use crate::mutant::NetworkChoice;
 use autonomi::{Client, ScratchpadAddress, SecretKey, Wallet};
 use log::info;
-use tokio::sync::OnceCell;
+use std::sync::Arc;
+use tokio::sync::{Mutex, OnceCell};
 
 use network::create_scratchpad_static;
 
@@ -72,6 +73,11 @@ impl Storage {
             initial_data,
             content_type,
             payment_option,
+            "_internal_raw_",
+            0,
+            &Arc::new(Mutex::new(None)),
+            &Arc::new(Mutex::new(0)),
+            1,
         )
         .await?;
 

@@ -190,6 +190,11 @@ pub(crate) async fn storage_create_mis_from_arc_static(
         &bytes,
         ContentType::MasterIndex as u64,
         payment_option,
+        "_internal_update_", // key_str (internal context)
+        0,                   // pad_index (internal context)
+        &Arc::new(Mutex::new(None)),
+        &Arc::new(Mutex::new(0)),
+        1, // total_pads_expected (assume 1 for MIS)
     )
     .await;
 
@@ -633,22 +638,23 @@ pub(crate) async fn create_scratchpad_static(
     initial_data: &[u8],
     content_type: u64,
     payment_option: PaymentOption,
+    key_str: &str,
+    pad_index: usize,
+    callback_arc: &Arc<Mutex<Option<PutCallback>>>,
+    total_pads_committed_arc: &Arc<Mutex<u64>>,
+    total_pads_expected: usize,
 ) -> Result<ScratchpadAddress, Error> {
     let data_bytes = Bytes::from(initial_data.to_vec());
     let expected_address = ScratchpadAddress::new(owner_key.public_key().into());
     let initial_data_len = initial_data.len(); // For logging
 
     debug!(
-        "CreateStatic[{}]: Attempting static scratchpad creation for owner {:?} at expected address {}. Data size: {}, ContentType: {}",
-        expected_address,
-        owner_key.public_key(),
-        expected_address,
-        initial_data_len,
-        content_type,
+        "CreateStatic[{}][{}][Pad {}]: Attempting creation. Data size: {}, ContentType: {}",
+        key_str, expected_address, pad_index, initial_data_len, content_type,
     );
 
     let created_address = retry_operation(
-        &format!("Static Create Scratchpad ({})", expected_address),
+        &format!("Static Create Scratchpad {} Pad {}", key_str, pad_index),
         || {
             let client_clone = client.clone();
             let owner_key_clone = owner_key.clone();
@@ -673,75 +679,139 @@ pub(crate) async fn create_scratchpad_static(
 
     if created_address != expected_address {
         error!(
-            "FATAL: Created scratchpad address {} does not match address derived from owner key {}. This should not happen.",
-            created_address, expected_address
+            "FATAL: CreateStatic[{}][{}][Pad {}]: Created address {} mismatch derived {}. Aborting.",
+            key_str, expected_address, pad_index, created_address, expected_address
         );
         return Err(Error::InternalError(
             "Mismatch between derived and created scratchpad address".to_string(),
         ));
     }
-    debug!(
-        "CreateStatic[{}]: Static scratchpad creation reported successful. Starting verification loop ({} attempts, no delay).",
-        created_address, VERIFICATION_RETRY_LIMIT
-    );
 
-    // --- Add delay before starting verification ---
+    // --- Add verification loop and commit event --- //
     debug!(
-        "CreateStatic[{}]: Create successful. Waiting 5 seconds before starting verification loop...",
-        created_address
+        "CreateStatic[{}][{}][Pad {}]: Create successful. Waiting 5 seconds before starting verification loop...",
+        key_str, expected_address, pad_index
     );
     tokio::time::sleep(Duration::from_secs(5)).await;
-    // ------------------------------------------
 
     debug!(
-        "CreateStatic[{}]: Starting verification loop...",
-        created_address
+        "CreateStatic[{}][{}][Pad {}]: Starting verification loop...",
+        key_str, expected_address, pad_index
     );
 
-    // Verification Loop - Check only for existence, not content (decryption fails on newly created empty pads)
     for attempt in 0..VERIFICATION_RETRY_LIMIT {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
         debug!(
-            "CreateStaticVerify[{}]: Verification attempt {}/{} (checking existence)...",
-            created_address,
-            attempt + 1,
-            VERIFICATION_RETRY_LIMIT
+            "CreateStaticVerify[{}][{}][Pad {}]: Verification attempt {}/{} (checking existence & content)...",
+            key_str, expected_address, pad_index, attempt + 1, VERIFICATION_RETRY_LIMIT
         );
 
-        match client.scratchpad_get(&created_address).await {
-            Ok(_) => {
-                debug!(
-                    "CreateStaticVerify[{}]: Existence verified on attempt {}.",
-                    created_address,
-                    attempt + 1
+        match client.scratchpad_get(&expected_address).await {
+            Ok(scratchpad) => {
+                // Pad exists, now verify content (if data was provided)
+                if !initial_data.is_empty() {
+                    let key_clone = owner_key.clone();
+                    match task::spawn_blocking(move || scratchpad.decrypt_data(&key_clone)).await {
+                        Ok(Ok(decrypted_bytes)) => {
+                            if decrypted_bytes.as_ref() == initial_data {
+                                debug!(
+                                    "CreateStaticVerify[{}][{}][Pad {}]: Content verification successful on attempt {}.",
+                                    key_str, expected_address, pad_index, attempt + 1
+                                );
+                                // Content verified, break loop and emit commit
+                            } else {
+                                warn!(
+                                    "CreateStaticVerify[{}][{}][Pad {}]: Content mismatch on attempt {}. Retrying verification...",
+                                    key_str, expected_address, pad_index, attempt + 1
+                                );
+                                continue; // Content mismatch, retry
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            error!(
+                                "CreateStaticVerify[{}][{}][Pad {}]: Decryption failed during verification: {}. Aborting.",
+                                key_str, expected_address, pad_index, e
+                            );
+                            return Err(Error::DecryptionError(
+                                expected_address.to_string(),
+                                e.to_string(),
+                            ));
+                        }
+                        Err(e) => {
+                            error!(
+                                "CreateStaticVerify[{}][{}][Pad {}]: JoinError during decryption task: {}. Aborting.",
+                                key_str, expected_address, pad_index, e
+                            );
+                            return Err(Error::JoinError(e.to_string()));
+                        }
+                    }
+                } else {
+                    // No initial data, existence is enough
+                    debug!(
+                        "CreateStaticVerify[{}][{}][Pad {}]: Existence verified (no data to compare) on attempt {}.",
+                        key_str, expected_address, pad_index, attempt + 1
+                    );
+                }
+
+                // If we reach here, verification (existence or content) succeeded
+                info!(
+                    "CreateStaticVerify[{}][{}][Pad {}]: Verification successful. Emitting ScratchpadCommitComplete.",
+                    key_str, expected_address, pad_index
                 );
-                return Ok(created_address); // Success! Record exists.
+                let current_committed_pads = {
+                    let mut guard = total_pads_committed_arc.lock().await;
+                    *guard += 1;
+                    *guard
+                };
+                debug!(
+                    "CreateStaticVerify[{}][{}][Pad {}]: Commit progress updated: {} / {}",
+                    key_str,
+                    expected_address,
+                    pad_index,
+                    current_committed_pads,
+                    total_pads_expected
+                );
+                {
+                    // Scope for callback lock
+                    let mut cb_guard = callback_arc.lock().await;
+                    invoke_callback(
+                        &mut *cb_guard,
+                        PutEvent::ScratchpadCommitComplete {
+                            index: pad_index as u64,
+                            total: total_pads_expected as u64,
+                        },
+                    )
+                    .await?;
+                } // Callback lock released
+                return Ok(expected_address);
+            }
+            Err(se) if se.to_string().contains("RecordNotFound") => {
+                warn!(
+                    "CreateStaticVerify[{}][{}][Pad {}]: Not found on attempt {}. Retrying verification...",
+                    key_str, expected_address, pad_index, attempt + 1
+                );
+                continue; // Pad not found yet, retry
             }
             Err(e) => {
-                let e_str = e.to_string();
-                if e_str.contains("RecordNotFound") {
-                    debug!(
-                        "CreateStaticVerify[{}]: RecordNotFound during existence check attempt {}. Retrying...",
-                        created_address, attempt + 1
-                    );
-                    // Continue loop, waiting for propagation
-                } else {
-                    error!(
-                        "CreateStaticVerify[{}]: Unexpected error during existence check attempt {}: {}. Aborting verification.",
-                        created_address, attempt + 1, e
-                    );
-                    return Err(Error::AutonomiClient(e)); // Propagate other client errors
-                }
+                error!(
+                    "CreateStaticVerify[{}][{}][Pad {}]: Error during verification get: {}. Aborting.",
+                    key_str, expected_address, pad_index, e
+                );
+                return Err(Error::from(e)); // Convert Autonomi client error
             }
         }
     }
 
+    // If loop finishes without success
     error!(
-        "CreateStaticVerify[{}]: Verification timed out after {} attempts.",
-        created_address, VERIFICATION_RETRY_LIMIT
+        "CreateStaticVerify[{}][{}][Pad {}]: Failed to verify scratchpad after {} attempts. Aborting.",
+        key_str, expected_address, pad_index, VERIFICATION_RETRY_LIMIT
     );
     Err(Error::VerificationTimeout(format!(
-        "Create verification timed out for {}",
-        created_address
+        "Create {} Pad {}",
+        key_str, pad_index
     )))
 }
 

@@ -10,6 +10,7 @@ use hex;
 use log::{debug, error, info, trace, warn};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use tokio::sync::Mutex; // Correct import for async Mutex
 
 /// Calculates the SHA256 checksum of the data and returns it as a hex string.
 fn calculate_checksum(data: &[u8]) -> String {
@@ -35,7 +36,7 @@ pub(super) async fn store_data(
     ma: &MutAnt,
     key: &str,
     data_bytes: &[u8],
-    callback: Option<PutCallback>,
+    mut callback: Option<PutCallback>,
 ) -> Result<(), Error> {
     let data_size = data_bytes.len();
     let key_owned = key.to_string();
@@ -99,8 +100,15 @@ pub(super) async fn store_data(
                 // Release lock before entering upload phase
                 drop(mis_lock);
                 // Jump to Upload Execution Phase (using the existing key info)
-                return execute_upload_phase(ma, &key_owned, data_bytes, scratchpad_size, callback)
-                    .await;
+                return execute_upload_phase(
+                    ma,
+                    &key_owned,
+                    data_bytes,
+                    scratchpad_size,
+                    callback,
+                    pending_pads_count,
+                )
+                .await;
             } else {
                 // Should technically be caught by the 'all populated' check above, but log defensively.
                 warn!(
@@ -174,6 +182,15 @@ pub(super) async fn store_data(
             "StoreData[{}]: Generating {} new pads.",
             key_owned, new_pads_needed
         );
+        // Emit ReservingPads event before generating
+        invoke_callback(
+            &mut callback, // Borrow mutably here
+            PutEvent::ReservingPads {
+                count: new_pads_needed as u64,
+            },
+        )
+        .await?;
+
         for _ in 0..new_pads_needed {
             let new_key = SecretKey::random();
             let new_address = ScratchpadAddress::new(new_key.public_key().into());
@@ -227,7 +244,15 @@ pub(super) async fn store_data(
 
     // --- Upload Execution Phase --- (Called after planning or directly on resume)
     info!("StoreData[{}]: Entering Upload Execution Phase.", key_owned);
-    execute_upload_phase(ma, &key_owned, data_bytes, scratchpad_size, callback).await
+    execute_upload_phase(
+        ma,
+        &key_owned,
+        data_bytes,
+        scratchpad_size,
+        callback,
+        new_pads_needed,
+    )
+    .await
 }
 
 /// Handles the iterative process of uploading data chunks based on PadInfo status.
@@ -236,23 +261,32 @@ async fn execute_upload_phase(
     key: &str, // Use borrowed str
     data_bytes: &[u8],
     scratchpad_size: usize,
-    mut callback: Option<PutCallback>,
+    callback: Option<PutCallback>,
+    total_new_pads_to_reserve: usize,
 ) -> Result<(), Error> {
     let key_owned = key.to_string(); // Clone for async boundaries if needed
     let data_chunks = Arc::new(chunk_data(data_bytes, scratchpad_size));
+    let total_pads_expected = data_chunks.len(); // Total pads for confirmation
+
+    // --- Create Shared state for callbacks ---
+    let callback_arc = Arc::new(Mutex::new(callback));
+    let total_pads_committed_arc = Arc::new(Mutex::new(0u64));
+    // --- End Shared state ---
 
     // Emit StartingUpload event
     let total_bytes_expected = data_bytes.len() as u64;
     invoke_callback(
-        &mut callback,
+        // Use the Arc/Mutex version of the callback from now on
+        &mut *callback_arc.lock().await,
         PutEvent::StartingUpload {
             total_bytes: total_bytes_expected,
         },
     )
     .await?;
 
-    let _total_pads = data_chunks.len(); // Prefix with underscore
+    let _total_pads = total_pads_expected; // Use the calculated total pads
     let mut pads_processed = 0;
+    let mut generated_pads_processed_count = 0; // Counter for reservation progress
 
     // --- Phase 1: Process Generated Pads (Create + Write) ---
     debug!(
@@ -292,14 +326,19 @@ async fn execute_upload_phase(
                 key_owned, pad_index, pad_info.address
             );
 
-            // TODO: Add callback for UploadProgress / ScratchpadCommitStart?
-
+            // Pass down callback infrastructure
             match pad_manager::write::write_chunk(
                 &ma.storage,
                 pad_info.address,
                 &pad_info.key,
                 chunk,
-                pad_info.is_new, // Should be true for Generated
+                pad_info.is_new,           // Should be true for Generated
+                &key_owned,                // Pass key_str
+                pad_index,                 // Pass pad_index
+                &callback_arc,             // Pass callback Arc
+                &total_pads_committed_arc, // Pass commit counter Arc
+                total_pads_expected,       // Pass total expected pads
+                scratchpad_size,           // Pass scratchpad_size
             )
             .await
             {
@@ -314,6 +353,8 @@ async fn execute_upload_phase(
                         if let Some(pi_mut) = key_info.pads.get_mut(pad_index) {
                             pi_mut.status = PadUploadStatus::Free;
                             key_info.modified = Utc::now();
+                            // Increment counter after successful creation
+                            generated_pads_processed_count += 1;
                         } else {
                             error!(
                                 "ExecuteUpload[{}]: Pad index {} not found during status update (Generated -> Free). Inconsistency?",
@@ -394,14 +435,19 @@ async fn execute_upload_phase(
                 key_owned, pad_index, pad_info.address
             );
 
-            // TODO: Add callback for UploadProgress?
-
+            // Pass down callback infrastructure
             match pad_manager::write::write_chunk(
                 &ma.storage,
                 pad_info.address,
                 &pad_info.key,
                 chunk,
-                false, // Explicitly pass false for is_new when status is Free
+                false,         // Explicitly pass false for is_new when status is Free
+                &key_owned,    // Pass key_str
+                pad_index,     // Pass pad_index
+                &callback_arc, // Pass callback Arc
+                &total_pads_committed_arc, // Pass commit counter Arc
+                total_pads_expected, // Pass total expected pads
+                scratchpad_size, // Pass scratchpad_size
             )
             .await
             {
@@ -419,7 +465,8 @@ async fn execute_upload_phase(
 
                     // Use correct fields for UploadProgress
                     invoke_callback(
-                        &mut callback,
+                        // Use Arc/Mutex callback
+                        &mut *callback_arc.lock().await,
                         PutEvent::UploadProgress {
                             bytes_written,
                             total_bytes,
@@ -483,7 +530,22 @@ async fn execute_upload_phase(
                 "ExecuteUpload[{}]: All pads processed and confirmed Populated. Upload complete.",
                 key_owned
             );
-            invoke_callback(&mut callback, PutEvent::UploadFinished).await?;
+            // Use Arc/Mutex callback
+            invoke_callback(&mut *callback_arc.lock().await, PutEvent::UploadFinished).await?;
+
+            // Emit ReservationProgress
+            if total_new_pads_to_reserve > 0 {
+                // Only emit if reservations were needed
+                invoke_callback(
+                    &mut *callback_arc.lock().await,
+                    PutEvent::ReservationProgress {
+                        current: generated_pads_processed_count as u64,
+                        total: total_new_pads_to_reserve as u64,
+                    },
+                )
+                .await?;
+            }
+
             Ok(())
         } else {
             let pending_count = key_info

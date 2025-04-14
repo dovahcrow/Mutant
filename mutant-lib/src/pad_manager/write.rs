@@ -3,7 +3,7 @@ use crate::cache::write_local_index;
 use crate::error::Error;
 use crate::events::PutCallback;
 use crate::mutant::data_structures::{KeyStorageInfo, MasterIndexStorage};
-use crate::storage::{network, Storage};
+use crate::storage::{network, ContentType, Storage};
 use autonomi::{ScratchpadAddress, SecretKey};
 use chrono;
 use log::{debug, error, info};
@@ -29,6 +29,12 @@ pub(crate) type PadInfoAlias = (ScratchpadAddress, Vec<u8>);
 /// * `key_bytes` - The encryption key bytes for the scratchpad.
 /// * `data_chunk` - The chunk of data to write.
 /// * `is_new_pad` - Boolean indicating whether to create a new pad (`true`) or update an existing one (`false`).
+/// * `key_str` - For logging/event context.
+/// * `pad_index` - For logging/event context.
+/// * `callback_arc` - For callback infrastructure.
+/// * `total_pads_committed_arc` - For callback infrastructure.
+/// * `total_pads_expected` - For callback infrastructure.
+/// * `scratchpad_size` - The size of the scratchpad.
 ///
 /// # Returns
 /// Returns `Ok(())` on successful write and confirmation, otherwise a `crate::error::Error`.
@@ -38,9 +44,17 @@ pub async fn write_chunk(
     key_bytes: &[u8],
     data_chunk: &[u8],
     is_new_pad: bool,
+    key_str: &str,
+    pad_index: usize,
+    callback_arc: &Arc<Mutex<Option<PutCallback>>>,
+    total_pads_committed_arc: &Arc<Mutex<u64>>,
+    total_pads_expected: usize,
+    scratchpad_size: usize,
 ) -> Result<(), Error> {
     debug!(
-        "write_chunk: Address={}, Key=<{} bytes>, Chunk=<{} bytes>, IsNew={}",
+        "write_chunk[{}][Pad {}]: Address={}, Key=<{} bytes>, Chunk=<{} bytes>, IsNew={}",
+        key_str,
+        pad_index,
         address,
         key_bytes.len(),
         data_chunk.len(),
@@ -61,16 +75,39 @@ pub async fn write_chunk(
     if is_new_pad {
         let wallet = storage.wallet();
         let payment_option = autonomi::client::payment::PaymentOption::from(wallet);
-        let created_address =
-            network::create_scratchpad_static(client, &secret_key, data_chunk, 0, payment_option)
-                .await?;
-        debug!(
-            "write_chunk: Pad creation successful for {}",
-            created_address
-        );
+        network::create_scratchpad_static(
+            client,
+            &secret_key,
+            data_chunk,
+            ContentType::DataChunk as u64,
+            payment_option,
+            key_str,
+            pad_index,
+            callback_arc,
+            total_pads_committed_arc,
+            total_pads_expected,
+        )
+        .await?;
         Ok(())
     } else {
-        network::update_scratchpad_internal_static(client, &secret_key, data_chunk, 0).await
+        let bytes_in_chunk = data_chunk.len() as u64;
+        let total_size_overall = scratchpad_size as u64 * total_pads_expected as u64;
+        network::update_scratchpad_internal_static_with_progress(
+            client,
+            &secret_key,
+            data_chunk,
+            ContentType::DataChunk as u64,
+            key_str,
+            pad_index,
+            callback_arc,
+            &Arc::new(Mutex::new(0)),
+            bytes_in_chunk,
+            total_size_overall,
+            false,
+            total_pads_committed_arc,
+            total_pads_expected,
+        )
+        .await
     }
 }
 
