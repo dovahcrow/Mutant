@@ -53,7 +53,12 @@ pub async fn handle_put(
             .await
     } else {
         mutant
-            .store_with_progress(&key, &bytes_to_store, Some(callback), _commit_counter_arc)
+            .store_with_progress(
+                &key,
+                &bytes_to_store,
+                Some(callback),
+                _commit_counter_arc.clone(),
+            )
             .await
     };
 
