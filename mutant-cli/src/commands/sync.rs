@@ -79,10 +79,43 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
 
         // 2. Fetch remote index
         info!("Fetching remote index...");
-        let remote_index = mutant.fetch_remote_master_index().await.map_err(|e| {
-            error!("Failed to fetch remote index during sync: {}", e);
-            CliError::from(e)
-        })?;
+        let remote_index = match mutant.fetch_remote_master_index().await {
+            Ok(index) => {
+                info!("Successfully fetched remote index.");
+                index
+            }
+            Err(mutant_lib::error::Error::MasterIndexNotFound) => {
+                warn!("Remote master index not found. Creating remote index from current state.");
+                // The MutAnt instance should already hold the correct default index
+                // (including size) from initialization.
+                // Save the current state to create the remote index.
+                if let Err(e) = mutant.save_master_index().await {
+                    error!(
+                        "Failed to create default remote index from current state during sync: {}",
+                        e
+                    );
+                    return Err(CliError::from(e));
+                }
+                info!("Successfully created remote index from current state.");
+
+                // Now that it's created, fetch it again to use for the merge.
+                match mutant.fetch_remote_master_index().await {
+                    Ok(newly_created_index) => newly_created_index,
+                    Err(e) => {
+                        error!(
+                            "Failed to fetch the newly created remote index during sync: {}",
+                            e
+                        );
+                        return Err(CliError::from(e));
+                    }
+                }
+            }
+            Err(e) => {
+                // Handle other potential errors during the initial fetch
+                error!("Failed to fetch remote index during sync: {}", e);
+                return Err(CliError::from(e));
+            }
+        };
 
         // 3. Merge indices
         info!("Merging local and remote indices...");

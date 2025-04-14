@@ -82,6 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This prevents failures when resuming an interrupted upload where some pads were created but not yet marked as completed locally.
 - Handle `RecordNotFound` error when attempting to update a reused scratchpad (`is_new: false`) that doesn't actually exist on the network. The `write_chunk` function now checks for the pad's existence and attempts to create it if it's missing, preventing hangs during `put` operations involving reused pads.
 - Prevent fetching data for keys with incomplete uploads (`mutant get`). A specific error message is shown.
+- **Sync:** The `sync` command now correctly handles the case where the remote master index does not exist (e.g., after initializing with `--local` or declining the initial remote creation prompt). Instead of erroring, it creates the remote index based on the current `MutAnt` state before proceeding with the sync.
 
 ### Removed
 - The specific changelog entry for updating the progress message to "Creating remote master index..." as this is now covered by the refactoring of init steps.
