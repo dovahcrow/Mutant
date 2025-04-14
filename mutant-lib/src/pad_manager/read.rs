@@ -1,6 +1,7 @@
 use super::PadManager;
 use crate::error::Error;
 use crate::events::{invoke_get_callback, GetCallback, GetEvent};
+use crate::mutant::data_structures::PadInfo;
 use crate::utils::retry::retry_operation;
 use autonomi::SecretKey;
 use log::{debug, error, info, warn};
@@ -14,10 +15,7 @@ const PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
 
 impl PadManager {
     /// Retrieves the pad information (list of pads and total expected size) for a given key.
-    async fn get_pads_and_size(
-        &self,
-        key: &str,
-    ) -> Result<(Vec<(autonomi::ScratchpadAddress, Vec<u8>)>, usize), Error> {
+    async fn get_pads_and_size(&self, key: &str) -> Result<(Vec<PadInfo>, usize), Error> {
         let mis_guard = self.master_index_storage.lock().await;
         debug!("Retrieve[{}]: Lock acquired to get pad info.", key);
         match mis_guard.index.get(key) {
@@ -43,13 +41,13 @@ impl PadManager {
     fn spawn_fetch_tasks(
         &self,
         key_owned: &str,
-        pads_to_fetch: &[(autonomi::ScratchpadAddress, Vec<u8>)],
+        pads_to_fetch: &[PadInfo],
         join_set: &mut JoinSet<Result<(usize, Vec<u8>), (usize, Error)>>,
     ) {
-        for (index, (pad_address, pad_key_bytes)) in pads_to_fetch.iter().enumerate() {
+        for (index, pad_info) in pads_to_fetch.iter().enumerate() {
             let storage_clone = self.storage.clone();
-            let address_clone = pad_address.clone();
-            let key_bytes_clone = pad_key_bytes.clone();
+            let address_clone = pad_info.address.clone();
+            let key_bytes_clone = pad_info.key.clone();
             let key_for_task = key_owned.to_string();
 
             debug!(

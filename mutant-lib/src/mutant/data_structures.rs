@@ -4,15 +4,33 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Represents how and where a logical piece of data (identified by user key) is stored.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum PadUploadStatus {
+    Generated, // Pad metadata known, initial write+confirm pending
+    Free,      // Pad reservation confirmed, data write+confirm pending
+    Populated, // Data chunk confirmed written to this pad
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PadInfo {
+    pub address: ScratchpadAddress,
+    pub key: Vec<u8>,
+    pub status: PadUploadStatus,
+    pub is_new: bool, // Flag to indicate if this pad needs creation vs update
+                      // Optional: pub chunk_index: usize, // If order matters and isn't implied by Vec index
+}
+
+/// Represents how and where a logical piece of data (identified by user key) is stored.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct KeyStorageInfo {
     /// List of pads holding the data for this key (Address, Key Bytes)
-    pub pads: Vec<(ScratchpadAddress, Vec<u8>)>,
+    pub pads: Vec<PadInfo>,
     /// Actual size of the data stored across these pads
     pub data_size: usize,
     /// Timestamp of the last modification (store or update)
     #[serde(default = "Utc::now")]
     pub modified: DateTime<Utc>,
+    pub data_checksum: String,
 }
 
 /// The main index mapping user keys to their storage information.

@@ -1,16 +1,17 @@
-use super::PadInfo;
+use super::PadInfoAlias;
 use crate::error::Error;
 use crate::events::{invoke_callback, PutCallback, PutEvent};
 use crate::mutant::data_structures::MasterIndexStorage;
-use crate::storage::Storage;
+use crate::storage::Storage as BaseStorage;
 use crate::utils::retry::retry_operation;
-use futures::stream::{self, StreamExt};
+use futures::stream::StreamExt;
 use log::{debug, error, info};
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
+use tokio_stream as stream; // Only import the alias
 
-pub(super) const MAX_CONCURRENT_RESERVATIONS: usize = 100;
+pub(super) const MAX_CONCURRENT_RESERVATIONS: usize = 5;
 
 /// Reserves a specified number of new pads concurrently.
 /// Saves the Master Index after each successful reservation and sends PadInfo via channel.
@@ -18,9 +19,9 @@ pub(super) async fn reserve_new_pads_and_collect(
     key_for_log: &str,
     num_pads_to_reserve: usize,
     shared_callback: Arc<Mutex<Option<PutCallback>>>,
-    pad_info_tx: mpsc::Sender<Result<PadInfo, Error>>,
-    storage: Arc<Storage>,
-    _master_index_storage: Arc<Mutex<MasterIndexStorage>>,
+    pad_info_tx: Sender<Result<PadInfoAlias, Error>>,
+    storage: Arc<BaseStorage>,
+    master_index_storage: Arc<Mutex<MasterIndexStorage>>,
 ) -> Result<(), Error> {
     info!(
         "Reservation[{}]: Reserving {} new pads (max concurrent: {})... Saving after each success...",
@@ -79,7 +80,7 @@ pub(super) async fn reserve_new_pads_and_collect(
                 .ok(); // Ignore callback error here, main error handled below
             }
 
-            // Return the result of the reservation attempt (Ok(PadInfo) or Err(Error))
+            // Return the result of the reservation attempt (Ok(PadInfoAlias) or Err(Error))
             reserve_result
         }
     });
@@ -92,57 +93,78 @@ pub(super) async fn reserve_new_pads_and_collect(
     while let Some(result) = stream.next().await {
         match result {
             Ok(pad_info) => {
-                // Pad reservation succeeded
-                let (pad_address, _pad_key_bytes) = pad_info.clone(); // Clone for logging/sending
-                let log_index = successful_pad_count; // Index for logging before increment
-
+                // Reservation successful
+                successful_pad_count += 1;
                 debug!(
-                    "Reservation[{}]: Pad #{} ({:?}) reserved task completed. Sending to writer.",
-                    key_for_log, log_index, pad_address
+                    "Reservation[{}]: Successfully reserved pad #{} ({}/{})",
+                    key_for_log,
+                    successful_pad_count, // Use count instead of index for log message
+                    successful_pad_count,
+                    num_pads_to_reserve
                 );
 
-                // Send successful PadInfo over the channel
-                if let Err(send_err) = pad_info_tx.send(Ok(pad_info.clone())).await {
+                // --- Add to free_pads in MIS and Save MIS --- //
+                {
+                    let mut mis_guard = master_index_storage.lock().await;
+                    mis_guard.free_pads.push(pad_info.clone()); // Clone needed as pad_info is sent
+                    let mis_data_to_write = mis_guard.clone();
+                    drop(mis_guard); // Release lock before potentially slow I/O
+
+                    let network_choice = storage.get_network_choice();
+                    if let Err(e) =
+                        crate::cache::write_local_index(&mis_data_to_write, network_choice).await
+                    {
+                        error!("Reservation[{}]: Failed to persist MIS after reserving pad #{}: {}. Continuing...", key_for_log, successful_pad_count, e);
+                        // Don't abort the whole reservation process, just log the persistence error.
+                    }
+                } // End scope for MIS lock
+
+                // Send the successfully reserved PadInfoAlias to the write task
+                if pad_info_tx.send(Ok(pad_info)).await.is_err() {
                     error!(
-                        "Reservation[{}]: Failed to send successful PadInfo for pad #{} over channel: {}. Aborting.",
-                        key_for_log, log_index, send_err
+                        "Reservation[{}]: Failed to send reserved pad info to writer task. Channel closed?",
+                        key_for_log
                     );
-                    // Treat channel send failure as critical, as the uploader won't get the pad info
-                    return Err(Error::InternalError(format!(
-                        "Channel send error: {}",
-                        send_err
-                    )));
+                    // Abort if we can't communicate with the writer
+                    return Err(Error::InternalError(
+                        "Pad reservation channel closed unexpectedly".to_string(),
+                    ));
                 }
 
-                successful_pad_count += 1;
+                // Optional: Update ReservationProgress callback
+                {
+                    let mut cb_guard = shared_callback.lock().await;
+                    invoke_callback(
+                        &mut *cb_guard,
+                        PutEvent::ReservationProgress {
+                            current: successful_pad_count as u64,
+                            total: num_pads_to_reserve as u64,
+                        },
+                    )
+                    .await?;
+                }
             }
-            Err(reserve_err) => {
-                // Pad reservation failed
+            Err(e) => {
+                // A reservation task failed
                 error!(
-                    "Reservation[{}]: Reservation task failed: {}. Aborting remaining reservations.",
-                    key_for_log, reserve_err
+                    "Reservation[{}]: Failed to reserve a pad: {}. Aborting remaining reservations.",
+                    key_for_log, e
                 );
-                return Err(reserve_err); // Return the reservation error
+                // Send a generic error signal via channel so writer knows to stop
+                let signal_err = Error::AllocationFailed("Pad reservation failed".to_string());
+                pad_info_tx.send(Err(signal_err)).await.ok(); // Ignore send error
+                                                              // Drop the stream to cancel pending futures
+                drop(stream);
+                // Return the original error
+                return Err(e);
             }
         }
     }
 
-    // Final check after processing the stream
-    if successful_pad_count == num_pads_to_reserve {
-        info!(
-            "Reservation[{}]: Successfully reserved and sent all {} required pads to writer.",
-            key_for_log, num_pads_to_reserve
-        );
-        Ok(())
-    } else {
-        error!(
-            "Reservation[{}]: Exited reservation loop unexpectedly. Success count: {}/{}",
-            key_for_log, successful_pad_count, num_pads_to_reserve
-        );
-        Err(Error::InternalError(format!(
-            "Reservation ended prematurely: {}/{} pads",
-            successful_pad_count, num_pads_to_reserve
-        )))
-    }
-    // pad_info_tx is dropped implicitly when the function returns, closing the channel.
+    // If we reach here, all pads were reserved successfully
+    info!(
+        "Reservation[{}]: Successfully reserved all {} pads.",
+        key_for_log, num_pads_to_reserve
+    );
+    Ok(())
 }

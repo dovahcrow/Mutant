@@ -111,7 +111,7 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
         let occupied_pads: HashSet<ScratchpadAddress> = merged_index
             .index
             .values()
-            .flat_map(|key_info| key_info.pads.iter().map(|(addr, _)| *addr))
+            .flat_map(|key_info| key_info.pads.iter().map(|pad_info| pad_info.address))
             .collect();
         debug!(
             "Sync: Found {} occupied pads in merged index.",

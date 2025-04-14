@@ -1,4 +1,4 @@
-use super::PadInfo;
+use super::PadInfoAlias;
 use crate::error::Error;
 use crate::events::{invoke_callback, PutCallback, PutEvent};
 use crate::mutant::data_structures::MasterIndexStorage;
@@ -22,17 +22,17 @@ pub(super) const WRITE_TASK_CONCURRENCY: usize = 100;
 pub(super) async fn perform_concurrent_write_standalone(
     key: &str,
     data_arc: Arc<Vec<u8>>,
-    initial_pads: Vec<PadInfo>,
-    pads_from_free: Vec<PadInfo>,
-    mut reserved_pad_rx: mpsc::Receiver<Result<PadInfo, Error>>,
+    initial_pads: Vec<PadInfoAlias>,
+    pads_from_free: Vec<PadInfoAlias>,
+    mut reserved_pad_rx: mpsc::Receiver<Result<PadInfoAlias, Error>>,
     storage: Arc<BaseStorage>,
     master_index_storage: Arc<Mutex<MasterIndexStorage>>,
     callback_arc: Arc<Mutex<Option<PutCallback>>>,
-) -> Result<Vec<PadInfo>, Error> {
+) -> Result<Vec<PadInfoAlias>, Error> {
     let total_size = data_arc.len();
     let key_owned = key.to_string();
 
-    let successfully_written_pads_map: Arc<Mutex<HashMap<usize, PadInfo>>> =
+    let successfully_written_pads_map: Arc<Mutex<HashMap<usize, PadInfoAlias>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
     let scratchpad_size = {
@@ -47,7 +47,7 @@ pub(super) async fn perform_concurrent_write_standalone(
         mis_guard.scratchpad_size
     };
 
-    let mut join_set: JoinSet<Result<(usize, PadInfo), Error>> = JoinSet::new();
+    let mut join_set: JoinSet<Result<(usize, PadInfoAlias), Error>> = JoinSet::new();
     let semaphore = Arc::new(Semaphore::new(WRITE_TASK_CONCURRENCY));
     let total_bytes_uploaded = Arc::new(Mutex::new(0u64));
     let total_pads_committed = Arc::new(Mutex::new(0u64));
@@ -300,10 +300,10 @@ pub(super) async fn perform_concurrent_write_standalone(
                 })?
                 .into_inner();
 
-            let mut sorted_pads: Vec<(usize, PadInfo)> = final_pads_map.into_iter().collect();
+            let mut sorted_pads: Vec<(usize, PadInfoAlias)> = final_pads_map.into_iter().collect();
             sorted_pads.sort_by_key(|&(index, _)| index);
 
-            let final_pads: Vec<PadInfo> = sorted_pads
+            let final_pads: Vec<PadInfoAlias> = sorted_pads
                 .into_iter()
                 .map(|(_, pad_info)| pad_info)
                 .collect();
@@ -333,7 +333,7 @@ pub(super) async fn perform_concurrent_write_standalone(
 /// Spawns a single write task. (Standalone function version)
 #[allow(clippy::too_many_arguments)]
 fn spawn_write_task_standalone(
-    join_set: &mut JoinSet<Result<(usize, PadInfo), Error>>,
+    join_set: &mut JoinSet<Result<(usize, PadInfoAlias), Error>>,
     semaphore: Arc<Semaphore>,
     callback_arc: Arc<Mutex<Option<PutCallback>>>,
     total_bytes_uploaded_arc: Arc<Mutex<u64>>,
@@ -347,7 +347,7 @@ fn spawn_write_task_standalone(
     chunk_start: usize,
     chunk_end: usize,
     _scratchpad_size: usize,
-    pad_info_for_task: PadInfo,
+    pad_info_for_task: PadInfoAlias,
     key_str: String,
     is_newly_reserved: bool,
 ) {

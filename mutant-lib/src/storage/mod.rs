@@ -1,5 +1,5 @@
 mod init;
-mod network;
+pub(crate) mod network;
 
 use crate::error::Error;
 use crate::mutant::NetworkChoice;
@@ -19,6 +19,7 @@ pub(crate) use network::update_scratchpad_internal_static_with_progress;
 #[repr(u64)]
 pub(super) enum ContentType {
     MasterIndex = 1,
+    DataChunk = 2,
 }
 
 #[derive(Clone)]

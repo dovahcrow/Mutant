@@ -3,7 +3,8 @@ use crate::cache::write_local_index;
 use crate::error::Error;
 use crate::events::PutCallback;
 use crate::mutant::data_structures::{KeyStorageInfo, MasterIndexStorage};
-use autonomi::ScratchpadAddress;
+use crate::storage::{network, Storage};
+use autonomi::{ScratchpadAddress, SecretKey};
 use chrono;
 use log::{debug, error, info};
 use std::sync::Arc;
@@ -14,7 +15,64 @@ use tokio::sync::MutexGuard; // Added
 mod concurrent;
 mod reservation;
 
-pub(crate) type PadInfo = (ScratchpadAddress, Vec<u8>);
+pub(crate) type PadInfoAlias = (ScratchpadAddress, Vec<u8>);
+
+/// Writes a single data chunk to a specified scratchpad.
+///
+/// This function acts as a wrapper around the storage layer's create/update operations,
+/// handling the choice between creating a new pad or updating an existing one.
+/// It relies on the underlying storage functions to handle confirmation loops.
+///
+/// # Arguments
+/// * `storage` - Reference to the storage interface.
+/// * `address` - The address of the scratchpad to write to.
+/// * `key_bytes` - The encryption key bytes for the scratchpad.
+/// * `data_chunk` - The chunk of data to write.
+/// * `is_new_pad` - Boolean indicating whether to create a new pad (`true`) or update an existing one (`false`).
+///
+/// # Returns
+/// Returns `Ok(())` on successful write and confirmation, otherwise a `crate::error::Error`.
+pub async fn write_chunk(
+    storage: &Storage,
+    address: ScratchpadAddress,
+    key_bytes: &[u8],
+    data_chunk: &[u8],
+    is_new_pad: bool,
+) -> Result<(), Error> {
+    debug!(
+        "write_chunk: Address={}, Key=<{} bytes>, Chunk=<{} bytes>, IsNew={}",
+        address,
+        key_bytes.len(),
+        data_chunk.len(),
+        is_new_pad
+    );
+
+    let key_array: [u8; 32] = key_bytes.try_into().map_err(|_| {
+        Error::InvalidInput(format!(
+            "Invalid secret key byte length: expected 32, got {}",
+            key_bytes.len()
+        ))
+    })?;
+    let secret_key = SecretKey::from_bytes(key_array)
+        .map_err(|e| Error::InvalidInput(format!("Invalid secret key bytes: {}", e)))?;
+
+    let client = storage.get_client().await?;
+
+    if is_new_pad {
+        let wallet = storage.wallet();
+        let payment_option = autonomi::client::payment::PaymentOption::from(wallet);
+        let created_address =
+            network::create_scratchpad_static(client, &secret_key, data_chunk, 0, payment_option)
+                .await?;
+        debug!(
+            "write_chunk: Pad creation successful for {}",
+            created_address
+        );
+        Ok(())
+    } else {
+        network::update_scratchpad_internal_static(client, &secret_key, data_chunk, 0).await
+    }
+}
 
 // Helper function placed here or in util.rs
 fn calculate_needed_pads(data_size: usize, scratchpad_size: usize) -> Result<usize, Error> {
@@ -36,10 +94,10 @@ impl PadManager {
     ///
     /// # Returns
     /// A tuple containing:
-    /// * `Vec<PadInfo>`: Pads to use immediately (kept from old + taken from free).
+    /// * `Vec<PadInfoAlias>`: Pads to use immediately (kept from old + taken from free).
     /// * `usize`: Number of *new* pads that need to be reserved.
-    /// * `Vec<PadInfo>`: Pads taken from the free list (to be returned on failure).
-    /// * `Vec<PadInfo>`: Old pads to be recycled *on success* (only relevant for updates).
+    /// * `Vec<PadInfoAlias>`: Pads taken from the free list (to be returned on failure).
+    /// * `Vec<PadInfoAlias>`: Old pads to be recycled *on success* (only relevant for updates).
     fn acquire_resources_for_write<'a>(
         &self,
         mis_guard: &mut MutexGuard<'a, MasterIndexStorage>,
@@ -47,10 +105,10 @@ impl PadManager {
         data_size: usize,
     ) -> Result<
         (
-            Vec<PadInfo>, // pads_to_keep (from existing entry)
-            Vec<PadInfo>, // pads_to_recycle_on_success (from shrinking update)
-            usize,        // needed_from_free (how many to take from free list later)
-            usize,        // pads_to_reserve (how many to reserve if free list is insufficient)
+            Vec<PadInfoAlias>, // pads_to_keep (from existing entry)
+            Vec<PadInfoAlias>, // pads_to_recycle_on_success (from shrinking update)
+            usize,             // needed_from_free (how many to take from free list later)
+            usize,             // pads_to_reserve (how many to reserve if free list is insufficient)
         ),
         Error,
     > {
@@ -62,8 +120,8 @@ impl PadManager {
             key, data_size, scratchpad_size, needed_total_pads
         );
 
-        let pads_to_keep: Vec<PadInfo>;
-        let pads_to_recycle_on_success: Vec<PadInfo>;
+        let pads_to_keep: Vec<PadInfoAlias>;
+        let pads_to_recycle_on_success: Vec<PadInfoAlias>;
         let needed_from_free: usize;
         let pads_to_reserve: usize;
 
@@ -76,13 +134,23 @@ impl PadManager {
 
             if needed_total_pads <= old_num_pads {
                 // Shrinking or same size
-                pads_to_keep = existing_info.pads[0..needed_total_pads].to_vec();
-                pads_to_recycle_on_success = existing_info.pads[needed_total_pads..].to_vec();
+                pads_to_keep = existing_info.pads[0..needed_total_pads]
+                    .iter()
+                    .map(|pi| (pi.address, pi.key.clone()))
+                    .collect();
+                pads_to_recycle_on_success = existing_info.pads[needed_total_pads..]
+                    .iter()
+                    .map(|pi| (pi.address, pi.key.clone()))
+                    .collect();
                 needed_from_free = 0;
                 pads_to_reserve = 0;
             } else {
                 // Growing
-                pads_to_keep = existing_info.pads; // Keep all existing
+                pads_to_keep = existing_info
+                    .pads
+                    .iter()
+                    .map(|pi| (pi.address, pi.key.clone()))
+                    .collect();
                 let additional_pads_required = needed_total_pads - old_num_pads;
                 pads_to_recycle_on_success = Vec::new(); // Not shrinking
 
@@ -140,8 +208,8 @@ impl PadManager {
         let key_owned = key.to_string();
 
         // --- Step 1: Initial Resource Check (Under Lock) ---
-        let initial_pads_to_keep: Vec<PadInfo>;
-        let initial_recycle_on_success: Vec<PadInfo>;
+        let initial_pads_to_keep: Vec<PadInfoAlias>;
+        let initial_recycle_on_success: Vec<PadInfoAlias>;
         let initial_needed_from_free: usize;
         let initial_pads_to_reserve: usize;
         {
@@ -163,7 +231,7 @@ impl PadManager {
         } // Lock released
 
         // --- Step 1.5: Take Pads from Free List (Under Lock) ---
-        let pads_taken_from_free: Vec<PadInfo>;
+        let pads_taken_from_free: Vec<PadInfoAlias>;
         if initial_needed_from_free > 0 {
             let mut mis_guard = self.master_index_storage.lock().await;
             debug!(
@@ -204,7 +272,7 @@ impl PadManager {
 
         // Create MPSC channel for reserved pads
         // Channel buffer size - can be tuned. 1 allows the first reserved pad to be sent immediately.
-        let (pad_info_tx, pad_info_rx) = mpsc::channel::<Result<PadInfo, Error>>(1);
+        let (pad_info_tx, pad_info_rx) = mpsc::channel::<Result<PadInfoAlias, Error>>(1);
 
         // --- Step 2 & 4 Concurrently: Reserve New Pads & Perform Write ---
 
@@ -307,11 +375,25 @@ impl PadManager {
             );
 
             // Add/Update the key entry
+            let final_pads_info: Vec<crate::mutant::data_structures::PadInfo> = written_pads
+                .into_iter()
+                .map(|(addr, key)| crate::mutant::data_structures::PadInfo {
+                    address: addr,
+                    key,
+                    // Status should reflect the outcome, but write task doesn't provide it.
+                    // Assuming Populated for now, but this is incorrect for resumability.
+                    status: crate::mutant::data_structures::PadUploadStatus::Populated,
+                    // is_new is also unknown here.
+                    is_new: false, // Placeholder!
+                })
+                .collect();
+
             mis_guard.index.insert(
                 key_owned.clone(),
                 KeyStorageInfo {
-                    pads: written_pads,
+                    pads: final_pads_info, // Use the converted Vec<PadInfo>
                     data_size,
+                    data_checksum: String::new(), // Placeholder!
                     modified: chrono::Utc::now(),
                 },
             );

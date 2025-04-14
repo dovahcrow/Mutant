@@ -408,7 +408,7 @@ impl MutAnt {
                 "User key conflicts with internal master index key".to_string(),
             ));
         }
-        store_logic::store_item(self, user_key, data_bytes, callback).await
+        store_logic::store_data(self, user_key, data_bytes, callback).await
     }
 
     /// Fetches the raw bytes associated with the given user key without progress reporting.
@@ -602,11 +602,12 @@ impl MutAnt {
         }
 
         // Check if used by any key
-        if mis_guard
-            .index
-            .values()
-            .any(|key_info| key_info.pads.iter().any(|(addr, _)| *addr == pad_address))
-        {
+        if mis_guard.index.values().any(|key_info| {
+            key_info
+                .pads
+                .iter()
+                .any(|pad_info| pad_info.address == pad_address)
+        }) {
             debug!(
                 "ImportPad[{}]: Pad is currently occupied by a key. Aborting.",
                 pad_address

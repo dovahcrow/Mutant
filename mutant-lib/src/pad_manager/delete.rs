@@ -1,5 +1,6 @@
 use super::PadManager;
 use crate::error::Error;
+use autonomi::ScratchpadAddress;
 use log::debug;
 
 impl PadManager {
@@ -12,7 +13,12 @@ impl PadManager {
         match mis_guard.index.remove(key) {
             Some(key_info) => {
                 let num_released = key_info.pads.len();
-                mis_guard.free_pads.extend(key_info.pads);
+                let pads_to_free: Vec<(ScratchpadAddress, Vec<u8>)> = key_info
+                    .pads
+                    .into_iter()
+                    .map(|pad_info| (pad_info.address, pad_info.key))
+                    .collect();
+                mis_guard.free_pads.extend(pads_to_free);
                 debug!(
                     "Release[{}]: Key removed. Added {} pads to free list (new total: {}). Releasing lock.",
                     key,
