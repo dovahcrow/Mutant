@@ -7,7 +7,6 @@ use mutant_lib::cache::{read_local_index, write_local_index};
 use mutant_lib::mutant::MutAnt;
 use mutant_lib::mutant::data_structures::MasterIndexStorage;
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
 
 pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliError> {
     info!("Starting synchronization process...");
