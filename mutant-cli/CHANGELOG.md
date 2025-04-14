@@ -3,6 +3,9 @@
 ### Added
 - Global `--quiet` (`-q`) flag to suppress progress bars and other non-essential output.
 
+### Changed
+- Parallelized pad verification during `purge` command for faster execution.
+
 ### Fixed
 - Corrected checksum logic in `put` command to prevent unnecessary overwrites.
 
