@@ -152,28 +152,6 @@ pub fn create_put_callback(
                         current, total
                     );
 
-                    // Update Reservation Bar
-                    if let Some(res_pb) = ctx.res_pb_opt.lock().await.as_mut() {
-                        if !res_pb.is_finished() {
-                            if res_pb.length() != Some(total) {
-                                warn!(
-                                    "PadConfirmed: Res bar length ({:?}) differs from event total ({}). Resetting length.",
-                                    res_pb.length(), total
-                                );
-                                res_pb.set_length(total);
-                            }
-                             if current <= res_pb.length().unwrap_or(0) {
-                                res_pb.set_position(current);
-                            } else {
-                                warn!("PadConfirmed: Tried to set res bar position {} beyond length {:?}", current, res_pb.length());
-                            }
-                            if total > 0 && current >= total {
-                                res_pb.set_message("Reservation complete.".to_string());
-                                // Don't finish/clear yet, let StoreComplete handle it.
-                            }
-                        }
-                    }
-
                     // Update Confirmation Bar
                     let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
                     let confirm_pb = confirm_pb_guard.get_or_insert_with(|| {
@@ -208,6 +186,37 @@ pub fn create_put_callback(
                         }
                     } else {
                         debug!("Callback: Confirmation bar is already finished.");
+                    }
+                    Ok(true)
+                },
+                PutEvent::PadCreateSuccess { index, total } => {
+                    debug!(
+                        "Callback: Received PadCreateSuccess - Index: {}, Total: {}",
+                        index, total
+                    );
+                    if let Some(res_pb) = ctx.res_pb_opt.lock().await.as_mut() {
+                        if !res_pb.is_finished() {
+                            if res_pb.length() != Some(total) {
+                                warn!(
+                                    "PadCreateSuccess: Res bar length ({:?}) differs from event total ({}). Resetting length.",
+                                    res_pb.length(), total
+                                );
+                                res_pb.set_length(total);
+                            }
+                            // Use index + 1 because index is 0-based, progress is 1-based
+                            let current_pos = index + 1;
+                            if current_pos <= res_pb.length().unwrap_or(0) {
+                                res_pb.set_position(current_pos);
+                            } else {
+                                warn!("PadCreateSuccess: Tried to set res bar position {} beyond length {:?}", current_pos, res_pb.length());
+                            }
+                            if total > 0 && current_pos >= total {
+                                res_pb.set_message("Reservation complete.".to_string());
+                                // Don't finish/clear yet, let StoreComplete handle it.
+                            }
+                        }
+                    } else {
+                        warn!("PadCreateSuccess event received but reservation progress bar does not exist.");
                     }
                     Ok(true)
                 },

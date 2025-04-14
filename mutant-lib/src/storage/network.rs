@@ -184,17 +184,21 @@ pub(crate) async fn storage_create_mis_from_arc_static(
 
     // Use create_scratchpad_static instead of update
     let payment_option = PaymentOption::from(wallet);
+    let dummy_bytes_uploaded: Arc<Mutex<u64>> = Arc::new(Mutex::new(0)); // Dummy for MIS
+    let data_len = bytes.len() as u64; // total size for MIS
     let create_result = create_scratchpad_static(
         client,
         key,
         &bytes,
         ContentType::MasterIndex as u64,
         payment_option,
-        "_internal_update_", // key_str (internal context)
-        0,                   // pad_index (internal context)
-        &Arc::new(Mutex::new(None)),
-        &Arc::new(Mutex::new(0)),
-        1, // total_pads_expected (assume 1 for MIS)
+        "_internal_update_",         // key_str (internal context)
+        0,                           // pad_index (internal context)
+        &Arc::new(Mutex::new(None)), // dummy_callback
+        &Arc::new(Mutex::new(0)),    // dummy_pads_committed
+        1,                           // total_pads_expected (assume 1 for MIS)
+        &dummy_bytes_uploaded,       // Pass dummy arc
+        data_len,                    // Pass total size
     )
     .await;
 
@@ -405,9 +409,10 @@ pub(crate) async fn update_scratchpad_internal_static_with_progress(
     .await?;
 
     info!(
-        "UpdateStatic[{}][{}][Pad {}]: Put successful. Emitting UploadProgress.",
+        "UpdateStatic[{}][{}][Pad {}]: Network update call successful. Proceeding to verification prep.",
         key_str, address, pad_index
     );
+
     // --- Emit UploadProgress ---
     let current_total_bytes = {
         let mut guard = total_bytes_uploaded_arc.lock().await;
@@ -618,6 +623,8 @@ pub(crate) async fn update_scratchpad_internal_static(
     .await
 }
 
+// Create scratchpad and perform verification
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn create_scratchpad_static(
     client: &Client,
     owner_key: &SecretKey,
@@ -626,13 +633,16 @@ pub(crate) async fn create_scratchpad_static(
     payment_option: PaymentOption,
     key_str: &str,
     pad_index: usize,
-    _callback_arc: &Arc<tokio::sync::Mutex<Option<PutCallback>>>,
-    _total_pads_committed_arc: &Arc<tokio::sync::Mutex<u64>>,
-    _total_pads_expected: usize,
+    callback_arc: &Arc<tokio::sync::Mutex<Option<PutCallback>>>,
+    total_pads_committed_arc: &Arc<tokio::sync::Mutex<u64>>,
+    total_pads_expected: usize,
+    total_bytes_uploaded_arc: &Arc<Mutex<u64>>, // Need this for UploadProgress
+    total_size_overall: u64,                    // Need this for UploadProgress
 ) -> Result<ScratchpadAddress, Error> {
     let data_bytes = Bytes::from(initial_data.to_vec());
     let expected_address = ScratchpadAddress::new(owner_key.public_key().into());
-    let initial_data_len = initial_data.len(); // For logging
+    let initial_data_len = initial_data.len();
+    let bytes_in_chunk = initial_data_len as u64;
 
     debug!(
         "CreateStatic[{}][{}][Pad {}]: Attempting creation. Data size: {}, ContentType: {}",
@@ -659,9 +669,14 @@ pub(crate) async fn create_scratchpad_static(
                 Ok(address)
             }
         },
-        |_e: &Error| true, // Retry on all errors for creation
+        |_e: &Error| true,
     )
     .await?;
+
+    info!(
+        "CreateStatic[{}][{}][Pad {}]: Network create call successful. Address: {}",
+        key_str, expected_address, pad_index, created_address
+    );
 
     if created_address != expected_address {
         error!(
@@ -673,8 +688,186 @@ pub(crate) async fn create_scratchpad_static(
         ));
     }
 
-    // If we got here, creation succeeded (no immediate verification)
-    Ok(expected_address)
+    // --- Emit PadCreateSuccess ---
+    {
+        let mut cb_guard = callback_arc.lock().await;
+        invoke_callback(
+            &mut *cb_guard,
+            PutEvent::PadCreateSuccess {
+                index: pad_index as u64,
+                total: total_pads_expected as u64,
+            },
+        )
+        .await?;
+    }
+    debug!(
+        "CreateStatic[{}][{}][Pad {}]: Emitted PadCreateSuccess.",
+        key_str, expected_address, pad_index
+    );
+
+    // --- Emit UploadProgress ---
+    let current_total_bytes = {
+        let mut guard = total_bytes_uploaded_arc.lock().await;
+        *guard += bytes_in_chunk;
+        *guard
+    };
+    {
+        let mut cb_guard = callback_arc.lock().await;
+        invoke_callback(
+            &mut *cb_guard,
+            PutEvent::UploadProgress {
+                bytes_written: current_total_bytes,
+                total_bytes: total_size_overall,
+            },
+        )
+        .await?;
+    }
+    debug!(
+        "CreateStatic[{}][{}][Pad {}]: Emitted UploadProgress ({} / {}).",
+        key_str, expected_address, pad_index, current_total_bytes, total_size_overall
+    );
+
+    // --- Start Verification Loop (Adapted from update_...) ---
+    debug!(
+        "CreateStatic[{}][{}][Pad {}]: Waiting 5 seconds before starting verification loop...",
+        key_str, expected_address, pad_index
+    );
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    debug!(
+        "CreateStatic[{}][{}][Pad {}]: Starting verification loop...",
+        key_str, expected_address, pad_index
+    );
+
+    for attempt in 0..VERIFICATION_RETRY_LIMIT {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+
+        debug!(
+            "CreateStaticVerify[{}][{}][Pad {}]: Verification attempt {}/{}...",
+            key_str,
+            expected_address,
+            pad_index,
+            attempt + 1,
+            VERIFICATION_RETRY_LIMIT
+        );
+
+        match client.scratchpad_get(&expected_address).await {
+            Ok(scratchpad) => {
+                debug!(
+                    "CreateStaticVerify[{}][{}][Pad {}]: Fetched scratchpad. Counter: {}, PayloadSize: {}",
+                    key_str,
+                    expected_address,
+                    pad_index,
+                    scratchpad.counter(),
+                    scratchpad.payload_size()
+                );
+
+                // 1. Check counter should be 1 for initial creation
+                let counter_check_passed = scratchpad.counter() == 1;
+
+                if !counter_check_passed {
+                    debug!(
+                        "CreateStaticVerify[{}][{}][Pad {}]: Counter check failed (Expected: 1, Current: {}). Retrying...",
+                        key_str, expected_address, pad_index, scratchpad.counter()
+                    );
+                    continue;
+                }
+
+                // 2. Decrypt and compare data
+                debug!(
+                    "CreateStaticVerify[{}][{}][Pad {}]: Counter check passed. Proceeding to decryption check.",
+                    key_str, expected_address, pad_index
+                );
+                let key_clone = owner_key.clone();
+                match task::spawn_blocking(move || scratchpad.decrypt_data(&key_clone)).await {
+                    Ok(Ok(decrypted_bytes)) => {
+                        if decrypted_bytes.as_ref() == initial_data {
+                            debug!(
+                                "CreateStaticVerify[{}][{}][Pad {}]: Verification successful on attempt {}.",
+                                key_str, expected_address, pad_index, attempt + 1
+                            );
+
+                            // --- Emit PadConfirmed --- //
+                            let current_confirmed = {
+                                let mut counter = total_pads_committed_arc.lock().await;
+                                *counter += 1;
+                                debug!(
+                                    "CreateStaticVerify[{}][{}][Pad {}]: Incrementing commit counter to {}. Emitting PadConfirmed.",
+                                    key_str, expected_address, pad_index, *counter
+                                );
+                                *counter
+                            };
+                            invoke_callback(
+                                &mut *callback_arc.lock().await,
+                                PutEvent::PadConfirmed {
+                                    current: current_confirmed,
+                                    total: total_pads_expected as u64,
+                                },
+                            )
+                            .await?;
+                            return Ok(expected_address); // Verification successful
+                        } else {
+                            debug!(
+                                "CreateStaticVerify[{}][{}][Pad {}]: Data mismatch during verification attempt {} (Expected len: {}, Got len: {}). Retrying...",
+                                key_str,
+                                expected_address,
+                                pad_index,
+                                attempt + 1,
+                                initial_data.len(),
+                                decrypted_bytes.len()
+                            );
+                            continue;
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        debug!(
+                            "CreateStaticVerify[{}][{}][Pad {}]: Decryption failed during verification attempt {} (likely transient): {}. Retrying...",
+                             key_str, expected_address, pad_index, attempt + 1, e
+                        );
+                        continue;
+                    }
+                    Err(join_error) => {
+                        error!(
+                            "CreateStaticVerify[{}][{}][Pad {}]: Spawn_blocking failed during verification: {}. Aborting verification.",
+                             key_str, expected_address, pad_index, join_error
+                        );
+                        return Err(Error::from_join_error_msg(
+                            &join_error,
+                            format!(
+                                "Verification task failed for {}[{}]",
+                                key_str, expected_address
+                            ),
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                if e.to_string().contains("RecordNotFound") {
+                    debug!(
+                        "CreateStaticVerify[{}][{}][Pad {}]: RecordNotFound during verification attempt {}. Retrying...",
+                        key_str, expected_address, pad_index, attempt + 1
+                    );
+                    // Continue loop, waiting for propagation
+                } else {
+                    error!(
+                        "CreateStaticVerify[{}][{}][Pad {}]: Unexpected error during verification attempt {}: {}. Aborting verification.",
+                        key_str, expected_address, pad_index, attempt + 1, e
+                    );
+                    return Err(Error::AutonomiClient(e));
+                }
+            }
+        }
+    }
+
+    error!(
+        "CreateStaticVerify[{}][{}][Pad {}]: Verification timed out after {} attempts.",
+        key_str, expected_address, pad_index, VERIFICATION_RETRY_LIMIT
+    );
+    Err(Error::VerificationTimeout(format!(
+        "Create verification timed out for {} ({})",
+        key_str, expected_address
+    )))
 }
 
 /// Fetches and deserializes the MasterIndexStorage from the network without cache interaction.

@@ -35,6 +35,8 @@ use tokio::sync::Mutex;
 /// * `total_pads_committed_arc` - For callback infrastructure.
 /// * `total_pads_expected` - For callback infrastructure.
 /// * `scratchpad_size` - The size of the scratchpad.
+/// * `total_bytes_uploaded_arc` - For callback infrastructure.
+/// * `total_size_overall` - For callback infrastructure.
 ///
 /// # Returns
 /// Returns `Ok(())` on successful write and confirmation, otherwise a `crate::error::Error`.
@@ -50,7 +52,9 @@ pub async fn write_chunk(
     callback_arc: &Arc<Mutex<Option<PutCallback>>>,
     total_pads_committed_arc: &Arc<Mutex<u64>>,
     total_pads_expected: usize,
-    scratchpad_size: usize, // Use this parameter again
+    scratchpad_size: usize,
+    total_bytes_uploaded_arc: &Arc<Mutex<u64>>,
+    total_size_overall: u64,
 ) -> Result<(), Error> {
     debug!(
         "write_chunk[{}][Pad {}]: Address={}, IsNew={}",
@@ -74,7 +78,10 @@ pub async fn write_chunk(
     let client = storage.get_client().await?;
 
     if is_new_pad {
-        // Call create, which now handles its own verification and commit event
+        debug!(
+            "write_chunk[{}][Pad {}]: Calling create_scratchpad_static...",
+            key_str, pad_index
+        );
         let wallet = storage.wallet();
         let payment_option = autonomi::client::payment::PaymentOption::from(wallet);
         network::create_scratchpad_static(
@@ -88,12 +95,17 @@ pub async fn write_chunk(
             callback_arc,
             total_pads_committed_arc,
             total_pads_expected,
+            total_bytes_uploaded_arc,
+            total_size_overall,
         )
         .await?;
         // create returns address, we discard it and return Ok(()) on success
         Ok(())
     } else {
-        // Call update with progress, which handles verification and commit event
+        debug!(
+            "write_chunk[{}][Pad {}]: Calling update_scratchpad_internal_static_with_progress...",
+            key_str, pad_index
+        );
         let bytes_in_chunk = data_chunk.len() as u64;
         // Estimate total size using passed scratchpad_size
         let total_size_overall = scratchpad_size as u64 * total_pads_expected as u64;

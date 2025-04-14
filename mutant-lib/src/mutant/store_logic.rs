@@ -269,8 +269,8 @@ async fn execute_upload_phase(
     data_bytes: &[u8],
     scratchpad_size: usize,
     callback: Option<PutCallback>,
-    total_new_pads_to_reserve: usize, // Use this for ReservationProgress total
-    commit_counter_arc: Arc<tokio::sync::Mutex<u64>>, // Use this parameter
+    total_new_pads_to_reserve: usize,
+    commit_counter_arc: Arc<tokio::sync::Mutex<u64>>,
 ) -> Result<(), Error> {
     let key_owned = key.to_string();
     let data_chunks = Arc::new(chunk_data(data_bytes, scratchpad_size));
@@ -288,6 +288,9 @@ async fn execute_upload_phase(
     // Use the passed commit_counter_arc
     let bytes_written_arc = Arc::new(Mutex::new(0u64));
     // --- End Shared state ---
+
+    // For UploadProgress tracking
+    let total_bytes_uploaded_arc = Arc::new(Mutex::new(0u64));
 
     // Emit StartingUpload event
     let total_bytes_expected = data_bytes.len() as u64;
@@ -331,26 +334,19 @@ async fn execute_upload_phase(
                 let is_new_pad = pad_info.status == PadUploadStatus::Generated;
                 let chunk = data_chunks[pad_index].clone();
                 let chunk_size = chunk.len() as u64;
-                let pad_info_clone = pad_info.clone(); // Clone needed PadInfo for task
-                let ma_storage = ma.storage.clone();
+                let pad_info_clone = pad_info.clone();
+                let is_new = is_new_pad;
+                let chunk_data = chunk.clone();
                 let key_for_task = key_owned.clone();
-                let cb_arc_clone = callback_arc.clone();
-                // Clone the passed counter Arc for the task
-                let commit_arc_clone = commit_counter_arc.clone();
+                let ma_storage_clone = ma.storage.clone();
                 let sem_clone = semaphore.clone();
-                let bytes_written_clone = bytes_written_arc.clone(); // Clone for progress reporting
-
-                // DEBUG: Log pointer of cloned commit counter Arc before spawning
-                debug!(
-                    "ExecuteUpload[{}]: Spawning task for Pad {} - commit_arc_clone Ptr: {:?}",
-                    key_for_task,
-                    pad_index,
-                    Arc::as_ptr(&commit_arc_clone)
-                );
+                let commit_arc_clone = commit_counter_arc.clone();
+                let cb_arc_clone = callback_arc.clone();
+                let total_bytes_up_clone = total_bytes_uploaded_arc.clone();
+                let bytes_written_clone = bytes_written_arc.clone();
 
                 join_set.spawn(async move {
                     let permit = sem_clone.acquire_owned().await.expect("Semaphore closed");
-                    // DEBUG: Log pointer of commit counter Arc inside task
                     debug!(
                         "ExecuteUploadTask[{}][Pad {}]: Inside Task - commit_arc_clone Ptr: {:?}",
                         key_for_task,
@@ -359,21 +355,23 @@ async fn execute_upload_phase(
                     );
                     debug!(
                         "ExecuteUploadTask[{}]: Acquired permit. Writing pad index {} (IsNew: {})",
-                        key_for_task, pad_index, is_new_pad
+                        key_for_task, pad_index, is_new
                     );
 
                     let write_result = pad_manager::write::write_chunk(
-                        &ma_storage,
+                        &ma_storage_clone,
                         pad_info_clone.address,
                         &pad_info_clone.key,
-                        &chunk,
-                        is_new_pad,
+                        &chunk_data,
+                        is_new,
                         &key_for_task,
                         pad_index,
                         &cb_arc_clone,
                         &commit_arc_clone,
                         total_pads_expected,
                         scratchpad_size,
+                        &total_bytes_up_clone,
+                        total_bytes_expected,
                     )
                     .await;
 
@@ -381,22 +379,12 @@ async fn execute_upload_phase(
 
                     match write_result {
                         Ok(_) => {
-                            // Update total bytes written
                             let current_bytes = {
                                 let mut guard = bytes_written_clone.lock().await;
                                 *guard += chunk_size;
                                 *guard
                             };
-                            // Emit UploadProgress incrementally
-                            invoke_callback(
-                                &mut *cb_arc_clone.lock().await,
-                                PutEvent::UploadProgress {
-                                    bytes_written: current_bytes,
-                                    total_bytes: total_bytes_expected,
-                                },
-                            )
-                            .await
-                            .ok(); // Ignore callback errors within task?
+                            // Removed UploadProgress emission from here, now handled in create/update_scratchpad
 
                             Ok((pad_index, chunk_size))
                         }

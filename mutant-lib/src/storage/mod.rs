@@ -58,32 +58,6 @@ impl Storage {
         &self.wallet
     }
 
-    pub(crate) async fn create_scratchpad_internal_raw(
-        &self,
-        initial_data: &[u8],
-        content_type: u64,
-    ) -> Result<(ScratchpadAddress, SecretKey), Error> {
-        let client = self.get_client().await?;
-        let owner_key = SecretKey::random();
-        let payment_option = autonomi::client::payment::PaymentOption::from(&self.wallet);
-
-        let address = create_scratchpad_static(
-            client,
-            &owner_key,
-            initial_data,
-            content_type,
-            payment_option,
-            "_internal_raw_",
-            0,
-            &Arc::new(Mutex::new(None)),
-            &Arc::new(Mutex::new(0)),
-            1,
-        )
-        .await?;
-
-        Ok((address, owner_key))
-    }
-
     pub(crate) fn get_master_index_info(&self) -> (ScratchpadAddress, SecretKey) {
         (self.master_index_address, self.master_index_key.clone())
     }

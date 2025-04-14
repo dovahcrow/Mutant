@@ -117,6 +117,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Reworked progress reporting for `put` command:**
+  - Added verification loop to `create_scratchpad_static`.
+  - Introduced `PadCreateSuccess` event emitted after network create success.
+  - Moved `UploadProgress` emission to occur immediately after network create/update success.
+  - `PadConfirmed` is now emitted after successful verification in both create and update paths.
+  - CLI callback now updates Reservation bar on `PadCreateSuccess`, Upload bar on `UploadProgress`, and Confirmation bar on `PadConfirmed`.
+
 - **Refactored `PutEvent` enum and progress bars:**
   - Simplified `PutEvent` variants for clearer progress reporting (`ReservingPads`, `StartingUpload`, `UploadProgress`, `PadConfirmed`, `StoreComplete`).
   - Removed redundant/confusing events (`PadWriteConfirmed`, `ScratchpadCommitComplete`, `PadWriteProgress`, `UploadFinished`).
