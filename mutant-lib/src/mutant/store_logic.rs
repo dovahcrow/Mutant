@@ -269,8 +269,8 @@ async fn execute_upload_phase(
     data_bytes: &[u8],
     scratchpad_size: usize,
     callback: Option<PutCallback>,
-    _total_new_pads_to_reserve: usize, // Keep underscore
-    commit_counter_arc: Arc<Mutex<u64>>,
+    total_new_pads_to_reserve: usize, // Use this for ReservationProgress total
+    commit_counter_arc: Arc<Mutex<u64>>, // Use this parameter
 ) -> Result<(), Error> {
     let key_owned = key.to_string();
     let data_chunks = Arc::new(chunk_data(data_bytes, scratchpad_size));
@@ -278,8 +278,8 @@ async fn execute_upload_phase(
 
     // --- Create Shared state for callbacks ---
     let callback_arc = Arc::new(Mutex::new(callback));
-    let bytes_written_arc = Arc::new(Mutex::new(0u64)); // Track total bytes written
-                                                        // --- End Shared state ---
+    let bytes_written_arc = Arc::new(Mutex::new(0u64));
+    // --- End Shared state ---
 
     // Emit StartingUpload event
     let total_bytes_expected = data_bytes.len() as u64;
@@ -292,9 +292,11 @@ async fn execute_upload_phase(
     .await?;
 
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_WRITES));
-    let mut join_set: JoinSet<Result<(usize, u64), Error>> = JoinSet::new(); // Returns (index, chunk_size) on success
+    let mut join_set: JoinSet<Result<(usize, u64), Error>> = JoinSet::new();
     let mut pads_to_process_count = 0;
     let mut first_error: Option<Error> = None;
+    // Counter for reservation progress
+    let mut pads_reserved_count = 0;
 
     // --- Single Concurrent Processing Phase ---
     debug!(
@@ -399,6 +401,33 @@ async fn execute_upload_phase(
         match res {
             Ok(Ok((pad_index, _chunk_size))) => {
                 successful_updates += 1;
+
+                // Determine if this was originally a 'Generated' pad to count reservation
+                let was_generated = {
+                    let mis_guard = ma.master_index_storage.lock().await;
+                    mis_guard
+                        .index
+                        .get(&key_owned)
+                        .and_then(|ki| ki.pads.get(pad_index))
+                        // If status is Free/Populated now, it *was* Generated if is_new is true
+                        .map_or(false, |pi| pi.is_new)
+                };
+                if was_generated {
+                    pads_reserved_count += 1;
+                    // Emit ReservationProgress if needed
+                    if total_new_pads_to_reserve > 0 {
+                        // Check if reservations were actually needed
+                        invoke_callback(
+                            &mut *callback_arc.lock().await,
+                            PutEvent::ReservationProgress {
+                                current: pads_reserved_count as u64,
+                                total: total_new_pads_to_reserve as u64,
+                            },
+                        )
+                        .await?;
+                    }
+                }
+
                 // Update status for this specific pad
                 let mut mis_guard = ma.master_index_storage.lock().await;
                 if let Some(key_info) = mis_guard.index.get_mut(&key_owned) {

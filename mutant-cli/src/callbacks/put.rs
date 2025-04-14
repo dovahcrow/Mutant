@@ -76,7 +76,7 @@ pub fn create_put_callback(
                     let mut res_pb_opt_guard = ctx.res_pb_opt.lock().await;
                     let pb = res_pb_opt_guard.get_or_insert_with(|| {
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
-                        pb.set_message("Reserving scratchpad(s)...".to_string());
+                        pb.set_message("Initializing pads...".to_string());
                         pb
                     });
                     pb.set_length(count);
@@ -105,14 +105,14 @@ pub fn create_put_callback(
                             debug!("Setting reservation bar position to {}", current);
                             res_pb.set_position(current);
                             if current >= total && !res_pb.is_finished() {
-                                debug!("Reservation progress complete ({} >= {}), setting final message.", current, total);
-                                res_pb.set_message("Reservation complete.".to_string());
+                                debug!("Initialization progress complete ({} >= {}), setting final message.", current, total);
+                                res_pb.set_message("Initialization complete.".to_string());
                                 // Don't finish or clear yet
                             }
                         } else if !res_pb.is_finished() {
                             // If total is 0, set final message immediately
-                            debug!("ReservationProgress: Total is 0, setting final message.");
-                            res_pb.set_message("Reservation complete (0 needed).".to_string());
+                            debug!("InitializationProgress: Total is 0, setting final message.");
+                            res_pb.set_message("Initialization complete (0 needed).".to_string());
                             // Don't finish or clear yet
                         }
                     } else {
