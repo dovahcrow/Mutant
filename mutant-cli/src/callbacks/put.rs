@@ -89,7 +89,7 @@ pub fn create_put_callback(
                     upload_pb.set_position(0);
                     upload_pb.set_message("Uploading...".to_string());
 
-                    // Initialize Confirmation Bar using stored total_pads
+                    // Initialize Confirmation Bar
                     let total_pads_count = *ctx.total_pads.lock().await;
                     *ctx.confirm_counter_arc.lock().await = 0;
                     let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
@@ -97,6 +97,7 @@ pub fn create_put_callback(
                         StyledProgressBar::new_for_steps(&ctx.multi_progress)
                     });
                     confirm_pb.set_message("Confirming...".to_string());
+                    // Set length based on known count, default to 0 if no ReservingPads event occurred
                     confirm_pb.set_length(total_pads_count);
                     confirm_pb.set_position(0);
 
