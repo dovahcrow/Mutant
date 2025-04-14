@@ -14,17 +14,10 @@ struct PutCallbackContext {
     upload_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     confirm_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     total_bytes_for_upload: Arc<Mutex<u64>>,
+    uploaded_bytes_counter: Arc<Mutex<u64>>,
     confirm_counter_arc: Arc<Mutex<u64>>,
-    create_counter_arc: Arc<Mutex<u64>>,
     total_pads: Arc<Mutex<u64>>,
     multi_progress: MultiProgress,
-    cyan: Style,
-    blue: Style,
-    green: Style,
-    red: Style,
-    yellow: Style,
-    magenta: Style,
-    separator_style: Style,
 }
 
 pub fn create_put_callback(
@@ -38,8 +31,6 @@ pub fn create_put_callback(
     Arc<Mutex<Option<StyledProgressBar>>>,
     // Shared confirm counter (created by caller, passed into callback)
     Arc<Mutex<u64>>,
-    // Shared create counter (created by caller, passed into callback)
-    Arc<Mutex<u64>>,
     // The actual callback closure
     PutCallback,
 ) {
@@ -47,8 +38,8 @@ pub fn create_put_callback(
     let upload_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let confirm_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let total_bytes_for_upload = Arc::new(Mutex::new(0u64));
+    let uploaded_bytes_counter = Arc::new(Mutex::new(0u64));
     let confirm_counter_arc = Arc::new(Mutex::new(0u64));
-    let create_counter_arc = Arc::new(Mutex::new(0u64));
     let total_pads = Arc::new(Mutex::new(0u64));
 
     // Create the context instance
@@ -57,17 +48,10 @@ pub fn create_put_callback(
         upload_pb_opt: upload_pb_opt.clone(),
         confirm_pb_opt: confirm_pb_opt.clone(),
         total_bytes_for_upload: total_bytes_for_upload.clone(),
+        uploaded_bytes_counter: uploaded_bytes_counter.clone(),
         confirm_counter_arc: confirm_counter_arc.clone(),
-        create_counter_arc: create_counter_arc.clone(),
         total_pads: total_pads.clone(),
         multi_progress: multi_progress.clone(),
-        cyan: Style::new().fg(Color::Cyan),
-        blue: Style::new().fg(Color::Blue),
-        green: Style::new().fg(Color::Green),
-        red: Style::new().fg(Color::Red),
-        yellow: Style::new().fg(Color::Yellow),
-        magenta: Style::new().fg(Color::Magenta),
-        separator_style: Style::new().fg(Color::DarkGray),
     };
 
     // Clone the context for the callback
@@ -93,6 +77,7 @@ pub fn create_put_callback(
                 },
                 PutEvent::StartingUpload { total_bytes } => {
                     *ctx.total_bytes_for_upload.lock().await = total_bytes;
+                    *ctx.uploaded_bytes_counter.lock().await = 0;
 
                     // Initialize Upload Bar
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
@@ -106,16 +91,13 @@ pub fn create_put_callback(
 
                     // Initialize Confirmation Bar using stored total_pads
                     let total_pads_count = *ctx.total_pads.lock().await;
+                    *ctx.confirm_counter_arc.lock().await = 0;
                     let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
                     let confirm_pb = confirm_pb_guard.get_or_insert_with(|| {
                         StyledProgressBar::new_for_steps(&ctx.multi_progress)
                     });
                     confirm_pb.set_message("Confirming...".to_string());
-                    if total_pads_count > 0 {
-                        confirm_pb.set_length(total_pads_count);
-                    } else {
-                        confirm_pb.set_length(0); // Handle case where count might be 0
-                    }
+                    confirm_pb.set_length(total_pads_count);
                     confirm_pb.set_position(0);
 
                     Ok(true)
@@ -123,7 +105,10 @@ pub fn create_put_callback(
                 PutEvent::UploadProgress { bytes_written, total_bytes: _ } => {
                     if let Some(upload_pb) = ctx.upload_pb_opt.lock().await.as_mut() {
                         if !upload_pb.is_finished() {
-                            upload_pb.set_position(bytes_written);
+                            let current_pos = upload_pb.position();
+                            if bytes_written > current_pos {
+                                upload_pb.set_position(bytes_written);
+                            }
                         }
                     } else {
                         warn!("UploadProgress event received but upload progress bar does not exist.");
@@ -160,46 +145,52 @@ pub fn create_put_callback(
                     }
                     Ok(true)
                 },
-                PutEvent::PadConfirmed { current, total } => {
+                PutEvent::PadConfirmed { current: _, total } => {
                     debug!(
-                        "Callback: Received PadConfirmed - Current: {}, Total: {}",
-                        current, total
+                        "Callback: Received PadConfirmed - Total: {}",
+                        total
                     );
 
                     // Update Confirmation Bar
                     let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
-                    let confirm_pb = confirm_pb_guard.get_or_insert_with(|| {
-                         debug!("Callback: Initializing confirmation bar (PadConfirmed event)");
-                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
-                         pb.set_message("Confirming...".to_string());
-                         pb.reset();
-                         pb
-                    });
+                    if let Some(confirm_pb) = confirm_pb_guard.as_mut() {
+                        if !confirm_pb.is_finished() {
+                            let mut bar_total = confirm_pb.length().unwrap_or(0);
+                            if bar_total == 0 && total > 0 {
+                                debug!("PadConfirmed: Confirm bar length is 0, setting from event total ({}).", total);
+                                confirm_pb.set_length(total);
+                                bar_total = total;
+                            }
 
-                    if !confirm_pb.is_finished() {
-                        if confirm_pb.length() != Some(total) {
-                             debug!(
-                                "PadConfirmed: Confirm bar length ({:?}) differs from event total ({}). Resetting length.",
-                                confirm_pb.length(), total
-                            );
-                            confirm_pb.set_length(total);
-                        }
+                            let new_pos = {
+                                let mut counter = ctx.confirm_counter_arc.lock().await;
+                                *counter += 1;
+                                *counter
+                            };
 
-                        if total > 0 {
-                            if current <= total {
-                                confirm_pb.set_position(current);
+                            if bar_total > 0 {
+                                let display_pos = std::cmp::min(new_pos, bar_total);
+                                confirm_pb.set_position(display_pos);
+
+                                if display_pos >= bar_total {
+                                    debug!("Confirmation progress complete ({} >= {}), setting final message.", display_pos, bar_total);
+                                    confirm_pb.set_message("Confirmation complete.".to_string());
+                                }
                             } else {
-                                warn!("PadConfirmed: Tried to set confirm bar position {} beyond length {}", current, total);
+                                confirm_pb.set_position(0);
+                                if new_pos > 0 {
+                                    warn!("PadConfirmed received but confirmation bar total is 0. Counter: {}", new_pos);
+                                }
                             }
-
-                            if current >= total {
-                                debug!("Confirmation progress complete ({} >= {}), setting final message.", current, total);
-                                confirm_pb.set_message("Confirmation complete.".to_string());
-                                // Don't finish/clear yet
-                            }
+                            debug!(
+                                "Callback: PadConfirmed updated - Counter: {}, Bar Total: {}, New Position: {}",
+                                new_pos, bar_total, confirm_pb.position()
+                            );
+                        } else {
+                            debug!("Callback: Confirmation bar is already finished.");
                         }
                     } else {
-                        debug!("Callback: Confirmation bar is already finished.");
+                        warn!("PadConfirmed event received but confirmation progress bar does not exist.");
                     }
                     Ok(true)
                 },
@@ -217,7 +208,6 @@ pub fn create_put_callback(
                                 );
                                 res_pb.set_length(total);
                             }
-                            // Use current count directly
                             if current <= res_pb.length().unwrap_or(0) {
                                 res_pb.set_position(current);
                             } else {
@@ -242,7 +232,6 @@ pub fn create_put_callback(
         upload_pb_opt,
         confirm_pb_opt,
         confirm_counter_arc,
-        create_counter_arc,
         callback,
     )
 }

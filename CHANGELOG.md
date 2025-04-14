@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI:** Ensure initialization progress correctly advances to Step 5/6 when creating the remote master index after prompt confirmation.
 - Fixed a data corruption issue during `get` caused by the list of storage pads (`PadInfo`) not being saved in the correct chunk order during `put`/`update`. The `perform_concurrent_write_standalone` function now collects `(index, PadInfo)` pairs, sorts them by index, and stores the correctly ordered list in the master index.
 - Adapt tests in `mutant-lib/tests/mutant_test.rs` to handle the updated return signature of `MutAnt::init_with_progress` (no longer returns a tuple).
+- Fixed progress bar behavior during `put` operations that only update existing pads (no new reservations required). Ensure upload and confirmation bars initialize and progress correctly in this scenario.
 
 ### Removed
 - The specific changelog entry for updating the progress message to "Creating remote master index..." as this is now covered by the refactoring of init steps.
