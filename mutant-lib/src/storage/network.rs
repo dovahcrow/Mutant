@@ -500,42 +500,33 @@ pub(crate) async fn update_scratchpad_internal_static_with_progress(
                                 key_str, address, pad_index, attempt + 1
                             );
 
-                            // --- Emit ScratchpadCommitComplete (if applicable) ---
-                            if is_newly_reserved {
-                                info!(
-                                    "UpdateStaticVerify[{}][{}][Pad {}]: Emitting ScratchpadCommitComplete.",
-                                    key_str, address, pad_index
-                                );
-                                let current_committed_pads = {
-                                    let mut guard = total_pads_committed_arc.lock().await;
-                                    *guard += 1;
-                                    *guard
-                                };
-                                debug!(
-                                    "UpdateStaticVerify[{}][{}][Pad {}]: Commit progress updated: {} / {}",
-                                    key_str, address, pad_index, current_committed_pads, total_pads_expected
-                                );
-                                {
-                                    // Scope for callback lock
-                                    let mut cb_guard = callback_arc.lock().await;
-                                    invoke_callback(
-                                        &mut *cb_guard,
-                                        PutEvent::ScratchpadCommitComplete {
-                                            index: current_committed_pads.saturating_sub(1), // 0-based index
-                                            total: total_pads_expected as u64,
-                                        },
-                                    )
-                                    .await?;
-                                } // Callback lock released
-                            } else {
-                                debug!(
-                                    "UpdateStaticVerify[{}][{}][Pad {}]: Verification ok, but pad not newly reserved. No commit event.",
-                                    key_str, address, pad_index
-                                );
-                            }
-                            // --- End Emit ScratchpadCommitComplete ---
-
-                            return Ok(()); // Data matches!
+                            // --- Emit ScratchpadCommitComplete (ALWAYS emit on successful verification) ---
+                            info!(
+                                "UpdateStaticVerify[{}][{}][Pad {}]: Emitting ScratchpadCommitComplete.",
+                                key_str, address, pad_index
+                            );
+                            let current_committed_pads = {
+                                let mut guard = total_pads_committed_arc.lock().await;
+                                *guard += 1;
+                                *guard
+                            };
+                            debug!(
+                                "UpdateStaticVerify[{}][{}][Pad {}]: Commit progress updated: {} / {}",
+                                key_str, address, pad_index, current_committed_pads, total_pads_expected
+                            );
+                            {
+                                // Scope for callback lock
+                                let mut cb_guard = callback_arc.lock().await;
+                                invoke_callback(
+                                    &mut *cb_guard,
+                                    PutEvent::ScratchpadCommitComplete {
+                                        index: pad_index as u64,
+                                        total: total_pads_expected as u64,
+                                    },
+                                )
+                                .await?;
+                            } // Callback lock released
+                            return Ok(()); // Verification successful
                         } else {
                             debug!(
                                 "UpdateStaticVerify[{}][{}][Pad {}]: Data mismatch during verification attempt {} (Expected len: {}, Got len: {}). Retrying...",

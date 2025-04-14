@@ -374,12 +374,34 @@ async fn execute_upload_phase(
         match res {
             Ok(Ok(pad_index)) => {
                 successfully_created_indices.push(pad_index);
-                // Update counters for progress reporting AFTER the batch
+                // Update counters for progress reporting incrementally
                 generated_pads_processed_count += 1;
-                if pad_index < data_chunks.len() {
-                    // Check bounds
-                    bytes_written_during_create += data_chunks[pad_index].len() as u64;
+                let chunk_size_for_progress = if pad_index < data_chunks.len() {
+                    data_chunks[pad_index].len() as u64
+                } else {
+                    0
+                };
+                bytes_written_during_create += chunk_size_for_progress;
+
+                // Emit incremental progress
+                if total_new_pads_to_reserve > 0 {
+                    invoke_callback(
+                        &mut *callback_arc.lock().await,
+                        PutEvent::ReservationProgress {
+                            current: generated_pads_processed_count as u64,
+                            total: total_new_pads_to_reserve as u64,
+                        },
+                    )
+                    .await?;
                 }
+                invoke_callback(
+                    &mut *callback_arc.lock().await,
+                    PutEvent::UploadProgress {
+                        bytes_written: bytes_written_during_create,
+                        total_bytes: total_bytes_expected,
+                    },
+                )
+                .await?;
             }
             Ok(Err(e)) => {
                 if first_error.is_none() {
@@ -434,25 +456,6 @@ async fn execute_upload_phase(
                     key_owned, e
                 );
             }
-            // Emit batch progress after update
-            if total_new_pads_to_reserve > 0 {
-                invoke_callback(
-                    &mut *callback_arc.lock().await,
-                    PutEvent::ReservationProgress {
-                        current: generated_pads_processed_count as u64,
-                        total: total_new_pads_to_reserve as u64,
-                    },
-                )
-                .await?;
-            }
-            invoke_callback(
-                &mut *callback_arc.lock().await,
-                PutEvent::UploadProgress {
-                    bytes_written: bytes_written_during_create,
-                    total_bytes: total_bytes_expected,
-                },
-            )
-            .await?;
         }
     }
 
@@ -473,8 +476,6 @@ async fn execute_upload_phase(
             })
             .unwrap_or_default()
     };
-
-    let mut pads_processed_in_update = 0; // Counter for this phase
 
     for (pad_index, pad_info) in free_pads_to_process {
         if pad_index >= data_chunks.len() {
@@ -532,9 +533,24 @@ async fn execute_upload_phase(
         match res {
             Ok(Ok(pad_index)) => {
                 successfully_updated_indices.push(pad_index);
-                if pad_index < data_chunks.len() {
-                    total_bytes_written_in_update += data_chunks[pad_index].len() as u64;
-                }
+                let chunk_size_for_progress = if pad_index < data_chunks.len() {
+                    data_chunks[pad_index].len() as u64
+                } else {
+                    0
+                };
+                total_bytes_written_in_update += chunk_size_for_progress;
+
+                // Emit incremental UploadProgress
+                let current_total_bytes =
+                    bytes_written_during_create + total_bytes_written_in_update;
+                invoke_callback(
+                    &mut *callback_arc.lock().await,
+                    PutEvent::UploadProgress {
+                        bytes_written: current_total_bytes,
+                        total_bytes: total_bytes_expected,
+                    },
+                )
+                .await?;
             }
             Ok(Err(e)) => {
                 if first_error.is_none() {
@@ -589,16 +605,6 @@ async fn execute_upload_phase(
                     key_owned, e
                 );
             }
-            // Emit batch progress after update
-            let final_bytes_written = bytes_written_during_create + total_bytes_written_in_update;
-            invoke_callback(
-                &mut *callback_arc.lock().await,
-                PutEvent::UploadProgress {
-                    bytes_written: final_bytes_written,
-                    total_bytes: total_bytes_expected,
-                },
-            )
-            .await?;
         }
     }
 
@@ -616,7 +622,8 @@ async fn execute_upload_phase(
             );
             // Use Arc/Mutex callback
             invoke_callback(&mut *callback_arc.lock().await, PutEvent::UploadFinished).await?;
-
+            // Emit StoreComplete after UploadFinished
+            invoke_callback(&mut *callback_arc.lock().await, PutEvent::StoreComplete).await?;
             Ok(())
         } else {
             let pending_count = key_info
