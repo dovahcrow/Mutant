@@ -1,6 +1,9 @@
 use crate::cache::{read_local_index, write_local_index};
 use crate::error::Error;
-use crate::events::{invoke_init_callback, GetCallback, InitCallback, PutCallback};
+use crate::events::{
+    invoke_init_callback, invoke_purge_callback, GetCallback, InitCallback, PurgeCallback,
+    PurgeEvent, PutCallback,
+};
 use crate::mutant::data_structures::MasterIndexStorage;
 use crate::pad_manager::PadManager;
 use crate::storage::{storage_create_mis_from_arc_static, Storage};
@@ -767,20 +770,29 @@ impl MutAnt {
     /// Attempts to fetch metadata for each pad. Successfully fetched pads are moved to `free_pads`.
     /// Failed pads (e.g., not found) are discarded.
     /// Saves the updated master index ONLY to the local cache.
-    /// Returns tuple (initial_count, verified_count, failed_count).
-    pub async fn purge_unverified_pads(&self) -> Result<(usize, usize, usize), Error> {
+    /// Uses an optional callback for progress reporting.
+    pub async fn purge_unverified_pads(
+        &self,
+        mut callback: Option<PurgeCallback>,
+    ) -> Result<(), Error> {
         info!("Starting local purge of unverified pads...");
 
-        // Get the network choice for cache saving
         let network_choice = self.storage.get_network_choice();
-
-        // Lock the master index for modification
         let mut master_index_storage = self.master_index_storage.lock().await;
 
         let pads_to_verify = std::mem::take(&mut master_index_storage.pending_verification_pads);
         let initial_count = pads_to_verify.len();
         let mut verified_pads = Vec::new();
         let mut failed_pads_count = 0;
+
+        // Emit Starting event
+        invoke_purge_callback(
+            &mut callback,
+            PurgeEvent::Starting {
+                total_count: initial_count,
+            },
+        )
+        .await?;
 
         info!(
             "Found {} pads pending verification. Attempting to fetch metadata...",
@@ -792,13 +804,13 @@ impl MutAnt {
 
             for (address, key) in &pads_to_verify {
                 debug!("Verifying pad at address: {}", address);
-                match client.scratchpad_get(address).await {
+                let verified = match client.scratchpad_get(address).await {
                     Ok(_) => {
                         info!("Successfully verified pad at address: {}", address);
                         verified_pads.push((address.clone(), key.clone()));
+                        true
                     }
                     Err(e) => {
-                        // Only log RecordNotFound as info, others as warn/error?
                         if e.to_string().contains("RecordNotFound") {
                             info!(
                                 "Pad at address {} not found. Discarding. Error: {}",
@@ -811,7 +823,12 @@ impl MutAnt {
                             );
                         }
                         failed_pads_count += 1;
+                        false
                     }
+                };
+                // Emit PadProcessed event regardless of success/failure
+                if !invoke_purge_callback(&mut callback, PurgeEvent::PadProcessed).await? {
+                    return Err(Error::OperationCancelled);
                 }
             }
         }
@@ -819,7 +836,6 @@ impl MutAnt {
         let verified_count = verified_pads.len();
         master_index_storage.free_pads.extend(verified_pads);
 
-        // Update counts before logging and saving
         let final_verified_count = verified_count;
         let final_failed_count = failed_pads_count;
 
@@ -835,18 +851,24 @@ impl MutAnt {
                 "Writing updated index to local cache ({:?})...",
                 network_choice
             );
-            // Pass a reference to the locked data
             write_local_index(&*master_index_storage, network_choice).await?;
             info!("Local cache updated after purge.");
         } else {
             info!("No pending pads found, local cache unchanged.");
         }
 
-        // Explicitly drop the lock before returning
-        drop(master_index_storage);
+        // Emit Complete event
+        invoke_purge_callback(
+            &mut callback,
+            PurgeEvent::Complete {
+                verified_count: final_verified_count,
+                failed_count: final_failed_count,
+            },
+        )
+        .await?;
 
-        // Return initial_count, verified_count, failed_count
-        Ok((initial_count, final_verified_count, final_failed_count))
+        drop(master_index_storage);
+        Ok(())
     }
 
     /// Retrieves the network choice (Devnet or Mainnet) this MutAnt instance is configured for.

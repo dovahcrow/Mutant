@@ -118,3 +118,45 @@ pub(crate) async fn invoke_get_callback(
         Ok(())
     }
 }
+
+// --- Purge Events ---
+
+#[derive(Debug, Clone)]
+pub enum PurgeEvent {
+    /// Fired once at the beginning, indicating the total number of pads to check.
+    Starting { total_count: usize },
+    /// Fired after each pad is processed.
+    PadProcessed,
+    /// Fired once at the end with the final counts.
+    Complete {
+        verified_count: usize,
+        failed_count: usize,
+    },
+}
+
+/// Callback type for purge progress reporting.
+/// The callback receives a PurgeEvent and should return `Ok(true)` to continue or `Ok(false)`/`Err` to cancel.
+pub type PurgeCallback =
+    Box<dyn Fn(PurgeEvent) -> BoxFuture<'static, Result<bool, Error>> + Send + Sync>;
+
+/// Helper to invoke the purge callback if it exists.
+pub(crate) async fn invoke_purge_callback(
+    callback: &mut Option<PurgeCallback>,
+    event: PurgeEvent,
+) -> Result<bool, Error> {
+    if let Some(cb) = callback {
+        // Call the callback and handle potential errors
+        match cb(event).await {
+            Ok(should_continue) => {
+                if !should_continue {
+                    Err(Error::OperationCancelled)
+                } else {
+                    Ok(true)
+                }
+            }
+            Err(e) => Err(e), // Propagate callback error
+        }
+    } else {
+        Ok(true) // No callback, always continue
+    }
+}
