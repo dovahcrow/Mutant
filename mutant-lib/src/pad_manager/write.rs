@@ -37,6 +37,7 @@ use tokio::sync::Mutex;
 /// * `scratchpad_size` - The size of the scratchpad.
 /// * `total_bytes_uploaded_arc` - For callback infrastructure.
 /// * `total_size_overall` - For callback infrastructure.
+/// * `create_counter_arc` - For callback infrastructure.
 ///
 /// # Returns
 /// Returns `Ok(())` on successful write and confirmation, otherwise a `crate::error::Error`.
@@ -55,6 +56,7 @@ pub async fn write_chunk(
     scratchpad_size: usize,
     total_bytes_uploaded_arc: &Arc<Mutex<u64>>,
     total_size_overall: u64,
+    create_counter_arc: &Arc<Mutex<u64>>,
 ) -> Result<(), Error> {
     debug!(
         "write_chunk[{}][Pad {}]: Address={}, IsNew={}",
@@ -97,6 +99,7 @@ pub async fn write_chunk(
             total_pads_expected,
             total_bytes_uploaded_arc,
             total_size_overall,
+            create_counter_arc,
         )
         .await?;
         // create returns address, we discard it and return Ok(()) on success

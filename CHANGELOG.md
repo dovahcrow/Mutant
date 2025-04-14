@@ -129,3 +129,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Removed redundant/confusing events (`PadWriteConfirmed`, `ScratchpadCommitComplete`, `PadWriteProgress`, `UploadFinished`).
   - Introduced a dedicated "Confirmation" progress bar in the CLI, updated by `PadConfirmed` events.
   - CLI callback logic updated to handle the new event structure and manage reservation, upload (bytes), and confirmation (count) bars correctly.
+
+- **Fixed reservation bar progress:** Introduced a dedicated counter for successful pad creations (`create_counter_arc`) and updated `PadCreateSuccess` event and handler to use this count, preventing the progress bar from jumping positions.

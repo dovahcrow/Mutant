@@ -199,6 +199,7 @@ pub(crate) async fn storage_create_mis_from_arc_static(
         1,                           // total_pads_expected (assume 1 for MIS)
         &dummy_bytes_uploaded,       // Pass dummy arc
         data_len,                    // Pass total size
+        &Arc::new(Mutex::new(0)),    // Pass dummy create counter
     )
     .await;
 
@@ -636,8 +637,9 @@ pub(crate) async fn create_scratchpad_static(
     callback_arc: &Arc<tokio::sync::Mutex<Option<PutCallback>>>,
     total_pads_committed_arc: &Arc<tokio::sync::Mutex<u64>>,
     total_pads_expected: usize,
-    total_bytes_uploaded_arc: &Arc<Mutex<u64>>, // Need this for UploadProgress
-    total_size_overall: u64,                    // Need this for UploadProgress
+    total_bytes_uploaded_arc: &Arc<Mutex<u64>>,
+    total_size_overall: u64,
+    create_counter_arc: &Arc<tokio::sync::Mutex<u64>>,
 ) -> Result<ScratchpadAddress, Error> {
     let data_bytes = Bytes::from(initial_data.to_vec());
     let expected_address = ScratchpadAddress::new(owner_key.public_key().into());
@@ -689,20 +691,25 @@ pub(crate) async fn create_scratchpad_static(
     }
 
     // --- Emit PadCreateSuccess ---
+    let current_created = {
+        let mut counter = create_counter_arc.lock().await;
+        *counter += 1;
+        *counter // Return incremented value
+    };
     {
         let mut cb_guard = callback_arc.lock().await;
         invoke_callback(
             &mut *cb_guard,
             PutEvent::PadCreateSuccess {
-                index: pad_index as u64,
+                current: current_created,
                 total: total_pads_expected as u64,
             },
         )
         .await?;
     }
     debug!(
-        "CreateStatic[{}][{}][Pad {}]: Emitted PadCreateSuccess.",
-        key_str, expected_address, pad_index
+        "CreateStatic[{}][{}][Pad {}]: Emitted PadCreateSuccess (Current: {}, Total: {}).",
+        key_str, expected_address, pad_index, current_created, total_pads_expected
     );
 
     // --- Emit UploadProgress ---

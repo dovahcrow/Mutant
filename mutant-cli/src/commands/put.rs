@@ -32,8 +32,14 @@ pub async fn handle_put(
     };
 
     let put_multi_progress = multi_progress.clone();
-    let (reservation_pb, upload_pb, commit_pb, _commit_counter_arc, callback) =
-        create_put_callback(&put_multi_progress);
+    let (
+        reservation_pb,
+        upload_pb,
+        confirm_pb,
+        _confirm_counter_arc,
+        _create_counter_arc,
+        callback,
+    ) = create_put_callback(&put_multi_progress);
 
     // Spawn the background task for drawing progress bars
     let _progress_jh = tokio::spawn(async move {
@@ -57,7 +63,7 @@ pub async fn handle_put(
                 &key,
                 &bytes_to_store,
                 Some(callback),
-                _commit_counter_arc.clone(),
+                _confirm_counter_arc.clone(),
             )
             .await
     };
@@ -90,7 +96,7 @@ pub async fn handle_put(
             };
             clear_pb(&reservation_pb);
             clear_pb(&upload_pb);
-            clear_pb(&commit_pb);
+            clear_pb(&confirm_pb);
             ExitCode::FAILURE
         }
         Err(Error::KeyAlreadyExists(_)) if !force => {
@@ -124,7 +130,7 @@ pub async fn handle_put(
             };
             abandon_pb(&reservation_pb);
             abandon_pb(&upload_pb);
-            abandon_pb(&commit_pb);
+            abandon_pb(&confirm_pb);
             ExitCode::FAILURE
         }
     }

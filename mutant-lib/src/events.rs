@@ -16,7 +16,7 @@ pub enum PutEvent {
         total_bytes: u64,
     },
     /// Indicates that a single *new* pad was successfully created on the network (before verification).
-    PadCreateSuccess { index: u64, total: u64 },
+    PadCreateSuccess { current: u64, total: u64 },
     /// Indicates that a single pad has been successfully verified and confirmed.
     PadConfirmed { current: u64, total: u64 },
     /// Indicates the entire store operation (allocation, write, metadata update) is complete.

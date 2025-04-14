@@ -260,7 +260,7 @@ pub(super) async fn store_data(
     .await
 }
 
-const MAX_CONCURRENT_WRITES: usize = 10;
+const MAX_CONCURRENT_WRITES: usize = 100;
 
 /// Handles the iterative process of uploading data chunks based on PadInfo status.
 async fn execute_upload_phase(
@@ -287,7 +287,8 @@ async fn execute_upload_phase(
     let callback_arc = Arc::new(Mutex::new(callback));
     // Use the passed commit_counter_arc
     let bytes_written_arc = Arc::new(Mutex::new(0u64));
-    // --- End Shared state ---
+    let create_counter_arc = Arc::new(Mutex::new(0u64)); // New counter for creates
+                                                         // --- End Shared state ---
 
     // For UploadProgress tracking
     let total_bytes_uploaded_arc = Arc::new(Mutex::new(0u64));
@@ -344,6 +345,7 @@ async fn execute_upload_phase(
                 let cb_arc_clone = callback_arc.clone();
                 let total_bytes_up_clone = total_bytes_uploaded_arc.clone();
                 let bytes_written_clone = bytes_written_arc.clone();
+                let create_ctr_clone = create_counter_arc.clone(); // Clone create counter
 
                 join_set.spawn(async move {
                     let permit = sem_clone.acquire_owned().await.expect("Semaphore closed");
@@ -372,6 +374,7 @@ async fn execute_upload_phase(
                         scratchpad_size,
                         &total_bytes_up_clone,
                         total_bytes_expected,
+                        &create_ctr_clone, // Pass create counter clone
                     )
                     .await;
 

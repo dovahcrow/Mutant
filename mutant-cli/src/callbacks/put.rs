@@ -15,6 +15,7 @@ struct PutCallbackContext {
     confirm_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     total_bytes_for_upload: Arc<Mutex<u64>>,
     confirm_counter_arc: Arc<Mutex<u64>>,
+    create_counter_arc: Arc<Mutex<u64>>,
     multi_progress: MultiProgress,
     cyan: Style,
     blue: Style,
@@ -36,6 +37,8 @@ pub fn create_put_callback(
     Arc<Mutex<Option<StyledProgressBar>>>,
     // Shared confirm counter (created by caller, passed into callback)
     Arc<Mutex<u64>>,
+    // Shared create counter (created by caller, passed into callback)
+    Arc<Mutex<u64>>,
     // The actual callback closure
     PutCallback,
 ) {
@@ -44,6 +47,7 @@ pub fn create_put_callback(
     let confirm_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let total_bytes_for_upload = Arc::new(Mutex::new(0u64));
     let confirm_counter_arc = Arc::new(Mutex::new(0u64));
+    let create_counter_arc = Arc::new(Mutex::new(0u64));
 
     // Create the context instance
     let context = PutCallbackContext {
@@ -52,6 +56,7 @@ pub fn create_put_callback(
         confirm_pb_opt: confirm_pb_opt.clone(),
         total_bytes_for_upload: total_bytes_for_upload.clone(),
         confirm_counter_arc: confirm_counter_arc.clone(),
+        create_counter_arc: create_counter_arc.clone(),
         multi_progress: multi_progress.clone(),
         cyan: Style::new().fg(Color::Cyan),
         blue: Style::new().fg(Color::Blue),
@@ -189,10 +194,10 @@ pub fn create_put_callback(
                     }
                     Ok(true)
                 },
-                PutEvent::PadCreateSuccess { index, total } => {
+                PutEvent::PadCreateSuccess { current, total } => {
                     debug!(
-                        "Callback: Received PadCreateSuccess - Index: {}, Total: {}",
-                        index, total
+                        "Callback: Received PadCreateSuccess - Current: {}, Total: {}",
+                        current, total
                     );
                     if let Some(res_pb) = ctx.res_pb_opt.lock().await.as_mut() {
                         if !res_pb.is_finished() {
@@ -203,16 +208,14 @@ pub fn create_put_callback(
                                 );
                                 res_pb.set_length(total);
                             }
-                            // Use index + 1 because index is 0-based, progress is 1-based
-                            let current_pos = index + 1;
-                            if current_pos <= res_pb.length().unwrap_or(0) {
-                                res_pb.set_position(current_pos);
+                            // Use current count directly
+                            if current <= res_pb.length().unwrap_or(0) {
+                                res_pb.set_position(current);
                             } else {
-                                warn!("PadCreateSuccess: Tried to set res bar position {} beyond length {:?}", current_pos, res_pb.length());
+                                warn!("PadCreateSuccess: Tried to set res bar position {} beyond length {:?}", current, res_pb.length());
                             }
-                            if total > 0 && current_pos >= total {
+                            if total > 0 && current >= total {
                                 res_pb.set_message("Reservation complete.".to_string());
-                                // Don't finish/clear yet, let StoreComplete handle it.
                             }
                         }
                     } else {
@@ -230,6 +233,7 @@ pub fn create_put_callback(
         upload_pb_opt,
         confirm_pb_opt,
         confirm_counter_arc,
+        create_counter_arc,
         callback,
     )
 }
