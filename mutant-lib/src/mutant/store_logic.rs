@@ -287,6 +287,7 @@ async fn execute_upload_phase(
     let _total_pads = total_pads_expected; // Use the calculated total pads
     let mut pads_processed = 0;
     let mut generated_pads_processed_count = 0; // Counter for reservation progress
+    let mut bytes_written_during_create: u64 = 0; // Counter for upload progress during create phase
 
     // --- Phase 1: Process Generated Pads (Create + Write) ---
     debug!(
@@ -349,12 +350,15 @@ async fn execute_upload_phase(
                     );
                     // Update status in MIS and persist
                     let mut mis_guard = ma.master_index_storage.lock().await;
+                    let chunk_size_for_progress = chunk.len() as u64; // Get chunk size for progress
                     if let Some(key_info) = mis_guard.index.get_mut(&key_owned) {
                         if let Some(pi_mut) = key_info.pads.get_mut(pad_index) {
                             pi_mut.status = PadUploadStatus::Free;
                             key_info.modified = Utc::now();
-                            // Increment counter after successful creation
+                            // Increment counters after successful creation
                             generated_pads_processed_count += 1;
+                            bytes_written_during_create += chunk_size_for_progress;
+                        // Add bytes written
                         } else {
                             error!(
                                 "ExecuteUpload[{}]: Pad index {} not found during status update (Generated -> Free). Inconsistency?",
@@ -362,17 +366,43 @@ async fn execute_upload_phase(
                             );
                             // Continue for now, but log error
                         }
-                        // Persist after update
-                        let network_choice = ma.storage.get_network_choice();
+                        // Clone MIS data before releasing lock
                         let mis_data_to_write = mis_guard.clone();
+                        // Get network choice before releasing lock
+                        let network_choice = ma.storage.get_network_choice();
+                        // Drop lock before emitting callback and persisting
                         drop(mis_guard);
+
+                        // Emit ReservationProgress *here*
+                        if total_new_pads_to_reserve > 0 {
+                            // Only emit if reservations were needed
+                            invoke_callback(
+                                &mut *callback_arc.lock().await,
+                                PutEvent::ReservationProgress {
+                                    current: generated_pads_processed_count as u64,
+                                    total: total_new_pads_to_reserve as u64,
+                                },
+                            )
+                            .await?;
+                        }
+
+                        // Emit UploadProgress
+                        invoke_callback(
+                            &mut *callback_arc.lock().await,
+                            PutEvent::UploadProgress {
+                                bytes_written: bytes_written_during_create,
+                                total_bytes: total_bytes_expected,
+                            },
+                        )
+                        .await?;
+
+                        // Persist after update & callback
                         if let Err(e) = write_local_index(&mis_data_to_write, network_choice).await
                         {
                             error!(
                                 "ExecuteUpload[{}]: Failed to persist state after pad {} status update (Generated -> Free): {}. Continuing...",
                                 key_owned, pad_index, e
                             );
-                            // Do not return error here, allow upload to proceed if possible
                         }
                     } else {
                         error!(
@@ -381,7 +411,6 @@ async fn execute_upload_phase(
                         );
                         // Drop lock if held
                     }
-                    // TODO: Add callback for ScratchpadCommitComplete?
                 }
                 Err(e) => {
                     error!(
@@ -459,17 +488,18 @@ async fn execute_upload_phase(
                     pads_processed += 1;
                     // Calculate bytes written based on pads processed and scratchpad size
                     // This is an approximation, assumes full pads except maybe the last.
-                    let bytes_written =
-                        std::cmp::min(pads_processed * scratchpad_size, data_bytes.len()) as u64;
-                    let total_bytes = data_bytes.len() as u64;
+                    let bytes_written = std::cmp::min(
+                        bytes_written_during_create + (pads_processed * scratchpad_size as u64),
+                        total_bytes_expected,
+                    );
 
                     // Use correct fields for UploadProgress
                     invoke_callback(
                         // Use Arc/Mutex callback
                         &mut *callback_arc.lock().await,
                         PutEvent::UploadProgress {
-                            bytes_written,
-                            total_bytes,
+                            bytes_written, // Use combined bytes written
+                            total_bytes: total_bytes_expected,
                         },
                     )
                     .await?;
@@ -532,19 +562,6 @@ async fn execute_upload_phase(
             );
             // Use Arc/Mutex callback
             invoke_callback(&mut *callback_arc.lock().await, PutEvent::UploadFinished).await?;
-
-            // Emit ReservationProgress
-            if total_new_pads_to_reserve > 0 {
-                // Only emit if reservations were needed
-                invoke_callback(
-                    &mut *callback_arc.lock().await,
-                    PutEvent::ReservationProgress {
-                        current: generated_pads_processed_count as u64,
-                        total: total_new_pads_to_reserve as u64,
-                    },
-                )
-                .await?;
-            }
 
             Ok(())
         } else {
