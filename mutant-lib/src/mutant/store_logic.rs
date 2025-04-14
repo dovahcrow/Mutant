@@ -101,6 +101,10 @@ pub(super) async fn store_data(
                     "StoreData[{}]: Checksum matches. Resuming upload for {} pending pads.",
                     key_owned, pending_pads_count
                 );
+
+                // Emit ReservingPads with 0 count for resume case to show the bar
+                invoke_callback(&mut callback, PutEvent::ReservingPads { count: 0 }).await?;
+
                 // Release lock before entering upload phase
                 drop(mis_lock);
                 // Jump to Upload Execution Phase (using the existing key info)

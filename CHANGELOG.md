@@ -142,3 +142,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fixed reservation bar progress:** Introduced a dedicated counter for successful pad creations (`create_counter_arc`) and updated `PadCreateSuccess` event and handler to use this count, preventing the progress bar from jumping positions.
 
 - **Fixed confirmation bar initial display:** The confirmation bar now shows the correct total number of pads immediately upon starting the upload phase, instead of displaying `[0/0]` initially.
+
+### Fixed
+- Ensure the reservation progress bar is displayed (with 0 count) when resuming an interrupted upload.
+- Handle "Scratchpad already exists" errors gracefully during pad creation in `create_scratchpad_static`.
+  This prevents failures when resuming an interrupted upload where some pads were created but not yet marked as completed locally.
