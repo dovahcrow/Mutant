@@ -235,7 +235,38 @@ pub fn create_put_callback(
                         debug!("Callback: Commit pads progress bar is already finished.");
                     }
                     Ok(true)
-                }
+                },
+                // Handle the new event for reservation progress
+                PutEvent::PadWriteConfirmed { current, total } => {
+                    debug!(
+                        "Callback: Received PadWriteConfirmed - Current: {}, Total: {}",
+                        current, total
+                    );
+                    let mut res_pb_opt_guard = ctx.res_pb_opt.lock().await;
+                    if let Some(res_pb) = res_pb_opt_guard.as_mut() {
+                        if res_pb.length() != Some(total) {
+                            warn!(
+                                "PadWriteConfirmed: Bar length ({:?}) differs from event total ({}). Resetting length.",
+                                res_pb.length(), total
+                            );
+                            res_pb.set_length(total);
+                        }
+                        if total > 0 {
+                            debug!("Setting reservation bar position to {}", current);
+                            res_pb.set_position(current);
+                            if current >= total && !res_pb.is_finished() {
+                                debug!("Initialization progress complete ({} >= {}), setting final message.", current, total);
+                                res_pb.set_message("Initialization complete.".to_string());
+                            }
+                        } else if !res_pb.is_finished() {
+                             debug!("PadWriteConfirmed: Total is 0, setting final message.");
+                             res_pb.set_message("Initialization complete (0 needed).".to_string());
+                        }
+                    } else {
+                        warn!("PadWriteConfirmed event received but initialization progress bar does not exist.");
+                    }
+                    Ok(true)
+                },
             }
         }
         .boxed()

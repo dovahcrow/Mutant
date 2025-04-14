@@ -39,6 +39,8 @@ pub enum PutEvent {
     UploadFinished,
     /// Indicates the entire store operation (allocation, write, metadata update) is complete.
     StoreComplete,
+    /// Indicates that a single pad write task (create or update) has completed successfully.
+    PadWriteConfirmed { current: u64, total: u64 },
     /// Indicates that a single scratchpad's worth of data has been successfully uploaded.
     ScratchpadUploadComplete { index: u64, total: u64 },
     /// Indicates that a single scratchpad has been fully committed/finalized after upload.

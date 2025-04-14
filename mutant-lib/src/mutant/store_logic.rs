@@ -276,8 +276,16 @@ async fn execute_upload_phase(
     let data_chunks = Arc::new(chunk_data(data_bytes, scratchpad_size));
     let total_pads_expected = data_chunks.len();
 
+    // DEBUG: Log pointer of received commit counter Arc
+    debug!(
+        "ExecuteUpload[{}]: Received commit_counter_arc Ptr: {:?}",
+        key_owned,
+        Arc::as_ptr(&commit_counter_arc)
+    );
+
     // --- Create Shared state for callbacks ---
     let callback_arc = Arc::new(Mutex::new(callback));
+    // Use the passed commit_counter_arc
     let bytes_written_arc = Arc::new(Mutex::new(0u64));
     // --- End Shared state ---
 
@@ -327,12 +335,28 @@ async fn execute_upload_phase(
                 let ma_storage = ma.storage.clone();
                 let key_for_task = key_owned.clone();
                 let cb_arc_clone = callback_arc.clone();
+                // Clone the passed counter Arc for the task
                 let commit_arc_clone = commit_counter_arc.clone();
                 let sem_clone = semaphore.clone();
                 let bytes_written_clone = bytes_written_arc.clone(); // Clone for progress reporting
 
+                // DEBUG: Log pointer of cloned commit counter Arc before spawning
+                debug!(
+                    "ExecuteUpload[{}]: Spawning task for Pad {} - commit_arc_clone Ptr: {:?}",
+                    key_for_task,
+                    pad_index,
+                    Arc::as_ptr(&commit_arc_clone)
+                );
+
                 join_set.spawn(async move {
                     let permit = sem_clone.acquire_owned().await.expect("Semaphore closed");
+                    // DEBUG: Log pointer of commit counter Arc inside task
+                    debug!(
+                        "ExecuteUploadTask[{}][Pad {}]: Inside Task - commit_arc_clone Ptr: {:?}",
+                        key_for_task,
+                        pad_index,
+                        Arc::as_ptr(&commit_arc_clone)
+                    );
                     debug!(
                         "ExecuteUploadTask[{}]: Acquired permit. Writing pad index {} (IsNew: {})",
                         key_for_task, pad_index, is_new_pad
@@ -402,24 +426,22 @@ async fn execute_upload_phase(
             Ok(Ok((pad_index, _chunk_size))) => {
                 successful_updates += 1;
 
-                // Determine if this was originally a 'Generated' pad to count reservation
+                // Determine if this was originally a 'Generated' pad
                 let was_generated = {
                     let mis_guard = ma.master_index_storage.lock().await;
                     mis_guard
                         .index
                         .get(&key_owned)
                         .and_then(|ki| ki.pads.get(pad_index))
-                        // If status is Free/Populated now, it *was* Generated if is_new is true
                         .map_or(false, |pi| pi.is_new)
                 };
                 if was_generated {
                     pads_reserved_count += 1;
-                    // Emit ReservationProgress if needed
+                    // Emit PadWriteConfirmed for reservation progress
                     if total_new_pads_to_reserve > 0 {
-                        // Check if reservations were actually needed
                         invoke_callback(
                             &mut *callback_arc.lock().await,
-                            PutEvent::ReservationProgress {
+                            PutEvent::PadWriteConfirmed {
                                 current: pads_reserved_count as u64,
                                 total: total_new_pads_to_reserve as u64,
                             },
