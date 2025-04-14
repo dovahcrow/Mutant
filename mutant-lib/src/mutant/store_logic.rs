@@ -39,6 +39,7 @@ pub(super) async fn store_data(
     key: &str,
     data_bytes: &[u8],
     mut callback: Option<PutCallback>,
+    commit_counter_arc: Arc<Mutex<u64>>,
 ) -> Result<(), Error> {
     let data_size = data_bytes.len();
     let key_owned = key.to_string();
@@ -109,6 +110,7 @@ pub(super) async fn store_data(
                     scratchpad_size,
                     callback,
                     pending_pads_count,
+                    commit_counter_arc,
                 )
                 .await;
             } else {
@@ -253,6 +255,7 @@ pub(super) async fn store_data(
         scratchpad_size,
         callback,
         new_pads_needed,
+        commit_counter_arc,
     )
     .await
 }
@@ -266,7 +269,8 @@ async fn execute_upload_phase(
     data_bytes: &[u8],
     scratchpad_size: usize,
     callback: Option<PutCallback>,
-    _total_new_pads_to_reserve: usize, // No longer needed for ReservationProgress
+    _total_new_pads_to_reserve: usize, // Keep underscore
+    commit_counter_arc: Arc<Mutex<u64>>,
 ) -> Result<(), Error> {
     let key_owned = key.to_string();
     let data_chunks = Arc::new(chunk_data(data_bytes, scratchpad_size));
@@ -274,7 +278,6 @@ async fn execute_upload_phase(
 
     // --- Create Shared state for callbacks ---
     let callback_arc = Arc::new(Mutex::new(callback));
-    let total_pads_committed_arc = Arc::new(Mutex::new(0u64));
     let bytes_written_arc = Arc::new(Mutex::new(0u64)); // Track total bytes written
                                                         // --- End Shared state ---
 
@@ -322,7 +325,7 @@ async fn execute_upload_phase(
                 let ma_storage = ma.storage.clone();
                 let key_for_task = key_owned.clone();
                 let cb_arc_clone = callback_arc.clone();
-                let commit_arc_clone = total_pads_committed_arc.clone();
+                let commit_arc_clone = commit_counter_arc.clone();
                 let sem_clone = semaphore.clone();
                 let bytes_written_clone = bytes_written_arc.clone(); // Clone for progress reporting
 

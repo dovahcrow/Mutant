@@ -393,7 +393,10 @@ impl MutAnt {
     /// Stores raw bytes under a given user key without progress reporting.
     /// Use `store_with_progress` for detailed feedback.
     pub async fn store(&self, user_key: &str, data_bytes: &[u8]) -> Result<(), Error> {
-        self.store_with_progress(user_key, data_bytes, None).await
+        // Create a dummy counter Arc for the call, as it won't be observed
+        let commit_counter_arc = Arc::new(Mutex::new(0u64));
+        self.store_with_progress(user_key, data_bytes, None, commit_counter_arc)
+            .await
     }
 
     /// Stores raw bytes under a given user key with optional progress reporting via callback.
@@ -402,13 +405,15 @@ impl MutAnt {
         user_key: &str,
         data_bytes: &[u8],
         callback: Option<PutCallback>,
+        commit_counter_arc: Arc<Mutex<u64>>, // Correct parameter
     ) -> Result<(), Error> {
         if user_key == MASTER_INDEX_KEY {
             return Err(Error::InvalidInput(
                 "User key conflicts with internal master index key".to_string(),
             ));
         }
-        store_logic::store_data(self, user_key, data_bytes, callback).await
+        // Pass the counter Arc down to store_data
+        store_logic::store_data(self, user_key, data_bytes, callback, commit_counter_arc).await
     }
 
     /// Fetches the raw bytes associated with the given user key without progress reporting.

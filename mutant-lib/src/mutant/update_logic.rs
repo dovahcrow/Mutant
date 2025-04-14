@@ -2,6 +2,8 @@ use super::{store_logic, MutAnt};
 use crate::error::Error;
 use crate::events::PutCallback;
 use log::{debug, info, trace};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Updates an existing item with new data by performing a delete followed by a store.
 ///
@@ -47,8 +49,10 @@ pub(super) async fn update_item(
 
     // 3. Store the new item data
     debug!("UpdateItem[{}]: Storing new item data...", key_owned);
+    // Create a dummy commit counter Arc for the store call
+    let commit_counter_arc = Arc::new(Mutex::new(0u64));
     // store_data handles planning, persistence, callbacks, etc.
-    store_logic::store_data(ma, &key_owned, data_bytes, callback).await?;
+    store_logic::store_data(ma, &key_owned, data_bytes, callback, commit_counter_arc).await?;
 
     info!("UpdateItem[{}]: Update operation completed.", key_owned);
     Ok(())

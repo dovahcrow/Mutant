@@ -4,7 +4,8 @@ use indicatif::MultiProgress;
 use log::{debug, warn};
 use mutant_lib::events::{PutCallback, PutEvent};
 use nu_ansi_term::{Color, Style};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 // Define the context struct to hold shared state and styles
 #[derive(Clone)]
@@ -65,7 +66,6 @@ pub fn create_put_callback(
     let ctx_clone = context.clone();
 
     let callback: PutCallback = Box::new(move |event: PutEvent| {
-        // Use the cloned context
         let ctx = ctx_clone.clone();
 
         async move {
@@ -73,7 +73,7 @@ pub fn create_put_callback(
                 PutEvent::ReservingScratchpads { needed: _ } => Ok(true),
                 PutEvent::ReservingPads { count } => {
                     debug!("Received ReservingPads: count={}", count);
-                    let mut res_pb_opt_guard = ctx.res_pb_opt.lock().unwrap();
+                    let mut res_pb_opt_guard = ctx.res_pb_opt.lock().await;
                     let pb = res_pb_opt_guard.get_or_insert_with(|| {
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
                         pb.set_message("Reserving scratchpad(s)...".to_string());
@@ -94,7 +94,7 @@ pub fn create_put_callback(
                 PutEvent::ReservationProgress { current, total } => {
                     debug!("Received ReservationProgress: current={}, total={}", current, total);
 
-                    let mut res_pb_opt_guard = ctx.res_pb_opt.lock().unwrap();
+                    let mut res_pb_opt_guard = ctx.res_pb_opt.lock().await;
                     if let Some(res_pb) = res_pb_opt_guard.as_mut() {
                         if res_pb.length() != Some(total) {
                             warn!("ReservationProgress: Bar length ({:?}) differs from event total ({}). Resetting length.", res_pb.length(), total);
@@ -121,10 +121,10 @@ pub fn create_put_callback(
                     Ok(true)
                 },
                 PutEvent::StartingUpload { total_bytes } => {
-                    *ctx.total_bytes_for_upload.lock().unwrap() = total_bytes;
+                    *ctx.total_bytes_for_upload.lock().await = total_bytes;
 
                     // Initialize Upload Bar
-                    let mut upload_pb_guard = ctx.upload_pb_opt.lock().unwrap();
+                    let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
                     let upload_pb = upload_pb_guard.get_or_insert_with(|| {
                         StyledProgressBar::new(&ctx.multi_progress)
                     });
@@ -136,7 +136,7 @@ pub fn create_put_callback(
                     Ok(true)
                 },
                 PutEvent::UploadProgress { bytes_written, total_bytes: _ } => {
-                    if let Some(upload_pb) = ctx.upload_pb_opt.lock().unwrap().as_mut() {
+                    if let Some(upload_pb) = ctx.upload_pb_opt.lock().await.as_mut() {
                         if !upload_pb.is_finished() {
                             upload_pb.set_position(bytes_written);
                         }
@@ -146,7 +146,7 @@ pub fn create_put_callback(
                     Ok(true)
                 },
                 PutEvent::UploadFinished => {
-                    if let Some(upload_pb) = ctx.upload_pb_opt.lock().unwrap().as_mut() {
+                    if let Some(upload_pb) = ctx.upload_pb_opt.lock().await.as_mut() {
                         if !upload_pb.is_finished() {
                             upload_pb.set_message("Upload complete. Committing...".to_string());
                             if let Some(len) = upload_pb.length() {
@@ -162,7 +162,7 @@ pub fn create_put_callback(
                     Ok(true)
                 },
                 PutEvent::StoreComplete => {
-                    if let Some(res_pb) = ctx.res_pb_opt.lock().unwrap().take() {
+                    if let Some(res_pb) = ctx.res_pb_opt.lock().await.take() {
                         if !res_pb.is_finished() {
                             res_pb.finish_and_clear();
                             debug!("StoreComplete event: Finished and cleared reservation bar.");
@@ -171,7 +171,7 @@ pub fn create_put_callback(
                             debug!("StoreComplete event: Cleared finished reservation bar.");
                         }
                     }
-                    if let Some(upload_pb) = ctx.upload_pb_opt.lock().unwrap().take() {
+                    if let Some(upload_pb) = ctx.upload_pb_opt.lock().await.take() {
                         if !upload_pb.is_finished() {
                             upload_pb.finish_and_clear();
                             debug!("StoreComplete event: Force-finished and cleared upload bar.");
@@ -180,7 +180,7 @@ pub fn create_put_callback(
                             debug!("StoreComplete event: Cleared finished upload bar.");
                         }
                     }
-                    if let Some(commit_pb) = ctx.commit_pb_opt.lock().unwrap().take() {
+                    if let Some(commit_pb) = ctx.commit_pb_opt.lock().await.take() {
                         if !commit_pb.is_finished() {
                             commit_pb.finish_and_clear();
                             debug!("StoreComplete event: Finished and cleared commit progress bar.");
@@ -197,13 +197,13 @@ pub fn create_put_callback(
                 },
                 PutEvent::ScratchpadCommitComplete { index: _, total } => {
                     // Use the shared commit counter from context
-                    let current_committed = *ctx.commit_counter_arc.lock().unwrap();
+                    let current_committed = *ctx.commit_counter_arc.lock().await;
                     debug!(
                         "Callback: Received ScratchpadCommitComplete - Current: {}, Total: {}",
                         current_committed,
                         total
                     );
-                    let mut commit_pb_guard = ctx.commit_pb_opt.lock().unwrap();
+                    let mut commit_pb_guard = ctx.commit_pb_opt.lock().await;
                     let commit_pb = commit_pb_guard.get_or_insert_with(|| {
                         debug!("Callback: Initializing commit pads progress bar ({} total)", total);
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);

@@ -35,6 +35,17 @@ pub async fn handle_put(
     let (reservation_pb, upload_pb, commit_pb, _commit_counter_arc, callback) =
         create_put_callback(&put_multi_progress);
 
+    // Spawn the background task for drawing progress bars
+    let _progress_jh = tokio::spawn(async move {
+        // Just holding multi_progress keeps it drawing
+        // If we needed to wait, we'd await the JoinHandle (_progress_jh)
+        // outside the spawn block.
+        let _ = multi_progress; // Keep the clone alive
+        // Add a small delay or loop to prevent immediate exit if needed,
+        // although holding it should suffice.
+        // tokio::time::sleep(std::time::Duration::from_secs(u64::MAX)).await;
+    });
+
     let result = if force {
         debug!("Forcing update for key: {}", key);
         mutant
@@ -42,7 +53,7 @@ pub async fn handle_put(
             .await
     } else {
         mutant
-            .store_with_progress(&key, &bytes_to_store, Some(callback))
+            .store_with_progress(&key, &bytes_to_store, Some(callback), _commit_counter_arc)
             .await
     };
 
@@ -58,12 +69,18 @@ pub async fn handle_put(
         Err(Error::OperationCancelled) => {
             eprintln!("Operation cancelled.");
             let clear_pb = |pb_opt: &std::sync::Arc<
-                std::sync::Mutex<Option<crate::callbacks::StyledProgressBar>>,
+                tokio::sync::Mutex<Option<crate::callbacks::StyledProgressBar>>,
             >| {
-                if let Some(pb) = pb_opt.lock().unwrap().take() {
-                    if !pb.is_finished() {
-                        pb.finish_and_clear();
+                if let Ok(mut guard) = pb_opt.try_lock() {
+                    if let Some(pb) = guard.take() {
+                        if !pb.is_finished() {
+                            pb.finish_and_clear();
+                        } else {
+                            pb.finish_and_clear();
+                        }
                     }
+                } else {
+                    warn!("clear_pb: Could not lock progress bar mutex.");
                 }
             };
             clear_pb(&reservation_pb);
@@ -90,12 +107,14 @@ pub async fn handle_put(
             );
             let fail_msg = "Operation Failed".to_string();
             let abandon_pb = |pb_opt: &std::sync::Arc<
-                std::sync::Mutex<Option<crate::callbacks::StyledProgressBar>>,
+                tokio::sync::Mutex<Option<crate::callbacks::StyledProgressBar>>,
             >| {
-                if let Some(pb) = pb_opt.lock().unwrap().take() {
-                    if !pb.is_finished() {
+                if let Ok(mut guard) = pb_opt.try_lock() {
+                    if let Some(pb) = guard.take() {
                         pb.abandon_with_message(fail_msg.clone());
                     }
+                } else {
+                    warn!("abandon_pb: Could not lock progress bar mutex.");
                 }
             };
             abandon_pb(&reservation_pb);
