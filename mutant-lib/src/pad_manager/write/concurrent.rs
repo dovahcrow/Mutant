@@ -6,6 +6,7 @@ use crate::storage::Storage as BaseStorage;
 use crate::utils::retry::retry_operation;
 use autonomi::SecretKey;
 use log::{debug, error, warn};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
@@ -31,7 +32,8 @@ pub(super) async fn perform_concurrent_write_standalone(
     let total_size = data_arc.len();
     let key_owned = key.to_string();
 
-    let successfully_written_pads: Arc<Mutex<Vec<PadInfo>>> = Arc::new(Mutex::new(Vec::new()));
+    let successfully_written_pads_map: Arc<Mutex<HashMap<usize, PadInfo>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 
     let scratchpad_size = {
         let mis_guard = master_index_storage.lock().await;
@@ -45,7 +47,7 @@ pub(super) async fn perform_concurrent_write_standalone(
         mis_guard.scratchpad_size
     };
 
-    let mut join_set = JoinSet::new();
+    let mut join_set: JoinSet<Result<(usize, PadInfo), Error>> = JoinSet::new();
     let semaphore = Arc::new(Semaphore::new(WRITE_TASK_CONCURRENCY));
     let total_bytes_uploaded = Arc::new(Mutex::new(0u64));
     let total_pads_committed = Arc::new(Mutex::new(0u64));
@@ -115,7 +117,6 @@ pub(super) async fn perform_concurrent_write_standalone(
             task_chunk_start,
             task_chunk_end,
             scratchpad_size,
-            successfully_written_pads.clone(),
             current_pad_info,
             key_owned.clone(),
             false, // Not newly reserved
@@ -166,7 +167,6 @@ pub(super) async fn perform_concurrent_write_standalone(
             task_chunk_start,
             task_chunk_end,
             scratchpad_size,
-            successfully_written_pads.clone(),
             current_pad_info,
             key_owned.clone(),
             false, // Not newly reserved
@@ -213,7 +213,6 @@ pub(super) async fn perform_concurrent_write_standalone(
                         task_chunk_start,
                         task_chunk_end,
                         scratchpad_size,
-                        successfully_written_pads.clone(),
                         current_pad_info,
                         key_owned.clone(),
                         true, // Newly reserved
@@ -250,14 +249,19 @@ pub(super) async fn perform_concurrent_write_standalone(
 
     while let Some(join_result) = join_set.join_next().await {
         match join_result {
-            Ok(task_result) => {
-                if let Err(e) = task_result {
+            Ok(task_result) => match task_result {
+                Ok((pad_index, pad_info)) => {
+                    let mut map_guard = successfully_written_pads_map.lock().await;
+                    map_guard.insert(pad_index, pad_info);
+                    drop(map_guard);
+                }
+                Err(e) => {
                     error!("Write Sub-Task[{}]: Failed: {}", key_owned, e);
                     if first_error.is_none() {
                         first_error = Some(e);
                     }
                 }
-            }
+            },
             Err(join_error) => {
                 error!("Write Task Join[{}]: JoinError: {}", key_owned, join_error);
                 if first_error.is_none() {
@@ -288,13 +292,21 @@ pub(super) async fn perform_concurrent_write_standalone(
                 "Write completion byte count mismatch".to_string(),
             ))
         } else {
-            let final_pads = Arc::try_unwrap(successfully_written_pads)
+            let final_pads_map = Arc::try_unwrap(successfully_written_pads_map)
                 .map_err(|_| {
                     Error::InternalError(
-                        "Failed to unwrap Arc for successfully written pads".to_string(),
+                        "Failed to unwrap Arc for successfully written pads map".to_string(),
                     )
                 })?
                 .into_inner();
+
+            let mut sorted_pads: Vec<(usize, PadInfo)> = final_pads_map.into_iter().collect();
+            sorted_pads.sort_by_key(|&(index, _)| index);
+
+            let final_pads: Vec<PadInfo> = sorted_pads
+                .into_iter()
+                .map(|(_, pad_info)| pad_info)
+                .collect();
 
             debug!(
                 "PerformWrite[{}]: Completed successfully. {} bytes written across {} pads.",
@@ -321,7 +333,7 @@ pub(super) async fn perform_concurrent_write_standalone(
 /// Spawns a single write task. (Standalone function version)
 #[allow(clippy::too_many_arguments)]
 fn spawn_write_task_standalone(
-    join_set: &mut JoinSet<Result<(), Error>>,
+    join_set: &mut JoinSet<Result<(usize, PadInfo), Error>>,
     semaphore: Arc<Semaphore>,
     callback_arc: Arc<Mutex<Option<PutCallback>>>,
     total_bytes_uploaded_arc: Arc<Mutex<u64>>,
@@ -335,7 +347,6 @@ fn spawn_write_task_standalone(
     chunk_start: usize,
     chunk_end: usize,
     _scratchpad_size: usize,
-    successfully_written_pads: Arc<Mutex<Vec<PadInfo>>>,
     pad_info_for_task: PadInfo,
     key_str: String,
     is_newly_reserved: bool,
@@ -347,7 +358,6 @@ fn spawn_write_task_standalone(
     let task_chunk_start = chunk_start;
     let task_chunk_end = chunk_end;
     let task_pad_info = pad_info_for_task;
-    let task_successfully_written_pads = successfully_written_pads.clone();
     // --- Variables needed for internal progress reporting ---
     let task_key_str = key_str.clone();
     let task_pad_index = pad_index;
@@ -362,7 +372,7 @@ fn spawn_write_task_standalone(
 
     join_set.spawn(async move {
         // Acquire semaphore permit
-        let _permit = semaphore
+        let permit = semaphore
             .acquire()
             .await
             .map_err(|_| Error::InternalError("Semaphore closed unexpectedly".to_string()))?;
@@ -423,16 +433,13 @@ fn spawn_write_task_standalone(
         // UploadProgress and ScratchpadCommitComplete events are now emitted
         // *inside* update_scratchpad_internal_static_with_progress.
 
-        // Add successfully written pad info
-        let mut success_guard = task_successfully_written_pads.lock().await;
-        success_guard.push(task_pad_info);
-        drop(success_guard);
+        drop(permit); // Release semaphore permit explicitly before returning
 
         debug!(
-            "Task[{}][Pad {}]: Write task completed successfully.",
+            "Task[{}][Pad {}]: Write task completed successfully. Returning index and info.",
             task_key_str, task_pad_index
         );
 
-        Ok(())
+        Ok((task_pad_index, task_pad_info))
     });
 }
