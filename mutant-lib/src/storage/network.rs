@@ -366,7 +366,7 @@ pub(crate) async fn update_scratchpad_internal_static_with_progress(
     total_bytes_uploaded_arc: &Arc<Mutex<u64>>,
     bytes_in_chunk: u64,
     total_size_overall: u64,
-    is_newly_reserved: bool,
+    _is_newly_reserved: bool,
     total_pads_committed_arc: &Arc<Mutex<u64>>,
     total_pads_expected: usize,
 ) -> Result<(), Error> {
@@ -631,9 +631,9 @@ pub(crate) async fn create_scratchpad_static(
     payment_option: PaymentOption,
     key_str: &str,
     pad_index: usize,
-    callback_arc: &Arc<Mutex<Option<PutCallback>>>,
-    total_pads_committed_arc: &Arc<Mutex<u64>>,
-    total_pads_expected: usize,
+    _callback_arc: &Arc<Mutex<Option<PutCallback>>>,
+    _total_pads_committed_arc: &Arc<Mutex<u64>>,
+    _total_pads_expected: usize,
 ) -> Result<ScratchpadAddress, Error> {
     let data_bytes = Bytes::from(initial_data.to_vec());
     let expected_address = ScratchpadAddress::new(owner_key.public_key().into());
@@ -678,132 +678,8 @@ pub(crate) async fn create_scratchpad_static(
         ));
     }
 
-    // --- Add verification loop and commit event --- //
-    debug!(
-        "CreateStatic[{}][{}][Pad {}]: Create successful. Waiting 5 seconds before starting verification loop...",
-        key_str, expected_address, pad_index
-    );
-    tokio::time::sleep(Duration::from_secs(5)).await;
-
-    debug!(
-        "CreateStatic[{}][{}][Pad {}]: Starting verification loop...",
-        key_str, expected_address, pad_index
-    );
-
-    for attempt in 0..VERIFICATION_RETRY_LIMIT {
-        if attempt > 0 {
-            tokio::time::sleep(Duration::from_secs(5)).await;
-        }
-        debug!(
-            "CreateStaticVerify[{}][{}][Pad {}]: Verification attempt {}/{} (checking existence & content)...",
-            key_str, expected_address, pad_index, attempt + 1, VERIFICATION_RETRY_LIMIT
-        );
-
-        match client.scratchpad_get(&expected_address).await {
-            Ok(scratchpad) => {
-                // Pad exists, now verify content (if data was provided)
-                if !initial_data.is_empty() {
-                    let key_clone = owner_key.clone();
-                    match task::spawn_blocking(move || scratchpad.decrypt_data(&key_clone)).await {
-                        Ok(Ok(decrypted_bytes)) => {
-                            if decrypted_bytes.as_ref() == initial_data {
-                                debug!(
-                                    "CreateStaticVerify[{}][{}][Pad {}]: Content verification successful on attempt {}.",
-                                    key_str, expected_address, pad_index, attempt + 1
-                                );
-                                // Content verified, break loop and emit commit
-                            } else {
-                                warn!(
-                                    "CreateStaticVerify[{}][{}][Pad {}]: Content mismatch on attempt {}. Retrying verification...",
-                                    key_str, expected_address, pad_index, attempt + 1
-                                );
-                                continue; // Content mismatch, retry
-                            }
-                        }
-                        Ok(Err(e)) => {
-                            error!(
-                                "CreateStaticVerify[{}][{}][Pad {}]: Decryption failed during verification: {}. Aborting.",
-                                key_str, expected_address, pad_index, e
-                            );
-                            return Err(Error::DecryptionError(
-                                expected_address.to_string(),
-                                e.to_string(),
-                            ));
-                        }
-                        Err(e) => {
-                            error!(
-                                "CreateStaticVerify[{}][{}][Pad {}]: JoinError during decryption task: {}. Aborting.",
-                                key_str, expected_address, pad_index, e
-                            );
-                            return Err(Error::JoinError(e.to_string()));
-                        }
-                    }
-                } else {
-                    // No initial data, existence is enough
-                    debug!(
-                        "CreateStaticVerify[{}][{}][Pad {}]: Existence verified (no data to compare) on attempt {}.",
-                        key_str, expected_address, pad_index, attempt + 1
-                    );
-                }
-
-                // If we reach here, verification (existence or content) succeeded
-                info!(
-                    "CreateStaticVerify[{}][{}][Pad {}]: Verification successful. Emitting ScratchpadCommitComplete.",
-                    key_str, expected_address, pad_index
-                );
-                let current_committed_pads = {
-                    let mut guard = total_pads_committed_arc.lock().await;
-                    *guard += 1;
-                    *guard
-                };
-                debug!(
-                    "CreateStaticVerify[{}][{}][Pad {}]: Commit progress updated: {} / {}",
-                    key_str,
-                    expected_address,
-                    pad_index,
-                    current_committed_pads,
-                    total_pads_expected
-                );
-                {
-                    // Scope for callback lock
-                    let mut cb_guard = callback_arc.lock().await;
-                    invoke_callback(
-                        &mut *cb_guard,
-                        PutEvent::ScratchpadCommitComplete {
-                            index: pad_index as u64,
-                            total: total_pads_expected as u64,
-                        },
-                    )
-                    .await?;
-                } // Callback lock released
-                return Ok(expected_address);
-            }
-            Err(se) if se.to_string().contains("RecordNotFound") => {
-                warn!(
-                    "CreateStaticVerify[{}][{}][Pad {}]: Not found on attempt {}. Retrying verification...",
-                    key_str, expected_address, pad_index, attempt + 1
-                );
-                continue; // Pad not found yet, retry
-            }
-            Err(e) => {
-                error!(
-                    "CreateStaticVerify[{}][{}][Pad {}]: Error during verification get: {}. Aborting.",
-                    key_str, expected_address, pad_index, e
-                );
-                return Err(Error::from(e)); // Convert Autonomi client error
-            }
-        }
-    }
-
-    // If loop finishes without success
-    error!(
-        "CreateStaticVerify[{}][{}][Pad {}]: Failed to verify scratchpad after {} attempts. Aborting.",
-        key_str, expected_address, pad_index, VERIFICATION_RETRY_LIMIT
-    );
-    Err(Error::VerificationTimeout(format!(
-        "Create {} Pad {}",
-        key_str, pad_index
-    )))
+    // If we got here, creation succeeded (no immediate verification)
+    Ok(expected_address)
 }
 
 /// Fetches and deserializes the MasterIndexStorage from the network without cache interaction.

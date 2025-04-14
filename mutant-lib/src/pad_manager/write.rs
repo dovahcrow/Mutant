@@ -73,25 +73,55 @@ pub async fn write_chunk(
     let client = storage.get_client().await?;
 
     if is_new_pad {
+        // 1. Create the empty pad first
         let wallet = storage.wallet();
         let payment_option = autonomi::client::payment::PaymentOption::from(wallet);
+        // Call create without callbacks (it no longer emits them)
         network::create_scratchpad_static(
+            client,
+            &secret_key,
+            &[],                           // Create with empty data
+            ContentType::DataChunk as u64, // Use DataChunk content type
+            payment_option,
+            key_str,
+            pad_index,
+            &Arc::new(Mutex::new(None)), // Dummy callback
+            &Arc::new(Mutex::new(0)),    // Dummy counter
+            total_pads_expected,         // Still needed for logging in create?
+        )
+        .await?;
+        debug!(
+            "write_chunk[{}][Pad {}]: Initial create call finished.",
+            key_str, pad_index
+        );
+
+        // 2. Now perform an UPDATE to write the actual data and trigger verification/commit event
+        debug!(
+            "write_chunk[{}][Pad {}]: Performing update to write data and verify...",
+            key_str, pad_index
+        );
+        let bytes_in_chunk = data_chunk.len() as u64;
+        let total_size_overall = scratchpad_size as u64 * total_pads_expected as u64; // Estimate total size
+        network::update_scratchpad_internal_static_with_progress(
             client,
             &secret_key,
             data_chunk,
             ContentType::DataChunk as u64,
-            payment_option,
             key_str,
             pad_index,
-            callback_arc,
-            total_pads_committed_arc,
+            callback_arc,             // Pass real callback arc
+            &Arc::new(Mutex::new(0)), // Dummy total_bytes_uploaded
+            bytes_in_chunk,
+            total_size_overall,
+            true,                     // Pass true for is_newly_reserved for the commit event
+            total_pads_committed_arc, // Pass real commit counter arc
             total_pads_expected,
         )
-        .await?;
-        Ok(())
+        .await
     } else {
+        // This is an update for a previously created (Free) pad
         let bytes_in_chunk = data_chunk.len() as u64;
-        let total_size_overall = scratchpad_size as u64 * total_pads_expected as u64;
+        let total_size_overall = scratchpad_size as u64 * total_pads_expected as u64; // Estimate total size
         network::update_scratchpad_internal_static_with_progress(
             client,
             &secret_key,
@@ -100,10 +130,10 @@ pub async fn write_chunk(
             key_str,
             pad_index,
             callback_arc,
-            &Arc::new(Mutex::new(0)),
+            &Arc::new(Mutex::new(0)), // Dummy total_bytes_uploaded
             bytes_in_chunk,
             total_size_overall,
-            false,
+            false, // is_newly_reserved is false for subsequent updates
             total_pads_committed_arc,
             total_pads_expected,
         )

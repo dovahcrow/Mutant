@@ -32,7 +32,8 @@ pub async fn handle_put(
     };
 
     let put_multi_progress = multi_progress.clone();
-    let (reservation_pb, upload_pb, commit_pb, callback) = create_put_callback(&put_multi_progress);
+    let (reservation_pb, upload_pb, commit_pb, _commit_counter_arc, callback) =
+        create_put_callback(&put_multi_progress);
 
     let result = if force {
         debug!("Forcing update for key: {}", key);

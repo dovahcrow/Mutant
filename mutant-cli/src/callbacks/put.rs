@@ -13,6 +13,7 @@ struct PutCallbackContext {
     upload_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     commit_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     total_bytes_for_upload: Arc<Mutex<u64>>,
+    commit_counter_arc: Arc<Mutex<u64>>,
     multi_progress: MultiProgress,
     cyan: Style,
     blue: Style,
@@ -32,6 +33,8 @@ pub fn create_put_callback(
     Arc<Mutex<Option<StyledProgressBar>>>,
     // Commit progress bar (Tracks ScratchpadCommitComplete)
     Arc<Mutex<Option<StyledProgressBar>>>,
+    // Shared commit counter (created by caller, passed into callback)
+    Arc<Mutex<u64>>,
     // The actual callback closure
     PutCallback,
 ) {
@@ -39,6 +42,7 @@ pub fn create_put_callback(
     let upload_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let commit_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let total_bytes_for_upload = Arc::new(Mutex::new(0u64));
+    let commit_counter_arc = Arc::new(Mutex::new(0u64));
 
     // Create the context instance
     let context = PutCallbackContext {
@@ -46,6 +50,7 @@ pub fn create_put_callback(
         upload_pb_opt: upload_pb_opt.clone(),
         commit_pb_opt: commit_pb_opt.clone(),
         total_bytes_for_upload: total_bytes_for_upload.clone(),
+        commit_counter_arc: commit_counter_arc.clone(),
         multi_progress: multi_progress.clone(),
         cyan: Style::new().fg(Color::Cyan),
         blue: Style::new().fg(Color::Blue),
@@ -190,10 +195,12 @@ pub fn create_put_callback(
                     debug!("Received ScratchpadUploadComplete (ignored)");
                     Ok(true)
                 },
-                PutEvent::ScratchpadCommitComplete { index, total } => {
+                PutEvent::ScratchpadCommitComplete { index: _, total } => {
+                    // Use the shared commit counter from context
+                    let current_committed = *ctx.commit_counter_arc.lock().unwrap();
                     debug!(
-                        "Callback: Received ScratchpadCommitComplete - Index: {}, Total: {}",
-                        index,
+                        "Callback: Received ScratchpadCommitComplete - Current: {}, Total: {}",
+                        current_committed,
                         total
                     );
                     let mut commit_pb_guard = ctx.commit_pb_opt.lock().unwrap();
@@ -207,20 +214,19 @@ pub fn create_put_callback(
                     });
 
                     if !commit_pb.is_finished() {
-                        let new_pos = index + 1;
                         debug!(
                             "Callback: Setting commit pads progress bar position to {}",
-                            new_pos
+                            current_committed // Use the counter
                         );
-                        if commit_pb.length().is_none() || new_pos <= commit_pb.length().unwrap_or(0) {
-                             commit_pb.set_position(new_pos);
+                        if commit_pb.length().is_none() || current_committed <= commit_pb.length().unwrap_or(0) {
+                             commit_pb.set_position(current_committed); // Use the counter
                         } else {
-                            warn!("Callback: Tried to set commit bar position {} beyond length {:?}", new_pos, commit_pb.length());
+                            warn!("Callback: Tried to set commit bar position {} beyond length {:?}", current_committed, commit_pb.length());
                         }
-                        if total > 0 && new_pos >= total {
-                            debug!("Commit progress complete ({} >= {}), setting final message.", new_pos, total);
+                        if total > 0 && current_committed >= total {
+                            debug!("Commit progress complete ({} >= {}), setting final message.", current_committed, total);
                             commit_pb.set_message("Confirmation complete.".to_string());
-                             // Don't finish or clear yet
+                            // Don't finish or clear yet
                         }
                     } else {
                         debug!("Callback: Commit pads progress bar is already finished.");
@@ -232,5 +238,11 @@ pub fn create_put_callback(
         .boxed()
     });
 
-    (reservation_pb_opt, upload_pb_opt, commit_pb_opt, callback)
+    (
+        reservation_pb_opt,
+        upload_pb_opt,
+        commit_pb_opt,
+        commit_counter_arc,
+        callback,
+    )
 }
