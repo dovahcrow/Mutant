@@ -15,7 +15,6 @@ use log::{debug, error, info, warn};
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc; // For signaling completion from tasks
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
@@ -280,65 +279,94 @@ impl MutAnt {
                             // Network load explicitly failed because index doesn't exist.
                             // Prompt the user via callback.
                             info!("Master index not found on network. Prompting user...");
-                            invoke_init_callback(
+                            let should_create_remote = invoke_init_callback(
                                 &mut init_callback,
                                 InitProgressEvent::PromptCreateRemoteIndex,
                             )
                             .await?;
 
-                            // Inform the user that creation is starting
-                            // --- Step 5: Create Remote Index ---
-                            invoke_init_callback(
-                                &mut init_callback,
-                                InitProgressEvent::Step {
-                                    step: 5, // Explicitly set step 5 for this event
-                                    message: "Creating remote master index...".to_string(),
-                                },
-                            )
-                            .await?;
+                            let create_remote_index = match should_create_remote {
+                                Some(true) => true,
+                                Some(false) => {
+                                    info!("User declined remote index creation. Proceeding with local index only.");
+                                    false
+                                }
+                                None => {
+                                    warn!("No callback provided to answer prompt. Defaulting to not creating remote index.");
+                                    false
+                                }
+                            };
 
-                            // Callback result was already handled by the invoke_init_callback
-                            // that emitted PromptCreateRemoteIndex. If we got here, user confirmed.
-
-                            warn!("No remote index exists. Creating and saving a new default index locally and remotely.");
                             let default_mis = MasterIndexStorage {
                                 scratchpad_size: DEFAULT_SCRATCHPAD_SIZE,
                                 ..Default::default()
                             };
                             let mis_arc = Arc::new(Mutex::new(default_mis));
 
-                            // Attempt to save the new default index remotely
-                            let (master_addr, master_key) = storage_arc.get_master_index_info();
-                            let client = storage_arc.get_client().await?; // Ensure client is initialized
-                            let wallet_instance = storage_arc.wallet(); // Use the getter
-                            match storage_create_mis_from_arc_static(
-                                client,
-                                wallet_instance, // Pass the wallet reference
-                                &master_addr,
-                                &master_key,
-                                &mis_arc,
-                            )
-                            .await
-                            {
-                                Ok(_) => {
-                                    info!(
-                                        "Successfully created new default master index remotely."
-                                    );
-                                    // Also save locally
-                                    let mis_guard = mis_arc.lock().await;
-                                    if let Err(e) =
-                                        write_local_index(&*mis_guard, network_choice).await
-                                    {
-                                        warn!("Failed to write newly created index to local cache: {}", e);
+                            let mut attempt_local_save = true; // Flag to control local saving
+
+                            if create_remote_index {
+                                // Inform the user that remote creation is starting
+                                // --- Step 5: Create Remote Index ---
+                                invoke_init_callback(
+                                    &mut init_callback,
+                                    InitProgressEvent::Step {
+                                        step: 5, // Explicitly set step 5 for this event
+                                        message: "Creating remote master index...".to_string(),
+                                    },
+                                )
+                                .await?;
+
+                                warn!(
+                                    "Creating and saving a new default index locally and remotely."
+                                );
+
+                                // Attempt to save the new default index remotely
+                                let (master_addr, master_key) = storage_arc.get_master_index_info();
+                                let client = storage_arc.get_client().await?;
+                                let wallet_instance = storage_arc.wallet();
+                                match storage_create_mis_from_arc_static(
+                                    client,
+                                    wallet_instance,
+                                    &master_addr,
+                                    &master_key,
+                                    &mis_arc,
+                                )
+                                .await
+                                {
+                                    Ok(_) => {
+                                        info!(
+                                            "Successfully created new default master index remotely."
+                                        );
+                                        // Local save will happen later
                                     }
-                                    drop(mis_guard);
+                                    Err(e) => {
+                                        error!("Failed to create default index on remote: {}. Proceeding with local index only.", e);
+                                        // Do not attempt to save locally if remote failed.
+                                        attempt_local_save = false;
+                                        // This arm now implicitly returns ()
+                                    }
                                 }
-                                Err(e) => {
-                                    // If creating remotely fails, still proceed with the in-memory index
-                                    // but log the error. The cache won't be written in this case.
-                                    error!("Failed to create default index on remote: {}. Proceeding with in-memory index only.", e);
-                                }
+                            } else {
+                                warn!("Skipping remote index creation as requested or due to no callback.");
+                                // Proceed to local save
                             }
+
+                            // Always attempt to save the index locally if we created a default one
+                            // and remote creation didn't explicitly fail.
+                            if attempt_local_save {
+                                info!("Saving new default index to local cache...");
+                                let mis_guard = mis_arc.lock().await;
+                                if let Err(e) = write_local_index(&*mis_guard, network_choice).await
+                                {
+                                    // Log error but continue with the in-memory index
+                                    error!("Failed to write newly created index to local cache: {}. Proceeding with in-memory index.", e);
+                                } else {
+                                    info!("Successfully saved index to local cache.");
+                                }
+                                drop(mis_guard);
+                            }
+
                             Ok(mis_arc)
                         }
                         Err(e) => {

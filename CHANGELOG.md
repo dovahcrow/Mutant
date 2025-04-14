@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.2] - Unreleased
 
 ### Changed
+- **Initialization:** When prompting to create a remote index (if local cache and remote index are missing), declining the prompt no longer aborts initialization. Instead, it skips remote index creation and proceeds to create the local index cache only.
 - **Refactor:** Split `MutAnt` initialization Step 4 (Load/Create Master Index) into sub-steps for clearer progress reporting. Creating the remote index (if prompted) is now a distinct Step 5.
 - **CLI:** Reworked `put` progress display.
   - The `StartingUpload` event now includes `total_pads`.

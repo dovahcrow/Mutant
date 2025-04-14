@@ -73,16 +73,15 @@ pub type InitCallback =
 pub(crate) async fn invoke_init_callback(
     callback: &mut Option<InitCallback>,
     event: InitProgressEvent,
-) -> Result<(), Error> {
+) -> Result<Option<bool>, Error> {
     if let Some(cb) = callback {
         let fut = cb(event);
         match fut.await {
-            Ok(Some(true)) | Ok(None) => Ok(()), // Confirmed or no decision needed = Success for invoker
-            Ok(Some(false)) => Err(Error::OperationCancelled), // Declined = Cancellation
-            Err(e) => Err(e),                    // Propagate callback error
+            Ok(result_opt) => Ok(result_opt),
+            Err(e) => Err(e),
         }
     } else {
-        Ok(()) // No callback, always success
+        Ok(None)
     }
 }
 
