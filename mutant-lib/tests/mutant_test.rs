@@ -30,7 +30,7 @@ async fn setup_test_env() -> Result<(mutant_lib::mutant::MutAnt, Network, String
         )
         .await
         {
-            Ok((mutant_instance, _maybe_handle)) => {
+            Ok(mutant_instance) => {
                 info!(
                     "MutAnt initialized successfully on attempt {}.",
                     attempt + 1
@@ -213,7 +213,7 @@ async fn test_persistence() -> Result<(), Error> {
     let config = MutAntConfig::local();
 
     {
-        let (mutant_initial, _handle_initial) = mutant_lib::mutant::MutAnt::init_with_progress(
+        let mutant_initial = mutant_lib::mutant::MutAnt::init_with_progress(
             private_key_hex.clone(),
             config.clone(),
             None,
@@ -233,7 +233,7 @@ async fn test_persistence() -> Result<(), Error> {
     }
 
     info!("Re-creating MutAnt instance with the same private key...");
-    let (mutant_recreate, _handle_recreate) = mutant_lib::mutant::MutAnt::init_with_progress(
+    let mutant_recreate = mutant_lib::mutant::MutAnt::init_with_progress(
         private_key_hex.clone(),
         config.clone(),
         None,
