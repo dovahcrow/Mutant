@@ -241,7 +241,17 @@ async fn execute_upload_phase(
     let key_owned = key.to_string(); // Clone for async boundaries if needed
     let data_chunks = Arc::new(chunk_data(data_bytes, scratchpad_size));
 
-    let _total_pads = data_chunks.len();
+    // Emit StartingUpload event
+    let total_bytes_expected = data_bytes.len() as u64;
+    invoke_callback(
+        &mut callback,
+        PutEvent::StartingUpload {
+            total_bytes: total_bytes_expected,
+        },
+    )
+    .await?;
+
+    let _total_pads = data_chunks.len(); // Prefix with underscore
     let mut pads_processed = 0;
 
     // --- Phase 1: Process Generated Pads (Create + Write) ---
