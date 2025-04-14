@@ -31,6 +31,10 @@ pub struct KeyStorageInfo {
     #[serde(default = "Utc::now")]
     pub modified: DateTime<Utc>,
     pub data_checksum: String,
+    #[serde(default)] // Assume incomplete if field is missing during deserialization
+    pub is_complete: bool,
+    #[serde(default)] // Number of pads confirmed written
+    pub populated_pads_count: usize,
 }
 
 /// The main index mapping user keys to their storage information.

@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reads/writes use the local cache first, reducing network requests for most operations.
 - Added a new `sync` command to reconcile the local cache with the remote master index.
 - Write operations (`put`, `rm`, `update`) now update the local cache immediately and require `sync` to push changes remotely.
+- Show completion percentage for incomplete uploads in `mutant ls` output (both standard and long formats).
 
 ### Changed
 - **`mutant-lib` API:** Unified key parameter types in `store`, `store_with_progress`, `update`, and `update_with_progress` to accept `&str` instead of `String` for consistency.
@@ -71,6 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ensure CLI errors are always printed to stderr in `main`
 - **CLI:** Suspend progress bar drawing during interactive prompts to prevent display corruption (e.g., when asking to create a remote index).
 - **CLI:** Ensure initialization progress correctly advances to Step 5/6 when creating the remote master index after prompt confirmation.
+- **CLI:** Mark incomplete uploads with `*` in `mutant ls` output (both standard and long formats).
 - Fixed a data corruption issue during `get` caused by the list of storage pads (`PadInfo`) not being saved in the correct chunk order during `put`/`update`. The `perform_concurrent_write_standalone` function now collects `(index, PadInfo)` pairs, sorts them by index, and stores the correctly ordered list in the master index.
 - Adapt tests in `mutant-lib/tests/mutant_test.rs` to handle the updated return signature of `MutAnt::init_with_progress` (no longer returns a tuple).
 - Fixed confirmation progress bar counting. The CLI callback now uses the `current` value from the `PadConfirmed` event directly, resolving an issue where the internal counter was incrementing beyond the actual total due to duplicate event emissions or double counting.
@@ -78,6 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Handle "Scratchpad already exists" errors gracefully during pad creation in `create_scratchpad_static`.
   This prevents failures when resuming an interrupted upload where some pads were created but not yet marked as completed locally.
 - Handle `RecordNotFound` error when attempting to update a reused scratchpad (`is_new: false`) that doesn't actually exist on the network. The `write_chunk` function now checks for the pad's existence and attempts to create it if it's missing, preventing hangs during `put` operations involving reused pads.
+- Prevent fetching data for keys with incomplete uploads (`mutant get`). A specific error message is shown.
 
 ### Removed
 - The specific changelog entry for updating the progress message to "Creating remote master index..." as this is now covered by the refactoring of init steps.

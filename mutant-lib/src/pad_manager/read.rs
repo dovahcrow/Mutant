@@ -14,21 +14,29 @@ const PROGRESS_UPDATE_THRESHOLD_BYTES: u64 = 1024 * 1024;
 const PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
 
 impl PadManager {
-    /// Retrieves the pad information (list of pads and total expected size) for a given key.
-    async fn get_pads_and_size(&self, key: &str) -> Result<(Vec<PadInfo>, usize), Error> {
+    /// Retrieves the pad information, expected size, and completion status for a given key.
+    async fn get_pads_size_and_status(
+        &self,
+        key: &str,
+    ) -> Result<(Vec<PadInfo>, usize, bool), Error> {
         let mis_guard = self.master_index_storage.lock().await;
-        debug!("Retrieve[{}]: Lock acquired to get pad info.", key);
+        debug!(
+            "Retrieve[{}]: Lock acquired to get pad info, size, and status.",
+            key
+        );
         match mis_guard.index.get(key) {
             Some(key_info) => {
                 let pads = key_info.pads.clone();
                 let size = key_info.data_size;
+                let is_complete = key_info.is_complete;
                 debug!(
-                    "Retrieve[{}]: Found {} pads, expected size {}. Releasing lock.",
+                    "Retrieve[{}]: Found {} pads, expected size {}, complete: {}. Releasing lock.",
                     key,
                     pads.len(),
-                    size
+                    size,
+                    is_complete
                 );
-                Ok((pads, size))
+                Ok((pads, size, is_complete))
             }
             None => {
                 debug!("Retrieve[{}]: Key not found. Releasing lock.", key);
@@ -383,7 +391,18 @@ impl PadManager {
         info!("PadManager::Retrieve[{}]: Starting retrieval...", key);
         let key_owned = key.to_string();
 
-        let (pads_to_fetch, expected_data_size) = self.get_pads_and_size(key).await?;
+        // Get pads, size, AND completion status
+        let (pads_to_fetch, expected_data_size, is_complete) =
+            self.get_pads_size_and_status(key).await?;
+
+        // Check if upload is complete BEFORE proceeding
+        if !is_complete {
+            warn!(
+                "Retrieve[{}]: Attempted fetch, but upload is incomplete.",
+                key_owned
+            );
+            return Err(Error::UploadIncomplete(key_owned));
+        }
 
         if pads_to_fetch.is_empty() {
             debug!(

@@ -89,11 +89,13 @@ pub struct StorageStats {
 }
 
 /// Public struct to hold details for the `ls -l` command.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct KeyDetails {
     pub key: String,
     pub size: usize,
     pub modified: DateTime<Utc>,
+    pub is_finished: bool,
+    pub completion_percentage: Option<f32>,
 }
 
 /// Manages raw byte data storage using the PadManager.
@@ -679,30 +681,49 @@ impl MutAnt {
         }
     }
 
-    /// Lists all user keys currently tracked in the master index.
-    pub async fn list_keys(&self) -> Vec<String> {
+    /// Lists all user keys currently tracked, along with completion status and percentage (if incomplete).
+    pub async fn list_keys(&self) -> Result<Vec<(String, bool, Option<f32>)>, Error> {
         let mis_guard = self.master_index_storage.lock().await;
-        let all_user_keys: Vec<String> = mis_guard
+        let keys_with_status: Vec<(String, bool, Option<f32>)> = mis_guard
             .index
-            .keys()
-            .filter(|k| *k != MASTER_INDEX_KEY)
-            .cloned()
+            .iter()
+            .filter(|(k, _)| *k != MASTER_INDEX_KEY)
+            .map(|(key, info)| {
+                let is_complete = info.is_complete;
+                let percentage = if !is_complete && !info.pads.is_empty() {
+                    Some((info.populated_pads_count as f32 / info.pads.len() as f32) * 100.0)
+                } else {
+                    None
+                };
+                (key.clone(), is_complete, percentage)
+            })
             .collect();
         drop(mis_guard);
-        all_user_keys
+        Ok(keys_with_status)
     }
 
-    /// Retrieves a list of keys along with their size and modification time.
+    /// Retrieves a list of keys along with their size, modification time, completion status, and percentage.
     pub async fn list_key_details(&self) -> Result<Vec<KeyDetails>, Error> {
         debug!("MutAnt: list_key_details called");
         let guard = self.master_index_storage.lock().await;
         let details: Vec<KeyDetails> = guard
             .index
             .iter()
-            .map(|(key, info)| KeyDetails {
-                key: key.clone(),
-                size: info.data_size,
-                modified: info.modified,
+            .filter(|(k, _)| *k != MASTER_INDEX_KEY) // Exclude internal keys
+            .map(|(key, info)| {
+                let is_complete = info.is_complete;
+                let percentage = if !is_complete && !info.pads.is_empty() {
+                    Some((info.populated_pads_count as f32 / info.pads.len() as f32) * 100.0)
+                } else {
+                    None
+                };
+                KeyDetails {
+                    key: key.clone(),
+                    size: info.data_size,
+                    modified: info.modified,
+                    is_finished: is_complete,
+                    completion_percentage: percentage,
+                }
             })
             .collect();
         Ok(details)

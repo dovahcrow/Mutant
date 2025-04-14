@@ -218,6 +218,8 @@ pub(super) async fn store_data(
         data_size,
         data_checksum: new_checksum,
         modified: Utc::now(),
+        is_complete: false,      // Initialize as incomplete
+        populated_pads_count: 0, // Initialize count
     };
 
     // 4. Persist MasterIndexStorage locally BEFORE starting uploads
@@ -430,6 +432,7 @@ async fn execute_upload_phase(
                     if let Some(pi_mut) = key_info.pads.get_mut(pad_index) {
                         if pi_mut.status != PadUploadStatus::Populated {
                             pi_mut.status = PadUploadStatus::Populated;
+                            key_info.populated_pads_count += 1; // Increment count
                             key_info.modified = Utc::now();
                             // Persist after each successful update
                             let network_choice = ma.storage.get_network_choice();
@@ -476,9 +479,48 @@ async fn execute_upload_phase(
     // Final check
     if successful_updates == pads_to_process_count {
         info!(
-            "ExecuteUpload[{}]: All {} pads processed successfully. Upload complete.",
+            "ExecuteUpload[{}]: All {} pads processed successfully. Marking as complete.",
             key_owned, successful_updates
         );
+
+        // --- Mark as complete and persist FINAL state ---
+        {
+            let mut mis_guard = ma.master_index_storage.lock().await;
+            if let Some(key_info) = mis_guard.index.get_mut(&key_owned) {
+                key_info.is_complete = true;
+                key_info.modified = Utc::now(); // Update modified time on completion
+
+                let network_choice = ma.storage.get_network_choice();
+                let mis_data_to_write = mis_guard.clone();
+                drop(mis_guard); // Drop lock before write
+
+                if let Err(e) = write_local_index(&mis_data_to_write, network_choice).await {
+                    error!(
+                        "ExecuteUpload[{}]: CRITICAL: Failed to persist FINAL completed state: {}. Upload technically succeeded but state may be stale.",
+                        key_owned, e
+                    );
+                    // Don't return error here, as upload did finish. Log is important.
+                } else {
+                    debug!(
+                        "ExecuteUpload[{}]: Successfully persisted FINAL completed state.",
+                        key_owned
+                    );
+                }
+            } else {
+                drop(mis_guard);
+                error!(
+                    "ExecuteUpload[{}]: Key disappeared before final completion update? State inconsistent.",
+                    key_owned
+                );
+                // Return error because we couldn't mark it complete
+                return Err(Error::InternalError(format!(
+                    "Key {} not found during final completion stage",
+                    key_owned
+                )));
+            }
+        }
+        // --- End final persistence ---
+
         invoke_callback(&mut *callback_arc.lock().await, PutEvent::StoreComplete).await?;
         Ok(())
     } else {

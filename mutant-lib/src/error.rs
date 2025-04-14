@@ -160,6 +160,8 @@ pub enum Error {
     },
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Attempted to fetch key '{0}' which has an incomplete upload.")]
+    UploadIncomplete(String),
 }
 
 impl Error {
