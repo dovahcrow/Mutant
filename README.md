@@ -125,6 +125,14 @@ $> cat big_file | mutant put my_big_file
 
 ![Put Progress Screenshot](docs/screenshots/put_screenshot1.png)
 
+```bash
+$> mutant stats
+```
+
+![Stats Screenshot](docs/screenshots/stats_screenshot1.png)
+
+
+
 ### Library Usage
 
 Add `mutant_lib` and its dependencies to your `Cargo.toml`:
