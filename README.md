@@ -23,7 +23,13 @@
 
 ### Setup
 
-Before using `mutant`, you need to have an `ant` wallet configured for the target network (Mainnet by default, or Devnet if using the `--local` flag). If you haven't already, you can import your existing wallet's private key using the `ant` CLI:
+Before using `mutant`, you need to have an `ant` wallet configured for the target network (Mainnet by default, or Devnet if using the `--local` flag). If you don't have `ant` installed, you can get it using [antup](https://github.com/maidsafe/antup):
+
+```bash
+antup client
+```
+
+Once `ant` is installed, if you haven't already, you can import your existing wallet's private key using the `ant` CLI:
 
 ```bash
 ant wallet import YOUR_PRIVATE_KEY_HERE
