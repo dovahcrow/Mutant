@@ -650,15 +650,18 @@ pub(crate) async fn create_scratchpad_static(
         key_str, expected_address, pad_index, initial_data_len, content_type,
     );
 
-    let created_address = retry_operation(
+    let creation_result = retry_operation(
         &format!("Static Create Scratchpad {} Pad {}", key_str, pad_index),
         || {
             let client_clone = client.clone();
             let owner_key_clone = owner_key.clone();
             let data_bytes_clone = data_bytes.clone();
             let payment_option_clone = payment_option.clone();
+            let expected_address_clone = expected_address.clone(); // Clone for closure
+            let key_str_clone = key_str.to_string(); // Clone for closure
+            let pad_index_clone = pad_index;         // Copy (usize is Copy)
             async move {
-                let (_cost, address) = client_clone
+                match client_clone
                     .scratchpad_create(
                         &owner_key_clone,
                         content_type,
@@ -666,16 +669,51 @@ pub(crate) async fn create_scratchpad_static(
                         payment_option_clone,
                     )
                     .await
-                    .map_err(Error::AutonomiClient)?;
-                Ok(address)
+                {
+                    Ok((_cost, address)) => Ok(address),
+                    Err(e) => {
+                        // Check if the error indicates the scratchpad already exists
+                        let error_string = e.to_string();
+                        if error_string.contains("already exists") || error_string.contains("RecordAlreadyExists") { // Adjust based on exact error message
+                            warn!(
+                                "CreateStatic[{}][{}][Pad {}]: Attempted to create scratchpad, but it already exists. Treating as success.",
+                                key_str_clone, expected_address_clone, pad_index_clone
+                            );
+                            Ok(expected_address_clone) // Return expected address if it already exists
+                        } else {
+                            Err(Error::AutonomiClient(e)) // Propagate other client errors
+                        }
+                    }
+                }
             }
         },
-        |_e: &Error| true,
+        |e: &Error| {
+            // Retry on most AutonomiClient errors, *except* the "already exists" case which we now handle.
+            // Also retry on JoinErrors etc.
+             match e {
+                Error::AutonomiClient(se) => {
+                    let error_string = se.to_string();
+                     !(error_string.contains("already exists") || error_string.contains("RecordAlreadyExists"))
+                }
+                _ => true, // Retry on other error types like JoinError
+            }
+        },
     )
-    .await?;
+    .await;
+
+    let created_address = match creation_result {
+        Ok(addr) => addr,
+        Err(e) => {
+            error!(
+                "CreateStatic[{}][{}][Pad {}]: Failed to create scratchpad after retries: {}",
+                key_str, expected_address, pad_index, e
+            );
+            return Err(e); // Return the final error after retries
+        }
+    };
 
     info!(
-        "CreateStatic[{}][{}][Pad {}]: Network create call successful. Address: {}",
+        "CreateStatic[{}][{}][Pad {}]: Network create call successful (or pad already existed). Address: {}",
         key_str, expected_address, pad_index, created_address
     );
 
