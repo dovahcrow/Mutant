@@ -145,29 +145,29 @@ pub fn create_put_callback(
                     }
                     Ok(true)
                 },
-                PutEvent::PadConfirmed { current: _, total } => {
+                PutEvent::PadConfirmed { current, total } => {
                     debug!(
-                        "Callback: Received PadConfirmed - Total: {}",
-                        total
+                        "Callback: Received PadConfirmed - Current: {}, Total: {}",
+                        current, total
                     );
 
                     // Update Confirmation Bar
                     let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
+                    // Bar should be initialized by StartingUpload
                     if let Some(confirm_pb) = confirm_pb_guard.as_mut() {
                         if !confirm_pb.is_finished() {
+                            // Check and set length if it's currently 0 (e.g., no reservations)
                             let mut bar_total = confirm_pb.length().unwrap_or(0);
                             if bar_total == 0 && total > 0 {
                                 debug!("PadConfirmed: Confirm bar length is 0, setting from event total ({}).", total);
                                 confirm_pb.set_length(total);
-                                bar_total = total;
+                                bar_total = total; // Update local variable
                             }
 
-                            let new_pos = {
-                                let mut counter = ctx.confirm_counter_arc.lock().await;
-                                *counter += 1;
-                                *counter
-                            };
+                            // Use the 'current' value directly from the event
+                            let new_pos = current; // Use event value
 
+                            // Set position based on event's 'current', capped at bar_total
                             if bar_total > 0 {
                                 let display_pos = std::cmp::min(new_pos, bar_total);
                                 confirm_pb.set_position(display_pos);
@@ -175,16 +175,21 @@ pub fn create_put_callback(
                                 if display_pos >= bar_total {
                                     debug!("Confirmation progress complete ({} >= {}), setting final message.", display_pos, bar_total);
                                     confirm_pb.set_message("Confirmation complete.".to_string());
+                                    // Don't finish/clear yet
                                 }
                             } else {
+                                // If bar_total is still 0, keep position at 0
                                 confirm_pb.set_position(0);
                                 if new_pos > 0 {
-                                    warn!("PadConfirmed received but confirmation bar total is 0. Counter: {}", new_pos);
+                                    // Use current (from event) in warning message
+                                    warn!("PadConfirmed received but confirmation bar total is 0. Event Current: {}", current);
                                 }
                             }
                             debug!(
-                                "Callback: PadConfirmed updated - Counter: {}, Bar Total: {}, New Position: {}",
-                                new_pos, bar_total, confirm_pb.position()
+                                "Callback: PadConfirmed updated - Event Current: {}, Bar Total: {}, New Position: {}",
+                                current, // Log event's current value
+                                bar_total,
+                                confirm_pb.position()
                             );
                         } else {
                             debug!("Callback: Confirmation bar is already finished.");
