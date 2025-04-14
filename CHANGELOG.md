@@ -91,6 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix the commit progress bar to only track newly reserved pads.
 - Ensure upload progress bar completion reflects data write finalization before commit steps.
 - Emit UploadProgress/ScratchpadCommitComplete events from storage layer to accurately reflect put/get timing.
+- Modify pad recycling: When deleting a key, pads that were confirmed written (`Populated`) or confirmed reserved (`Free`) are added to the `free_pads` list for immediate reuse. Only pads that were planned but not yet confirmed reserved (`Generated`) are moved to the `pending_verification_pads` list.
 
 ### Added
 - `mutant list-details` command to show more information about stored keys.

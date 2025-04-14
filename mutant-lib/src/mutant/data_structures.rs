@@ -40,14 +40,18 @@ pub struct KeyStorageInfo {
 /// The main index mapping user keys to their storage information.
 pub type MasterIndex = HashMap<String, KeyStorageInfo>;
 
-/// Wrapper struct for data stored in the Master Index scratchpad.
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+/// Stores the master index information, including free pads and the main index.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MasterIndexStorage {
-    /// The actual mapping of user keys to data locations.
-    pub index: MasterIndex,
-    /// List of (Address, Key Bytes) tuples for scratchpads available for reuse.
+    /// List of pads that are known to exist but are not currently assigned to any key.
     #[serde(default)]
-    pub free_pads: Vec<(ScratchpadAddress, Vec<u8>)>,
-    /// The standard size of scratchpads managed by this index (persisted).
+    pub free_pads: Vec<(ScratchpadAddress, Vec<u8>)>, // Address and Key
+    /// List of pads from deleted keys that were not fully populated and need verification.
+    #[serde(default)]
+    pub pending_verification_pads: Vec<(ScratchpadAddress, Vec<u8>)>, // Address and Key
+    /// The main index mapping user keys to their storage details.
+    #[serde(default)]
+    pub index: HashMap<String, KeyStorageInfo>,
+    /// The size of each scratchpad in bytes, determined on initialization.
     pub scratchpad_size: usize,
 }
