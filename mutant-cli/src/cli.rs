@@ -9,6 +9,10 @@ pub struct Cli {
     #[arg(short, long, default_value_t = false)]
     pub local: bool,
 
+    /// Suppress progress bars and other non-essential output
+    #[arg(short, long, default_value_t = false)]
+    pub quiet: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }

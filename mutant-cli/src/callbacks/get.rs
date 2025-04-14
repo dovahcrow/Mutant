@@ -3,12 +3,19 @@ use mutant_lib::events::{GetCallback, GetEvent};
 use futures::future::FutureExt;
 use indicatif::MultiProgress;
 use log::{debug, warn};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
+use tokio::sync::Mutex;
 
 pub fn create_get_callback(
     multi_progress: &MultiProgress,
+    quiet: bool,
 ) -> (Arc<Mutex<Option<StyledProgressBar>>>, GetCallback) {
     let download_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
+
+    if quiet {
+        let noop_callback: GetCallback = Box::new(|_event: GetEvent| async move { Ok(()) }.boxed());
+        return (download_pb_opt, noop_callback);
+    }
 
     let pb_clone = download_pb_opt.clone();
     let mp_clone = multi_progress.clone();
@@ -18,7 +25,7 @@ pub fn create_get_callback(
         let multi_progress = mp_clone.clone();
 
         async move {
-            let mut pb_guard = pb_arc.lock().unwrap();
+            let mut pb_guard = pb_arc.lock().await;
 
             match event {
                 GetEvent::StartingDownload { total_bytes } => {

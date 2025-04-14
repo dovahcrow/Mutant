@@ -1,3 +1,4 @@
+use crate::callbacks::StyledProgressBar;
 use crate::callbacks::put::create_put_callback;
 use indicatif::MultiProgress;
 use log::{debug, warn};
@@ -5,6 +6,8 @@ use mutant_lib::error::Error;
 use mutant_lib::mutant::MutAnt;
 use std::io::{self, Read};
 use std::process::ExitCode;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub async fn handle_put(
     mutant: MutAnt,
@@ -12,16 +15,26 @@ pub async fn handle_put(
     value: Option<String>,
     force: bool,
     multi_progress: &MultiProgress,
+    quiet: bool,
 ) -> ExitCode {
     debug!(
-        "CLI: Handling Put command: key={}, value provided: {}, force: {}",
+        "CLI: Handling Put command: key={}, value_is_some={}, force={}",
         key,
         value.is_some(),
         force
     );
-    let bytes_to_store = match value {
-        Some(v) => v.into_bytes(),
+
+    // Get data as Vec<u8>
+    let data_vec: Vec<u8> = match value {
+        Some(v) => {
+            debug!("handle_put: Using value from argument");
+            v.into_bytes()
+        }
         None => {
+            if !quiet && atty::is(atty::Stream::Stdin) {
+                eprintln!("Reading value from stdin... (Ctrl+D to end)");
+            }
+            debug!("handle_put: Reading value from stdin");
             let mut buffer = Vec::new();
             if let Err(e) = io::stdin().read_to_end(&mut buffer) {
                 eprintln!("Error reading value from stdin: {}", e);
@@ -31,101 +44,81 @@ pub async fn handle_put(
         }
     };
 
-    let put_multi_progress = multi_progress.clone();
-    let (reservation_pb, upload_pb, confirm_pb, _confirm_counter_arc, callback) =
-        create_put_callback(&put_multi_progress);
+    // Conditionally create callbacks based on quiet flag
+    let (res_pb_opt, upload_pb_opt, confirm_pb_opt, confirm_counter_arc, callback) =
+        create_put_callback(multi_progress, quiet);
 
-    // Spawn the background task for drawing progress bars
-    let _progress_jh = tokio::spawn(async move {
-        // Just holding multi_progress keeps it drawing
-        // If we needed to wait, we'd await the JoinHandle (_progress_jh)
-        // outside the spawn block.
-        let _ = multi_progress; // Keep the clone alive
-        // Add a small delay or loop to prevent immediate exit if needed,
-        // although holding it should suffice.
-        // tokio::time::sleep(std::time::Duration::from_secs(u64::MAX)).await;
-    });
-
+    // Pass data as slice &[u8]
     let result = if force {
         debug!("Forcing update for key: {}", key);
         mutant
-            .update_with_progress(&key, &bytes_to_store, Some(callback))
+            .update_with_progress(&key, &data_vec, Some(callback))
             .await
     } else {
         mutant
-            .store_with_progress(
-                &key,
-                &bytes_to_store,
-                Some(callback),
-                _confirm_counter_arc.clone(),
-            )
+            .store_with_progress(&key, &data_vec, Some(callback), confirm_counter_arc.clone())
             .await
     };
 
     match result {
         Ok(_) => {
-            debug!("handle_put: Result Ok. Attempting multi_progress.clear()...");
-            if let Err(e) = multi_progress.clear() {
-                warn!("Failed to clear multi-progress bars: {}", e);
-            }
-            debug!("handle_put: multi_progress.clear() finished. Returning ExitCode::SUCCESS...");
+            debug!("Put operation successful for key: {}", key);
+            clear_pb(&res_pb_opt);
+            clear_pb(&upload_pb_opt);
+            clear_pb(&confirm_pb_opt);
             ExitCode::SUCCESS
         }
-        Err(Error::OperationCancelled) => {
-            eprintln!("Operation cancelled.");
-            let clear_pb = |pb_opt: &std::sync::Arc<
-                tokio::sync::Mutex<Option<crate::callbacks::StyledProgressBar>>,
-            >| {
-                if let Ok(mut guard) = pb_opt.try_lock() {
-                    if let Some(pb) = guard.take() {
-                        if !pb.is_finished() {
-                            pb.finish_and_clear();
-                        } else {
-                            pb.finish_and_clear();
-                        }
-                    }
-                } else {
-                    warn!("clear_pb: Could not lock progress bar mutex.");
-                }
-            };
-            clear_pb(&reservation_pb);
-            clear_pb(&upload_pb);
-            clear_pb(&confirm_pb);
-            ExitCode::FAILURE
-        }
-        Err(Error::KeyAlreadyExists(_)) if !force => {
-            eprintln!("Key '{}' already exists. Use --force to overwrite.", key);
-            ExitCode::FAILURE
-        }
-        Err(Error::KeyNotFound(_)) if force => {
-            eprintln!(
-                "Key not found for forced update: {}. Use put without --force to create.",
-                key
-            );
-            ExitCode::FAILURE
-        }
         Err(e) => {
-            eprintln!(
-                "Error during {}: {}",
-                if force { "update" } else { "store" },
-                e
-            );
-            let fail_msg = "Operation Failed".to_string();
-            let abandon_pb = |pb_opt: &std::sync::Arc<
-                tokio::sync::Mutex<Option<crate::callbacks::StyledProgressBar>>,
-            >| {
-                if let Ok(mut guard) = pb_opt.try_lock() {
-                    if let Some(pb) = guard.take() {
-                        pb.abandon_with_message(fail_msg.clone());
-                    }
-                } else {
-                    warn!("abandon_pb: Could not lock progress bar mutex.");
+            let error_message = match e {
+                Error::KeyAlreadyExists(ref k) if !force => {
+                    format!("Key '{}' already exists. Use --force to overwrite.", k)
                 }
+                Error::KeyNotFound(ref k) if force => {
+                    format!(
+                        "Cannot force update non-existent key '{}'. Use put without --force.",
+                        k
+                    )
+                }
+                Error::OperationCancelled => "Operation cancelled.".to_string(),
+                _ => format!(
+                    "Error during {}: {}",
+                    if force { "update" } else { "store" },
+                    e
+                ),
             };
-            abandon_pb(&reservation_pb);
-            abandon_pb(&upload_pb);
-            abandon_pb(&confirm_pb);
+
+            eprintln!("{}", error_message);
+            abandon_pb(&res_pb_opt, error_message.clone());
+            abandon_pb(&upload_pb_opt, error_message.clone());
+            abandon_pb(&confirm_pb_opt, error_message);
+
             ExitCode::FAILURE
         }
+    }
+}
+
+// Helper functions to clear or abandon progress bars - kept local to put.rs
+fn clear_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>) {
+    // Use try_lock to avoid blocking if the lock is held (e.g., by the callback thread)
+    if let Ok(mut guard) = pb_opt.try_lock() {
+        if let Some(pb) = guard.take() {
+            if !pb.is_finished() {
+                pb.finish_and_clear();
+            }
+        }
+    } else {
+        warn!("clear_pb: Could not acquire lock to clear progress bar.");
+    }
+}
+
+fn abandon_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>, message: String) {
+    if let Ok(mut guard) = pb_opt.try_lock() {
+        if let Some(pb) = guard.take() {
+            if !pb.is_finished() {
+                pb.abandon_with_message(message);
+            }
+        }
+    } else {
+        warn!("abandon_pb: Could not acquire lock to abandon progress bar.");
     }
 }

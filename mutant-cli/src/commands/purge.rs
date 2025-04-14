@@ -21,33 +21,39 @@ pub async fn run(
     _args: PurgeArgs,
     mutant: MutAnt,
     mp: &MultiProgress,
+    quiet: bool, // Add quiet flag
 ) -> Result<(), Box<dyn Error>> {
     info!("Executing purge command...");
 
     // Shared state between callback instances
     let state = Arc::new(Mutex::new(PurgeState::default()));
 
-    // Create the callback closure
+    // Create the callback closure, capturing quiet flag
     let mp_clone = mp.clone(); // Clone MultiProgress for the callback
     let state_clone = state.clone();
     let callback: PurgeCallback = Box::new(move |event: PurgeEvent| {
         let state = state_clone.clone();
         let mp = mp_clone.clone();
+        let quiet_captured = quiet; // Capture quiet flag
         async move {
             let mut state_guard = state.lock().unwrap(); // Use std::sync::Mutex, so unwrap is safe
             match event {
                 PurgeEvent::Starting { total_count } => {
-                    if total_count > 0 {
+                    // Only create progress bar if not quiet
+                    if !quiet_captured && total_count > 0 {
                         let pb = Arc::new(mp.add(ProgressBar::new(total_count as u64)));
                         pb.set_style(get_default_steps_style());
                         pb.set_message("Verifying pads...");
                         state_guard.pb = Some(pb);
-                    } else {
-                        // No pads to process, print message and finish early?
-                        // Or let it run through and Complete will handle it.
+                    } else if total_count == 0 {
+                        // Optionally print message if quiet and 0 pads
+                        if quiet_captured {
+                            println!("No pending pads found to purge.");
+                        }
                     }
                 }
                 PurgeEvent::PadProcessed => {
+                    // Only increment if pb exists
                     if let Some(pb) = &state_guard.pb {
                         pb.inc(1);
                     }
@@ -56,14 +62,23 @@ pub async fn run(
                     verified_count,
                     failed_count,
                 } => {
+                    // Only finish/print if pb exists
                     if let Some(pb) = state_guard.pb.take() {
                         pb.finish_with_message(format!(
                             "Purge complete. Verified: {}, Discarded: {}",
                             verified_count, failed_count
                         ));
-                    } else {
-                        // Handle case where there were 0 pads initially
+                    } else if !quiet_captured {
+                        // If not quiet and pb was None (meaning 0 pads initially), print the message.
                         println!("No pending pads found to purge.");
+                    }
+                    // Always print summary if not quiet, or maybe always? Decide based on desired quiet behavior.
+                    // For now, let's assume quiet suppresses this too.
+                    if !quiet_captured {
+                        info!(
+                            "Purge summary: Verified: {}, Discarded: {}",
+                            verified_count, failed_count
+                        );
                     }
                 }
             }
@@ -79,11 +94,8 @@ pub async fn run(
             // Handle potential OperationCancelled error from the callback
             if matches!(e, mutant_lib::error::Error::OperationCancelled) {
                 info!("Purge operation cancelled.");
-                // Return success or a specific cancellation error if needed
-                // For now, let's return success from CLI perspective if user cancelled.
                 Ok(())
             } else {
-                // Map other library errors to Box<dyn Error>
                 Err(Box::new(e) as Box<dyn Error>)
             }
         }

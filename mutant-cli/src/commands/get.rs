@@ -1,3 +1,4 @@
+use crate::callbacks::StyledProgressBar;
 use crate::callbacks::get::create_get_callback;
 use indicatif::MultiProgress;
 use log::debug;
@@ -5,22 +6,22 @@ use mutant_lib::Error;
 use mutant_lib::mutant::MutAnt;
 use std::io::{self, Write};
 use std::process::ExitCode;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-pub async fn handle_get(mutant: MutAnt, key: String, multi_progress: &MultiProgress) -> ExitCode {
+pub async fn handle_get(
+    mutant: MutAnt,
+    key: String,
+    multi_progress: &MultiProgress,
+    quiet: bool,
+) -> ExitCode {
     debug!("CLI: Handling Get command: key={}", key);
 
-    let get_multi_progress = multi_progress.clone();
-    let (download_pb_opt, callback) = create_get_callback(&get_multi_progress);
+    let (download_pb_opt, callback) = create_get_callback(multi_progress, quiet);
 
     match mutant.fetch_with_progress(&key, Some(callback)).await {
         Ok(value_bytes) => {
-            if let Some(pb) = download_pb_opt.lock().unwrap().take() {
-                if !pb.is_finished() {
-                    pb.finish_and_clear();
-                    debug!("handle_get: Success - Finishing and clearing progress bar.");
-                }
-            }
-
+            clear_pb(&download_pb_opt);
             if let Err(e) = io::stdout().write_all(&value_bytes) {
                 eprintln!("Error writing fetched data to stdout: {}", e);
                 ExitCode::FAILURE
@@ -40,20 +41,33 @@ pub async fn handle_get(mutant: MutAnt, key: String, multi_progress: &MultiProgr
             };
 
             eprintln!("{}", error_message);
+            abandon_pb(&download_pb_opt, error_message);
 
-            if let Some(pb) = download_pb_opt.lock().unwrap().take() {
-                if !pb.is_finished() {
-                    let abandon_message = match e {
-                        Error::UploadIncomplete(_) => "Upload incomplete".to_string(),
-                        _ => error_message.clone(),
-                    };
-                    pb.abandon_with_message(abandon_message);
-                    debug!("handle_get: Error - Abandoning progress bar ({:?}).", e);
-                } else {
-                    debug!("handle_get: Error - Progress bar already finished.");
-                }
-            }
             ExitCode::FAILURE
         }
+    }
+}
+
+fn clear_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>) {
+    if let Ok(mut guard) = pb_opt.try_lock() {
+        if let Some(pb) = guard.take() {
+            if !pb.is_finished() {
+                pb.finish_and_clear();
+            }
+        }
+    } else {
+        log::warn!("clear_pb: Could not acquire lock to clear progress bar.");
+    }
+}
+
+fn abandon_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>, message: String) {
+    if let Ok(mut guard) = pb_opt.try_lock() {
+        if let Some(pb) = guard.take() {
+            if !pb.is_finished() {
+                pb.abandon_with_message(message);
+            }
+        }
+    } else {
+        log::warn!("abandon_pb: Could not acquire lock to abandon progress bar.");
     }
 }

@@ -13,12 +13,12 @@ struct PutCallbackContext {
     upload_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     confirm_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     total_bytes_for_upload: Arc<Mutex<u64>>,
-    confirm_counter_arc: Arc<Mutex<u64>>,
     multi_progress: MultiProgress,
 }
 
 pub fn create_put_callback(
     multi_progress: &MultiProgress,
+    quiet: bool,
 ) -> (
     // Reservation progress bar (used before confirmation)
     Arc<Mutex<Option<StyledProgressBar>>>,
@@ -26,7 +26,6 @@ pub fn create_put_callback(
     Arc<Mutex<Option<StyledProgressBar>>>,
     // Confirm progress bar (Tracks ScratchpadCommitComplete)
     Arc<Mutex<Option<StyledProgressBar>>>,
-    // Shared confirm counter (created by caller, passed into callback)
     Arc<Mutex<u64>>,
     // The actual callback closure
     PutCallback,
@@ -37,21 +36,35 @@ pub fn create_put_callback(
     let total_bytes_for_upload = Arc::new(Mutex::new(0u64));
     let confirm_counter_arc = Arc::new(Mutex::new(0u64));
 
+    // Return early with no-op callback and dummy Arcs if quiet
+    if quiet {
+        let noop_callback: PutCallback =
+            Box::new(|_event: PutEvent| async move { Ok(true) }.boxed());
+        return (
+            res_pb_opt,
+            upload_pb_opt,
+            confirm_pb_opt,
+            confirm_counter_arc,
+            noop_callback,
+        );
+    }
+
     // Create the context instance
     let context = PutCallbackContext {
         res_pb_opt: res_pb_opt.clone(),
         upload_pb_opt: upload_pb_opt.clone(),
         confirm_pb_opt: confirm_pb_opt.clone(),
         total_bytes_for_upload: total_bytes_for_upload.clone(),
-        confirm_counter_arc: confirm_counter_arc.clone(),
         multi_progress: multi_progress.clone(),
     };
 
     // Clone the context for the callback
     let ctx_clone = context.clone();
+    let confirm_counter_clone = confirm_counter_arc.clone();
 
     let callback: PutCallback = Box::new(move |event: PutEvent| {
         let ctx = ctx_clone.clone();
+        let confirm_counter = confirm_counter_clone.clone();
 
         async move {
             match event {
@@ -81,7 +94,7 @@ pub fn create_put_callback(
                     upload_pb.set_message("Uploading...".to_string());
 
                     // Initialize Confirmation Bar using total_pads from the event
-                    *ctx.confirm_counter_arc.lock().await = 0;
+                    *confirm_counter.lock().await = 0;
                     let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
                     let confirm_pb = confirm_pb_guard.get_or_insert_with(|| {
                         StyledProgressBar::new_for_steps(&ctx.multi_progress)
@@ -156,6 +169,7 @@ pub fn create_put_callback(
                     Ok(true)
                 },
                 PutEvent::PadConfirmed { current, total } => {
+                    *confirm_counter.lock().await = current;
                     debug!(
                         "Callback: Received PadConfirmed - Current: {}, Total: {}",
                         current, total

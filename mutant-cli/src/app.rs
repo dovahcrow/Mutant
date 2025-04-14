@@ -282,13 +282,18 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
 
     let mp = MultiProgress::new();
     let _mp_clone_for_task = mp.clone();
-    let (_, init_callback_fn): (_, InitCallback) = create_init_callback(&mp);
+    let init_callback_fn: Option<InitCallback> = if !cli.quiet {
+        let (_pb_opt, cb) = create_init_callback(&mp, cli.quiet);
+        Some(cb)
+    } else {
+        None
+    };
 
     let config = MutAntConfig {
         network: network_choice,
     };
 
-    let mutant = MutAnt::init_with_progress(private_key, config, Some(init_callback_fn)).await?;
+    let mutant = MutAnt::init_with_progress(private_key, config, init_callback_fn).await?;
 
     let mp_join_handle = tokio::spawn(async move {
         let _keep_alive = _mp_clone_for_task;
@@ -297,9 +302,11 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
 
     let command_result: Result<ExitCode, CliError> = match cli.command {
         Commands::Put { key, value, force } => {
-            Ok(crate::commands::put::handle_put(mutant, key, value, force, &mp).await)
+            Ok(crate::commands::put::handle_put(mutant, key, value, force, &mp, cli.quiet).await)
         }
-        Commands::Get { key } => Ok(crate::commands::get::handle_get(mutant, key, &mp).await),
+        Commands::Get { key } => {
+            Ok(crate::commands::get::handle_get(mutant, key, &mp, cli.quiet).await)
+        }
         Commands::Rm { key } => Ok(crate::commands::remove::handle_rm(mutant, key).await),
         Commands::Ls { long } => Ok(crate::commands::ls::handle_ls(mutant, long).await),
         Commands::Stats => Ok(crate::commands::stats::handle_stats(mutant).await),
@@ -319,8 +326,13 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
             }
         }
         Commands::Purge => {
-            match crate::commands::purge::run(crate::commands::purge::PurgeArgs {}, mutant, &mp)
-                .await
+            match crate::commands::purge::run(
+                crate::commands::purge::PurgeArgs {},
+                mutant,
+                &mp,
+                cli.quiet,
+            )
+            .await
             {
                 Ok(_) => Ok(ExitCode::SUCCESS),
                 Err(e) => {
