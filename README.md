@@ -5,6 +5,7 @@
 
 **MutAnt** provides a robust and asynchronous private mutable key-value storage layer built upon the Autonomi network's `Scratchpad` primitives. It simplifies interaction with the underlying network storage.
 
+
 > **⚠️ Disclaimer:** MutAnt is currently under active development and is **not ready for production use or mainnet deployment**. Use it at your own risk. Expect potential bugs, breaking changes, and incomplete features. Check how to spin a local testnet [here](#local-testnet-management-scriptsmanage_local_testnetsh).
 
 ## Core Concepts
@@ -15,7 +16,9 @@
 *   **Progress Reporting:** Includes callbacks for monitoring `store` and `fetch` operations (e.g., reservation, upload/download progress).
 *   **CLI Tool:** Includes the `mutant` command-line tool for easy interaction with the storage layer, including progress bars.
 
+
 ## Getting Started
+
 
 ### Prerequisites
 
@@ -38,6 +41,8 @@ ant wallet import YOUR_PRIVATE_KEY_HERE
 Replace `YOUR_PRIVATE_KEY_HERE` with your actual private key. `mutant` will automatically detect and use this wallet.
 
 Alternatively, you can create a new empty wallet using `ant wallet create` and fund it with the necessary ANT or ETH later.
+
+MutAnt will look for your ant wallets and ask you which one you want to use if you have multiple on the first run, then save your choice in ~/.config/mutant/config.json
 
 ### Installation
 
@@ -107,6 +112,14 @@ mutant ls
 # Remove a key
 mutant rm mykey
 ```
+
+### Screenshots
+
+```bash
+$> cat big_file | mutant put my_big_file
+```
+
+![Put Progress Screenshot](docs/screenshots/put_screenshot1.png)
 
 ### Library Usage
 
@@ -220,7 +233,7 @@ Data is stored and retrieved as raw byte vectors (`Vec<u8>`), allowing the user 
 
 ## Configuration
 
-The primary configuration taken from your local ant wallet if existing. MutAnt will not create or manage wallets, it will propose which one you want to use if you have multiple on the first run, then save your choice in ~/.config/mutantcli/config.json
+The primary configuration taken from your local ant wallet if existing. MutAnt will not create or manage wallets, it will propose which one you want to use if you have multiple on the first run, then save your choice in ~/.config/mutant/config.json
 
 ## License
 
