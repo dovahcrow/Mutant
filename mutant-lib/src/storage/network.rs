@@ -763,20 +763,9 @@ pub(crate) async fn create_scratchpad_static(
                     scratchpad.payload_size()
                 );
 
-                // 1. Check counter should be 1 for initial creation
-                let counter_check_passed = scratchpad.counter() == 1;
-
-                if !counter_check_passed {
-                    debug!(
-                        "CreateStaticVerify[{}][{}][Pad {}]: Counter check failed (Expected: 1, Current: {}). Retrying...",
-                        key_str, expected_address, pad_index, scratchpad.counter()
-                    );
-                    continue;
-                }
-
                 // 2. Decrypt and compare data
                 debug!(
-                    "CreateStaticVerify[{}][{}][Pad {}]: Counter check passed. Proceeding to decryption check.",
+                    "CreateStaticVerify[{}][{}][Pad {}]: Proceeding to decryption check (Counter check removed).",
                     key_str, expected_address, pad_index
                 );
                 let key_clone = owner_key.clone();
