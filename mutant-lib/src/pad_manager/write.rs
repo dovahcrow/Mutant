@@ -7,6 +7,7 @@ use crate::storage::{network, ContentType, Storage};
 use autonomi::{ScratchpadAddress, SecretKey};
 use chrono;
 use log::{debug, error, info};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
@@ -54,7 +55,7 @@ pub async fn write_chunk(
     total_pads_committed_arc: &Arc<Mutex<u64>>,
     total_pads_expected: usize,
     scratchpad_size: usize,
-    total_bytes_uploaded_arc: &Arc<Mutex<u64>>,
+    total_bytes_uploaded_arc: &Arc<AtomicU64>,
     total_size_overall: u64,
     create_counter_arc: &Arc<Mutex<u64>>,
 ) -> Result<(), Error> {
@@ -89,7 +90,7 @@ pub async fn write_chunk(
         network::create_scratchpad_static(
             client,
             &secret_key,
-            data_chunk, // Pass initial data directly
+            data_chunk,
             ContentType::DataChunk as u64,
             payment_option,
             key_str,
@@ -110,8 +111,6 @@ pub async fn write_chunk(
             key_str, pad_index
         );
         let bytes_in_chunk = data_chunk.len() as u64;
-        // Estimate total size using passed scratchpad_size
-        let total_size_overall = scratchpad_size as u64 * total_pads_expected as u64;
         network::update_scratchpad_internal_static_with_progress(
             client,
             &secret_key,
@@ -120,7 +119,7 @@ pub async fn write_chunk(
             key_str,
             pad_index,
             callback_arc,
-            &Arc::new(Mutex::new(0)), // Dummy total_bytes_uploaded
+            total_bytes_uploaded_arc,
             bytes_in_chunk,
             total_size_overall,
             false, // is_new_pad is false for updates

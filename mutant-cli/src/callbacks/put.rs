@@ -14,7 +14,6 @@ struct PutCallbackContext {
     upload_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     confirm_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     total_bytes_for_upload: Arc<Mutex<u64>>,
-    uploaded_bytes_counter: Arc<Mutex<u64>>,
     confirm_counter_arc: Arc<Mutex<u64>>,
     total_pads: Arc<Mutex<u64>>,
     multi_progress: MultiProgress,
@@ -38,7 +37,6 @@ pub fn create_put_callback(
     let upload_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let confirm_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let total_bytes_for_upload = Arc::new(Mutex::new(0u64));
-    let uploaded_bytes_counter = Arc::new(Mutex::new(0u64));
     let confirm_counter_arc = Arc::new(Mutex::new(0u64));
     let total_pads = Arc::new(Mutex::new(0u64));
 
@@ -48,7 +46,6 @@ pub fn create_put_callback(
         upload_pb_opt: upload_pb_opt.clone(),
         confirm_pb_opt: confirm_pb_opt.clone(),
         total_bytes_for_upload: total_bytes_for_upload.clone(),
-        uploaded_bytes_counter: uploaded_bytes_counter.clone(),
         confirm_counter_arc: confirm_counter_arc.clone(),
         total_pads: total_pads.clone(),
         multi_progress: multi_progress.clone(),
@@ -77,7 +74,6 @@ pub fn create_put_callback(
                 },
                 PutEvent::StartingUpload { total_bytes } => {
                     *ctx.total_bytes_for_upload.lock().await = total_bytes;
-                    *ctx.uploaded_bytes_counter.lock().await = 0;
 
                     // Initialize Upload Bar
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;

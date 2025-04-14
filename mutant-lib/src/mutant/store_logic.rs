@@ -9,6 +9,7 @@ use chrono::Utc;
 use hex;
 use log::{debug, error, info, trace, warn};
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex; // Correct import for async Mutex
 use tokio::sync::Semaphore; // Added
@@ -291,7 +292,7 @@ async fn execute_upload_phase(
                                                          // --- End Shared state ---
 
     // For UploadProgress tracking
-    let total_bytes_uploaded_arc = Arc::new(Mutex::new(0u64));
+    let total_bytes_uploaded_arc = Arc::new(AtomicU64::new(0));
 
     // Emit StartingUpload event
     let total_bytes_expected = data_bytes.len() as u64;

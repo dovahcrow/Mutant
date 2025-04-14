@@ -8,6 +8,7 @@ use autonomi::{
 };
 use log::{debug, error, info, warn};
 use serde_cbor;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -184,7 +185,7 @@ pub(crate) async fn storage_create_mis_from_arc_static(
 
     // Use create_scratchpad_static instead of update
     let payment_option = PaymentOption::from(wallet);
-    let dummy_bytes_uploaded: Arc<Mutex<u64>> = Arc::new(Mutex::new(0)); // Dummy for MIS
+    let dummy_bytes_uploaded: Arc<AtomicU64> = Arc::new(AtomicU64::new(0)); // Use AtomicU64
     let data_len = bytes.len() as u64; // total size for MIS
     let create_result = create_scratchpad_static(
         client,
@@ -197,7 +198,7 @@ pub(crate) async fn storage_create_mis_from_arc_static(
         &Arc::new(Mutex::new(None)), // dummy_callback
         &Arc::new(Mutex::new(0)),    // dummy_pads_committed
         1,                           // total_pads_expected (assume 1 for MIS)
-        &dummy_bytes_uploaded,       // Pass dummy arc
+        &dummy_bytes_uploaded,       // Pass Arc<AtomicU64>
         data_len,                    // Pass total size
         &Arc::new(Mutex::new(0)),    // Pass dummy create counter
     )
@@ -368,7 +369,7 @@ pub(crate) async fn update_scratchpad_internal_static_with_progress(
     key_str: &str,
     pad_index: usize,
     callback_arc: &Arc<tokio::sync::Mutex<Option<PutCallback>>>,
-    total_bytes_uploaded_arc: &Arc<Mutex<u64>>,
+    total_bytes_uploaded_arc: &Arc<AtomicU64>,
     bytes_in_chunk: u64,
     total_size_overall: u64,
     is_newly_reserved: bool,
@@ -415,11 +416,9 @@ pub(crate) async fn update_scratchpad_internal_static_with_progress(
     );
 
     // --- Emit UploadProgress ---
-    let current_total_bytes = {
-        let mut guard = total_bytes_uploaded_arc.lock().await;
-        *guard += bytes_in_chunk;
-        *guard
-    };
+    let current_total_bytes =
+        total_bytes_uploaded_arc.fetch_add(bytes_in_chunk, Ordering::Relaxed) + bytes_in_chunk;
+
     debug!(
         "UpdateStatic[{}][{}][Pad {}]: Upload progress updated: {} / {}",
         key_str, address, pad_index, current_total_bytes, total_size_overall
@@ -601,7 +600,7 @@ pub(crate) async fn update_scratchpad_internal_static(
     // Create dummy values for progress reporting context
     let dummy_callback: Arc<tokio::sync::Mutex<Option<PutCallback>>> =
         Arc::new(tokio::sync::Mutex::new(None));
-    let dummy_bytes_uploaded: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
+    let dummy_bytes_uploaded: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
     let dummy_pads_committed: Arc<tokio::sync::Mutex<u64>> = Arc::new(tokio::sync::Mutex::new(0));
     let data_len = data.len() as u64;
 
@@ -637,7 +636,7 @@ pub(crate) async fn create_scratchpad_static(
     callback_arc: &Arc<tokio::sync::Mutex<Option<PutCallback>>>,
     total_pads_committed_arc: &Arc<tokio::sync::Mutex<u64>>,
     total_pads_expected: usize,
-    total_bytes_uploaded_arc: &Arc<Mutex<u64>>,
+    total_bytes_uploaded_arc: &Arc<AtomicU64>,
     total_size_overall: u64,
     create_counter_arc: &Arc<tokio::sync::Mutex<u64>>,
 ) -> Result<ScratchpadAddress, Error> {
@@ -713,11 +712,9 @@ pub(crate) async fn create_scratchpad_static(
     );
 
     // --- Emit UploadProgress ---
-    let current_total_bytes = {
-        let mut guard = total_bytes_uploaded_arc.lock().await;
-        *guard += bytes_in_chunk;
-        *guard
-    };
+    let current_total_bytes =
+        total_bytes_uploaded_arc.fetch_add(bytes_in_chunk, Ordering::Relaxed) + bytes_in_chunk;
+
     {
         let mut cb_guard = callback_arc.lock().await;
         invoke_callback(
