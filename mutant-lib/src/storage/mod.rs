@@ -5,17 +5,13 @@ use crate::error::Error;
 use crate::mutant::NetworkChoice;
 use autonomi::{Client, ScratchpadAddress, SecretKey, Wallet};
 use log::info;
-use std::sync::Arc;
-use tokio::sync::{Mutex, OnceCell};
-
-use network::create_scratchpad_static;
+use tokio::sync::OnceCell;
 
 pub(crate) use network::fetch_remote_master_index_storage_static;
 pub(crate) use network::fetch_scratchpad_internal_static;
 pub(crate) use network::load_master_index_storage_static;
 pub(crate) use network::storage_create_mis_from_arc_static;
 pub(crate) use network::storage_save_mis_from_arc_static;
-pub(crate) use network::update_scratchpad_internal_static_with_progress;
 
 #[repr(u64)]
 pub(super) enum ContentType {

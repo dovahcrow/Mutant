@@ -3,7 +3,6 @@ use futures::future::FutureExt;
 use indicatif::MultiProgress;
 use log::{debug, warn};
 use mutant_lib::events::{PutCallback, PutEvent};
-use nu_ansi_term::{Color, Style};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

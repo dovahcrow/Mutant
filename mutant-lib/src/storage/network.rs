@@ -372,7 +372,7 @@ pub(crate) async fn update_scratchpad_internal_static_with_progress(
     total_bytes_uploaded_arc: &Arc<AtomicU64>,
     bytes_in_chunk: u64,
     total_size_overall: u64,
-    is_newly_reserved: bool,
+    _is_newly_reserved: bool,
     total_pads_committed_arc: &Arc<tokio::sync::Mutex<u64>>,
     total_pads_expected: usize,
 ) -> Result<(), Error> {

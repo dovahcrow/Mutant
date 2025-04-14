@@ -1,15 +1,13 @@
-use super::PadManager;
-use crate::cache::write_local_index;
+// Removed unused imports
+// use super::PadManager;
+// use crate::cache::write_local_index;
 use crate::error::Error;
 use crate::events::PutCallback;
-use crate::mutant::data_structures::{KeyStorageInfo, MasterIndexStorage};
 use crate::storage::{network, ContentType, Storage};
 use autonomi::{ScratchpadAddress, SecretKey};
-use chrono;
-use log::{debug, error, info};
-use std::sync::atomic::{AtomicU64, Ordering};
+use log::debug;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
 // mod concurrent; // Removed module
@@ -54,7 +52,7 @@ pub async fn write_chunk(
     callback_arc: &Arc<Mutex<Option<PutCallback>>>,
     total_pads_committed_arc: &Arc<Mutex<u64>>,
     total_pads_expected: usize,
-    scratchpad_size: usize,
+    _scratchpad_size: usize,
     total_bytes_uploaded_arc: &Arc<AtomicU64>,
     total_size_overall: u64,
     create_counter_arc: &Arc<Mutex<u64>>,

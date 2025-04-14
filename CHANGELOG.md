@@ -75,6 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Adapt tests in `mutant-lib/tests/mutant_test.rs` to handle the updated return signature of `MutAnt::init_with_progress` (no longer returns a tuple).
 - Fixed confirmation progress bar counting. The CLI callback now uses the `current` value from the `PadConfirmed` event directly, resolving an issue where the internal counter was incrementing beyond the actual total due to duplicate event emissions or double counting.
 - Fixed upload progress bar logic in `put` callback. Switched the internal aggregate byte counter in `mutant-lib` from `Arc<Mutex<u64>>` to `Arc<AtomicU64>` to ensure correct and consistent progress reporting in the `UploadProgress` event, even with highly concurrent pad updates. The CLI callback now reliably reflects the total uploaded bytes.
+- Handle "Scratchpad already exists" errors gracefully during pad creation in `create_scratchpad_static`.
+  This prevents failures when resuming an interrupted upload where some pads were created but not yet marked as completed locally.
 
 ### Removed
 - The specific changelog entry for updating the progress message to "Creating remote master index..." as this is now covered by the refactoring of init steps.

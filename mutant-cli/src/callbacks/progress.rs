@@ -60,16 +60,6 @@ impl StyledProgressBar {
         self.pb.set_position(pos);
     }
 
-    /// Increments the position of the progress bar by a delta.
-    pub fn inc(&self, delta: u64) {
-        self.pb.inc(delta);
-    }
-
-    /// Resets the progress bar state.
-    pub fn reset(&self) {
-        self.pb.reset();
-    }
-
     /// Returns the current position of the progress bar.
     pub fn position(&self) -> u64 {
         self.pb.position()

@@ -9,7 +9,7 @@ use chrono::Utc;
 use hex;
 use log::{debug, error, info, trace, warn};
 use sha2::{Digest, Sha256};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tokio::sync::Mutex; // Correct import for async Mutex
 use tokio::sync::Semaphore; // Added
@@ -270,7 +270,7 @@ async fn execute_upload_phase(
     data_bytes: &[u8],
     scratchpad_size: usize,
     callback: Option<PutCallback>,
-    total_new_pads_to_reserve: usize,
+    _total_new_pads_to_reserve: usize, // Marked as unused
     commit_counter_arc: Arc<tokio::sync::Mutex<u64>>,
 ) -> Result<(), Error> {
     let key_owned = key.to_string();
@@ -310,7 +310,7 @@ async fn execute_upload_phase(
     let mut pads_to_process_count = 0;
     let mut first_error: Option<Error> = None;
     // Counter for reservation progress
-    let mut pads_reserved_count = 0;
+    let _pads_reserved_count = 0; // Marked as unused, removed mut
 
     // --- Single Concurrent Processing Phase ---
     debug!(
@@ -384,7 +384,8 @@ async fn execute_upload_phase(
 
                     match write_result {
                         Ok(_) => {
-                            let current_bytes = {
+                            let _current_bytes = {
+                                // Marked as unused
                                 let mut guard = bytes_written_clone.lock().await;
                                 *guard += chunk_size;
                                 *guard
