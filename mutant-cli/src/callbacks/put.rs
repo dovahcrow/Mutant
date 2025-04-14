@@ -106,10 +106,7 @@ pub fn create_put_callback(
                 PutEvent::UploadProgress { bytes_written, total_bytes: _ } => {
                     if let Some(upload_pb) = ctx.upload_pb_opt.lock().await.as_mut() {
                         if !upload_pb.is_finished() {
-                            let current_pos = upload_pb.position();
-                            if bytes_written > current_pos {
-                                upload_pb.set_position(bytes_written);
-                            }
+                            upload_pb.set_position(bytes_written);
                         }
                     } else {
                         warn!("UploadProgress event received but upload progress bar does not exist.");
