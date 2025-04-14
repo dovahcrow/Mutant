@@ -391,7 +391,7 @@ async fn execute_upload_phase(
                 pad_info.address,
                 &pad_info.key,
                 chunk,
-                pad_info.is_new, // Should be false for Free (or irrelevant for update?)
+                false, // Explicitly pass false for is_new when status is Free
             )
             .await
             {

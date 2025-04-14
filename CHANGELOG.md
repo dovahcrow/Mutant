@@ -81,3 +81,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `mutant list-details` command to show more information about stored keys.
+- Implemented resumable uploads for `store` operations (`mutant put`).
+  - Upload state (pad status: Generated, Free, Populated) is persisted locally after each step.
+  - If an upload is interrupted, it resumes based on the last saved state and data checksum.
+  - Uses new `PadInfo` struct to track individual pad status.
+- Added `data_checksum` field to `KeyStorageInfo`.
+
+### Changed
+- Refactored core store logic into `mutant::store_logic::store_data`.
+- Refactored `mutant::update_logic::update_item` to perform delete + store for simplicity.
+- Refactored `pad_manager` to support the new resumable logic and `PadInfo` struct.
+- Introduced `pad_manager::write::write_chunk` to handle individual pad creation/updates.
+
+## [0.1.1] - 2024-04-10
+
+### Fixed
+- Resolved hangs during scratchpad creation/update verification loops by adding timeouts and improving retry logic in `storage::network`.
+- Fixed panic in `sync` command when local cache exists but remote index doesn't.
+- Corrected free pad merging logic in `sync` command to avoid losing track of pads.
+- Ensured Master Index `scratchpad_size` is initialized correctly on first run.
+
+### Changed
+- Improved progress reporting during initialization and sync.
+- Enhanced logging across library and CLI.
+
+## [0.1.0] - Initial Release
+
+- Core `store`, `fetch`, `remove`, `update` functionality.
+- Basic CLI commands (`put`, `get`, `rm`, `up`, `list`).
+- Local caching of Master Index.
+- Initial pad management logic (no reuse).
+
+[Unreleased]: https://github.com/Champii/MutAnt/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Champii/MutAnt/compare/v0.1.0...v0.1.1
