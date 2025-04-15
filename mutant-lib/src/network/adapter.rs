@@ -3,18 +3,21 @@ use crate::network::error::NetworkError;
 use crate::network::wallet::create_wallet;
 use crate::network::NetworkChoice;
 use async_trait::async_trait;
-use autonomi::client::payment::PaymentOption; // Added specific import
-use autonomi::{Bytes, Client, ScratchpadAddress, SecretKey, Wallet}; // Removed PaymentOption
-use log::{debug, error, info, trace}; // Added error
+use autonomi::client::payment::PaymentOption;
+use autonomi::{Bytes, Client, Scratchpad, ScratchpadAddress, SecretKey, Wallet};
+use log::{debug, error, info, trace};
 use std::sync::Arc;
 
 /// Trait defining the interface for low-level network operations related to scratchpads.
 /// This abstracts the underlying network implementation (e.g., autonomi client).
 #[async_trait]
 pub trait NetworkAdapter: Send + Sync {
-    /// Fetches raw *encrypted* data from a scratchpad address.
-    /// Decryption must be handled by the caller using the appropriate key.
-    async fn get_raw(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, NetworkError>;
+    /// Fetches the full Scratchpad object from a scratchpad address.
+    /// Decryption must be handled by the caller using the appropriate key and the Scratchpad's decrypt_data method.
+    async fn get_raw_scratchpad(
+        &self,
+        address: &ScratchpadAddress,
+    ) -> Result<Scratchpad, NetworkError>;
 
     /// Puts raw data into a scratchpad associated with the given secret key.
     /// Creates the scratchpad if it doesn't exist, updates it otherwise.
@@ -75,19 +78,22 @@ impl AutonomiNetworkAdapter {
 
 #[async_trait]
 impl NetworkAdapter for AutonomiNetworkAdapter {
-    async fn get_raw(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, NetworkError> {
-        trace!("NetworkAdapter::get_raw called for address: {}", address);
-        let scratchpad =
+    async fn get_raw_scratchpad(
+        &self,
+        address: &ScratchpadAddress,
+    ) -> Result<Scratchpad, NetworkError> {
+        trace!(
+            "NetworkAdapter::get_raw_scratchpad called for address: {}",
+            address
+        );
+        // Fetch the Scratchpad object
+        let scratchpad: Scratchpad =
             self.client.scratchpad_get(address).await.map_err(|e| {
                 NetworkError::InternalError(format!("Failed to get scratchpad: {}", e))
             })?;
 
-        // Use the adapter's stored key for decryption
-        let decrypted_bytes = scratchpad.decrypt_data(&self.secret_key).map_err(|e| {
-            NetworkError::InternalError(format!("Scratchpad decryption failed: {}", e))
-        })?;
-
-        Ok(decrypted_bytes.to_vec())
+        // Return the whole Scratchpad object
+        Ok(scratchpad)
     }
 
     async fn put_raw(

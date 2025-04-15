@@ -1,16 +1,19 @@
 use crate::network::NetworkAdapter;
 use crate::storage::error::StorageError;
 use async_trait::async_trait;
-use autonomi::{ScratchpadAddress, SecretKey};
+use autonomi::{Scratchpad, ScratchpadAddress, SecretKey};
 use log::trace;
 use std::sync::Arc;
 
-/// Trait defining the interface for a slightly higher-level storage abstraction
-/// over raw scratchpads. It might handle transformations like encryption or checksums.
+/// Trait defining the interface for storing and retrieving data from individual scratchpads.
+/// Handles potential data transformations (encryption, checksums - if implemented).
 #[async_trait]
 pub trait StorageManager: Send + Sync {
-    /// Reads potentially transformed *encrypted* data from a specific scratchpad address.
-    async fn read_pad_data(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, StorageError>;
+    /// Reads the full Scratchpad object from a specific scratchpad address.
+    async fn read_pad_scratchpad(
+        &self,
+        address: &ScratchpadAddress,
+    ) -> Result<Scratchpad, StorageError>;
 
     /// Writes potentially transformed data to a scratchpad using its associated secret key.
     /// Returns the address of the written pad.
@@ -42,12 +45,18 @@ impl DefaultStorageManager {
 
 #[async_trait]
 impl StorageManager for DefaultStorageManager {
-    async fn read_pad_data(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, StorageError> {
-        trace!("StorageManager::read_pad_data for address: {}", address);
-        // Read raw encrypted data. No decryption at this layer.
-        let raw_data = self.network_adapter.get_raw(address).await?;
+    async fn read_pad_scratchpad(
+        &self,
+        address: &ScratchpadAddress,
+    ) -> Result<Scratchpad, StorageError> {
+        trace!(
+            "StorageManager::read_pad_scratchpad for address: {}",
+            address
+        );
+        // Read the full scratchpad object. No decryption/transformation at this layer.
+        let scratchpad = self.network_adapter.get_raw_scratchpad(address).await?;
         // Apply transformations (e.g., checksum verification if added) from pad_io if needed
-        Ok(raw_data)
+        Ok(scratchpad)
     }
 
     async fn write_pad_data(

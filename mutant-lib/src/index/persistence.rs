@@ -3,8 +3,8 @@ use crate::index::structure::MasterIndex;
 use crate::network::NetworkAdapter;
 use crate::storage::{StorageError, StorageManager};
 use autonomi::{ScratchpadAddress, SecretKey};
-use log::{debug, error, trace, warn};
-use serde_cbor;
+use log::{debug, error, info, trace, warn};
+use serde_cbor::{from_slice, to_vec};
 
 /// Serializes the MasterIndex structure into CBOR bytes.
 pub(crate) fn serialize_index(index: &MasterIndex) -> Result<Vec<u8>, IndexError> {
@@ -24,34 +24,34 @@ pub(crate) fn deserialize_index(data: &[u8]) -> Result<MasterIndex, IndexError> 
     })
 }
 
-/// Loads the serialized index data from its dedicated scratchpad using the StorageManager.
-/// First checks if the scratchpad exists.
+/// Loads the serialized index data from its dedicated scratchpad.
 pub(crate) async fn load_index(
     storage_manager: &dyn StorageManager,
-    network_adapter: &dyn NetworkAdapter,
+    network_adapter: &dyn NetworkAdapter, // Network adapter needed for existence check
     address: &ScratchpadAddress,
 ) -> Result<MasterIndex, IndexError> {
-    debug!("Checking existence of MasterIndex at address: {}", address);
-
-    // --- Check existence first --- (THIS IS NEW)
+    // --- Add existence check first ---
+    debug!("Checking existence of index scratchpad at {}", address);
     match network_adapter.check_existence(address).await {
         Ok(true) => {
-            debug!("Index scratchpad found at {}, proceeding to load.", address);
-            // Continue to load data
+            debug!(
+                "Index scratchpad exists at {}. Proceeding to load.",
+                address
+            );
+            // Continue below
         }
         Ok(false) => {
-            debug!("Index scratchpad not found at address {}.", address);
-            return Err(IndexError::KeyNotFound(format!(
-                "Master index record not found at address {}",
-                address
-            )));
+            info!("Index scratchpad not found at address {}.", address);
+            // Use DeserializationError to indicate not found after check
+            return Err(IndexError::DeserializationError(
+                "Master index scratchpad not found on network".to_string(),
+            ));
         }
         Err(e) => {
             error!(
                 "Error checking existence for index scratchpad {}: {}",
                 address, e
             );
-            // Propagate the error, mapping it appropriately
             return Err(IndexError::Storage(StorageError::Network(e)));
         }
     }
@@ -61,8 +61,11 @@ pub(crate) async fn load_index(
         "Attempting to load MasterIndex data from address: {}",
         address
     );
-    match storage_manager.read_pad_data(address).await {
-        Ok(data) => {
+    // Call read_pad_scratchpad and get Scratchpad object
+    match storage_manager.read_pad_scratchpad(address).await {
+        // Get raw bytes from scratchpad.encrypted_data()
+        Ok(scratchpad) => {
+            let data = scratchpad.encrypted_data().to_vec();
             if data.is_empty() {
                 warn!(
                     "Loaded empty data from existing index address {}, treating as invalid.",
@@ -80,7 +83,6 @@ pub(crate) async fn load_index(
             deserialize_index(&data)
         }
         Err(e) => {
-            // Removed the old RecordNotFound check as existence is checked upfront
             error!("Storage error during index load from {}: {}", address, e);
             Err(IndexError::Storage(e))
         }

@@ -6,7 +6,7 @@ use crate::events::{
 use crate::index::{IndexManager, KeyInfo, PadInfo};
 use crate::pad_lifecycle::PadLifecycleManager;
 use crate::storage::StorageManager;
-use autonomi::{ScratchpadAddress, SecretKey};
+use autonomi::{Bytes, Scratchpad, ScratchpadAddress, SecretKey};
 use chrono::Utc;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
@@ -271,12 +271,14 @@ pub(crate) async fn fetch_op(
 ) -> Result<Vec<u8>, DataError> {
     info!("DataOps: Starting fetch operation for key '{}'", user_key);
 
-    // 1. Get KeyInfo from index
+    // 1. Get KeyInfo and MasterIndex copy
     let key_info = deps
         .index_manager
         .get_key_info(user_key)
         .await?
         .ok_or_else(|| DataError::KeyNotFound(user_key.to_string()))?;
+
+    let index_copy = deps.index_manager.get_index_copy().await?; // Fetch index copy for keys
 
     if !key_info.is_complete {
         // Handle incomplete data - return error or partial data? Error for now.
@@ -323,35 +325,100 @@ pub(crate) async fn fetch_op(
 
     // 2. Fetch chunks concurrently
     let mut fetch_futures = FuturesUnordered::new();
-    // Sort PadInfo by chunk_index to ensure correct order for reassembly
-    let mut sorted_pads = key_info.pads;
+    let mut sorted_pads = key_info.pads.clone(); // Clone to avoid borrow issues later
     sorted_pads.sort_by_key(|p| p.chunk_index);
 
+    let storage_manager = Arc::clone(&deps.storage_manager);
     for pad_info in sorted_pads.iter() {
-        let storage_manager = Arc::clone(&deps.storage_manager);
-        let address = pad_info.address; // Copy address
+        let sm_clone = Arc::clone(&storage_manager);
+        let address = pad_info.address;
         let index = pad_info.chunk_index;
-
         fetch_futures.push(async move {
-            let result = storage_manager.read_pad_data(&address).await;
-            (index, result) // Return index and Result<Vec<u8>, StorageError>
+            let result = sm_clone.read_pad_scratchpad(&address).await;
+            (index, address, result) // Return index, address, and Result<Scratchpad, StorageError>
         });
     }
 
-    // Collect fetched *encrypted* chunks
-    let mut fetched_encrypted_chunks: Vec<Option<Vec<u8>>> = vec![None; num_chunks];
+    // Collect fetched *and decrypted* chunks
+    let mut fetched_decrypted_chunks: Vec<Option<Vec<u8>>> = vec![None; num_chunks];
     let mut fetched_count = 0;
 
-    while let Some((chunk_index, result)) = fetch_futures.next().await {
+    while let Some((chunk_index, pad_address, result)) = fetch_futures.next().await {
         match result {
-            Ok(data) => {
+            Ok(scratchpad) => {
                 trace!(
-                    "Successfully fetched encrypted chunk {} ({} bytes)",
+                    "Successfully fetched scratchpad for chunk {} from pad {}",
                     chunk_index,
-                    data.len()
+                    pad_address
                 );
-                if chunk_index < fetched_encrypted_chunks.len() {
-                    fetched_encrypted_chunks[chunk_index] = Some(data);
+
+                // Find the pad key by iterating through Vecs
+                let key_bytes_opt = index_copy
+                    .free_pads
+                    .iter()
+                    .find(|(addr, _)| *addr == pad_address)
+                    .map(|(_, key_bytes)| key_bytes)
+                    .or_else(|| {
+                        index_copy
+                            .pending_verification_pads
+                            .iter()
+                            .find(|(addr, _)| *addr == pad_address)
+                            .map(|(_, key_bytes)| key_bytes)
+                    });
+
+                let pad_secret_key = match key_bytes_opt {
+                    Some(key_bytes_vec) => {
+                        let key_array: [u8; 32] =
+                            key_bytes_vec.as_slice().try_into().map_err(|_| {
+                                error!(
+                                    "Secret key for pad {} has incorrect length (expected 32): {}",
+                                    pad_address,
+                                    key_bytes_vec.len()
+                                );
+                                DataError::InternalError(format!(
+                                    "Invalid key length for {}",
+                                    pad_address
+                                ))
+                            })?;
+                        SecretKey::from_bytes(key_array).map_err(|e| {
+                            error!(
+                                "Failed to deserialize secret key for pad {}: {}",
+                                pad_address, e
+                            );
+                            DataError::InternalError(format!(
+                                "Pad key deserialization failed for {}",
+                                pad_address
+                            ))
+                        })?
+                    }
+                    None => {
+                        error!(
+                            "Could not find secret key for fetched pad address {}",
+                            pad_address
+                        );
+                        return Err(DataError::InternalError(format!(
+                            "Pad key not found for {}",
+                            pad_address
+                        )));
+                    }
+                };
+
+                // Decrypt the data using scratchpad.decrypt_data() - NOW INSIDE THE BLOCK
+                let decrypted_data = scratchpad.decrypt_data(&pad_secret_key).map_err(|e| {
+                    error!(
+                        "Failed to decrypt chunk {} from pad {}: {}",
+                        chunk_index, pad_address, e
+                    );
+                    // Use InternalError for decryption failures
+                    DataError::InternalError(format!(
+                        "Chunk decryption failed for pad {}",
+                        pad_address
+                    ))
+                })?;
+                trace!("Decrypted chunk {} successfully", chunk_index);
+
+                if chunk_index < fetched_decrypted_chunks.len() {
+                    fetched_decrypted_chunks[chunk_index] = Some(decrypted_data.to_vec());
                     fetched_count += 1;
                     if !invoke_get_callback(&mut callback, GetEvent::ChunkFetched { chunk_index })
                         .await
@@ -368,7 +435,6 @@ pub(crate) async fn fetch_op(
                         chunk_index,
                         num_chunks - 1
                     );
-                    // This indicates an index inconsistency
                     return Err(DataError::InternalError(format!(
                         "Invalid chunk index {} encountered",
                         chunk_index
@@ -376,10 +442,11 @@ pub(crate) async fn fetch_op(
                 }
             }
             Err(e) => {
-                error!("Failed to fetch chunk {}: {}", chunk_index, e);
-                // Don't immediately fail, allow reassembly to detect missing chunk later?
-                // Or fail fast? Fail fast seems safer.
-                return Err(DataError::Storage(e.into())); // Convert StorageError
+                error!(
+                    "Failed to fetch scratchpad for chunk {}: {}",
+                    chunk_index, e
+                );
+                return Err(DataError::Storage(e.into()));
             }
         }
     }
@@ -395,17 +462,17 @@ pub(crate) async fn fetch_op(
         ));
     }
 
-    debug!("All {} encrypted chunks fetched.", num_chunks);
+    debug!("All {} chunks fetched and decrypted.", num_chunks);
 
-    // 3. Reassemble *encrypted* data
+    // 3. Reassemble *decrypted* data
     if !invoke_get_callback(&mut callback, GetEvent::Reassembling)
         .await
         .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
     {
         return Err(DataError::OperationCancelled);
     }
-    let reassembled_encrypted_data = reassemble_data(fetched_encrypted_chunks, key_info.data_size)?;
-    debug!("Encrypted data reassembled successfully.");
+    let reassembled_data = reassemble_data(fetched_decrypted_chunks, key_info.data_size)?;
+    debug!("Decrypted data reassembled successfully.");
 
     if !invoke_get_callback(&mut callback, GetEvent::Complete)
         .await
@@ -414,11 +481,8 @@ pub(crate) async fn fetch_op(
         return Err(DataError::OperationCancelled);
     }
 
-    info!(
-        "DataOps: Fetch operation complete for key '{}' (returning encrypted data)",
-        user_key
-    );
-    Ok(reassembled_encrypted_data) // Return the reassembled encrypted data
+    info!("DataOps: Fetch operation complete for key '{}'", user_key);
+    Ok(reassembled_data) // Return the reassembled decrypted data
 }
 
 // --- Remove Operation ---
