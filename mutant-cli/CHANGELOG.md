@@ -7,6 +7,7 @@
 - Parallelized pad verification during `purge` command for faster execution.
 
 ### Fixed
+- **Devnet:** Corrected the format of the hardcoded devnet private key by adding the `0x` prefix.
 - **Compatibility:** Updated CLI commands (`get`, `put`, `ls`, `reset`, `purge`, `sync`, `import`, `rm`) and callbacks to align with `mutant-lib` v0.2.0 API changes (event structures, error handling, method signatures, `Send + Sync` requirements).
 - **Sync Logic:** Re-added `get_index_copy` to `mutant-lib` API to support existing CLI sync merge strategy.
 - **Ls Command:** Corrected type handling in `ls` short format to properly display key status.

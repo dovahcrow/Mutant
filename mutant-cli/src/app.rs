@@ -266,8 +266,8 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
     // Determine private key: Use hardcoded for local, otherwise load from wallet.
     let private_key = if cli.local {
         info!("Using hardcoded local/devnet secret key for testing.");
-        // Standard Anvil/Hardhat dev key 0
-        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
+        // Standard Anvil/Hardhat dev key 0, prefixed with 0x
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
     } else {
         match initialize_wallet().await {
             Ok(key) => key,
