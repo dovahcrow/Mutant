@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Store operation now saves the updated index to the local cache, ensuring `ls` reflects recent changes.
 - Remove operation (`rm`) now saves the updated index to the local cache, ensuring `ls` reflects the removal.
+- Initialization now proceeds with an empty in-memory index if the persisted index (local cache or remote) fails to deserialize (e.g., due to corruption or format changes), preventing errors during startup and allowing commands like `sync --push-force` to fix the remote index.
 
 ## [0.1.2] - Unreleased
 

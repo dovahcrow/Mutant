@@ -157,21 +157,23 @@ impl IndexManager for DefaultIndexManager {
                 info!("Index loaded successfully from storage.");
                 Ok(())
             }
-            // Catch the specific DeserializationError indicating the index was not found
-            Err(IndexError::DeserializationError(ref msg))
-                if msg == "Master index scratchpad not found on network" =>
-            {
-                info!("Index not found on network. Initializing with default in memory.");
+            // Treat ANY deserialization error (not found, corrupted, version mismatch) as a reason to initialize default.
+            Err(IndexError::DeserializationError(e)) => {
+                warn!(
+                    "Failed to load or deserialize index from storage ({}). Initializing with default in memory.",
+                    e
+                );
                 // State already holds default, so nothing to change in memory.
-                // We don't automatically save the default here; PadLifecycleManager handles caching.
+                // We don't automatically save the default here; PadLifecycleManager handles caching if needed.
                 Ok(())
             }
-            // Re-introduce handling for KeyNotFound just in case, although the persistence layer
-            // should ideally return the specific DeserializationError now.
+            // Re-introduce handling for KeyNotFound just in case the persistence layer changes behavior.
+            // This path should ideally not be hit if persistence correctly returns DeserializationError for not found.
             Err(IndexError::KeyNotFound(_)) => {
-                info!("Index key not found (unexpected persistence state?). Initializing with default in memory.");
+                warn!("Index key not found (unexpected persistence state?). Initializing with default in memory.");
                 Ok(())
             }
+            // Propagate other errors (e.g., storage connection issues)
             Err(e) => {
                 error!("Failed to load index from storage: {}", e);
                 Err(e)
