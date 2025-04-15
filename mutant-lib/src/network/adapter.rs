@@ -4,8 +4,8 @@ use crate::network::wallet::create_wallet;
 use crate::network::NetworkChoice;
 use async_trait::async_trait;
 use autonomi::client::payment::PaymentOption; // Added specific import
-use autonomi::{Client, Scratchpad, ScratchpadAddress, SecretKey, Wallet}; // Removed PaymentOption
-use log::{debug, trace};
+use autonomi::{Bytes, Client, Scratchpad, ScratchpadAddress, SecretKey, Wallet}; // Removed PaymentOption
+use log::{debug, error, info, trace, warn}; // Added error
 use std::sync::Arc;
 
 /// Trait defining the interface for low-level network operations related to scratchpads.
@@ -76,30 +76,52 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
             .scratchpad_get(address)
             .await
             .map_err(NetworkError::AutonomiClient)?;
-        // Assuming Scratchpad has a field like .data to get Vec<u8>
-        // If this fails, we'll need to adjust based on the actual Scratchpad structure.
-        Ok(scratchpad.data) // Changed to field access .data
+        // Decrypt the data using the wallet's secret key
+        let secret_key = self.wallet.secret_key();
+        let decrypted_bytes = scratchpad.decrypt_data(secret_key).map_err(|e| {
+            NetworkError::InternalError(format!("Scratchpad decryption failed: {}", e))
+        })?; // Handle decryption error
+
+        Ok(decrypted_bytes.to_vec()) // Convert Bytes to Vec<u8>
     }
 
     async fn put_raw(&self, address: &ScratchpadAddress, data: &[u8]) -> Result<(), NetworkError> {
-        trace!(
-            "NetworkAdapter::put_raw called for address: {}, data_len: {}",
-            address,
-            data.len()
-        );
-        // Re-attempting Scratchpad construction based on E0308 hint
-        let owner_pk = self.wallet.pk(); // Changed to pk()
-        let nonce = 0; // Assuming 0 is acceptable for nonce
-                       // Assuming signature Scratchpad::new(address, owner_pk, nonce, content: Vec<u8>)
-                       // This might still be wrong if the signature is different (e.g., expects &Bytes)
-        let scratchpad = Scratchpad::new(*address, owner_pk, nonce, data.to_vec());
-        let payment = PaymentOption::PayForUpload;
+        trace!("NetworkAdapter::put_raw called, data_len: {}", data.len());
+        let secret_key = self.wallet.secret_key();
+        let public_key = secret_key.public_key();
+        // let address = ScratchpadAddress::new(public_key);
+        let data_bytes = Bytes::copy_from_slice(data); // Convert to autonomi::Bytes
 
-        self.client
-            .scratchpad_put(scratchpad, payment)
-            .await
-            .map_err(NetworkError::AutonomiClient)
-            .map(|(_cost, _addr)| ()) // Discard the cost and address, return () on success
+        // Use default content type and payment option
+        let content_type = 0u64;
+        let payment_option = PaymentOption::Wallet(self.wallet.clone());
+
+        debug!("Checking existence of scratchpad at address: {}", address);
+
+        match self.client.scratchpad_check_existance(&address).await {
+            Ok(true) => {
+                // Pad exists, update it
+                info!("Scratchpad exists at {}, updating...", address);
+                self.client
+                    .scratchpad_update(secret_key, content_type, &data_bytes)
+                    .await
+                    .map_err(NetworkError::AutonomiClient)
+            }
+            Ok(false) => {
+                // Pad does not exist, create it
+                info!("Scratchpad does not exist at {}, creating...", address);
+                self.client
+                    .scratchpad_create(secret_key, content_type, &data_bytes, payment_option)
+                    .await
+                    .map_err(NetworkError::AutonomiClient)
+                    .map(|(_cost, _addr)| ()) // Discard cost and address
+            }
+            Err(e) => {
+                // Error during check existence
+                error!("Error checking scratchpad existence at {}: {}", address, e);
+                Err(NetworkError::AutonomiClient(e))
+            }
+        }
     }
 
     async fn delete_raw(

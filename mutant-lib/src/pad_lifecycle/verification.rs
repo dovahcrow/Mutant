@@ -28,16 +28,22 @@ pub(crate) async fn verify_pads_concurrently(
     if initial_count == 0 {
         debug!("Verification: No pads to verify.");
         // Emit starting/complete events even if count is 0? Yes, for consistency.
+        invoke_purge_callback(&mut callback, PurgeEvent::Starting { total_count: 0 })
+            .await
+            .map_err(|e| {
+                PadLifecycleError::InternalError(format!("Callback invocation failed: {}", e))
+            })?;
         invoke_purge_callback(
             &mut callback,
-            PurgeEvent::Starting { total_count: 0 },
+            PurgeEvent::Complete {
+                verified_count: 0,
+                failed_count: 0,
+            },
         )
-        .await?;
-         invoke_purge_callback(
-            &mut callback,
-            PurgeEvent::Complete { verified_count: 0, failed_count: 0 },
-        )
-        .await?;
+        .await
+        .map_err(|e| {
+            PadLifecycleError::InternalError(format!("Callback invocation failed: {}", e))
+        })?;
         return Ok((Vec::new(), 0));
     }
 
@@ -53,7 +59,8 @@ pub(crate) async fn verify_pads_concurrently(
             total_count: initial_count,
         },
     )
-    .await?;
+    .await
+    .map_err(|e| PadLifecycleError::InternalError(format!("Callback invocation failed: {}", e)))?;
 
     let mut join_set = JoinSet::new();
 
@@ -68,7 +75,10 @@ pub(crate) async fn verify_pads_concurrently(
             match adapter_clone.get_raw(&address).await {
                 Ok(_) => {
                     // Pad exists on the network
-                    debug!("Successfully verified pad existence at address: {}", address);
+                    debug!(
+                        "Successfully verified pad existence at address: {}",
+                        address
+                    );
                     let mut verified_guard = verified_clone.lock().await;
                     verified_guard.push((address, key_bytes)); // Keep original key bytes
                     Ok(true) // Indicate success
@@ -77,7 +87,9 @@ pub(crate) async fn verify_pads_concurrently(
                     // Check if it's a 'not found' error vs. other network issue
                     // Relying on string matching is fragile, but necessary without specific error variants
                     let error_string = e.to_string();
-                     if error_string.contains("RecordNotFound") || error_string.contains("Could not find record") {
+                    if error_string.contains("RecordNotFound")
+                        || error_string.contains("Could not find record")
+                    {
                         info!(
                             "Pad at address {} not found on network. Discarding.",
                             address
@@ -99,7 +111,11 @@ pub(crate) async fn verify_pads_concurrently(
     let mut processed_count = 0;
     while let Some(res) = join_set.join_next().await {
         processed_count += 1;
-        trace!("Verification: Processed task {}/{}", processed_count, initial_count);
+        trace!(
+            "Verification: Processed task {}/{}",
+            processed_count,
+            initial_count
+        );
         match res {
             Ok(task_result) => {
                 // Task completed successfully (returned Ok or Err from the task itself)
@@ -109,7 +125,7 @@ pub(crate) async fn verify_pads_concurrently(
                         first_error = Some(PadLifecycleError::Network(task_err));
                     }
                 }
-                 // If task_result was Ok(true), it means success, already handled by pushing to verified_pads_arc
+                // If task_result was Ok(true), it means success, already handled by pushing to verified_pads_arc
             }
             Err(join_error) => {
                 // Task panicked or was cancelled
@@ -126,7 +142,12 @@ pub(crate) async fn verify_pads_concurrently(
 
         // Emit PadProcessed event after each task finishes
         if !callback_cancelled {
-            if !invoke_purge_callback(&mut callback, PurgeEvent::PadProcessed).await? {
+            if !invoke_purge_callback(&mut callback, PurgeEvent::PadProcessed)
+                .await
+                .map_err(|e| {
+                    PadLifecycleError::InternalError(format!("Callback invocation failed: {}", e))
+                })?
+            {
                 warn!("Verification cancelled by callback.");
                 callback_cancelled = true;
                 if first_error.is_none() {
@@ -152,7 +173,7 @@ pub(crate) async fn verify_pads_concurrently(
         final_verified_count, final_failed_count
     );
 
-     // Emit Complete event
+    // Emit Complete event
     invoke_purge_callback(
         &mut callback,
         PurgeEvent::Complete {
@@ -160,8 +181,8 @@ pub(crate) async fn verify_pads_concurrently(
             failed_count: final_failed_count,
         },
     )
-    .await?;
-
+    .await
+    .map_err(|e| PadLifecycleError::InternalError(format!("Callback invocation failed: {}", e)))?;
 
     // Return the first error encountered, or Ok with results
     if let Some(e) = first_error {

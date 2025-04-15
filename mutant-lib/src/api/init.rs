@@ -113,21 +113,19 @@ pub(crate) async fn initialize_layers(
         },
     )
     .await?;
-    // Cast to trait object before cloning
-    let network_adapter_trait: Arc<dyn NetworkAdapter> = network_adapter;
-    let storage_manager = Arc::new(DefaultStorageManager::new(Arc::clone(
-        &network_adapter_trait,
-    )));
 
-    // Cast to trait object before cloning
-    let storage_manager_trait: Arc<dyn StorageManager> = Arc::clone(&storage_manager);
-    let index_manager = Arc::new(DefaultIndexManager::new(Arc::clone(&storage_manager_trait)));
+    // Clone the Arc<ConcreteType> and then explicitly cast to Arc<dyn Trait>
+    let storage_manager = Arc::new(DefaultStorageManager::new(
+        Arc::clone(&network_adapter) as Arc<dyn NetworkAdapter>
+    ));
 
-    // Cast to trait objects before cloning
-    let index_manager_trait: Arc<dyn IndexManager> = Arc::clone(&index_manager);
+    let index_manager = Arc::new(DefaultIndexManager::new(
+        Arc::clone(&storage_manager) as Arc<dyn StorageManager>
+    ));
+
     let pad_lifecycle_manager = Arc::new(DefaultPadLifecycleManager::new(
-        Arc::clone(&index_manager_trait),
-        Arc::clone(&network_adapter_trait), // Reuse casted network adapter
+        Arc::clone(&index_manager) as Arc<dyn IndexManager>,
+        Arc::clone(&network_adapter) as Arc<dyn NetworkAdapter>,
     ));
     info!("StorageManager, IndexManager, PadLifecycleManager initialized.");
 
@@ -221,13 +219,10 @@ pub(crate) async fn initialize_layers(
         },
     )
     .await?;
-    // Cast to trait objects before cloning
-    let pad_lifecycle_manager_trait: Arc<dyn PadLifecycleManager> =
-        Arc::clone(&pad_lifecycle_manager);
     let data_manager = Arc::new(DefaultDataManager::new(
-        Arc::clone(&index_manager_trait), // Reuse casted index manager
-        Arc::clone(&pad_lifecycle_manager_trait),
-        Arc::clone(&storage_manager_trait), // Reuse casted storage manager
+        Arc::clone(&index_manager) as Arc<dyn IndexManager>,
+        Arc::clone(&pad_lifecycle_manager) as Arc<dyn PadLifecycleManager>,
+        Arc::clone(&storage_manager) as Arc<dyn StorageManager>,
     ));
     info!("DataManager initialized.");
 

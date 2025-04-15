@@ -46,7 +46,8 @@ pub(crate) async fn store_op(
             total_chunks: num_chunks,
         },
     )
-    .await?
+    .await
+    .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
     {
         return Err(DataError::OperationCancelled);
     }
@@ -69,7 +70,10 @@ pub(crate) async fn store_op(
         // or these details need to be passed down. Let's assume IndexManager handles it for now.
         // deps.index_manager.save(???, ???).await?; // How to get address/key?
         // TODO: Revisit index saving strategy. For now, skip explicit save here. API layer will save.
-        if !invoke_put_callback(&mut callback, PutEvent::Complete).await? {
+        if !invoke_put_callback(&mut callback, PutEvent::Complete)
+            .await
+            .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
+        {
             return Err(DataError::OperationCancelled);
         }
         return Ok(());
@@ -144,7 +148,10 @@ pub(crate) async fn store_op(
                     _pad_address
                 );
                 if !invoke_put_callback(&mut callback, PutEvent::ChunkWritten { chunk_index })
-                    .await?
+                    .await
+                    .map_err(|e| {
+                        DataError::InternalError(format!("Callback invocation failed: {}", e))
+                    })?
                 {
                     // TODO: Handle cancellation during concurrent writes (abort others, release pads?)
                     error!("Store operation cancelled by callback during chunk writing.");
@@ -211,7 +218,10 @@ pub(crate) async fn store_op(
     // }
     // deps.index_manager.save(???, ???).await?; // How to get address/key?
 
-    if !invoke_put_callback(&mut callback, PutEvent::Complete).await? {
+    if !invoke_put_callback(&mut callback, PutEvent::Complete)
+        .await
+        .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
+    {
         return Err(DataError::OperationCancelled);
     }
 
@@ -253,7 +263,8 @@ pub(crate) async fn fetch_op(
             total_chunks: num_chunks,
         },
     )
-    .await?
+    .await
+    .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
     {
         return Err(DataError::OperationCancelled);
     }
@@ -268,7 +279,10 @@ pub(crate) async fn fetch_op(
             );
             // Return empty vec anyway? Or error? Let's return empty vec.
         }
-        if !invoke_get_callback(&mut callback, GetEvent::Complete).await? {
+        if !invoke_get_callback(&mut callback, GetEvent::Complete)
+            .await
+            .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
+        {
             return Err(DataError::OperationCancelled);
         }
         return Ok(Vec::new());
@@ -307,7 +321,10 @@ pub(crate) async fn fetch_op(
                     fetched_chunks[chunk_index] = Some(data);
                     fetched_count += 1;
                     if !invoke_get_callback(&mut callback, GetEvent::ChunkFetched { chunk_index })
-                        .await?
+                        .await
+                        .map_err(|e| {
+                            DataError::InternalError(format!("Callback invocation failed: {}", e))
+                        })?
                     {
                         error!("Fetch operation cancelled by callback during chunk fetching.");
                         return Err(DataError::OperationCancelled);
@@ -348,13 +365,19 @@ pub(crate) async fn fetch_op(
     debug!("All {} chunks fetched.", num_chunks);
 
     // 3. Reassemble data
-    if !invoke_get_callback(&mut callback, GetEvent::Reassembling).await? {
+    if !invoke_get_callback(&mut callback, GetEvent::Reassembling)
+        .await
+        .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
+    {
         return Err(DataError::OperationCancelled);
     }
     let reassembled_data = reassemble_data(fetched_chunks, key_info.data_size)?;
     debug!("Data reassembled successfully.");
 
-    if !invoke_get_callback(&mut callback, GetEvent::Complete).await? {
+    if !invoke_get_callback(&mut callback, GetEvent::Complete)
+        .await
+        .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
+    {
         return Err(DataError::OperationCancelled);
     }
 
@@ -453,7 +476,8 @@ pub(crate) async fn update_op(
             total_chunks: new_num_chunks,
         },
     )
-    .await?
+    .await
+    .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
     {
         return Err(DataError::OperationCancelled);
     }
@@ -560,7 +584,10 @@ pub(crate) async fn update_op(
                     _pad_address
                 );
                 if !invoke_put_callback(&mut callback, PutEvent::ChunkWritten { chunk_index })
-                    .await?
+                    .await
+                    .map_err(|e| {
+                        DataError::InternalError(format!("Callback invocation failed: {}", e))
+                    })?
                 {
                     error!("Update operation cancelled by callback during chunk writing.");
                     // TODO: Release acquired pads and potentially revert index changes? Complex.
@@ -618,7 +645,10 @@ pub(crate) async fn update_op(
     // }
     // deps.index_manager.save(???, ???).await?;
 
-    if !invoke_put_callback(&mut callback, PutEvent::Complete).await? {
+    if !invoke_put_callback(&mut callback, PutEvent::Complete)
+        .await
+        .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
+    {
         return Err(DataError::OperationCancelled);
     }
 

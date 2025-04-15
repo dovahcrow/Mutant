@@ -12,7 +12,7 @@ pub enum NetworkError {
     ClientInitError(String),
 
     #[error("Autonomi client operation failed: {0}")]
-    AutonomiClient(#[from] autonomi::client::Error), // Try client::Error again
+    AutonomiClient(#[from] autonomi::client::Error), // Changed from client::ClientError or similar
 
     #[error("Invalid configuration: {0}")]
     ConfigError(String),

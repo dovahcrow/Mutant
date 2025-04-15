@@ -1,6 +1,6 @@
 use crate::network::error::NetworkError;
 use crate::network::NetworkChoice;
-use autonomi::{Network, Wallet};
+use autonomi::{Network, SecretKey, Wallet};
 use hex;
 use log::info;
 

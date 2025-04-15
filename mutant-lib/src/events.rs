@@ -28,7 +28,9 @@ pub type GetCallback = Box<
 /// The callback receives an InitProgressEvent and should return true to continue, false to cancel.
 /// The boolean return for PromptCreateRemoteIndex indicates user choice (true=create, false=don't create).
 pub type InitCallback = Box<
-    dyn Fn(InitProgressEvent) -> Pin<Box<dyn Future<Output = Result<Option<bool>, Error>> + Send + Sync>>
+    dyn Fn(
+            InitProgressEvent,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<bool>, Error>> + Send + Sync>>
         + Send
         + Sync,
 >;
@@ -40,7 +42,6 @@ pub type PurgeCallback = Box<
         + Send
         + Sync,
 >;
-
 
 // --- Event Enums ---
 
@@ -86,7 +87,6 @@ pub enum InitProgressEvent {
     Complete { message: String },
 }
 
-
 /// Events reported during pad purging (verification).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PurgeEvent {
@@ -100,7 +100,6 @@ pub enum PurgeEvent {
         failed_count: usize,
     },
 }
-
 
 // --- Helper Functions for Invoking Callbacks ---
 
@@ -128,7 +127,7 @@ pub(crate) async fn invoke_get_callback(
     callback: &mut Option<GetCallback>,
     event: GetEvent,
 ) -> Result<bool, Error> {
-     if let Some(cb) = callback {
+    if let Some(cb) = callback {
         match cb(event).await {
             Ok(continue_op) => Ok(continue_op),
             Err(e) => Err(e),
@@ -144,7 +143,7 @@ pub(crate) async fn invoke_init_callback(
     callback: &mut Option<InitCallback>,
     event: InitProgressEvent,
 ) -> Result<Option<bool>, Error> {
-     if let Some(cb) = callback {
+    if let Some(cb) = callback {
         match cb(event).await {
             Ok(response) => Ok(response), // Propagate user response or None
             Err(e) => Err(e),
@@ -152,7 +151,7 @@ pub(crate) async fn invoke_init_callback(
     } else {
         // If no callback, default behavior for PromptCreateRemoteIndex is 'false' (don't create)
         if matches!(event, InitProgressEvent::PromptCreateRemoteIndex) {
-             Ok(Some(false))
+            Ok(Some(false))
         } else {
             Ok(None) // No response needed for other events
         }
@@ -164,7 +163,7 @@ pub(crate) async fn invoke_purge_callback(
     callback: &mut Option<PurgeCallback>,
     event: PurgeEvent,
 ) -> Result<bool, Error> {
-     if let Some(cb) = callback {
+    if let Some(cb) = callback {
         match cb(event).await {
             Ok(continue_op) => Ok(continue_op),
             Err(e) => Err(e),
