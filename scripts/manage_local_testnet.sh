@@ -185,15 +185,21 @@ start_antctl() {
 stop_antctl() {
     echo "--- Stopping Antctl Local Network ---"
     echo "Using XDG_DATA_HOME: $XDG_DATA_HOME"
+    local antctl_binary="$AUTONOMI_DIR/target/debug/antctl"
+
+    # Check if antctl binary exists first
+    if [ ! -x "$antctl_binary" ]; then
+        echo "antctl binary not found at '$antctl_binary', cannot run kill command. Assuming network is stopped."
+        # If the binary doesn't exist, we can't stop anything, but the network is effectively stopped.
+        return 0
+    fi
+
     # Run kill command from autonomi directory. It should respect XDG_DATA_HOME.
-    if (cd "$AUTONOMI_DIR" && ./target/debug/antctl local kill); then
+    if (cd "$AUTONOMI_DIR" && "$antctl_binary" local kill); then
         echo "antctl local network stopped successfully."
     else
-        # Check if it might have failed because antctl wasn't built
-        if [ ! -x "$AUTONOMI_DIR/target/debug/antctl" ]; then
-             echo "antctl binary not found, cannot stop network."
-             return 1
-        fi
+        # The kill command failed, but the binary exists.
+        # This usually means the network was already stopped.
         echo "antctl local kill command failed (exit code $?). Network might already be stopped."
         # Don't treat failure to stop as a script error if it might be stopped already
         return 0
