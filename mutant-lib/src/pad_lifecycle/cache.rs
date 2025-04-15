@@ -3,7 +3,7 @@ use crate::index::structure::MasterIndex;
 use crate::network::NetworkChoice;
 use crate::pad_lifecycle::error::PadLifecycleError;
 use log::{debug, error, info, trace};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

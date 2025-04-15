@@ -76,6 +76,13 @@ impl StyledProgressBar {
         self.pb.set_message(msg);
     }
 
+    /// Finishes the progress bar with a message.
+    pub fn finish_with_message(&self, msg: impl Into<std::borrow::Cow<'static, str>>) {
+        if !self.pb.is_finished() {
+            self.pb.finish_with_message(msg);
+        }
+    }
+
     /// Finishes the progress bar and clears it.
     pub fn finish_and_clear(&self) {
         if !self.pb.is_finished() {

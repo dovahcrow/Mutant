@@ -1,9 +1,8 @@
 use crate::index::error::IndexError;
-use crate::index::structure::{KeyInfo, MasterIndex, PadInfo, DEFAULT_SCRATCHPAD_SIZE};
+use crate::index::structure::{KeyInfo, MasterIndex, DEFAULT_SCRATCHPAD_SIZE};
 use crate::types::{KeyDetails, StorageStats};
 use autonomi::ScratchpadAddress;
 use log::{debug, trace, warn};
-use std::collections::HashMap;
 
 // --- Internal Query & Modification Functions ---
 // These functions operate directly on the MasterIndex state and are

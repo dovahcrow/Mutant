@@ -4,8 +4,8 @@ use crate::network::wallet::create_wallet;
 use crate::network::NetworkChoice;
 use async_trait::async_trait;
 use autonomi::client::payment::PaymentOption; // Added specific import
-use autonomi::{Bytes, Client, Scratchpad, ScratchpadAddress, SecretKey, Wallet}; // Removed PaymentOption
-use log::{debug, error, info, trace, warn}; // Added error
+use autonomi::{Bytes, Client, ScratchpadAddress, SecretKey, Wallet}; // Removed PaymentOption
+use log::{debug, error, info, trace}; // Added error
 use std::sync::Arc;
 
 /// Trait defining the interface for low-level network operations related to scratchpads.

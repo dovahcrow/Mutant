@@ -9,7 +9,7 @@ use crate::pad_lifecycle::verification::verify_pads_concurrently;
 use async_trait::async_trait;
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::error;
-use log::{debug, info, trace, warn};
+use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 

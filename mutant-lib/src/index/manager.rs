@@ -1,7 +1,7 @@
 use crate::index::error::IndexError;
 use crate::index::persistence::{load_index, save_index};
 use crate::index::query;
-use crate::index::structure::{KeyInfo, MasterIndex, PadInfo, DEFAULT_SCRATCHPAD_SIZE};
+use crate::index::structure::{KeyInfo, MasterIndex, DEFAULT_SCRATCHPAD_SIZE};
 use crate::storage::StorageManager;
 use crate::types::{KeyDetails, StorageStats};
 use async_trait::async_trait;

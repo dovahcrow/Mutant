@@ -1,5 +1,4 @@
 use crate::error::Error; // Assuming top-level error exists or will exist
-use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
 

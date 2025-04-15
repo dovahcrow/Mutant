@@ -2,7 +2,7 @@ use crate::index::IndexManager;
 use crate::pad_lifecycle::error::PadLifecycleError;
 use autonomi::{ScratchpadAddress, SecretKey};
 use hex;
-use log::{debug, info, warn};
+use log::{debug, info};
 
 /// Imports an external free pad using its private key hex string.
 ///

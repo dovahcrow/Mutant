@@ -6,8 +6,8 @@ use log::{debug, error, info, trace, warn};
 use mutant_lib::{
     Error as LibError,
     MutAnt,
-    autonomi::ScratchpadAddress,      // Use re-exported autonomi crate
-    index::{IndexError, MasterIndex}, // Import from index module
+    autonomi::ScratchpadAddress, // Use re-exported autonomi crate
+    index::IndexError,           // Import from index module
 };
 // Removed direct import of autonomi::ScratchpadAddress
 use std::collections::{HashMap, HashSet};

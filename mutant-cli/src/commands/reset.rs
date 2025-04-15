@@ -1,27 +1,34 @@
-use log::{debug, error, info};
-// Use new top-level re-exports
-use mutant_lib::{Error as LibError, MutAnt};
+use log::{error, info};
+// Use the new top-level re-exports
+use dialoguer::Confirm;
+use mutant_lib::MutAnt;
 use std::process::ExitCode;
 
 /// Executes the core logic for resetting the master index.
 /// Confirmation should be handled by the caller.
-pub async fn handle_reset(mutant: MutAnt) -> Result<ExitCode, LibError> {
-    // Update return type
-    debug!("CLI: Executing core Reset logic...");
-    match mutant.reset_master_index().await {
+pub async fn handle_reset(mutant: MutAnt) -> ExitCode {
+    if !Confirm::new()
+        .with_prompt(
+            "WARNING: This will reset the index, orphaning all existing data. Are you sure?",
+        )
+        .interact()
+        .unwrap_or(false)
+    {
+        println!("Reset cancelled.");
+        return ExitCode::SUCCESS; // Or a specific code for cancellation?
+    }
+
+    info!("Proceeding with index reset...");
+    match mutant.reset().await {
+        // Call the public reset method
         Ok(_) => {
-            info!("Master index reset successfully via MutAnt library call.");
-            println!("Master index has been reset.");
-            Ok(ExitCode::SUCCESS)
+            println!("Index reset successfully.");
+            ExitCode::SUCCESS
         }
         Err(e) => {
-            error!(
-                "Failed to reset master index via MutAnt library call: {}",
-                e
-            );
-            eprintln!("Error resetting master index: {}", e);
-            // Propagate the library error
-            Err(e) // Return the specific LibError
+            error!("Error during index reset: {}", e);
+            eprintln!("Error resetting index: {}", e);
+            ExitCode::FAILURE
         }
     }
 }

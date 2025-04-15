@@ -60,24 +60,25 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
             }
         }
     } else {
-        info!("Fetching key list...");
-        match mutant.list_keys().await {
-            Ok(keys_with_status) => {
-                if keys_with_status.is_empty() {
+        info!("Fetching key details (for status markers)...");
+        // Fetch details even for short list to show status markers (* or %)
+        match mutant.list_key_details().await {
+            Ok(details) => {
+                if details.is_empty() {
                     println!("No keys stored.");
                 } else {
-                    let mut keys_with_status = keys_with_status;
+                    let mut details = details;
                     // Sort by key
-                    keys_with_status.sort_by(|(key_a, _, _), (key_b, _, _)| key_a.cmp(key_b));
-                    for (key, is_finished, percentage_opt) in keys_with_status {
-                        if is_finished {
-                            println!("{}", key);
+                    details.sort_by(|a, b| a.key.cmp(&b.key));
+                    for detail in details {
+                        if detail.is_finished {
+                            println!("{}", detail.key);
                         } else {
                             // Display percentage if available
-                            if let Some(percentage) = percentage_opt {
-                                println!("*{} ({:.1}%)", key, percentage);
+                            if let Some(percentage) = detail.completion_percentage {
+                                println!("*{} ({:.1}%)", detail.key, percentage);
                             } else {
-                                println!("*{}", key); // Fallback if no percentage
+                                println!("*{}", detail.key); // Fallback if no percentage
                             }
                         }
                     }
@@ -85,7 +86,7 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("Error fetching key list: {}", e);
+                eprintln!("Error fetching key list/details: {}", e);
                 ExitCode::FAILURE
             }
         }

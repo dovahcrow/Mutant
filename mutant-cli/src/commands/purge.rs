@@ -1,12 +1,11 @@
 use crate::callbacks::progress::get_default_steps_style;
 use clap::Args;
-use futures::future::FutureExt;
 use indicatif::{MultiProgress, ProgressBar};
-use log::info;
+use log::{error, info};
 // Use new top-level re-exports
 use mutant_lib::{Error as LibError, MutAnt, PurgeCallback, PurgeEvent};
 use std::error::Error as StdError; // Alias std::error::Error to avoid name clash
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex as StdMutex}; // Use StdMutex for state that doesn't cross .await
 
 #[derive(Args, Debug)]
 pub struct PurgeArgs {}
@@ -14,7 +13,8 @@ pub struct PurgeArgs {}
 // Shared state for the callback
 #[derive(Clone, Default)]
 struct PurgeState {
-    pb: Option<Arc<ProgressBar>>,
+    // Wrap ProgressBar in StdMutex since indicatif::ProgressBar is !Sync
+    pb: Option<Arc<StdMutex<ProgressBar>>>,
 }
 
 pub async fn run(
@@ -27,65 +27,103 @@ pub async fn run(
     info!("Executing purge command...");
 
     // Shared state between callback instances
-    let state = Arc::new(Mutex::new(PurgeState::default()));
+    let state = Arc::new(StdMutex::new(PurgeState::default()));
 
     // Create the callback closure, capturing quiet flag
     let mp_clone = mp.clone(); // Clone MultiProgress for the callback
     let state_clone = state.clone();
     let callback: PurgeCallback = Box::new(move |event: PurgeEvent| {
-        let state = state_clone.clone();
-        let mp = mp_clone.clone();
-        let quiet_captured = quiet; // Capture quiet flag
-        async move {
-            let mut state_guard = state.lock().unwrap(); // Use std::sync::Mutex, so unwrap is safe
+        let state_arc = state_clone.clone();
+        let mp_clone = mp_clone.clone();
+        let quiet_captured = quiet;
+
+        // Return a Pinned, Boxed Future that is Send + Sync
+        Box::pin(async move {
+            // Lock the StdMutex - this does not require .await
+            let mut state_guard = match state_arc.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    // Handle the poisoned mutex error, e.g., log and return an error
+                    error!("Purge callback state mutex poisoned: {}", poisoned);
+                    // Decide how to handle this - maybe return an internal error?
+                    return Err(LibError::Internal(
+                        "Purge callback state mutex poisoned".to_string(),
+                    ));
+                }
+            };
+
             match event {
                 PurgeEvent::Starting { total_count } => {
-                    // Only create progress bar if not quiet
                     if !quiet_captured && total_count > 0 {
-                        let pb = Arc::new(mp.add(ProgressBar::new(total_count as u64)));
-                        pb.set_style(get_default_steps_style());
-                        pb.set_message("Verifying pads...");
+                        let pb = Arc::new(StdMutex::new(
+                            mp_clone.add(ProgressBar::new(total_count as u64)),
+                        ));
+                        {
+                            let pb_guard = pb.lock().unwrap(); // Lock the inner ProgressBar
+                            pb_guard.set_style(get_default_steps_style());
+                            pb_guard.set_message("Verifying pads...");
+                        } // Inner lock guard dropped
                         state_guard.pb = Some(pb);
-                    } else if total_count == 0 {
-                        // Optionally print message if quiet and 0 pads
-                        if quiet_captured {
-                            println!("No pending pads found to purge.");
-                        }
+                    } else if total_count == 0 && quiet_captured {
+                        println!("No pending pads found to purge.");
                     }
+                    Ok::<bool, LibError>(true)
                 }
                 PurgeEvent::PadProcessed => {
-                    // Only increment if pb exists
-                    if let Some(pb) = &state_guard.pb {
-                        pb.inc(1);
+                    if let Some(pb_arc) = &state_guard.pb {
+                        // Lock inner PB to increment
+                        match pb_arc.lock() {
+                            Ok(pb) => pb.inc(1),
+                            Err(poisoned) => {
+                                error!(
+                                    "Inner progress bar mutex poisoned in PadProcessed: {}",
+                                    poisoned
+                                );
+                                // Ignore or return error?
+                            }
+                        }
                     }
+                    Ok::<bool, LibError>(true)
                 }
                 PurgeEvent::Complete {
                     verified_count,
                     failed_count,
                 } => {
-                    // Only finish/print if pb exists
-                    if let Some(pb) = state_guard.pb.take() {
-                        pb.finish_with_message(format!(
-                            "Purge complete. Verified: {}, Discarded: {}",
-                            verified_count, failed_count
-                        ));
+                    let maybe_pb_arc = state_guard.pb.take(); // Take ownership from state
+                    // Drop the state guard *before* potentially finishing the PB
+                    drop(state_guard);
+
+                    if let Some(pb_arc) = maybe_pb_arc {
+                        // Lock inner PB
+                        match pb_arc.lock() {
+                            Ok(pb) => {
+                                pb.finish_with_message(format!(
+                                    "Purge complete. Verified: {}, Discarded: {}",
+                                    verified_count, failed_count
+                                ));
+                            }
+                            Err(poisoned) => {
+                                error!(
+                                    "Inner progress bar mutex poisoned in Complete: {}",
+                                    poisoned
+                                );
+                            }
+                        }
                     } else if !quiet_captured {
-                        // If not quiet and pb was None (meaning 0 pads initially), print the message.
                         println!("No pending pads found to purge.");
                     }
-                    // Always print summary if not quiet, or maybe always? Decide based on desired quiet behavior.
-                    // For now, let's assume quiet suppresses this too.
+
                     if !quiet_captured {
                         info!(
                             "Purge summary: Verified: {}, Discarded: {}",
                             verified_count, failed_count
                         );
                     }
+                    Ok::<bool, LibError>(true)
                 }
             }
-            Ok(true) // Indicate to continue processing
-        }
-        .boxed()
+            // state_guard is implicitly dropped if not already
+        })
     });
 
     // Call the library function with the callback

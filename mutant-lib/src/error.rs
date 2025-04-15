@@ -1,4 +1,4 @@
-use crate::api::mutant; // Might need if API layer has specific errors later
+ // Might need if API layer has specific errors later
 use crate::data::DataError;
 use crate::index::IndexError;
 use crate::network::NetworkError;

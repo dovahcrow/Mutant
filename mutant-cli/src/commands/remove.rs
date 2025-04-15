@@ -1,6 +1,6 @@
 use log::debug;
 // Use new top-level re-exports
-use mutant_lib::{DataError, Error as LibError, MutAnt}; // Import DataError for matching
+use mutant_lib::MutAnt;
 use std::process::ExitCode;
 
 pub async fn handle_rm(mutant: MutAnt, key: String) -> ExitCode {

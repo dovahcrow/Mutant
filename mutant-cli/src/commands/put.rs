@@ -3,7 +3,7 @@ use crate::callbacks::put::create_put_callback;
 use indicatif::MultiProgress;
 use log::{debug, warn};
 // Use new top-level re-exports
-use mutant_lib::{DataError, Error as LibError, MutAnt}; // Import DataError for matching
+use mutant_lib::{Error as LibError, MutAnt, data::DataError}; // Import DataError for matching
 use std::io::{self, Read};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -45,7 +45,7 @@ pub async fn handle_put(
     };
 
     // Conditionally create callbacks based on quiet flag
-    let (res_pb_opt, upload_pb_opt, confirm_pb_opt, confirm_counter_arc, callback) =
+    let (res_pb_opt, upload_pb_opt, confirm_pb_opt, _confirm_counter_arc, callback) =
         create_put_callback(multi_progress, quiet);
 
     // Pass data as slice &[u8]

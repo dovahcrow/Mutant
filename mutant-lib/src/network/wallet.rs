@@ -1,7 +1,6 @@
 use crate::network::error::NetworkError;
 use crate::network::NetworkChoice;
 use autonomi::{Network, SecretKey, Wallet};
-use hex;
 use log::info;
 
 // Creates an Autonomi wallet from a private key hex string.

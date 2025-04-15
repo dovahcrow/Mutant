@@ -3,7 +3,7 @@ use futures::future::FutureExt;
 use indicatif::MultiProgress;
 use log::{debug, warn};
 // Use the new top-level re-exports
-use mutant_lib::{Error as LibError, PutCallback, PutEvent};
+use mutant_lib::{PutCallback, PutEvent, error::Error as LibError};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -40,7 +40,7 @@ pub fn create_put_callback(
     // Return early with no-op callback and dummy Arcs if quiet
     if quiet {
         let noop_callback: PutCallback =
-            Box::new(|_event: PutEvent| async move { Ok(true) }.boxed());
+            Box::new(|_event: PutEvent| async move { Ok::<bool, LibError>(true) }.boxed());
         return (
             res_pb_opt,
             upload_pb_opt,
@@ -65,198 +65,89 @@ pub fn create_put_callback(
 
     let callback: PutCallback = Box::new(move |event: PutEvent| {
         let ctx = ctx_clone.clone();
-        let confirm_counter = confirm_counter_clone.clone();
+        // Note: confirm_counter_arc/clone are no longer used here with the new events
 
-        async move {
+        // Return a Pinned, Boxed Future that is Send + Sync
+        Box::pin(async move {
+            // Lock mutexes, perform operations, then drop guards before awaits or returns
             match event {
-                PutEvent::ReservingPads { count } => {
-                    debug!("Received ReservingPads: count={}", count);
-                    let mut res_pb_opt_guard = ctx.res_pb_opt.lock().await;
-                    let pb = res_pb_opt_guard.get_or_insert_with(|| {
-                        let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
-                        pb.set_message("Initializing pads...".to_string());
-                        pb
-                    });
-                    pb.set_length(count);
-                    pb.set_position(0);
-                    Ok(true)
-                },
-                PutEvent::StartingUpload { total_bytes, total_pads } => {
-                    *ctx.total_bytes_for_upload.lock().await = total_bytes;
+                PutEvent::Starting { total_chunks } => {
+                    debug!("Put Callback: Starting - Total chunks: {}", total_chunks);
 
-                    // Initialize Upload Bar
+                    // Initialize Upload Bar (represents chunk writes)
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
                     let upload_pb = upload_pb_guard.get_or_insert_with(|| {
-                        StyledProgressBar::new(&ctx.multi_progress)
+                        let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
+                        pb.set_message("Writing chunks...".to_string());
+                        pb
                     });
-                    upload_pb.set_style(super::progress::get_default_bytes_style());
-                    upload_pb.set_length(total_bytes);
+                    upload_pb.set_length(total_chunks as u64);
                     upload_pb.set_position(0);
-                    upload_pb.set_message("Uploading...".to_string());
+                    drop(upload_pb_guard); // Drop guard
 
-                    // Initialize Confirmation Bar using total_pads from the event
-                    *confirm_counter.lock().await = 0;
+                    // Clear other potential bars (no longer used)
+                    let mut res_pb_guard = ctx.res_pb_opt.lock().await;
+                    if let Some(pb) = res_pb_guard.take() {
+                        pb.finish_and_clear();
+                    }
+                    drop(res_pb_guard);
                     let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
-                    let confirm_pb = confirm_pb_guard.get_or_insert_with(|| {
-                        StyledProgressBar::new_for_steps(&ctx.multi_progress)
-                    });
-                    confirm_pb.set_message("Confirming...".to_string());
-                    confirm_pb.set_length(total_pads);
-                    confirm_pb.set_position(0);
+                    if let Some(pb) = confirm_pb_guard.take() {
+                        pb.finish_and_clear();
+                    }
+                    drop(confirm_pb_guard);
 
-                    Ok(true)
-                },
-                PutEvent::UploadProgress { bytes_written, total_bytes: _ } => {
-                    debug!(
-                        "Callback: Received UploadProgress - bytes_written: {}",
-                        bytes_written
-                    );
-                    if let Some(upload_pb) = ctx.upload_pb_opt.lock().await.as_mut() {
+                    Ok::<bool, LibError>(true)
+                }
+                PutEvent::ChunkWritten { chunk_index } => {
+                    let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
+                    if let Some(upload_pb) = upload_pb_guard.as_mut() {
                         if !upload_pb.is_finished() {
-                            let old_pos = upload_pb.position();
-                            // Only update if the new aggregate is not less than the current position
-                            if bytes_written >= old_pos {
-                                upload_pb.set_position(bytes_written);
-                                let new_pos = upload_pb.position();
-                                debug!(
-                                    "Callback: UploadProgress updated - Old Pos: {}, New Pos: {}, Event Bytes: {}",
-                                    old_pos,
-                                    new_pos,
-                                    bytes_written
-                                );
-                            } else {
-                                debug!(
-                                    "Callback: UploadProgress skipped update - Old Pos: {}, Event Bytes: {} (ignored)",
-                                    old_pos,
-                                    bytes_written
-                                );
-                            }
-                        } else {
-                            debug!("Callback: Upload bar is already finished.");
+                            upload_pb.set_position((chunk_index + 1) as u64);
                         }
                     } else {
-                        warn!("UploadProgress event received but upload progress bar does not exist.");
+                        warn!("Put Callback: ChunkWritten event but upload bar doesn't exist.");
                     }
-                    Ok(true)
-                },
-                PutEvent::StoreComplete => {
-                    if let Some(res_pb) = ctx.res_pb_opt.lock().await.take() {
-                        if !res_pb.is_finished() {
-                            res_pb.finish_and_clear();
-                            debug!("StoreComplete event: Finished and cleared reservation bar.");
-                        } else {
-                             res_pb.finish_and_clear();
-                            debug!("StoreComplete event: Cleared finished reservation bar.");
-                        }
-                    }
-                    if let Some(upload_pb) = ctx.upload_pb_opt.lock().await.take() {
+                    drop(upload_pb_guard); // Drop guard
+                    Ok::<bool, LibError>(true)
+                }
+                PutEvent::SavingIndex => {
+                    let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
+                    if let Some(upload_pb) = upload_pb_guard.as_mut() {
                         if !upload_pb.is_finished() {
-                            upload_pb.finish_and_clear();
-                            debug!("StoreComplete event: Force-finished and cleared upload bar.");
-                        } else {
-                            upload_pb.finish_and_clear();
-                            debug!("StoreComplete event: Cleared finished upload bar.");
+                            upload_pb.set_message("Saving index...".to_string());
                         }
+                    } else {
+                        warn!("Put Callback: SavingIndex event but upload bar doesn't exist.");
                     }
-                    if let Some(confirm_pb) = ctx.confirm_pb_opt.lock().await.take() {
-                        if !confirm_pb.is_finished() {
-                            confirm_pb.finish_and_clear();
-                            debug!("StoreComplete event: Finished and cleared confirmation bar.");
-                        } else {
-                            confirm_pb.finish_and_clear();
-                            debug!("StoreComplete event: Cleared finished confirmation bar.");
-                        }
+                    drop(upload_pb_guard); // Drop guard
+                    Ok::<bool, LibError>(true)
+                }
+                PutEvent::Complete => {
+                    debug!("Put Callback: Complete event received, clearing bars");
+                    let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
+                    if let Some(pb) = upload_pb_guard.take() {
+                        pb.finish_and_clear();
                     }
-                    Ok(true)
-                },
-                PutEvent::PadConfirmed { current, total } => {
-                    *confirm_counter.lock().await = current;
-                    debug!(
-                        "Callback: Received PadConfirmed - Current: {}, Total: {}",
-                        current, total
-                    );
-
-                    // Update Confirmation Bar
+                    drop(upload_pb_guard);
+                    // Clear others just in case
+                    let mut res_pb_guard = ctx.res_pb_opt.lock().await;
+                    if let Some(pb) = res_pb_guard.take() {
+                        pb.finish_and_clear();
+                    }
+                    drop(res_pb_guard);
                     let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
-                    // Bar should be initialized by StartingUpload
-                    if let Some(confirm_pb) = confirm_pb_guard.as_mut() {
-                        if !confirm_pb.is_finished() {
-                            // Check and set length if it's currently 0 (e.g., no reservations)
-                            let mut bar_total = confirm_pb.length().unwrap_or(0);
-                            if bar_total == 0 && total > 0 {
-                                debug!("PadConfirmed: Confirm bar length is 0, setting from event total ({}).", total);
-                                confirm_pb.set_length(total);
-                                bar_total = total; // Update local variable
-                            }
-
-                            // Use the 'current' value directly from the event
-                            let new_pos = current; // Use event value
-
-                            // Set position based on event's 'current', capped at bar_total
-                            if bar_total > 0 {
-                                let display_pos = std::cmp::min(new_pos, bar_total);
-                                confirm_pb.set_position(display_pos);
-
-                                if display_pos >= bar_total {
-                                    debug!("Confirmation progress complete ({} >= {}), setting final message.", display_pos, bar_total);
-                                    confirm_pb.set_message("Confirmation complete.".to_string());
-                                    // Don't finish/clear yet
-                                }
-                            } else {
-                                // If bar_total is still 0, keep position at 0
-                                confirm_pb.set_position(0);
-                                if new_pos > 0 {
-                                    // Use current (from event) in warning message
-                                    warn!("PadConfirmed received but confirmation bar total is 0. Event Current: {}", current);
-                                }
-                            }
-                            debug!(
-                                "Callback: PadConfirmed updated - Event Current: {}, Bar Total: {}, New Position: {}",
-                                current, // Log event's current value
-                                bar_total,
-                                confirm_pb.position()
-                            );
-                        } else {
-                            debug!("Callback: Confirmation bar is already finished.");
-                        }
-                    } else {
-                        warn!("PadConfirmed event received but confirmation progress bar does not exist.");
+                    if let Some(pb) = confirm_pb_guard.take() {
+                        pb.finish_and_clear();
                     }
-                    Ok(true)
-                },
-                PutEvent::PadCreateSuccess { current, total } => {
-                    debug!(
-                        "Callback: Received PadCreateSuccess - Current: {}, Total: {}",
-                        current, total
-                    );
-                    if let Some(res_pb) = ctx.res_pb_opt.lock().await.as_mut() {
-                        if !res_pb.is_finished() {
-                            if res_pb.length() != Some(total) {
-                                warn!(
-                                    "PadCreateSuccess: Res bar length ({:?}) differs from event total ({}). Resetting length.",
-                                    res_pb.length(), total
-                                );
-                                res_pb.set_length(total);
-                            }
-                            if current <= res_pb.length().unwrap_or(0) {
-                                res_pb.set_position(current);
-                            } else {
-                                warn!("PadCreateSuccess: Tried to set res bar position {} beyond length {:?}", current, res_pb.length());
-                            }
-                            if total > 0 && current >= total {
-                                res_pb.set_message("Reservation complete.".to_string());
-                            }
-                        }
-                    } else {
-                        warn!("PadCreateSuccess event received but reservation progress bar does not exist.");
-                    }
-                    Ok(true)
-                },
+                    drop(confirm_pb_guard);
+                    Ok::<bool, LibError>(true)
+                } // REMOVED old variants: ReservingPads, StartingUpload, UploadProgress, StoreComplete, PadConfirmed, PadCreateSuccess, Finished, ErrorOccurred
             }
-        }
-        .boxed()
+        })
     });
 
+    // Return the Arcs needed by handle_put (res and confirm are dummies now)
     (
         res_pb_opt,
         upload_pb_opt,

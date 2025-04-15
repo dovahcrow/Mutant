@@ -3,7 +3,7 @@ use crate::callbacks::get::create_get_callback;
 use indicatif::MultiProgress;
 use log::debug;
 // Use new top-level re-exports
-use mutant_lib::{DataError, Error as LibError, MutAnt}; // Import DataError for matching
+use mutant_lib::{Error as LibError, MutAnt, data::DataError}; // Import DataError for matching
 use std::io::{self, Write};
 use std::process::ExitCode;
 use std::sync::Arc;

@@ -259,6 +259,16 @@ impl MutAnt {
             .map_err(Error::Index)
     }
 
+    /// Returns a clone of the current in-memory MasterIndex state.
+    /// Useful for synchronization or backup, use with caution.
+    pub async fn get_index_copy(&self) -> Result<MasterIndex, Error> {
+        debug!("MutAnt::get_index_copy called");
+        self.index_manager
+            .get_index_copy()
+            .await
+            .map_err(Error::Index)
+    }
+
     // --- Utility ---
 
     /// Retrieves the network choice (Devnet or Mainnet) this MutAnt instance is configured for.

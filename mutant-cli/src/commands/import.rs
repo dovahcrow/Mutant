@@ -1,6 +1,6 @@
 use log::{error, info};
 // Use new top-level re-exports
-use mutant_lib::{Error as LibError, MutAnt, PadLifecycleError}; // Import PadLifecycleError for matching
+use mutant_lib::{Error as LibError, MutAnt, pad_lifecycle::PadLifecycleError}; // Import PadLifecycleError for matching
 use std::process::ExitCode;
 
 pub async fn handle_import(mutant: MutAnt, private_key: String) -> ExitCode {
