@@ -1,4 +1,5 @@
 /target
+.cursor/
 .roo/
 .roomodes
 .test_deps/
