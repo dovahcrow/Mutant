@@ -76,6 +76,26 @@ impl DefaultPadLifecycleManager {
             network_adapter,
         }
     }
+
+    async fn generate_and_add_new_pad(
+        &self,
+    ) -> Result<(ScratchpadAddress, SecretKey), PadLifecycleError> {
+        debug!("Generating a new pad...");
+        // Generate new keypair
+        let secret_key = SecretKey::random();
+        let public_key = secret_key.public_key();
+        let address = ScratchpadAddress::new(public_key);
+        let key_bytes = secret_key.to_bytes().to_vec();
+
+        // Add to pending list in index manager (requires verification later)
+        // Wrap the single pad in a vector for add_pending_pads
+        self.index_manager
+            .add_pending_pads(vec![(address, key_bytes)])
+            .await?;
+        debug!("Generated and added new pad {} to pending list.", address);
+
+        Ok((address, secret_key))
+    }
 }
 
 #[async_trait]
@@ -187,13 +207,37 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
     ) -> Result<Vec<(ScratchpadAddress, SecretKey)>, PadLifecycleError> {
         info!("PadLifecycleManager: Acquiring {} pads...", count);
         let mut acquired_pads = Vec::with_capacity(count);
-        for _ in 0..count {
-            let pad = acquire_free_pad(self.index_manager.as_ref()).await?;
-            acquired_pads.push(pad);
+        for i in 0..count {
+            match acquire_free_pad(self.index_manager.as_ref()).await {
+                Ok(pad) => {
+                    acquired_pads.push(pad);
+                }
+                Err(PadLifecycleError::PadAcquisitionFailed(msg))
+                    if msg == "No free pads available in the index" =>
+                {
+                    // No free pads, generate a new one
+                    debug!(
+                        "No free pads available, generating new pad ({} out of {} needed)...",
+                        i + 1,
+                        count
+                    );
+                    let new_pad = self.generate_and_add_new_pad().await?;
+                    acquired_pads.push(new_pad);
+                }
+                Err(e) => {
+                    // Other error from acquire_free_pad, propagate it
+                    error!("Failed to acquire pad {} out of {}: {}", i + 1, count, e);
+                    // The caller (data::ops) handles releasing any partially acquired pads on error.
+                    return Err(e);
+                }
+            }
+        }
+        // Sanity check
+        if acquired_pads.len() != count {
+            warn!("Acquire pads mismatch: requested {}, got {}. This might indicate an unexpected issue.", count, acquired_pads.len());
         }
         debug!("Successfully acquired {} pads.", acquired_pads.len());
         Ok(acquired_pads)
-        // Note: This doesn't automatically save the index state change. Assumed handled later.
     }
 
     async fn release_pads(
