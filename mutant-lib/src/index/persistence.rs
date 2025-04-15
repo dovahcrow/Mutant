@@ -1,5 +1,6 @@
 use crate::index::error::IndexError;
 use crate::index::structure::MasterIndex;
+use crate::network::NetworkAdapter;
 use crate::storage::{StorageError, StorageManager};
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::{debug, error, trace, warn};
@@ -24,21 +25,49 @@ pub(crate) fn deserialize_index(data: &[u8]) -> Result<MasterIndex, IndexError> 
 }
 
 /// Loads the serialized index data from its dedicated scratchpad using the StorageManager.
+/// First checks if the scratchpad exists.
 pub(crate) async fn load_index(
     storage_manager: &dyn StorageManager,
+    network_adapter: &dyn NetworkAdapter,
     address: &ScratchpadAddress,
 ) -> Result<MasterIndex, IndexError> {
-    debug!("Attempting to load MasterIndex from address: {}", address);
+    debug!("Checking existence of MasterIndex at address: {}", address);
+
+    // --- Check existence first --- (THIS IS NEW)
+    match network_adapter.check_existence(address).await {
+        Ok(true) => {
+            debug!("Index scratchpad found at {}, proceeding to load.", address);
+            // Continue to load data
+        }
+        Ok(false) => {
+            debug!("Index scratchpad not found at address {}.", address);
+            return Err(IndexError::KeyNotFound(format!(
+                "Master index record not found at address {}",
+                address
+            )));
+        }
+        Err(e) => {
+            error!(
+                "Error checking existence for index scratchpad {}: {}",
+                address, e
+            );
+            // Propagate the error, mapping it appropriately
+            return Err(IndexError::Storage(StorageError::Network(e)));
+        }
+    }
+    // --- End existence check ---
+
+    debug!(
+        "Attempting to load MasterIndex data from address: {}",
+        address
+    );
     match storage_manager.read_pad_data(address).await {
         Ok(data) => {
             if data.is_empty() {
-                // Treat empty data as not found, as CBOR deserialization might succeed on empty slice
-                debug!(
-                    "Loaded empty data from index address {}, treating as not found.",
+                warn!(
+                    "Loaded empty data from existing index address {}, treating as invalid.",
                     address
                 );
-                // TODO: Define a specific error for this? Or rely on DeserializationError::EOF?
-                // For now, let deserialize_index handle it, which should map EOF.
                 return Err(IndexError::DeserializationError(
                     "Index data read from storage was empty".to_string(),
                 ));
@@ -50,30 +79,8 @@ pub(crate) async fn load_index(
             );
             deserialize_index(&data)
         }
-        Err(StorageError::Network(net_err)) => {
-            // Check if the network error indicates the record wasn't found
-            // This relies on the specific error message from autonomi::ClientError
-            // TODO: Make this check more robust if possible (e.g., specific error variant)
-            if net_err.to_string().contains("RecordNotFound")
-                || net_err.to_string().contains("Could not find record")
-            {
-                debug!(
-                    "MasterIndex not found at address {} (RecordNotFound)",
-                    address
-                );
-                Err(IndexError::KeyNotFound(format!(
-                    "Master index record not found at address {}",
-                    address
-                )))
-            } else {
-                error!(
-                    "Network error during index load from {}: {}",
-                    address, net_err
-                );
-                Err(IndexError::Storage(StorageError::Network(net_err)))
-            }
-        }
         Err(e) => {
+            // Removed the old RecordNotFound check as existence is checked upfront
             error!("Storage error during index load from {}: {}", address, e);
             Err(IndexError::Storage(e))
         }

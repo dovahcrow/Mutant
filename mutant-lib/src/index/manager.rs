@@ -2,6 +2,7 @@ use crate::index::error::IndexError;
 use crate::index::persistence::{load_index, save_index};
 use crate::index::query;
 use crate::index::structure::{KeyInfo, MasterIndex, DEFAULT_SCRATCHPAD_SIZE};
+use crate::network::NetworkAdapter;
 use crate::storage::StorageManager;
 use crate::types::{KeyDetails, StorageStats};
 use async_trait::async_trait;
@@ -105,13 +106,18 @@ pub trait IndexManager: Send + Sync {
 pub struct DefaultIndexManager {
     state: Arc<Mutex<MasterIndex>>,
     storage_manager: Arc<dyn StorageManager>,
+    network_adapter: Arc<dyn NetworkAdapter>,
 }
 
 impl DefaultIndexManager {
-    pub fn new(storage_manager: Arc<dyn StorageManager>) -> Self {
+    pub fn new(
+        storage_manager: Arc<dyn StorageManager>,
+        network_adapter: Arc<dyn NetworkAdapter>,
+    ) -> Self {
         Self {
             state: Arc::new(Mutex::new(MasterIndex::default())), // Start with default
             storage_manager,
+            network_adapter,
         }
     }
 }
@@ -124,7 +130,13 @@ impl IndexManager for DefaultIndexManager {
         master_index_key: &SecretKey, // Key needed if we need to create/save default
     ) -> Result<(), IndexError> {
         info!("IndexManager: Loading index from storage...");
-        match load_index(self.storage_manager.as_ref(), master_index_address).await {
+        match load_index(
+            self.storage_manager.as_ref(),
+            self.network_adapter.as_ref(),
+            master_index_address,
+        )
+        .await
+        {
             Ok(loaded_index) => {
                 let mut state_guard = self.state.lock().await;
                 // Ensure loaded index has a valid scratchpad size
@@ -300,11 +312,12 @@ impl IndexManager for DefaultIndexManager {
         &self,
         master_index_address: &ScratchpadAddress,
     ) -> Result<MasterIndex, IndexError> {
-        debug!(
-            "IndexManager: Fetching remote index directly from storage address: {}",
-            master_index_address
-        );
-        // Directly call the persistence function using the storage manager
-        load_index(self.storage_manager.as_ref(), master_index_address).await
+        debug!("IndexManager: Fetching remote index directly...");
+        load_index(
+            self.storage_manager.as_ref(),
+            self.network_adapter.as_ref(),
+            master_index_address,
+        )
+        .await
     }
 }

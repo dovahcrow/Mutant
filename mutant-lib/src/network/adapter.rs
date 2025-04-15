@@ -62,10 +62,10 @@ impl AutonomiNetworkAdapter {
         );
         // create_wallet returns (Wallet, SecretKey). Store both.
         let (wallet, key) = create_wallet(private_key_hex, network_choice)?;
-        // Pass wallet to client creation
-        let client = create_client(wallet.clone()).await?;
+        // Pass network_choice to client creation instead of wallet
+        let client = create_client(network_choice).await?;
         Ok(Self {
-            wallet,
+            wallet, // Keep wallet for now, needed for PaymentOption
             client: Arc::new(client),
             network_choice,
             secret_key: key, // Store the secret key
