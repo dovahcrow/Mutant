@@ -157,11 +157,19 @@ impl IndexManager for DefaultIndexManager {
                 info!("Index loaded successfully from storage.");
                 Ok(())
             }
+            // Catch the specific DeserializationError indicating the index was not found
+            Err(IndexError::DeserializationError(ref msg))
+                if msg == "Master index scratchpad not found on network" =>
+            {
+                info!("Index not found on network. Initializing with default in memory.");
+                // State already holds default, so nothing to change in memory.
+                // We don't automatically save the default here; PadLifecycleManager handles caching.
+                Ok(())
+            }
+            // Re-introduce handling for KeyNotFound just in case, although the persistence layer
+            // should ideally return the specific DeserializationError now.
             Err(IndexError::KeyNotFound(_)) => {
-                info!("Index not found in storage. Initializing with default in memory.");
-                // State already holds default, so nothing to do here for the in-memory part.
-                // We don't automatically save the default here; that's handled by the API layer
-                // based on user interaction (prompt).
+                info!("Index key not found (unexpected persistence state?). Initializing with default in memory.");
                 Ok(())
             }
             Err(e) => {
