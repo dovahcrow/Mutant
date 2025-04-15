@@ -133,27 +133,48 @@ pub(crate) async fn store_op(
         });
 
         write_futures.push(async move {
-            let result = storage_manager.write_pad_data(&pad_address, &chunk).await;
-            (i, pad_address, result) // Return index and result
+            let result = storage_manager.write_pad_data(&pad_key, &chunk).await;
+            (i, result) // Return index and Result<ScratchpadAddress, StorageError>
         });
     }
 
-    while let Some((chunk_index, _pad_address, result)) = write_futures.next().await {
+    // PadInfo list needs to be built after writes complete
+    let mut final_pad_info_list = vec![None; num_chunks];
+
+    while let Some((chunk_index, result)) = write_futures.next().await {
         match result {
-            Ok(_) => {
+            Ok(written_address) => {
                 populated_count += 1;
                 trace!(
                     "Successfully wrote chunk {} to pad {}",
                     chunk_index,
-                    _pad_address
+                    written_address // Use the returned address
                 );
+                // Store the PadInfo for the index later
+                if chunk_index < final_pad_info_list.len() {
+                    final_pad_info_list[chunk_index] = Some(PadInfo {
+                        address: written_address,
+                        chunk_index,
+                    });
+                } else {
+                    error!(
+                        "Invalid chunk index {} returned during store write (max expected {})",
+                        chunk_index,
+                        num_chunks - 1
+                    );
+                    // TODO: Handle cancellation/failure more robustly
+                    return Err(DataError::InternalError(format!(
+                        "Invalid chunk index {} encountered during store",
+                        chunk_index
+                    )));
+                }
+
                 if !invoke_put_callback(&mut callback, PutEvent::ChunkWritten { chunk_index })
                     .await
                     .map_err(|e| {
                         DataError::InternalError(format!("Callback invocation failed: {}", e))
                     })?
                 {
-                    // TODO: Handle cancellation during concurrent writes (abort others, release pads?)
                     error!("Store operation cancelled by callback during chunk writing.");
                     // Release ALL acquired pads if cancelled
                     let keys_map: HashMap<_, _> = acquired_pads
@@ -171,9 +192,15 @@ pub(crate) async fn store_op(
                 }
             }
             Err(e) => {
+                // Get the address associated with this failed chunk index for logging
+                let failed_address_str = final_pad_info_list
+                    .get(chunk_index)
+                    .and_then(|opt| opt.as_ref())
+                    .map(|pi| pi.address.to_string())
+                    .unwrap_or_else(|| "<unknown address>".to_string()); // Log string instead
                 error!(
                     "Failed to write chunk {} to pad {}: {}",
-                    chunk_index, _pad_address, e
+                    chunk_index, failed_address_str, e
                 );
                 // TODO: Handle partial write failure (release pads, mark as incomplete?)
                 // Release ALL acquired pads on failure
@@ -191,12 +218,18 @@ pub(crate) async fn store_op(
                         rel_e
                     );
                 }
-                return Err(DataError::Storage(e));
+                return Err(DataError::Storage(e.into())); // Convert StorageError
             }
         }
     }
 
     debug!("All {} chunks written successfully.", num_chunks);
+
+    // Collect the final PadInfo list, ensuring all slots are filled
+    let pad_info_list: Vec<PadInfo> = final_pad_info_list
+        .into_iter()
+        .map(|opt| opt.expect("Missing PadInfo after successful write"))
+        .collect();
 
     // 4. Update index
     let key_info = KeyInfo {
@@ -301,24 +334,24 @@ pub(crate) async fn fetch_op(
 
         fetch_futures.push(async move {
             let result = storage_manager.read_pad_data(&address).await;
-            (index, result) // Return index and result
+            (index, result) // Return index and Result<Vec<u8>, StorageError>
         });
     }
 
-    // Collect fetched chunks, placing them in a Vec<Option<Vec<u8>>> based on index
-    let mut fetched_chunks: Vec<Option<Vec<u8>>> = vec![None; num_chunks];
+    // Collect fetched *encrypted* chunks
+    let mut fetched_encrypted_chunks: Vec<Option<Vec<u8>>> = vec![None; num_chunks];
     let mut fetched_count = 0;
 
     while let Some((chunk_index, result)) = fetch_futures.next().await {
         match result {
             Ok(data) => {
                 trace!(
-                    "Successfully fetched chunk {} ({} bytes)",
+                    "Successfully fetched encrypted chunk {} ({} bytes)",
                     chunk_index,
                     data.len()
                 );
-                if chunk_index < fetched_chunks.len() {
-                    fetched_chunks[chunk_index] = Some(data);
+                if chunk_index < fetched_encrypted_chunks.len() {
+                    fetched_encrypted_chunks[chunk_index] = Some(data);
                     fetched_count += 1;
                     if !invoke_get_callback(&mut callback, GetEvent::ChunkFetched { chunk_index })
                         .await
@@ -346,7 +379,7 @@ pub(crate) async fn fetch_op(
                 error!("Failed to fetch chunk {}: {}", chunk_index, e);
                 // Don't immediately fail, allow reassembly to detect missing chunk later?
                 // Or fail fast? Fail fast seems safer.
-                return Err(DataError::Storage(e));
+                return Err(DataError::Storage(e.into())); // Convert StorageError
             }
         }
     }
@@ -362,17 +395,17 @@ pub(crate) async fn fetch_op(
         ));
     }
 
-    debug!("All {} chunks fetched.", num_chunks);
+    debug!("All {} encrypted chunks fetched.", num_chunks);
 
-    // 3. Reassemble data
+    // 3. Reassemble *encrypted* data
     if !invoke_get_callback(&mut callback, GetEvent::Reassembling)
         .await
         .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
     {
         return Err(DataError::OperationCancelled);
     }
-    let reassembled_data = reassemble_data(fetched_chunks, key_info.data_size)?;
-    debug!("Data reassembled successfully.");
+    let reassembled_encrypted_data = reassemble_data(fetched_encrypted_chunks, key_info.data_size)?;
+    debug!("Encrypted data reassembled successfully.");
 
     if !invoke_get_callback(&mut callback, GetEvent::Complete)
         .await
@@ -381,8 +414,11 @@ pub(crate) async fn fetch_op(
         return Err(DataError::OperationCancelled);
     }
 
-    info!("DataOps: Fetch operation complete for key '{}'", user_key);
-    Ok(reassembled_data)
+    info!(
+        "DataOps: Fetch operation complete for key '{}' (returning encrypted data)",
+        user_key
+    );
+    Ok(reassembled_encrypted_data) // Return the reassembled encrypted data
 }
 
 // --- Remove Operation ---
@@ -569,20 +605,41 @@ pub(crate) async fn update_op(
         let storage_manager = Arc::clone(&deps.storage_manager);
 
         write_futures.push(async move {
-            let result = storage_manager.write_pad_data(&pad_address, &chunk).await;
-            (i, pad_address, result)
+            let result = storage_manager.write_pad_data(&pad_key, &chunk).await;
+            (i, result) // Return Result<ScratchpadAddress, StorageError>
         });
     }
 
-    while let Some((chunk_index, _pad_address, result)) = write_futures.next().await {
+    // PadInfo list needs to be built after writes complete
+    let mut final_pad_info_list = vec![None; new_num_chunks];
+
+    while let Some((chunk_index, result)) = write_futures.next().await {
         match result {
-            Ok(_) => {
+            Ok(written_address) => {
                 populated_count += 1;
                 trace!(
                     "Successfully wrote chunk {} to pad {}",
                     chunk_index,
-                    _pad_address
+                    written_address // Use the returned address
                 );
+                // Store PadInfo
+                if chunk_index < final_pad_info_list.len() {
+                    final_pad_info_list[chunk_index] = Some(PadInfo {
+                        address: written_address,
+                        chunk_index,
+                    });
+                } else {
+                    error!(
+                        "Invalid chunk index {} returned during update write (max expected {})",
+                        chunk_index,
+                        new_num_chunks - 1
+                    );
+                    return Err(DataError::InternalError(format!(
+                        "Invalid chunk index {} encountered during update",
+                        chunk_index
+                    )));
+                }
+
                 if !invoke_put_callback(&mut callback, PutEvent::ChunkWritten { chunk_index })
                     .await
                     .map_err(|e| {
@@ -595,12 +652,17 @@ pub(crate) async fn update_op(
                 }
             }
             Err(e) => {
+                // Get the address associated with this failed chunk index for logging
+                let failed_address_str = pads_to_use
+                    .get(chunk_index)
+                    .map(|pi| pi.address.to_string())
+                    .unwrap_or_else(|| "<unknown address>".to_string()); // Log string instead
                 error!(
                     "Failed to write chunk {} to pad {}: {}",
-                    chunk_index, _pad_address, e
+                    chunk_index, failed_address_str, e
                 );
                 // TODO: Handle partial write failure during update. Release acquired pads?
-                return Err(DataError::Storage(e));
+                return Err(DataError::Storage(e.into())); // Convert StorageError
             }
         }
     }
@@ -608,6 +670,12 @@ pub(crate) async fn update_op(
         "All {} new chunks written successfully for update.",
         new_num_chunks
     );
+
+    // Collect the final PadInfo list
+    let pads_to_use: Vec<PadInfo> = final_pad_info_list
+        .into_iter()
+        .map(|opt| opt.expect("Missing PadInfo after successful update write"))
+        .collect();
 
     // --- Release Unused Pads ---
     if !pads_to_release_info.is_empty() {

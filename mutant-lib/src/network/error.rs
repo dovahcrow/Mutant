@@ -1,3 +1,4 @@
+// use autonomi::client::data_types::ScratchpadError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -10,9 +11,6 @@ pub enum NetworkError {
 
     #[error("Failed to initialize Autonomi client: {0}")]
     ClientInitError(String),
-
-    #[error("Autonomi client operation failed: {0}")]
-    AutonomiClient(#[from] autonomi::client::Error), // Changed from client::ClientError or similar
 
     #[error("Invalid configuration: {0}")]
     ConfigError(String),

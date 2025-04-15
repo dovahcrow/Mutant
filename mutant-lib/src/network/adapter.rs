@@ -12,14 +12,24 @@ use std::sync::Arc;
 /// This abstracts the underlying network implementation (e.g., autonomi client).
 #[async_trait]
 pub trait NetworkAdapter: Send + Sync {
-    /// Fetches raw data from a scratchpad address.
+    /// Fetches raw *encrypted* data from a scratchpad address.
+    /// Decryption must be handled by the caller using the appropriate key.
     async fn get_raw(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, NetworkError>;
 
-    /// Puts raw data into a scratchpad address using the provided secret key.
-    /// Puts raw data into a scratchpad address. The implementation uses the adapter's internal wallet for signing.
-    async fn put_raw(&self, address: &ScratchpadAddress, data: &[u8]) -> Result<(), NetworkError>;
+    /// Puts raw data into a scratchpad associated with the given secret key.
+    /// Creates the scratchpad if it doesn't exist, updates it otherwise.
+    /// Returns the address of the scratchpad.
+    async fn put_raw(
+        &self,
+        key: &SecretKey,
+        data: &[u8],
+    ) -> Result<ScratchpadAddress, NetworkError>;
+
+    /// Checks if a scratchpad exists at the given address.
+    async fn check_existence(&self, address: &ScratchpadAddress) -> Result<bool, NetworkError>;
 
     /// Deletes a scratchpad entry using its address and secret key.
+    /// !! This likely requires the key corresponding to the address !!
     async fn delete_raw(
         &self,
         address: &ScratchpadAddress,
@@ -42,9 +52,10 @@ pub trait NetworkAdapter: Send + Sync {
 /// Concrete implementation of NetworkAdapter using the autonomi crate.
 #[derive(Clone)] // Clone is cheap due to Arc
 pub struct AutonomiNetworkAdapter {
-    wallet: Wallet, // Wallet might be needed for more than just client creation later
+    wallet: Wallet, // Wallet is currently only used during client creation, might be removable later
     client: Arc<Client>,
     network_choice: NetworkChoice, // Store for quick access
+    secret_key: SecretKey,         // Store the secret key
 }
 
 impl AutonomiNetworkAdapter {
@@ -57,12 +68,15 @@ impl AutonomiNetworkAdapter {
             "Creating AutonomiNetworkAdapter for network: {:?}",
             network_choice
         );
-        let wallet = create_wallet(private_key_hex, network_choice)?;
-        let client = create_client(wallet.clone()).await?; // Clone wallet for client creation
+        // create_wallet returns (Wallet, SecretKey). Store both.
+        let (wallet, key) = create_wallet(private_key_hex, network_choice)?;
+        // Pass wallet to client creation
+        let client = create_client(wallet.clone()).await?;
         Ok(Self {
             wallet,
             client: Arc::new(client),
             network_choice,
+            secret_key: key, // Store the secret key
         })
     }
 }
@@ -75,26 +89,27 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
             .client
             .scratchpad_get(address)
             .await
-            .map_err(NetworkError::AutonomiClient)?;
-        // Decrypt the data using the wallet's secret key
-        let secret_key = self.wallet.secret_key();
-        let decrypted_bytes = scratchpad.decrypt_data(secret_key).map_err(|e| {
-            NetworkError::InternalError(format!("Scratchpad decryption failed: {}", e))
-        })?; // Handle decryption error
+            .map_err(NetworkError::AutonomiScratchpadError)?; // Use the renamed variant
 
-        Ok(decrypted_bytes.to_vec()) // Convert Bytes to Vec<u8>
+        // Use the adapter's stored key for decryption
+        let decrypted_bytes = scratchpad.decrypt_data(&self.secret_key).map_err(|e| {
+            NetworkError::InternalError(format!("Scratchpad decryption failed: {}", e))
+        })?;
+
+        Ok(decrypted_bytes.to_vec())
     }
 
-    async fn put_raw(&self, address: &ScratchpadAddress, data: &[u8]) -> Result<(), NetworkError> {
+    async fn put_raw(&self, data: &[u8]) -> Result<ScratchpadAddress, NetworkError> {
         trace!("NetworkAdapter::put_raw called, data_len: {}", data.len());
-        let secret_key = self.wallet.secret_key();
-        let public_key = secret_key.public_key();
-        // let address = ScratchpadAddress::new(public_key);
+        // Use the adapter's stored secret key
+        let key = &self.secret_key;
+        let public_key = key.public_key();
+        let address = ScratchpadAddress::new(public_key);
         let data_bytes = Bytes::copy_from_slice(data); // Convert to autonomi::Bytes
 
         // Use default content type and payment option
         let content_type = 0u64;
-        let payment_option = PaymentOption::Wallet(self.wallet.clone());
+        let payment_option = PaymentOption::default();
 
         debug!("Checking existence of scratchpad at address: {}", address);
 
@@ -103,43 +118,47 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
                 // Pad exists, update it
                 info!("Scratchpad exists at {}, updating...", address);
                 self.client
-                    .scratchpad_update(secret_key, content_type, &data_bytes)
+                    .scratchpad_update(key, content_type, &data_bytes)
                     .await
-                    .map_err(NetworkError::AutonomiClient)
+                    .map_err(NetworkError::AutonomiClient)?; // Assuming ScratchpadError
+                Ok(address) // Return address on success
             }
             Ok(false) => {
                 // Pad does not exist, create it
                 info!("Scratchpad does not exist at {}, creating...", address);
                 self.client
-                    .scratchpad_create(secret_key, content_type, &data_bytes, payment_option)
+                    .scratchpad_create(key, content_type, &data_bytes, payment_option)
                     .await
-                    .map_err(NetworkError::AutonomiClient)
-                    .map(|(_cost, _addr)| ()) // Discard cost and address
+                    .map_err(NetworkError::AutonomiScratchpadError) // Use the renamed variant
+                    .map(|(_cost, created_addr)| created_addr) // Return created address
             }
             Err(e) => {
                 // Error during check existence
                 error!("Error checking scratchpad existence at {}: {}", address, e);
-                Err(NetworkError::AutonomiClient(e))
+                Err(NetworkError::AutonomiScratchpadError(e)) // Use the renamed variant
             }
         }
     }
 
-    async fn delete_raw(
-        &self,
-        address: &ScratchpadAddress,
-        _key: &SecretKey, // Key might not be needed if client uses wallet
-    ) -> Result<(), NetworkError> {
+    async fn check_existence(&self, address: &ScratchpadAddress) -> Result<bool, NetworkError> {
+        trace!(
+            "NetworkAdapter::check_existence called for address: {}",
+            address
+        );
+        self.client
+            .scratchpad_check_existance(address)
+            .await
+            .map_err(NetworkError::AutonomiScratchpadError) // Use the renamed variant
+    }
+
+    async fn delete_raw(&self, address: &ScratchpadAddress) -> Result<(), NetworkError> {
         trace!("NetworkAdapter::delete_raw called for address: {}", address);
-        // TODO: Implement delete_raw using available autonomi client methods if possible.
-        // The client.scratchpad_delete method seems to be missing in v0.4.3.
-        // For now, return an error or unimplemented!()
+        // Use the adapter's stored secret key
+        let key = &self.secret_key;
         Err(NetworkError::InternalError(
             "delete_raw is not implemented for AutonomiNetworkAdapter".to_string(),
         ))
-        // self.client
-        //     .scratchpad_delete(address, key) // This method doesn't seem to exist
-        //     .await
-        //     .map_err(NetworkError::AutonomiClient)
+        // TODO: Implement delete using the key
     }
 
     fn get_network_choice(&self) -> NetworkChoice {

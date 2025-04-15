@@ -71,9 +71,9 @@ pub(crate) async fn verify_pads_concurrently(
 
         join_set.spawn(async move {
             trace!("Verification task starting for address: {}", address);
-            // Use get_raw as a simple existence check
-            match adapter_clone.get_raw(&address).await {
-                Ok(_) => {
+            // Use check_existence instead of get_raw
+            match adapter_clone.check_existence(&address).await {
+                Ok(true) => {
                     // Pad exists on the network
                     debug!(
                         "Successfully verified pad existence at address: {}",
@@ -81,25 +81,23 @@ pub(crate) async fn verify_pads_concurrently(
                     );
                     let mut verified_guard = verified_clone.lock().await;
                     verified_guard.push((address, key_bytes)); // Keep original key bytes
-                    Ok(true) // Indicate success
+                    Ok(()) // Indicate success
+                }
+                Ok(false) => {
+                    // Pad does not exist on the network
+                    info!(
+                        "Pad at address {} not found on network. Discarding.",
+                        address
+                    );
+                    failed_clone.fetch_add(1, Ordering::SeqCst);
+                    Ok(()) // Indicate success (task completed, pad handled as failed)
                 }
                 Err(e) => {
-                    // Check if it's a 'not found' error vs. other network issue
-                    // Relying on string matching is fragile, but necessary without specific error variants
-                    let error_string = e.to_string();
-                    if error_string.contains("RecordNotFound")
-                        || error_string.contains("Could not find record")
-                    {
-                        info!(
-                            "Pad at address {} not found on network. Discarding.",
-                            address
-                        );
-                    } else {
-                        warn!(
-                            "Network error verifying pad at address {}: {}. Discarding.",
-                            address, e
-                        );
-                    }
+                    // Network error during check
+                    warn!(
+                        "Network error verifying pad at address {}: {}. Discarding.",
+                        address, e
+                    );
                     failed_clone.fetch_add(1, Ordering::SeqCst);
                     Err(e) // Propagate the network error
                 }

@@ -2,7 +2,7 @@ use crate::index::error::IndexError;
 use crate::index::structure::MasterIndex;
 use crate::storage::{StorageError, StorageManager};
 use autonomi::{ScratchpadAddress, SecretKey};
-use log::{debug, error, trace};
+use log::{debug, error, trace, warn};
 use serde_cbor;
 
 /// Serializes the MasterIndex structure into CBOR bytes.
@@ -90,13 +90,23 @@ pub(crate) async fn save_index(
     debug!("Attempting to save MasterIndex to address: {}", address);
     let serialized_data = serialize_index(index)?;
     debug!("Serialized index size: {} bytes", serialized_data.len());
-    storage_manager
-        .write_pad_data(address, &serialized_data)
+    let written_address = storage_manager
+        .write_pad_data(key, &serialized_data)
         .await
         .map_err(|e| {
             error!("Storage error during index save to {}: {}", address, e);
             IndexError::Storage(e)
         })?;
-    debug!("Successfully saved MasterIndex to address {}", address);
+    if written_address != *address {
+        warn!(
+            "Index save address mismatch: Expected {}, Got {}. This might indicate an issue.",
+            address, written_address
+        );
+        // Continue anyway, assuming the data is written correctly to the key's derived address.
+    }
+    debug!(
+        "Successfully saved MasterIndex (Address: {})",
+        written_address
+    );
     Ok(())
 }

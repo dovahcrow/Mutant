@@ -9,17 +9,16 @@ use std::sync::Arc;
 /// over raw scratchpads. It might handle transformations like encryption or checksums.
 #[async_trait]
 pub trait StorageManager: Send + Sync {
-    /// Reads potentially transformed data from a specific scratchpad address.
+    /// Reads potentially transformed *encrypted* data from a specific scratchpad address.
     async fn read_pad_data(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, StorageError>;
 
-    /// Writes potentially transformed data to a specific scratchpad address using its key.
-    /// Writes potentially transformed data to a specific scratchpad address.
-    /// The underlying NetworkAdapter handles signing with its internal wallet.
+    /// Writes potentially transformed data to a scratchpad using its associated secret key.
+    /// Returns the address of the written pad.
     async fn write_pad_data(
         &self,
-        address: &ScratchpadAddress,
+        key: &SecretKey,
         data: &[u8],
-    ) -> Result<(), StorageError>;
+    ) -> Result<ScratchpadAddress, StorageError>;
 
     // Potential future additions:
     // async fn delete_pad_data(&self, address: &ScratchpadAddress, key: &SecretKey) -> Result<(), StorageError>;
@@ -45,28 +44,23 @@ impl DefaultStorageManager {
 impl StorageManager for DefaultStorageManager {
     async fn read_pad_data(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, StorageError> {
         trace!("StorageManager::read_pad_data for address: {}", address);
-        // TODO: Add decryption/checksum verification here if implemented in pad_io.rs
+        // Read raw encrypted data. No decryption at this layer.
         let raw_data = self.network_adapter.get_raw(address).await?;
-        // Apply transformations from pad_io if needed
+        // Apply transformations (e.g., checksum verification if added) from pad_io if needed
         Ok(raw_data)
     }
 
     async fn write_pad_data(
         &self,
-        address: &ScratchpadAddress,
+        key: &SecretKey,
         data: &[u8],
-    ) -> Result<(), StorageError> {
-        trace!(
-            "StorageManager::write_pad_data for address: {}, data_len: {}",
-            address,
-            data.len()
-        );
+    ) -> Result<ScratchpadAddress, StorageError> {
+        trace!("StorageManager::write_pad_data, data_len: {}", data.len());
         // TODO: Add encryption/checksum generation here if implemented in pad_io.rs
         let transformed_data = data; // Placeholder
-                                     // Call the updated put_raw without the key
-        self.network_adapter
-            .put_raw(address, transformed_data)
-            .await?;
-        Ok(())
+
+        // Call network adapter's put_raw with the key
+        let address = self.network_adapter.put_raw(key, transformed_data).await?; // Propagate NetworkError (converted via From)
+        Ok(address)
     }
 }
