@@ -15,9 +15,9 @@ pub fn create_get_callback(
     let download_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
 
     if quiet {
-        // Update callback signature to return Result<bool, Error>
+        // The callback needs to be a Boxed Fn returning a Pinned Future
         let noop_callback: GetCallback =
-            Box::new(|_event: GetEvent| async move { Ok::<bool, LibError>(true) }.boxed());
+            Box::new(move |_event: GetEvent| Box::pin(async move { Ok::<bool, LibError>(true) }));
         return (download_pb_opt, noop_callback);
     }
 

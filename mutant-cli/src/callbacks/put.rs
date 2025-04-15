@@ -39,8 +39,10 @@ pub fn create_put_callback(
 
     // Return early with no-op callback and dummy Arcs if quiet
     if quiet {
+        // Use Box::pin for Send + Sync
+        // The callback needs to be a Boxed Fn returning a Pinned Future
         let noop_callback: PutCallback =
-            Box::new(|_event: PutEvent| async move { Ok::<bool, LibError>(true) }.boxed());
+            Box::new(move |_event: PutEvent| Box::pin(async move { Ok::<bool, LibError>(true) }));
         return (
             res_pb_opt,
             upload_pb_opt,

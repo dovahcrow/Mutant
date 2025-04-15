@@ -2,6 +2,7 @@ use dialoguer::Confirm;
 use futures::future::FutureExt;
 use indicatif::MultiProgress;
 // Use the new top-level re-exports
+use crate::callbacks::progress::StyledProgressBar;
 use mutant_lib::{Error as LibError, InitCallback, InitProgressEvent};
 use std::sync::{Arc, Mutex as StdMutex}; // Use std::sync::Mutex for non-async guards
 use tokio::sync::Mutex as TokioMutex;
@@ -73,9 +74,15 @@ pub fn create_init_callback(
                     }
                     InitProgressEvent::Failed { error_msg } => {
                         if let Some(pb) = pb_guard.take() {
-                            pb.abandon_with_message(format!("Initialization Failed: {}", error_msg));
+                            pb.abandon_with_message(format!(
+                                "Initialization Failed: {}",
+                                error_msg
+                            ));
                         }
-                        Err(LibError::Internal(format!("Initialization failed: {}", error_msg)))
+                        Err(LibError::Internal(format!(
+                            "Initialization failed: {}",
+                            error_msg
+                        )))
                     }
                     InitProgressEvent::PromptCreateRemoteIndex => {
                         drop(pb_guard);
@@ -93,7 +100,6 @@ pub fn create_init_callback(
                 result
             }
         })
-        .boxed()
     });
 
     (init_pb_opt, init_callback)

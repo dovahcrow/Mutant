@@ -314,9 +314,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         Commands::Rm { key } => Ok(crate::commands::remove::handle_rm(mutant, key).await),
         Commands::Ls { long } => Ok(crate::commands::ls::handle_ls(mutant, long).await),
         Commands::Stats => Ok(crate::commands::stats::handle_stats(mutant).await),
-        Commands::Reset => crate::commands::reset::handle_reset(mutant)
-            .await
-            .map_err(|e| CliError::MutAntInit(e.to_string())),
+        Commands::Reset => Ok(crate::commands::reset::handle_reset(mutant).await),
         Commands::Import { private_key } => {
             Ok(crate::commands::import::handle_import(mutant, private_key).await)
         }
