@@ -134,7 +134,15 @@ impl MutAnt {
         self.data_manager
             .remove(user_key)
             .await
-            .map_err(Error::Data)
+            .map_err(Error::Data)?; // Propagate error if remove fails
+
+        // After successful remove, save the updated index to cache
+        if let Err(e) = self.save_index_cache().await {
+            warn!("Failed to save index cache after remove operation: {}", e);
+            // Do not return error, as remove itself succeeded in memory.
+        }
+
+        Ok(())
     }
 
     /// Updates the raw bytes associated with an existing user key.

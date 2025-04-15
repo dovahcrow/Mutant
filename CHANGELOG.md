@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Store operation now saves the updated index to the local cache, ensuring `ls` reflects recent changes.
+- Remove operation (`rm`) now saves the updated index to the local cache, ensuring `ls` reflects the removal.
 
 ## [0.1.2] - Unreleased
 
