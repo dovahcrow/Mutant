@@ -2,8 +2,8 @@ use crate::callbacks::StyledProgressBar;
 use crate::callbacks::put::create_put_callback;
 use indicatif::MultiProgress;
 use log::{debug, warn};
-use mutant_lib::error::Error;
-use mutant_lib::mutant::MutAnt;
+// Use new top-level re-exports
+use mutant_lib::{DataError, Error as LibError, MutAnt}; // Import DataError for matching
 use std::io::{self, Read};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -52,11 +52,14 @@ pub async fn handle_put(
     let result = if force {
         debug!("Forcing update for key: {}", key);
         mutant
-            .update_with_progress(&key, &data_vec, Some(callback))
+            // Update takes ownership of the key String now
+            .update_with_progress(key.clone(), &data_vec, Some(callback))
             .await
     } else {
         mutant
-            .store_with_progress(&key, &data_vec, Some(callback), confirm_counter_arc.clone())
+            // Store takes ownership of the key String now
+            .store_with_progress(key.clone(), &data_vec, Some(callback))
+            // Removed confirm_counter_arc as store_with_progress no longer takes it
             .await
     };
 
@@ -69,20 +72,21 @@ pub async fn handle_put(
             ExitCode::SUCCESS
         }
         Err(e) => {
+            // Update error matching for the new Error structure
             let error_message = match e {
-                Error::KeyAlreadyExists(ref k) if !force => {
-                    format!("Key '{}' already exists. Use --force to overwrite.", k)
-                }
-                Error::KeyNotFound(ref k) if force => {
+                // KeyNotFound during update (force=true)
+                LibError::Data(DataError::KeyNotFound(k)) if force => {
                     format!(
                         "Cannot force update non-existent key '{}'. Use put without --force.",
                         k
                     )
                 }
-                Error::OperationCancelled => "Operation cancelled.".to_string(),
+                // Operation cancelled
+                LibError::OperationCancelled => "Operation cancelled.".to_string(),
+                // Other errors
                 _ => format!(
                     "Error during {}: {}",
-                    if force { "update" } else { "store" },
+                    if force { "update" } else { "store" }, // Use original key for message
                     e
                 ),
             };

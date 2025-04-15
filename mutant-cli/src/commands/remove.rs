@@ -1,5 +1,6 @@
 use log::debug;
-use mutant_lib::{error::Error, mutant::MutAnt};
+// Use new top-level re-exports
+use mutant_lib::{DataError, Error as LibError, MutAnt}; // Import DataError for matching
 use std::process::ExitCode;
 
 pub async fn handle_rm(mutant: MutAnt, key: String) -> ExitCode {
@@ -9,10 +10,10 @@ pub async fn handle_rm(mutant: MutAnt, key: String) -> ExitCode {
             println!("Removed key: {}", key);
             ExitCode::SUCCESS
         }
-        Err(Error::KeyNotFound(_)) => {
-            eprintln!("Key not found: {}", key);
-            ExitCode::FAILURE
-        }
+        // Update error matching. Note: remove currently returns Ok even if key not found.
+        // If KeyNotFound needs specific handling, the LibError::Data(DataError::KeyNotFound)
+        // variant would be used, but the current lib implementation doesn't return it on remove.
+        // We'll keep the generic error handling for now.
         Err(e) => {
             eprintln!("Error removing key: {}", e);
             ExitCode::FAILURE

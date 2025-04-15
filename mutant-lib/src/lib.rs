@@ -1,19 +1,43 @@
-pub mod cache;
+//! # mutant-lib
+//!
+//! A library for storing and retrieving data on the Autonomi network's scratchpad storage,
+//! managing data chunking, indexing, and pad lifecycle.
+
+// Declare layer modules
+pub mod api;
+pub mod data;
+pub mod index;
+pub mod network;
+pub mod pad_lifecycle;
+pub mod storage;
+
+// Declare top-level utility modules
 pub mod error;
 pub mod events;
-pub mod mutant;
-pub mod storage;
-pub mod utils;
+pub mod types;
 
+// --- Public Re-exports ---
+
+// Core library entry point
+pub use crate::api::MutAnt;
+
+// Top-level error enum
+pub use crate::error::Error;
+
+// Public configuration and data structures
+pub use crate::network::NetworkChoice;
+pub use crate::types::{KeyDetails, MutAntConfig, StorageStats};
+
+// Public events and callbacks
+pub use crate::events::{
+    GetCallback, GetEvent, InitCallback, InitProgressEvent, PurgeCallback, PurgeEvent, PutCallback,
+    PutEvent,
+};
+
+// Re-export key external crates for convenience if needed by users
+// (e.g., for constructing addresses or keys directly, though ideally abstracted)
 pub use autonomi;
-pub use futures;
-pub use log;
-pub use serde;
-pub use tokio;
+pub use log; // Useful for users to integrate with their logging setup
 
-pub(crate) mod pad_manager;
-
-pub use error::Error;
-pub use events::{GetCallback, GetEvent, InitCallback, InitProgressEvent, PutCallback, PutEvent};
-pub use mutant::KeyDetails;
-pub use mutant::MutAnt;
+// Potentially hide internal details if not needed publicly
+// mod internal_utils;

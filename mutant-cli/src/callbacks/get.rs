@@ -1,4 +1,6 @@
 use super::progress::StyledProgressBar;
+// Use full paths as re-exports seem problematic
+use mutant_lib::error::Error as LibError;
 use mutant_lib::events::{GetCallback, GetEvent};
 use futures::future::FutureExt;
 use indicatif::MultiProgress;
@@ -13,13 +15,15 @@ pub fn create_get_callback(
     let download_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
 
     if quiet {
-        let noop_callback: GetCallback = Box::new(|_event: GetEvent| async move { Ok(()) }.boxed());
+        // Update callback signature to return Result<bool, Error>
+        let noop_callback: GetCallback = Box::new(|_event: GetEvent| async move { Ok(true) }.boxed());
         return (download_pb_opt, noop_callback);
     }
 
     let pb_clone = download_pb_opt.clone();
     let mp_clone = multi_progress.clone();
 
+    // Update callback signature to return Result<bool, Error>
     let callback: GetCallback = Box::new(move |event: GetEvent| {
         let pb_arc = pb_clone.clone();
         let multi_progress = mp_clone.clone();
@@ -59,7 +63,7 @@ pub fn create_get_callback(
                     }
                 }
             }
-             Ok(()) 
+             Ok(true) // Return true to continue
         }.boxed() 
     });
 

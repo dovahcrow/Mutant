@@ -1,6 +1,7 @@
 use humansize::{BINARY, format_size};
 use log::{debug, info};
-use mutant_lib::mutant::MutAnt;
+// Use new top-level re-export
+use mutant_lib::MutAnt;
 use nu_ansi_term::Color;
 use std::process::ExitCode;
 

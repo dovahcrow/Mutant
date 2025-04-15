@@ -3,10 +3,12 @@ use dialoguer::{Select, theme::ColorfulTheme};
 use directories::{BaseDirs, ProjectDirs};
 use indicatif::MultiProgress;
 use log::{debug, error, info, warn};
-use mutant_lib::{
-    events::InitCallback,
-    mutant::{MutAnt, MutAntConfig, NetworkChoice},
-};
+// Use the new top-level re-exports from mutant_lib
+// Use full paths as re-exports seem problematic
+use mutant_lib::api::MutAnt;
+use mutant_lib::error::Error as LibError;
+use mutant_lib::events::InitCallback;
+use mutant_lib::types::{MutAntConfig, NetworkChoice};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -70,8 +72,9 @@ impl std::fmt::Display for CliError {
 impl std::error::Error for CliError {}
 
 // Implement conversion from the library error type
-impl From<mutant_lib::error::Error> for CliError {
-    fn from(lib_err: mutant_lib::error::Error) -> Self {
+// Implement conversion from the library error type (now directly mutant_lib::Error)
+impl From<LibError> for CliError {
+    fn from(lib_err: LibError) -> Self {
         // You might want more sophisticated mapping here later,
         // but for now, just wrap the display output.
         CliError::MutAntInit(lib_err.to_string()) // Reusing MutAntInit for simplicity

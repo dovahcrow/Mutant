@@ -2,7 +2,8 @@ use super::progress::StyledProgressBar;
 use futures::future::FutureExt;
 use indicatif::MultiProgress;
 use log::{debug, warn};
-use mutant_lib::events::{PutCallback, PutEvent};
+// Use the new top-level re-exports
+use mutant_lib::{Error as LibError, PutCallback, PutEvent};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

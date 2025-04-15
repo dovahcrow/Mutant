@@ -1,10 +1,12 @@
 use log::{debug, error, info};
-use mutant_lib::{error::Error, mutant::MutAnt};
+// Use new top-level re-exports
+use mutant_lib::{Error as LibError, MutAnt};
 use std::process::ExitCode;
 
 /// Executes the core logic for resetting the master index.
 /// Confirmation should be handled by the caller.
-pub async fn handle_reset(mutant: MutAnt) -> Result<ExitCode, Error> {
+pub async fn handle_reset(mutant: MutAnt) -> Result<ExitCode, LibError> {
+    // Update return type
     debug!("CLI: Executing core Reset logic...");
     match mutant.reset_master_index().await {
         Ok(_) => {

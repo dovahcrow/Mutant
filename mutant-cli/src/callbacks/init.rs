@@ -2,7 +2,8 @@ use super::progress::StyledProgressBar;
 use dialoguer::Confirm;
 use futures::future::FutureExt;
 use indicatif::MultiProgress;
-use mutant_lib::events::{InitCallback, InitProgressEvent};
+// Use the new top-level re-exports
+use mutant_lib::{Error as LibError, InitCallback, InitProgressEvent};
 use std::sync::{Arc, Mutex};
 
 pub fn create_init_callback(
@@ -26,7 +27,8 @@ pub fn create_init_callback(
                         let confirmation = Confirm::new()
                             .with_prompt("No local cache found, and no remote index exists. Create remote index now?")
                             .interact()
-                            .map_err(|e| mutant_lib::error::Error::DialoguerError(format!("Dialoguer error: {}", e)))
+                            // Map dialoguer error to a suitable LibError variant
+                            .map_err(|e| LibError::Internal(format!("Dialoguer interaction failed: {}", e)))
                         ?;
                         Ok(Some(confirmation))
                     }
@@ -86,7 +88,8 @@ pub fn create_init_callback(
                             Confirm::new()
                                 .with_prompt("No local cache found, and no remote index exists. Create remote index now?")
                                 .interact()
-                                .map_err(|e| mutant_lib::error::Error::DialoguerError(format!("Dialoguer error: {}", e)))
+                                // Map dialoguer error to a suitable LibError variant
+                                .map_err(|e| LibError::Internal(format!("Dialoguer interaction failed: {}", e)))
                         })?;
                         Ok(Some(confirmation))
                     }

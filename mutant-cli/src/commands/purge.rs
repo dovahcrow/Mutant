@@ -3,9 +3,9 @@ use clap::Args;
 use futures::future::FutureExt;
 use indicatif::{MultiProgress, ProgressBar};
 use log::info;
-use mutant_lib::MutAnt;
-use mutant_lib::events::{PurgeCallback, PurgeEvent};
-use std::error::Error;
+// Use new top-level re-exports
+use mutant_lib::{Error as LibError, MutAnt, PurgeCallback, PurgeEvent};
+use std::error::Error as StdError; // Alias std::error::Error to avoid name clash
 use std::sync::{Arc, Mutex};
 
 #[derive(Args, Debug)]
@@ -22,7 +22,8 @@ pub async fn run(
     mutant: MutAnt,
     mp: &MultiProgress,
     quiet: bool, // Add quiet flag
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn StdError>> {
+    // Use aliased StdError
     info!("Executing purge command...");
 
     // Shared state between callback instances
@@ -88,15 +89,18 @@ pub async fn run(
     });
 
     // Call the library function with the callback
-    match mutant.purge_unverified_pads(Some(callback)).await {
+    // Call the library function (now named purge) with the callback
+    match mutant.purge(Some(callback)).await {
         Ok(_) => Ok(()),
         Err(e) => {
             // Handle potential OperationCancelled error from the callback
-            if matches!(e, mutant_lib::error::Error::OperationCancelled) {
+            if matches!(e, LibError::OperationCancelled) {
+                // Use LibError::OperationCancelled
                 info!("Purge operation cancelled.");
-                Ok(())
+                Ok(()) // Return Ok(()) if cancelled
             } else {
-                Err(Box::new(e) as Box<dyn Error>)
+                // Map other LibError types to Box<dyn StdError>
+                Err(Box::new(e) as Box<dyn StdError>)
             }
         }
     }

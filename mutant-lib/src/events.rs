@@ -1,161 +1,175 @@
-use crate::error::Error;
-use futures::future::BoxFuture;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use crate::error::Error; // Assuming top-level error exists or will exist
+use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
 
-/// Events emitted during the 'put' (store) operation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// --- Callback Types ---
+// Define function signature types for callbacks.
+// Use Pin<Box<dyn Future>> for async operations within callbacks.
+// Add Send + Sync bounds as callbacks might be called from different threads.
+
+/// Callback for reporting progress during data storage (put/update) operations.
+/// The callback receives a PutEvent and should return true to continue, false to cancel.
+pub type PutCallback = Box<
+    dyn Fn(PutEvent) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + Send + Sync>>
+        + Send
+        + Sync,
+>;
+
+/// Callback for reporting progress during data retrieval (get) operations.
+/// The callback receives a GetEvent and should return true to continue, false to cancel.
+pub type GetCallback = Box<
+    dyn Fn(GetEvent) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + Send + Sync>>
+        + Send
+        + Sync,
+>;
+
+/// Callback for reporting progress during library initialization.
+/// The callback receives an InitProgressEvent and should return true to continue, false to cancel.
+/// The boolean return for PromptCreateRemoteIndex indicates user choice (true=create, false=don't create).
+pub type InitCallback = Box<
+    dyn Fn(InitProgressEvent) -> Pin<Box<dyn Future<Output = Result<Option<bool>, Error>> + Send + Sync>>
+        + Send
+        + Sync,
+>;
+
+/// Callback for reporting progress during pad purging (verification).
+/// The callback receives a PurgeEvent and should return true to continue, false to cancel.
+pub type PurgeCallback = Box<
+    dyn Fn(PurgeEvent) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + Send + Sync>>
+        + Send
+        + Sync,
+>;
+
+
+// --- Event Enums ---
+
+/// Events reported during data storage (put/update) operations.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PutEvent {
-    /// Indicates the start of the reservation process for a batch of pads.
-    ReservingPads { count: u64 },
-    /// Indicates that the data upload process is starting.
-    StartingUpload { total_bytes: u64, total_pads: u64 },
-    /// Reports byte-level progress of the overall data upload.
-    UploadProgress {
-        bytes_written: u64,
-        total_bytes: u64,
-    },
-    /// Indicates that a single *new* pad was successfully created on the network (before verification).
-    PadCreateSuccess { current: u64, total: u64 },
-    /// Indicates that a single pad has been successfully verified and confirmed.
-    PadConfirmed { current: u64, total: u64 },
-    /// Indicates the entire store operation (allocation, write, metadata update) is complete.
-    StoreComplete,
+    /// Starting the operation. Provides total chunks to be written.
+    Starting { total_chunks: usize },
+    /// A single chunk has been successfully written to its pad.
+    ChunkWritten { chunk_index: usize },
+    /// The master index is being saved after chunk writes.
+    SavingIndex,
+    /// The operation completed successfully.
+    Complete,
 }
 
-/// Type alias for the callback function used during the 'put' operation.
-/// Uses `async FnMut` which requires the `async_fn_in_trait` feature.
-/// It returns a `BoxFuture` to handle the async nature in a trait object.
-pub type PutCallback =
-    Box<dyn FnMut(PutEvent) -> BoxFuture<'static, Result<bool, Error>> + Send + Sync>;
-
-#[inline]
-pub async fn invoke_callback(
-    callback: &mut Option<PutCallback>,
-    event: PutEvent,
-) -> Result<(), Error> {
-    if let Some(cb) = callback {
-        let fut = cb(event);
-        match fut.await {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(Error::OperationCancelled),
-            Err(e) => Err(e),
-        }
-    } else {
-        Ok(())
-    }
+/// Events reported during data retrieval (get) operations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GetEvent {
+    /// Starting the operation. Provides total chunks to be fetched.
+    Starting { total_chunks: usize },
+    /// A single chunk has been successfully fetched from its pad.
+    ChunkFetched { chunk_index: usize },
+    /// The data is being reassembled from chunks.
+    Reassembling,
+    /// The operation completed successfully.
+    Complete,
 }
 
-/// Events emitted during the library initialization, primarily for first-run setup.
-#[derive(Debug, Clone)]
+/// Events reported during library initialization.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InitProgressEvent {
-    /// Starting the initialization process.
+    /// Initialization is starting. Provides the total number of steps.
     Starting { total_steps: u64 },
-    /// Progress update for a specific step.
+    /// Progressing to a specific step.
     Step { step: u64, message: String },
+    /// Master index not found remotely, prompt user whether to create it.
+    /// Callback should return Ok(Some(true)) to create, Ok(Some(false)) to skip, Ok(None) or Err to abort.
+    PromptCreateRemoteIndex,
+    /// Initialization failed at some step.
+    Failed { error_msg: String },
     /// Initialization completed successfully.
     Complete { message: String },
-    /// Initialization failed.
-    Failed { error_msg: String },
-    /// An existing configuration was found and loaded (skipping first-run).
-    ExistingLoaded { message: String },
-    /// Prompt the user whether to create the remote index.
-    PromptCreateRemoteIndex,
 }
 
-/// Type alias for the callback function used during library initialization.
-/// The callback returns a simple Result to indicate success or failure, but
-/// doesn't need to return a boolean like PutCallback.
-pub type InitCallback =
-    Arc<dyn Fn(InitProgressEvent) -> BoxFuture<'static, Result<Option<bool>, Error>> + Send + Sync>;
 
-#[inline]
-pub(crate) async fn invoke_init_callback(
-    callback: &mut Option<InitCallback>,
-    event: InitProgressEvent,
-) -> Result<Option<bool>, Error> {
-    if let Some(cb) = callback {
-        let fut = cb(event);
-        match fut.await {
-            Ok(result_opt) => Ok(result_opt),
-            Err(e) => Err(e),
-        }
-    } else {
-        Ok(None)
-    }
-}
-
-/// Events emitted during the `MutAnt::fetch` process.
-#[derive(Debug, Clone)]
-pub enum GetEvent {
-    /// Indicates the start of the download process, providing the total size.
-    StartingDownload { total_bytes: u64 },
-    /// Reports the progress of the download.
-    DownloadProgress { bytes_read: u64, total_bytes: u64 },
-    /// Indicates that the download has finished successfully.
-    DownloadFinished,
-}
-
-/// Callback type for Get/Fetch progress updates.
-/// The callback returns a simple Result to indicate success or failure.
-pub type GetCallback =
-    Box<dyn FnMut(GetEvent) -> BoxFuture<'static, Result<(), Error>> + Send + Sync>;
-
-// Helper function for invoking the Get callback if it exists.
-// Note: We might need a distinct invoke function if the return type differs significantly,
-// but since both InitCallback and GetCallback return Result<(), Error>, we might be able to reuse or generalize.
-// For now, let's assume invoke_init_callback logic works (simple propagation).
-#[inline]
-pub(crate) async fn invoke_get_callback(
-    callback: &mut Option<GetCallback>,
-    event: GetEvent,
-) -> Result<(), Error> {
-    if let Some(cb) = callback {
-        let fut = cb(event);
-        fut.await
-    } else {
-        Ok(())
-    }
-}
-
-// --- Purge Events ---
-
-#[derive(Debug, Clone)]
+/// Events reported during pad purging (verification).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PurgeEvent {
-    /// Fired once at the beginning, indicating the total number of pads to check.
+    /// Purge operation is starting. Provides the total number of pads to check.
     Starting { total_count: usize },
-    /// Fired after each pad is processed.
+    /// One pad has been processed (either verified or failed).
     PadProcessed,
-    /// Fired once at the end with the final counts.
+    /// Purge operation completed. Provides counts of verified and failed pads.
     Complete {
         verified_count: usize,
         failed_count: usize,
     },
 }
 
-/// Callback type for purge progress reporting.
-/// The callback receives a PurgeEvent and should return `Ok(true)` to continue or `Ok(false)`/`Err` to cancel.
-pub type PurgeCallback =
-    Box<dyn Fn(PurgeEvent) -> BoxFuture<'static, Result<bool, Error>> + Send + Sync>;
 
-/// Helper to invoke the purge callback if it exists.
+// --- Helper Functions for Invoking Callbacks ---
+
+/// Helper to invoke an optional PutCallback safely.
+pub(crate) async fn invoke_put_callback(
+    callback: &mut Option<PutCallback>,
+    event: PutEvent,
+) -> Result<bool, Error> {
+    if let Some(cb) = callback {
+        // Call the async closure and await its result
+        match cb(event).await {
+            Ok(continue_op) => Ok(continue_op),
+            Err(e) => {
+                // Propagate the error returned by the callback
+                Err(e)
+            }
+        }
+    } else {
+        Ok(true) // No callback, always continue
+    }
+}
+
+/// Helper to invoke an optional GetCallback safely.
+pub(crate) async fn invoke_get_callback(
+    callback: &mut Option<GetCallback>,
+    event: GetEvent,
+) -> Result<bool, Error> {
+     if let Some(cb) = callback {
+        match cb(event).await {
+            Ok(continue_op) => Ok(continue_op),
+            Err(e) => Err(e),
+        }
+    } else {
+        Ok(true)
+    }
+}
+
+/// Helper to invoke an optional InitCallback safely.
+/// Returns Ok(Some(bool)) for PromptCreateRemoteIndex response, Ok(None) otherwise, or Err.
+pub(crate) async fn invoke_init_callback(
+    callback: &mut Option<InitCallback>,
+    event: InitProgressEvent,
+) -> Result<Option<bool>, Error> {
+     if let Some(cb) = callback {
+        match cb(event).await {
+            Ok(response) => Ok(response), // Propagate user response or None
+            Err(e) => Err(e),
+        }
+    } else {
+        // If no callback, default behavior for PromptCreateRemoteIndex is 'false' (don't create)
+        if matches!(event, InitProgressEvent::PromptCreateRemoteIndex) {
+             Ok(Some(false))
+        } else {
+            Ok(None) // No response needed for other events
+        }
+    }
+}
+
+/// Helper to invoke an optional PurgeCallback safely.
 pub(crate) async fn invoke_purge_callback(
     callback: &mut Option<PurgeCallback>,
     event: PurgeEvent,
 ) -> Result<bool, Error> {
-    if let Some(cb) = callback {
-        // Call the callback and handle potential errors
+     if let Some(cb) = callback {
         match cb(event).await {
-            Ok(should_continue) => {
-                if !should_continue {
-                    Err(Error::OperationCancelled)
-                } else {
-                    Ok(true)
-                }
-            }
-            Err(e) => Err(e), // Propagate callback error
+            Ok(continue_op) => Ok(continue_op),
+            Err(e) => Err(e),
         }
     } else {
-        Ok(true) // No callback, always continue
+        Ok(true)
     }
 }
