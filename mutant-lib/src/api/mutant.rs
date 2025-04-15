@@ -8,7 +8,7 @@ use crate::network::{NetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::PadLifecycleManager;
 use crate::types::{KeyDetails, MutAntConfig, StorageStats};
 use autonomi::{ScratchpadAddress, SecretKey};
-use log::{debug, info};
+use log::{debug, info, warn};
 use std::sync::Arc;
 
 /// The main public structure for interacting with the MutAnt library.
@@ -86,11 +86,22 @@ impl MutAnt {
         data_bytes: &[u8],
         callback: Option<PutCallback>,
     ) -> Result<(), Error> {
-        debug!("MutAnt::store_with_progress called for key '{}'", user_key);
+        debug!(
+            "MutAnt::store_with_progress called for key \'{}\'",
+            user_key
+        );
         self.data_manager
             .store(user_key, data_bytes, callback)
             .await
-            .map_err(Error::Data)
+            .map_err(Error::Data)?;
+
+        // After successful store, save the updated index to cache
+        if let Err(e) = self.save_index_cache().await {
+            warn!("Failed to save index cache after store operation: {}", e);
+            // Do not return error, as store itself succeeded.
+        }
+
+        Ok(())
     }
 
     /// Fetches the raw bytes associated with the given user key.

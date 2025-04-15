@@ -5,11 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - 2024-08-26
+## [0.2.0] - 2025-04-15
 
-### Changed
-- Bumped `mutant-lib` and `mutant-cli` versions to `0.2.0`.
-- Updated dependencies.
+### Added
+- Initial release with core functionality: put, get, ls, rm, update.
+- Devnet support.
+- Progress bars for long operations.
+- Local index caching.
+- Basic CLI structure and logging.
+
+### Fixed
+- Store operation now saves the updated index to the local cache, ensuring `ls` reflects recent changes.
 
 ## [0.1.2] - Unreleased
 
