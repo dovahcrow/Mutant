@@ -28,14 +28,6 @@ pub trait NetworkAdapter: Send + Sync {
     /// Checks if a scratchpad exists at the given address.
     async fn check_existence(&self, address: &ScratchpadAddress) -> Result<bool, NetworkError>;
 
-    /// Deletes a scratchpad entry using its address and secret key.
-    /// !! This likely requires the key corresponding to the address !!
-    async fn delete_raw(
-        &self,
-        address: &ScratchpadAddress,
-        key: &SecretKey,
-    ) -> Result<(), NetworkError>;
-
     /// Returns the network choice (Devnet/Mainnet) the adapter is configured for.
     fn get_network_choice(&self) -> NetworkChoice;
 
@@ -168,20 +160,6 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
             .map_err(|e| {
                 NetworkError::InternalError(format!("Failed to check scratchpad existence: {}", e))
             })
-    }
-
-    async fn delete_raw(
-        &self,
-        address: &ScratchpadAddress,
-        key: &SecretKey,
-    ) -> Result<(), NetworkError> {
-        trace!("NetworkAdapter::delete_raw called for address: {}", address);
-        // Use the provided key for deletion
-        // TODO: Implement delete using the key and address
-        // self.client.scratchpad_delete(address, key).await.map_err(...)
-        Err(NetworkError::InternalError(
-            "delete_raw is not yet implemented for AutonomiNetworkAdapter".to_string(),
-        ))
     }
 
     fn get_network_choice(&self) -> NetworkChoice {
