@@ -85,11 +85,10 @@ impl AutonomiNetworkAdapter {
 impl NetworkAdapter for AutonomiNetworkAdapter {
     async fn get_raw(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, NetworkError> {
         trace!("NetworkAdapter::get_raw called for address: {}", address);
-        let scratchpad = self
-            .client
-            .scratchpad_get(address)
-            .await
-            .map_err(NetworkError::AutonomiScratchpadError)?; // Use the renamed variant
+        let scratchpad =
+            self.client.scratchpad_get(address).await.map_err(|e| {
+                NetworkError::InternalError(format!("Failed to get scratchpad: {}", e))
+            })?;
 
         // Use the adapter's stored key for decryption
         let decrypted_bytes = scratchpad.decrypt_data(&self.secret_key).map_err(|e| {
@@ -99,17 +98,22 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
         Ok(decrypted_bytes.to_vec())
     }
 
-    async fn put_raw(&self, data: &[u8]) -> Result<ScratchpadAddress, NetworkError> {
+    async fn put_raw(
+        &self,
+        key: &SecretKey,
+        data: &[u8],
+    ) -> Result<ScratchpadAddress, NetworkError> {
         trace!("NetworkAdapter::put_raw called, data_len: {}", data.len());
-        // Use the adapter's stored secret key
-        let key = &self.secret_key;
+        // The 'key' parameter is now used from the function arguments,
+        // but we still derive the address from it.
         let public_key = key.public_key();
         let address = ScratchpadAddress::new(public_key);
         let data_bytes = Bytes::copy_from_slice(data); // Convert to autonomi::Bytes
 
-        // Use default content type and payment option
+        // Use default content type
         let content_type = 0u64;
-        let payment_option = PaymentOption::default();
+        // Use PaymentOption::Wallet with the adapter's wallet
+        let payment_option = PaymentOption::Wallet(self.wallet.clone());
 
         debug!("Checking existence of scratchpad at address: {}", address);
 
@@ -120,22 +124,35 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
                 self.client
                     .scratchpad_update(key, content_type, &data_bytes)
                     .await
-                    .map_err(NetworkError::AutonomiClient)?; // Assuming ScratchpadError
+                    .map_err(|e| {
+                        NetworkError::InternalError(format!("Failed to update scratchpad: {}", e))
+                    })?;
                 Ok(address) // Return address on success
             }
             Ok(false) => {
                 // Pad does not exist, create it
                 info!("Scratchpad does not exist at {}, creating...", address);
-                self.client
+                let result_tuple = self
+                    .client
                     .scratchpad_create(key, content_type, &data_bytes, payment_option)
                     .await
-                    .map_err(NetworkError::AutonomiScratchpadError) // Use the renamed variant
-                    .map(|(_cost, created_addr)| created_addr) // Return created address
+                    // Convert Autonomi error to NetworkError::InternalError
+                    .map_err(|e| {
+                        NetworkError::InternalError(format!("Failed to create scratchpad: {}", e))
+                    })?;
+
+                // Extract the address from the tuple result after handling the error
+                let (_cost, created_addr) = result_tuple;
+                Ok(created_addr)
             }
             Err(e) => {
                 // Error during check existence
                 error!("Error checking scratchpad existence at {}: {}", address, e);
-                Err(NetworkError::AutonomiScratchpadError(e)) // Use the renamed variant
+                // Convert Autonomi error to NetworkError::InternalError
+                Err(NetworkError::InternalError(format!(
+                    "Failed to check scratchpad existence: {}",
+                    e
+                )))
             }
         }
     }
@@ -148,17 +165,23 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
         self.client
             .scratchpad_check_existance(address)
             .await
-            .map_err(NetworkError::AutonomiScratchpadError) // Use the renamed variant
+            .map_err(|e| {
+                NetworkError::InternalError(format!("Failed to check scratchpad existence: {}", e))
+            })
     }
 
-    async fn delete_raw(&self, address: &ScratchpadAddress) -> Result<(), NetworkError> {
+    async fn delete_raw(
+        &self,
+        address: &ScratchpadAddress,
+        key: &SecretKey,
+    ) -> Result<(), NetworkError> {
         trace!("NetworkAdapter::delete_raw called for address: {}", address);
-        // Use the adapter's stored secret key
-        let key = &self.secret_key;
+        // Use the provided key for deletion
+        // TODO: Implement delete using the key and address
+        // self.client.scratchpad_delete(address, key).await.map_err(...)
         Err(NetworkError::InternalError(
-            "delete_raw is not implemented for AutonomiNetworkAdapter".to_string(),
+            "delete_raw is not yet implemented for AutonomiNetworkAdapter".to_string(),
         ))
-        // TODO: Implement delete using the key
     }
 
     fn get_network_choice(&self) -> NetworkChoice {
