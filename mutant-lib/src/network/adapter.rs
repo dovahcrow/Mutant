@@ -50,7 +50,7 @@ pub struct AutonomiNetworkAdapter {
     wallet: Wallet, // Wallet is currently only used during client creation, might be removable later
     client: Arc<Client>,
     network_choice: NetworkChoice, // Store for quick access
-    secret_key: SecretKey,         // Store the secret key
+                                   // secret_key: SecretKey,         // Store the secret key
 }
 
 impl AutonomiNetworkAdapter {
@@ -71,7 +71,7 @@ impl AutonomiNetworkAdapter {
             wallet, // Keep wallet for now, needed for PaymentOption
             client: Arc::new(client),
             network_choice,
-            secret_key: key, // Store the secret key
+            // secret_key: key, // Store the secret key
         })
     }
 }

@@ -1,6 +1,6 @@
 use crate::network::error::NetworkError;
 use crate::network::NetworkChoice;
-use autonomi::{Client, Wallet};
+use autonomi::Client;
 use log::info;
 
 // Placeholder for client creation logic.

@@ -25,6 +25,8 @@ pub struct PadInfo {
 pub struct KeyInfo {
     /// List of pads holding the data chunks for this key, ordered by chunk_index.
     pub pads: Vec<PadInfo>,
+    /// Map storing the secret keys (as bytes) for the pads used by this key.
+    pub pad_keys: HashMap<ScratchpadAddress, Vec<u8>>,
     /// The total original size of the data in bytes.
     pub data_size: usize,
     /// Timestamp of the last modification.

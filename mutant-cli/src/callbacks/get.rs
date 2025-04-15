@@ -1,6 +1,5 @@
 use super::progress::StyledProgressBar;
 // Use full paths as re-exports seem problematic
-use futures::future::FutureExt;
 use indicatif::MultiProgress;
 use log::{debug, warn};
 use mutant_lib::error::Error as LibError;

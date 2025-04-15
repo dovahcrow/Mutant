@@ -1,10 +1,9 @@
 use dialoguer::Confirm;
-use futures::future::FutureExt;
 use indicatif::MultiProgress;
 // Use the new top-level re-exports
 use crate::callbacks::progress::StyledProgressBar;
 use mutant_lib::{Error as LibError, InitCallback, InitProgressEvent};
-use std::sync::{Arc, Mutex as StdMutex}; // Use std::sync::Mutex for non-async guards
+use std::sync::Arc; // Use std::sync::Mutex for non-async guards
 use tokio::sync::Mutex as TokioMutex;
 
 pub fn create_init_callback(

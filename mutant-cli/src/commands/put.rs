@@ -81,6 +81,10 @@ pub async fn handle_put(
                         k
                     )
                 }
+                // KeyAlreadyExists during store (force=false)
+                LibError::Data(DataError::KeyAlreadyExists(k)) if !force => {
+                    format!("Key '{}' already exists. Use --force to overwrite.", k)
+                }
                 // Operation cancelled
                 LibError::OperationCancelled => "Operation cancelled.".to_string(),
                 // Other errors

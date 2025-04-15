@@ -1,5 +1,4 @@
 use super::progress::StyledProgressBar;
-use futures::future::FutureExt;
 use indicatif::MultiProgress;
 use log::{debug, warn};
 // Use the new top-level re-exports
@@ -63,7 +62,7 @@ pub fn create_put_callback(
 
     // Clone the context for the callback
     let ctx_clone = context.clone();
-    let confirm_counter_clone = confirm_counter_arc.clone();
+    let _confirm_counter_clone = confirm_counter_arc.clone();
 
     let callback: PutCallback = Box::new(move |event: PutEvent| {
         let ctx = ctx_clone.clone();

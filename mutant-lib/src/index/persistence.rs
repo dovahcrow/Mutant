@@ -4,7 +4,6 @@ use crate::network::NetworkAdapter;
 use crate::storage::{StorageError, StorageManager};
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::{debug, error, info, trace, warn};
-use serde_cbor::{from_slice, to_vec};
 
 /// Serializes the MasterIndex structure into CBOR bytes.
 pub(crate) fn serialize_index(index: &MasterIndex) -> Result<Vec<u8>, IndexError> {

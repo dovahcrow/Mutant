@@ -20,6 +20,9 @@ pub enum DataError {
     #[error("Key not found for operation: {0}")]
     KeyNotFound(String), // If an operation requires a key that doesn't exist
 
+    #[error("Key already exists: {0}. Use --force to overwrite.")]
+    KeyAlreadyExists(String), // Attempted to store a key that already exists without force
+
     #[error("Index layer error during data operation: {0}")]
     Index(#[from] IndexError), // Propagate index errors
 

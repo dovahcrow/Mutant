@@ -28,7 +28,7 @@ pub trait IndexManager: Send + Sync {
     async fn save(
         &self,
         master_index_address: &ScratchpadAddress,
-        master_index_key: &SecretKey,
+        _master_index_key: &SecretKey,
     ) -> Result<(), IndexError>;
 
     /// Retrieves a clone of the KeyInfo for a specific key.
@@ -182,14 +182,14 @@ impl IndexManager for DefaultIndexManager {
     async fn save(
         &self,
         master_index_address: &ScratchpadAddress,
-        master_index_key: &SecretKey,
+        _master_index_key: &SecretKey,
     ) -> Result<(), IndexError> {
         debug!("IndexManager: Saving index to storage...");
         let state_guard = self.state.lock().await;
         save_index(
             self.storage_manager.as_ref(),
             master_index_address,
-            master_index_key,
+            _master_index_key,
             &*state_guard, // Pass the locked state
         )
         .await
