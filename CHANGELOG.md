@@ -113,6 +113,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ensure upload progress bar completion reflects data write finalization before commit steps.
 - Emit UploadProgress/ScratchpadCommitComplete events from storage layer to accurately reflect put/get timing.
 - Modify pad recycling: When deleting a key, pads that were confirmed written (`Populated`) or confirmed reserved (`Free`) are added to the `free_pads` list for immediate reuse. Only pads that were planned but not yet confirmed reserved (`Generated`) are moved to the `pending_verification_pads` list.
+- **BREAKING**: Refactored internal library structure into logical layers (Network, Storage, Index, PadLifecycle, Data, API).
+- **BREAKING**: Reworked error handling using `thiserror` and distinct error types per layer, propagating up to `mutant_lib::Error`.
+- **BREAKING**: Reworked event/callback system (`PutEvent`, `GetEvent`, `InitProgressEvent`, `PurgeEvent`).
+- Improved CLI output using `indicatif` for progress bars.
+- Core data operations (`put`, `get`, `rm`, `ls`, `stats`) now use the refactored library.
+- Initialization (`init_with_progress`) now uses callbacks for progress.
+- Use local cache for index persistence, saving/loading automatically.
+- `sync` command implemented (placeholder, needs actual logic).
+- Wallet handling: Scan default Autonomi dir, prompt user, save selection to config.
+- Network interaction uses `AutonomiNetworkAdapter`.
+- Index/Pad management uses `IndexManager` and `PadLifecycleManager`.
+- Added `KeyDetails` struct for `ls -l`.
+- Pad acquisition tries free pool first, then generates new pads.
+- Network initialization is now lazy: Connects only if the local index cache is missing and remote index fetch is needed.
 
 ### Added
 - `mutant list-details` command to show more information about stored keys.
@@ -121,6 +135,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - If an upload is interrupted, it resumes based on the last saved state and data checksum.
   - Uses new `PadInfo` struct to track individual pad status.
 - Added `data_checksum` field to `KeyStorageInfo`.
+- Purge command to verify pending pads.
+- Import command to add existing pads.
+- Reset command to clear the index.
 
 ### Changed
 - Refactored core store logic into `mutant::store_logic::store_data`.
@@ -130,6 +147,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Handle `QueryTimeout` errors during scratchpad state checks (`scratchpad_get`) in the `write_chunk` function. Added a retry mechanism (up to 3 attempts with 1-second delay) to improve robustness during network instability when resuming uploads.
+- Handled potential errors during wallet file reading and config operations.
+- Ensured MutAnt instance is properly passed to command handlers.
 
 ## [0.1.1] - 2024-04-10
 

@@ -100,9 +100,11 @@ pub(crate) async fn initialize_layers(
         },
     )
     .await?;
-    let network_adapter =
-        Arc::new(AutonomiNetworkAdapter::new(private_key_hex, config.network).await?);
-    info!("NetworkAdapter initialized.");
+    // Create concrete adapter first (new is sync now)
+    let network_adapter_concrete = AutonomiNetworkAdapter::new(private_key_hex, config.network)?;
+    // Then create Arc<dyn Trait>
+    let network_adapter: Arc<dyn NetworkAdapter> = Arc::new(network_adapter_concrete);
+    info!("NetworkAdapter configuration initialized.");
 
     // --- Step 4: Instantiate Lower Managers ---
     invoke_init_callback(

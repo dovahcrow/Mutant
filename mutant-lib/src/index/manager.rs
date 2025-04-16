@@ -21,7 +21,7 @@ pub trait IndexManager: Send + Sync {
     async fn load_or_initialize(
         &self,
         master_index_address: &ScratchpadAddress,
-        master_index_key: &SecretKey,
+        _master_index_key: &SecretKey,
     ) -> Result<(), IndexError>;
 
     /// Saves the current in-memory index state to persistence.
@@ -127,7 +127,7 @@ impl IndexManager for DefaultIndexManager {
     async fn load_or_initialize(
         &self,
         master_index_address: &ScratchpadAddress,
-        master_index_key: &SecretKey, // Key needed if we need to create/save default
+        _master_index_key: &SecretKey,
     ) -> Result<(), IndexError> {
         info!("IndexManager: Loading index from storage...");
         match load_index(

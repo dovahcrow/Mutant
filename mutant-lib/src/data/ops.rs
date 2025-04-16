@@ -295,7 +295,9 @@ pub(crate) async fn fetch_op(
         .await?
         .ok_or_else(|| DataError::KeyNotFound(user_key.to_string()))?;
 
-    let index_copy = deps.index_manager.get_index_copy().await?; // Fetch index copy for keys
+    // Fetch the current index for validation and pad info
+    // Use underscore as index_copy is not directly used after this.
+    let _index_copy = deps.index_manager.get_index_copy().await?; // Fetch once
 
     if !key_info.is_complete {
         // Handle incomplete data - return error or partial data? Error for now.

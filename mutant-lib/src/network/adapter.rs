@@ -7,6 +7,7 @@ use autonomi::client::payment::PaymentOption;
 use autonomi::{Bytes, Client, Scratchpad, ScratchpadAddress, SecretKey, Wallet};
 use log::{debug, error, info, trace};
 use std::sync::Arc;
+use tokio::sync::OnceCell;
 
 /// Trait defining the interface for low-level network operations related to scratchpads.
 /// This abstracts the underlying network implementation (e.g., autonomi client).
@@ -45,34 +46,46 @@ pub trait NetworkAdapter: Send + Sync {
 // --- Implementation ---
 
 /// Concrete implementation of NetworkAdapter using the autonomi crate.
-#[derive(Clone)] // Clone is cheap due to Arc
 pub struct AutonomiNetworkAdapter {
-    wallet: Wallet, // Wallet is currently only used during client creation, might be removable later
-    client: Arc<Client>,
-    network_choice: NetworkChoice, // Store for quick access
-                                   // secret_key: SecretKey,         // Store the secret key
+    wallet: Arc<Wallet>,
+    network_choice: NetworkChoice,
+    client: OnceCell<Arc<Client>>,
 }
 
 impl AutonomiNetworkAdapter {
-    /// Creates a new AutonomiNetworkAdapter instance.
-    pub async fn new(
-        private_key_hex: &str,
-        network_choice: NetworkChoice,
-    ) -> Result<Self, NetworkError> {
+    /// Creates a new AutonomiNetworkAdapter instance without connecting immediately.
+    pub fn new(private_key_hex: &str, network_choice: NetworkChoice) -> Result<Self, NetworkError> {
         debug!(
-            "Creating AutonomiNetworkAdapter for network: {:?}",
+            "Creating AutonomiNetworkAdapter configuration for network: {:?}",
             network_choice
         );
-        // create_wallet returns (Wallet, SecretKey). Store both.
-        let (wallet, key) = create_wallet(private_key_hex, network_choice)?;
-        // Pass network_choice to client creation instead of wallet
-        let client = create_client(network_choice).await?;
+        // Create wallet eagerly, it's cheap and needed for PaymentOption later
+        let (wallet, _key) = create_wallet(private_key_hex, network_choice)?;
+
         Ok(Self {
-            wallet, // Keep wallet for now, needed for PaymentOption
-            client: Arc::new(client),
+            wallet: Arc::new(wallet),
             network_choice,
-            // secret_key: key, // Store the secret key
+            client: OnceCell::new(),
         })
+    }
+
+    /// Gets the initialized client, initializing it on first call.
+    async fn get_or_init_client(&self) -> Result<Arc<Client>, NetworkError> {
+        self.client
+            .get_or_try_init(|| async {
+                // Clone Wallet and NetworkChoice to move into the async block
+                let _wallet_clone = Arc::clone(&self.wallet);
+                let network_choice_clone = self.network_choice;
+
+                info!(
+                    "Initializing network client for {:?}...",
+                    network_choice_clone
+                );
+                // Use create_client which handles Client::init/init_local
+                create_client(network_choice_clone).await.map(Arc::new) // Wrap the resulting Client in Arc
+            })
+            .await
+            .map(Arc::clone) // Clone the Arc<Client> for the caller
     }
 }
 
@@ -86,11 +99,12 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
             "NetworkAdapter::get_raw_scratchpad called for address: {}",
             address
         );
+        let client = self.get_or_init_client().await?;
         // Fetch the Scratchpad object
-        let scratchpad: Scratchpad =
-            self.client.scratchpad_get(address).await.map_err(|e| {
-                NetworkError::InternalError(format!("Failed to get scratchpad: {}", e))
-            })?;
+        let scratchpad: Scratchpad = client
+            .scratchpad_get(address)
+            .await
+            .map_err(|e| NetworkError::InternalError(format!("Failed to get scratchpad: {}", e)))?;
 
         // Return the whole Scratchpad object
         Ok(scratchpad)
@@ -102,6 +116,8 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
         data: &[u8],
     ) -> Result<ScratchpadAddress, NetworkError> {
         trace!("NetworkAdapter::put_raw called, data_len: {}", data.len());
+        let client = self.get_or_init_client().await?;
+
         // The 'key' parameter is now used from the function arguments,
         // but we still derive the address from it.
         let public_key = key.public_key();
@@ -111,15 +127,15 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
         // Use default content type
         let content_type = 0u64;
         // Use PaymentOption::Wallet with the adapter's wallet
-        let payment_option = PaymentOption::Wallet(self.wallet.clone());
+        let payment_option = PaymentOption::Wallet((*self.wallet).clone());
 
         debug!("Checking existence of scratchpad at address: {}", address);
 
-        match self.client.scratchpad_check_existance(&address).await {
+        match client.scratchpad_check_existance(&address).await {
             Ok(true) => {
                 // Pad exists, update it
                 info!("Scratchpad exists at {}, updating...", address);
-                self.client
+                client
                     .scratchpad_update(key, content_type, &data_bytes)
                     .await
                     .map_err(|e| {
@@ -130,8 +146,7 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
             Ok(false) => {
                 // Pad does not exist, create it
                 info!("Scratchpad does not exist at {}, creating...", address);
-                let result_tuple = self
-                    .client
+                let result_tuple = client
                     .scratchpad_create(key, content_type, &data_bytes, payment_option)
                     .await
                     // Convert Autonomi error to NetworkError::InternalError
@@ -160,7 +175,8 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
             "NetworkAdapter::check_existence called for address: {}",
             address
         );
-        self.client
+        let client = self.get_or_init_client().await?;
+        client
             .scratchpad_check_existance(address)
             .await
             .map_err(|e| {

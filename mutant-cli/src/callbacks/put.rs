@@ -12,8 +12,10 @@ struct PutCallbackContext {
     res_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     upload_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     confirm_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
-    total_bytes_for_upload: Arc<Mutex<u64>>,
+    _total_bytes_for_upload: Arc<Mutex<u64>>,
     multi_progress: MultiProgress,
+    chunks_written: Arc<Mutex<usize>>,
+    total_chunks: usize,
 }
 
 pub fn create_put_callback(
@@ -56,8 +58,10 @@ pub fn create_put_callback(
         res_pb_opt: res_pb_opt.clone(),
         upload_pb_opt: upload_pb_opt.clone(),
         confirm_pb_opt: confirm_pb_opt.clone(),
-        total_bytes_for_upload: total_bytes_for_upload.clone(),
+        _total_bytes_for_upload: total_bytes_for_upload.clone(),
         multi_progress: multi_progress.clone(),
+        chunks_written: Arc::new(Mutex::new(0usize)),
+        total_chunks: 0,
     };
 
     // Clone the context for the callback
