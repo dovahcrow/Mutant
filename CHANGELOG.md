@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI:** Mark incomplete uploads with `*` in `mutant ls` output (both standard and long formats).
 - **Sync:** Fixed an issue where the `sync` command (and other operations that save the index) would fail if the remote master index scratchpad did not exist. The save logic now checks for existence and calls the appropriate create or update function.
 - Fixed a data corruption issue during `get` caused by the list of storage pads (`PadInfo`) not being saved in the correct chunk order during `put`/`update`. The `perform_concurrent_write_standalone` function now collects `(index, PadInfo)` pairs, sorts them by index, and stores the correctly ordered list in the master index.
+- Network initialization is now lazy: Connects only if the local index cache is missing and remote index fetch is needed.
 
 ### Added
 - Differentiate local index cache based on network choice (Devnet vs Mainnet). Cache files are now stored in `~/.local/share/mutant/{devnet,mainnet}/index.cbor`.
@@ -106,49 +107,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - The specific changelog entry for updating the progress message to "Creating remote master index..." as this is now covered by the refactoring of init steps.
 
-## [Unreleased]
-
-### Changed
-- Fix the commit progress bar to only track newly reserved pads.
-- Ensure upload progress bar completion reflects data write finalization before commit steps.
-- Emit UploadProgress/ScratchpadCommitComplete events from storage layer to accurately reflect put/get timing.
-- Modify pad recycling: When deleting a key, pads that were confirmed written (`Populated`) or confirmed reserved (`Free`) are added to the `free_pads` list for immediate reuse. Only pads that were planned but not yet confirmed reserved (`Generated`) are moved to the `pending_verification_pads` list.
-- **BREAKING**: Refactored internal library structure into logical layers (Network, Storage, Index, PadLifecycle, Data, API).
-- **BREAKING**: Reworked error handling using `thiserror` and distinct error types per layer, propagating up to `mutant_lib::Error`.
-- **BREAKING**: Reworked event/callback system (`PutEvent`, `GetEvent`, `InitProgressEvent`, `PurgeEvent`).
-- Improved CLI output using `indicatif` for progress bars.
-- Core data operations (`put`, `get`, `rm`, `ls`, `stats`) now use the refactored library.
-- Initialization (`init_with_progress`) now uses callbacks for progress.
-- Use local cache for index persistence, saving/loading automatically.
-- `sync` command implemented (placeholder, needs actual logic).
-- Wallet handling: Scan default Autonomi dir, prompt user, save selection to config.
-- Network interaction uses `AutonomiNetworkAdapter`.
-- Index/Pad management uses `IndexManager` and `PadLifecycleManager`.
-- Added `KeyDetails` struct for `ls -l`.
-- Pad acquisition tries free pool first, then generates new pads.
-- Network initialization is now lazy: Connects only if the local index cache is missing and remote index fetch is needed.
-
-### Added
-- `mutant list-details` command to show more information about stored keys.
-- Implemented resumable uploads for `store` operations (`mutant put`).
-  - Upload state (pad status: Generated, Free, Populated) is persisted locally after each step.
-  - If an upload is interrupted, it resumes based on the last saved state and data checksum.
-  - Uses new `PadInfo` struct to track individual pad status.
-- Added `data_checksum` field to `KeyStorageInfo`.
-- Purge command to verify pending pads.
-- Import command to add existing pads.
-- Reset command to clear the index.
-
-### Changed
-- Refactored core store logic into `mutant::store_logic::store_data`.
-- Refactored `mutant::update_logic::update_item` to perform delete + store for simplicity.
-- Refactored `pad_manager` to support the new resumable logic and `PadInfo` struct.
-- Introduced `pad_manager::write::write_chunk` to handle individual pad creation/updates.
-
-### Fixed
-- Handle `QueryTimeout` errors during scratchpad state checks (`scratchpad_get`) in the `write_chunk` function. Added a retry mechanism (up to 3 attempts with 1-second delay) to improve robustness during network instability when resuming uploads.
-- Handled potential errors during wallet file reading and config operations.
-- Ensured MutAnt instance is properly passed to command handlers.
+[Unreleased]: https://github.com/Champii/MutAnt/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Champii/MutAnt/compare/v0.1.0...v0.1.1
 
 ## [0.1.1] - 2024-04-10
 
@@ -169,29 +129,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local caching of Master Index.
 - Initial pad management logic (no reuse).
 
-[Unreleased]: https://github.com/Champii/MutAnt/compare/v0.1.1...HEAD
-[0.1.1]: https://github.com/Champii/MutAnt/compare/v0.1.0...v0.1.1
-
 ### Changed
 
-- **Reworked progress reporting for `put` command:**
-  - Added verification loop to `create_scratchpad_static`.
-  - Introduced `PadCreateSuccess` event emitted after network create success.
-  - Moved `UploadProgress` emission to occur immediately after network create/update success.
-  - `PadConfirmed` is now emitted after successful verification in both create and update paths.
-  - CLI callback now updates Reservation bar on `PadCreateSuccess`, Upload bar on `UploadProgress`, and Confirmation bar on `PadConfirmed`.
-
-- **Refactored `PutEvent` enum and progress bars:**
-  - Simplified `PutEvent` variants for clearer progress reporting (`ReservingPads`, `StartingUpload`, `UploadProgress`, `PadConfirmed`, `StoreComplete`).
-  - Removed redundant/confusing events (`PadWriteConfirmed`, `ScratchpadCommitComplete`, `PadWriteProgress`, `UploadFinished`).
-  - Introduced a dedicated "Confirmation" progress bar in the CLI, updated by `PadConfirmed` events.
-  - CLI callback logic updated to handle the new event structure and manage reservation, upload (bytes), and confirmation (count) bars correctly.
-
-- **Fixed reservation bar progress:** Introduced a dedicated counter for successful pad creations (`create_counter_arc`) and updated `PadCreateSuccess` event and handler to use this count, preventing the progress bar from jumping positions.
-
-- **Fixed confirmation bar initial display:** The confirmation bar now shows the correct total number of pads immediately upon starting the upload phase, instead of displaying `[0/0]` initially.
-
-### Fixed
-- Ensure the reservation progress bar is displayed (with 0 count) when resuming an interrupted upload.
-- Handle "Scratchpad already exists" errors gracefully during pad creation in `create_scratchpad_static`.
-  This prevents failures when resuming an interrupted upload where some pads were created but not yet marked as completed locally.
+- **Reworked progress reporting for `
