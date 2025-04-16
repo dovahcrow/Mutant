@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Corrected pad lifecycle management to ensure pads from cancelled or failed `put` operations are not prematurely released or discarded, allowing for proper resumption.
 - **Fixed `put` progress reporting by ensuring the `Starting` event is emitted *before* pad acquisition begins, allowing the reservation progress bar to initialize correctly.**
+- **Fix:** Prevent redundant existence check in `put_raw` when reusing free pads.
 
 ### Removed
 - Removed redundant pad release functions (`pad_lifecycle::pool::release_pads_to_free`, `pad_lifecycle::manager::release_pads`) as the logic is now handled within `IndexManager` and `purge`.
