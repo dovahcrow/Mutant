@@ -75,7 +75,7 @@ pub fn create_put_callback(
                         pb
                     });
                     res_pb.set_length(total_u64);
-                    res_pb.set_position(0); // Start at 0
+                    res_pb.set_position(initial_written_count as u64); // Set initial position based on written count
                     drop(res_pb_guard);
 
                     // Initialize Upload Bar
