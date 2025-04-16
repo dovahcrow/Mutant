@@ -723,91 +723,75 @@ pub(crate) async fn store_op(
 
                                         match fetch_result {
                                             Ok(scratchpad) => {
-                                                // Attempt decryption using the key passed into this task
-                                                match scratchpad.decrypt_data(&confirm_secret_key) {
-                                                    Ok(_) => {
-                                                        // Decryption successful!
-                                                        let final_counter = scratchpad.counter();
-                                                        trace!(
-                                                            "Attempt {}: Decryption successful for pad {}. Final counter: {}",
-                                                            attempt + 1, confirm_pad_info.address, final_counter
-                                                        );
+                                                // Directly get the counter and perform the check
+                                                let final_counter = scratchpad.counter();
+                                                trace!(
+                                                    "Attempt {}: Fetched scratchpad for pad {}. Final counter: {}",
+                                                    attempt + 1, confirm_pad_info.address, final_counter
+                                                );
 
-                                                        // Check counter increment for FreePool pads
-                                                        let counter_check_passed = match confirm_pad_info.origin {
-                                                            PadOrigin::FreePool { initial_counter } => {
-                                                                if final_counter > initial_counter {
-                                                                    trace!("Attempt {}: Counter check passed for FreePool pad {}.", attempt + 1, confirm_pad_info.address);
-                                                                    true // Counter incremented
-                                                                } else {
-                                                                    warn!(
-                                                                        "Attempt {}: Counter check failed for pad {}. Initial: {}, Final: {}. Retrying...",
-                                                                        attempt + 1, confirm_pad_info.address, initial_counter, final_counter
-                                                                    );
-                                                                    // Store error in case loop finishes
-                                                                    last_error = Some(DataError::InconsistentState(format!(
-                                                                        "Counter check failed after retries for pad {} ({} -> {})",
-                                                                        confirm_pad_info.address,
-                                                                        initial_counter,
-                                                                        final_counter
-                                                                    )));
-                                                                    false // Counter did not increment yet
+                                                // Check counter increment for FreePool pads
+                                                let counter_check_passed = match confirm_pad_info.origin {
+                                                    PadOrigin::FreePool { initial_counter } => {
+                                                        if final_counter > initial_counter {
+                                                            trace!("Attempt {}: Counter check passed for FreePool pad {}.", attempt + 1, confirm_pad_info.address);
+                                                            true // Counter incremented
+                                                        } else {
+                                                            trace!(
+                                                                "Attempt {}: Counter check failed for pad {}. Initial: {}, Final: {}. Retrying...",
+                                                                attempt + 1, confirm_pad_info.address, initial_counter, final_counter
+                                                            );
+                                                            // Store error in case loop finishes
+                                                            last_error = Some(DataError::InconsistentState(format!(
+                                                                "Counter check failed after retries for pad {} ({} -> {})",
+                                                                confirm_pad_info.address,
+                                                                initial_counter,
+                                                                final_counter
+                                                            )));
+                                                            false // Counter did not increment yet
+                                                        }
+                                                    }
+                                                    PadOrigin::Generated => {
+                                                        trace!("Attempt {}: Skipping counter check for Generated pad {}.", attempt + 1, confirm_pad_info.address);
+                                                        true // No check needed for generated pads
+                                                    }
+                                                };
+
+                                                if counter_check_passed {
+                                                    // Counter check passed (or skipped), proceed to update status
+                                                    match index_manager_clone
+                                                        .update_pad_status(&user_key_inner_clone, &confirm_pad_info.address, PadStatus::Confirmed)
+                                                        .await {
+                                                            Ok(_) => {
+                                                                trace!("Updated status to Confirmed for pad {}", confirm_pad_info.address);
+                                                                // --- Persist Index Cache ---
+                                                                let network_choice = network_adapter_clone.get_network_choice();
+                                                                if let Err(e) = pad_lifecycle_manager_clone.save_index_cache(network_choice).await {
+                                                                    warn!("Failed to save index cache after setting pad {} to Confirmed: {}. Proceeding anyway.", confirm_pad_info.address, e);
                                                                 }
+                                                                // --- Emit Callback ---
+                                                                if !invoke_put_callback(
+                                                                    &mut *callback_clone.lock().await,
+                                                                    PutEvent::ChunkConfirmed {
+                                                                        chunk_index: confirm_pad_info.chunk_index,
+                                                                    },
+                                                                )
+                                                                .await
+                                                                .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))? {
+                                                                    error!("Store operation cancelled by callback after chunk confirmation.");
+                                                                    return Err(DataError::OperationCancelled);
+                                                                }
+                                                                // --- Success ---
+                                                                return Ok(confirm_pad_info.chunk_index);
                                                             }
-                                                            PadOrigin::Generated => {
-                                                                trace!("Attempt {}: Skipping counter check for Generated pad {}.", attempt + 1, confirm_pad_info.address);
-                                                                true // No check needed for generated pads
+                                                            Err(e) => {
+                                                                error!("Failed to update pad status to Confirmed for {}: {}", confirm_pad_info.address, e);
+                                                                // Return immediately on index error
+                                                                return Err(DataError::Index(e));
                                                             }
-                                                        };
-
-                                                        if counter_check_passed {
-                                                            // Counter check passed (or skipped), proceed to update status
-                                                            match index_manager_clone
-                                                                .update_pad_status(&user_key_inner_clone, &confirm_pad_info.address, PadStatus::Confirmed)
-                                                                .await {
-                                                                    Ok(_) => {
-                                                                        trace!("Updated status to Confirmed for pad {}", confirm_pad_info.address);
-                                                                        // --- Persist Index Cache ---
-                                                                        let network_choice = network_adapter_clone.get_network_choice();
-                                                                        if let Err(e) = pad_lifecycle_manager_clone.save_index_cache(network_choice).await {
-                                                                            warn!("Failed to save index cache after setting pad {} to Confirmed: {}. Proceeding anyway.", confirm_pad_info.address, e);
-                                                                        }
-                                                                        // --- Emit Callback ---
-                                                                        if !invoke_put_callback(
-                                                                            &mut *callback_clone.lock().await,
-                                                                            PutEvent::ChunkConfirmed {
-                                                                                chunk_index: confirm_pad_info.chunk_index,
-                                                                            },
-                                                                        )
-                                                                        .await
-                                                                        .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))? {
-                                                                            error!("Store operation cancelled by callback after chunk confirmation.");
-                                                                            return Err(DataError::OperationCancelled);
-                                                                        }
-                                                                        // --- Success ---
-                                                                        return Ok(confirm_pad_info.chunk_index);
-                                                                    }
-                                                                    Err(e) => {
-                                                                        error!("Failed to update pad status to Confirmed for {}: {}", confirm_pad_info.address, e);
-                                                                        // Return immediately on index error
-                                                                        return Err(DataError::Index(e));
-                                                                    }
-                                                            }
-                                                        } // end if counter_check_passed
-                                                        // else: counter check failed, loop will continue after delay
                                                     }
-                                                    Err(decrypt_err) => {
-                                                        // Decryption failed - DO NOT RETRY
-                                                        error!(
-                                                            "Confirmation failed for pad {}: Decryption error: {}. Halting operation.",
-                                                            confirm_pad_info.address, decrypt_err
-                                                        );
-                                                        return Err(DataError::InconsistentState(format!(
-                                                            "Confirmation failed (decryption) for {}",
-                                                            confirm_pad_info.address
-                                                        )));
-                                                    }
-                                                }
+                                                } // end if counter_check_passed
+                                                // else: counter check failed, loop will continue after delay
                                             }
                                             Err(fetch_err) => {
                                                 // Fetch failed (StorageError) - DO NOT RETRY
@@ -815,7 +799,8 @@ pub(crate) async fn store_op(
                                                     "Confirmation failed for pad {}: Storage error during fetch: {}",
                                                     confirm_pad_info.address, fetch_err
                                                 );
-                                                return Err(DataError::Storage(fetch_err.into()));
+                                                // Ensure error is wrapped correctly
+                                                return Err(DataError::Storage(fetch_err.into())); // Keep this error handling
                                             }
                                         }
 
