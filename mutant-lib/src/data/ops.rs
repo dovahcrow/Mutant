@@ -184,6 +184,22 @@ pub(crate) async fn store_op(
                                     key_info_mut.is_complete = false;
                                     // Treat as non-existent for the purpose of resume tasks
                                     existence_results.insert(address, false);
+
+                                    // --- Persist Index Cache Immediately --- START
+                                    let network_choice = deps.network_adapter.get_network_choice();
+                                    if let Err(cache_err) = deps
+                                        .pad_lifecycle_manager
+                                        .save_index_cache(network_choice)
+                                        .await
+                                    {
+                                        warn!(
+                                            "Failed to immediately save index cache after marking pad {} for re-verification: {}. Proceeding anyway.",
+                                            address, cache_err
+                                        );
+                                    } else {
+                                        debug!("Index cache saved immediately after marking pad {} for re-verification.", address);
+                                    }
+                                    // --- Persist Index Cache Immediately --- END
                                 } else {
                                     error!(
                                         "Logic error: Could not find PadInfo for address {} after existence check failure.",
