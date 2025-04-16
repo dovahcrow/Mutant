@@ -6,7 +6,7 @@ use crate::network::NetworkAdapter;
 use crate::pad_lifecycle::PadLifecycleManager;
 use crate::storage::StorageManager;
 use async_trait::async_trait;
-use log::warn;
+use log::{debug, error, info, trace};
 use std::sync::Arc;
 
 /// Trait defining the interface for high-level data operations (store, fetch, remove, update).
@@ -35,9 +35,9 @@ pub trait DataManager: Send + Sync {
     /// Returns `DataError::KeyNotFound` if the key does not exist.
     async fn update(
         &self,
-        user_key: String, // Take ownership as ops::update_op does
-        data_bytes: &[u8],
-        callback: Option<PutCallback>,
+        _user_key: String,
+        _data_bytes: &[u8],
+        _callback: Option<PutCallback>,
     ) -> Result<(), DataError>;
 }
 
@@ -92,13 +92,18 @@ impl DataManager for DefaultDataManager {
 
     async fn update(
         &self,
-        user_key: String,
-        data_bytes: &[u8],
-        callback: Option<PutCallback>,
+        _user_key: String,
+        _data_bytes: &[u8],
+        _callback: Option<PutCallback>,
     ) -> Result<(), DataError> {
+        unimplemented!(
+            "Update operation is temporarily removed due to complexity. Use remove then store."
+        );
+        /* COMMENTED OUT
         warn!("Update operation is currently disabled.");
         Err(DataError::InternalError(
             "Update operation not implemented".to_string(),
         ))
+        */
     }
 }

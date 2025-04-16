@@ -15,6 +15,7 @@ use log::{debug, error, info, trace, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio;
+use tokio::sync::Mutex;
 
 // Helper structure to pass down dependencies to operation functions
 // Using Arcs for shared ownership across potential concurrent tasks
@@ -43,9 +44,10 @@ pub(crate) async fn store_op(
     deps: &DataManagerDependencies,
     user_key: String, // Take ownership
     data_bytes: &[u8],
-    mut callback: Option<PutCallback>,
+    callback: Option<PutCallback>,
 ) -> Result<(), DataError> {
     info!("DataOps: Starting store operation for key '{}'", user_key);
+    let callback_arc = Arc::new(Mutex::new(callback));
     let data_size = data_bytes.len();
 
     // 1. Get chunk size and chunk data (do this early)
@@ -187,7 +189,7 @@ pub(crate) async fn store_op(
                     .insert_key_info(user_key.clone(), key_info)
                     .await?;
                 info!("Empty key '{}' created.", user_key);
-                if !invoke_put_callback(&mut callback, PutEvent::Complete)
+                if !invoke_put_callback(&mut *callback_arc.lock().await, PutEvent::Complete)
                     .await
                     .map_err(|e| DataError::InternalError(format!("Callback failed: {}", e)))?
                 {
@@ -196,11 +198,25 @@ pub(crate) async fn store_op(
                 return Ok(());
             }
 
+            // Invoke Starting event *before* acquiring pads
+            if !invoke_put_callback(
+                &mut *callback_arc.lock().await,
+                PutEvent::Starting {
+                    total_chunks: num_chunks,
+                },
+            )
+            .await
+            .map_err(|e| DataError::InternalError(format!("Callback failed: {}", e)))?
+            {
+                warn!("Put operation cancelled by callback during Starting event.");
+                return Err(DataError::OperationCancelled);
+            }
+
             // Acquire necessary pads (now returns origin and takes callback)
             debug!("Acquiring {} pads...", num_chunks);
             let acquired_pads_with_origin = deps
                 .pad_lifecycle_manager
-                .acquire_pads(num_chunks, &mut callback)
+                .acquire_pads(num_chunks, &mut *callback_arc.lock().await)
                 .await?;
 
             debug!(
@@ -271,6 +287,8 @@ pub(crate) async fn store_op(
 
     // --- Callback for Starting ---
     // Sent after initial setup (new or resume) is done and tasks are prepared
+    // MOVED EARLIER, removed redundant call:
+    /*
     if !invoke_put_callback(
         &mut callback,
         PutEvent::Starting {
@@ -284,20 +302,26 @@ pub(crate) async fn store_op(
         // No pads need releasing here as the index state is saved.
         return Err(DataError::OperationCancelled);
     }
+    */
 
-    // --- Concurrent Processing ---
+    // --- Concurrent Processing (Combined Write & Confirm) ---
     debug!(
         "Starting concurrent processing of {} write tasks...",
         tasks_to_run.len()
     );
     let mut write_futures = FuturesUnordered::new();
+    let mut confirm_futures = FuturesUnordered::new(); // Added for confirmations
 
     let mut operation_error: Option<DataError> = None;
     let mut callback_cancelled = false;
-    let mut active_write_tasks = 0;
+    let mut pending_writes = 0;
+    let mut pending_confirms = 0; // Added counter
 
-    // Vector to store pads that were successfully written and need confirmation
-    let mut written_pads: Vec<PadInfo> = Vec::new();
+    // Clone needed dependencies for async blocks
+    let index_manager = Arc::clone(&deps.index_manager);
+    let network_adapter = Arc::clone(&deps.network_adapter);
+    let storage_manager = Arc::clone(&deps.storage_manager);
+    let user_key_clone = user_key.clone(); // Clone user_key for use in tasks
 
     // Populate FuturesUnordered from the prepared tasks
     for task in tasks_to_run {
@@ -308,34 +332,34 @@ pub(crate) async fn store_op(
                 chunk_data,
                 origin,
             } => {
-                let storage_manager = Arc::clone(&deps.storage_manager);
+                let storage_manager_clone = Arc::clone(&storage_manager); // Clone for the write task
                 let is_new_hint = origin == PadOrigin::Generated;
-                active_write_tasks += 1;
+                pending_writes += 1;
                 write_futures.push(async move {
-                    let write_result = storage_manager
+                    let write_result = storage_manager_clone
                         .write_pad_data(&secret_key, &chunk_data, is_new_hint)
                         .await;
+                    // Return original pad_info along with the result
                     (pad_info, write_result)
                 });
             }
         }
     }
 
-    // --- Phase 1: Process Write Tasks ---
-    debug!("Starting Phase 1: Writing {} chunks...", active_write_tasks);
-    while active_write_tasks > 0 && operation_error.is_none() {
+    debug!(
+        "Processing {} pending writes and {} pending confirms.",
+        pending_writes, pending_confirms
+    );
+
+    // --- Combined Write & Confirm Loop ---
+    while (pending_writes > 0 || pending_confirms > 0) && operation_error.is_none() {
         tokio::select! {
-            // Biased select ensures we check for errors/cancellation first
+            // Biased select to prioritize processing completions over potential new confirmations
             biased;
 
-            // Check for error/cancellation (implicit check via loop condition)
-            _ = async {}, if operation_error.is_some() => {
-                break;
-            }
-
-            // Process Write Task Completion
-            Some((pad_info, result)) = write_futures.next(), if active_write_tasks > 0 => {
-                active_write_tasks -= 1;
+            // --- Process Write Task Completion ---
+            Some((pad_info, result)) = write_futures.next(), if pending_writes > 0 => {
+                pending_writes -= 1;
                 match result {
                     Ok(written_address) => {
                         // Sanity check address
@@ -344,151 +368,161 @@ pub(crate) async fn store_op(
                                 "StorageManager returned address {} but expected {}. Using returned address.",
                                 written_address, pad_info.address
                             );
+                            // Important: Use the address returned by the storage manager
+                            // for subsequent operations (index update, confirmation).
                         }
+                        let confirmed_pad_address = written_address; // Use the potentially corrected address
 
-                        trace!("Write successful for chunk {}, pad {}", pad_info.chunk_index, written_address);
+                        trace!("Write successful for chunk {}, pad {}", pad_info.chunk_index, confirmed_pad_address);
 
                         // Update status to Written
-                        match deps.index_manager
-                            .update_pad_status(&user_key, &written_address, PadStatus::Written)
+                        match index_manager
+                            .update_pad_status(&user_key_clone, &confirmed_pad_address, PadStatus::Written)
                             .await {
                                 Ok(_) => {
-                                    trace!("Updated status to Written for pad {}", written_address);
+                                    trace!("Updated status to Written for pad {}", confirmed_pad_address);
+
                                     // Emit ChunkWritten callback
-                                     if !invoke_put_callback(&mut callback, PutEvent::ChunkWritten { chunk_index: pad_info.chunk_index })
+                                     if !invoke_put_callback(
+                                         &mut *callback_arc.lock().await,
+                                         PutEvent::ChunkWritten { chunk_index: pad_info.chunk_index }
+                                         )
                                          .await
                                          .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
                                      {
                                          error!("Store operation cancelled by callback after chunk write.");
                                          operation_error = Some(DataError::OperationCancelled);
                                          callback_cancelled = true;
-                                         continue; // Let select break on error
+                                         continue; // Let select break on error check
                                      }
 
-                                    // Add to list for confirmation phase
-                                    let confirmed_pad_info = PadInfo {
-                                        address: written_address, // Use potentially corrected address
+                                    // --- Spawn Confirmation Task ---
+                                    let network_adapter_clone = Arc::clone(&network_adapter);
+                                    let index_manager_clone = Arc::clone(&index_manager);
+                                    let user_key_inner_clone = user_key_clone.clone();
+                                    let callback_clone = Arc::clone(&callback_arc); // Clone the Arc
+                                    let confirm_pad_info = PadInfo { // Create info with the correct address
+                                        address: confirmed_pad_address,
                                         chunk_index: pad_info.chunk_index,
                                         status: PadStatus::Written, // Status is now Written
                                     };
-                                    written_pads.push(confirmed_pad_info);
+
+                                    debug!("Spawning confirmation task for pad {}", confirmed_pad_address);
+                                    pending_confirms += 1;
+                                    confirm_futures.push(async move {
+                                        let confirmation_result = network_adapter_clone
+                                            .check_existence(&confirm_pad_info.address)
+                                            .await;
+
+                                        match confirmation_result {
+                                            Ok(exists) => {
+                                                if exists {
+                                                    trace!(
+                                                        "Confirmation check successful for chunk {}, pad {}",
+                                                        confirm_pad_info.chunk_index, confirm_pad_info.address
+                                                    );
+                                                    // Update status to Confirmed
+                                                    match index_manager_clone
+                                                        .update_pad_status(&user_key_inner_clone, &confirm_pad_info.address, PadStatus::Confirmed)
+                                                        .await {
+                                                            Ok(_) => {
+                                                                trace!("Updated status to Confirmed for pad {}", confirm_pad_info.address);
+                                                                // Emit ChunkConfirmed callback
+                                                                if !invoke_put_callback(
+                                                                    &mut *callback_clone.lock().await,
+                                                                    PutEvent::ChunkConfirmed {
+                                                                        chunk_index: confirm_pad_info.chunk_index,
+                                                                    },
+                                                                )
+                                                                .await
+                                                                .map_err(|e| {
+                                                                    DataError::InternalError(format!(
+                                                                        "Callback invocation failed: {}",
+                                                                        e
+                                                                    ))
+                                                                })? {
+                                                                    error!("Store operation cancelled by callback after chunk confirmation.");
+                                                                    // Indicate cancellation via error
+                                                                    return Err(DataError::OperationCancelled);
+                                                                }
+                                                                Ok(confirm_pad_info.chunk_index) // Indicate success
+                                                            }
+                                                            Err(e) => {
+                                                                error!("Failed to update pad status to Confirmed for {}: {}", confirm_pad_info.address, e);
+                                                                Err(DataError::Index(e)) // Return index error
+                                                            }
+                                                        }
+                                                } else {
+                                                    // Confirmation failed (pad doesn't exist after write?)
+                                                    error!("Confirmation check failed for pad {}: Pad not found after write.", confirm_pad_info.address);
+                                                    Err(DataError::InconsistentState(format!(
+                                                        "Pad {} not found during confirmation",
+                                                        confirm_pad_info.address
+                                                    )))
+                                                }
+                                            }
+                                            Err(e) => {
+                                                // Network error during confirmation check
+                                                error!("Network error during confirmation for pad {}: {}", confirm_pad_info.address, e);
+                                                Err(DataError::InternalError(format!("Network confirmation failed: {}", e)))
+                                            }
+                                        }
+                                    }); // End of confirm_futures.push async block
 
                                 }
                                 Err(e) => {
-                                    error!("Failed to update pad status to Written for {}: {}. Halting write phase.", written_address, e);
+                                    error!("Failed to update pad status to Written for {}: {}. Halting.", confirmed_pad_address, e);
                                     operation_error = Some(DataError::Index(e));
-                                    continue; // Let select break on error
+                                    continue; // Let select break on error check
                                 }
                             }
                     }
                     Err(e) => {
                         error!("Failed to write chunk {} to pad {}: {}. Halting.", pad_info.chunk_index, pad_info.address, e);
-                        if operation_error.is_none() {
+                        if operation_error.is_none() { // Prevent overwriting earlier error
                             operation_error = Some(DataError::Storage(e.into()));
                         }
-                        continue; // Let select break on error
+                        continue; // Let select break on error check
                     }
                 }
+            } // End Write Completion Handling
+
+            // --- Process Confirmation Task Completion ---
+            Some(confirm_result) = confirm_futures.next(), if pending_confirms > 0 => {
+                pending_confirms -= 1;
+                match confirm_result {
+                    Ok(confirmed_chunk_index) => {
+                        trace!("Confirmation task completed successfully for chunk index {}", confirmed_chunk_index);
+                        // Status update and callback emission happened inside the task's future
+                    }
+                    Err(e) => {
+                         error!("Confirmation task failed: {}. Halting.", e);
+                         if operation_error.is_none() { // Prevent overwriting earlier error
+                             operation_error = Some(e); // Use the error returned by the confirmation task
+                         }
+                         // If the error was OperationCancelled from the callback, set the flag
+                         if matches!(operation_error, Some(DataError::OperationCancelled)) {
+                            callback_cancelled = true;
+                         }
+                         continue; // Let select break on error check
+                    }
+                }
+            } // End Confirmation Completion Handling
+
+            // Default branch if no futures are ready - avoids busy-waiting
+            else => {
+                // Optional: yield briefly if needed, though select! handles this
+                // tokio::task::yield_now().await;
             }
-        }
-    }
 
-    // --- Phase 2: Process Confirmation Tasks ---
-    if operation_error.is_none() && !callback_cancelled {
-        debug!(
-            "Starting Phase 2: Confirming {} written pads...",
-            written_pads.len()
-        );
-        let mut confirm_futures = FuturesUnordered::new();
+        } // End tokio::select!
+    } // End combined loop
 
-        // Populate confirm_futures
-        for pad_info in written_pads {
-            let network_adapter = Arc::clone(&deps.network_adapter);
-            // Clone pad_info for the async block
-            let confirm_pad_info = pad_info.clone();
-            confirm_futures.push(async move {
-                // Simple existence check for now as per user description
-                let confirmation_result = network_adapter
-                    .check_existence(&confirm_pad_info.address)
-                    .await;
-                (confirm_pad_info, confirmation_result)
-            });
-        }
-
-        while let Some((pad_info, result)) = confirm_futures.next().await {
-            match result {
-                Ok(exists) => {
-                    if exists {
-                        trace!(
-                            "Confirmation successful for chunk {}, pad {}",
-                            pad_info.chunk_index,
-                            pad_info.address
-                        );
-                        // Update status to Confirmed
-                        match deps
-                            .index_manager
-                            .update_pad_status(&user_key, &pad_info.address, PadStatus::Confirmed)
-                            .await
-                        {
-                            Ok(_) => {
-                                trace!("Updated status to Confirmed for pad {}", pad_info.address);
-                                // Emit ChunkConfirmed callback
-                                if !invoke_put_callback(
-                                    &mut callback,
-                                    PutEvent::ChunkConfirmed {
-                                        chunk_index: pad_info.chunk_index,
-                                    },
-                                )
-                                .await
-                                .map_err(|e| {
-                                    DataError::InternalError(format!(
-                                        "Callback invocation failed: {}",
-                                        e
-                                    ))
-                                })? {
-                                    error!("Store operation cancelled by callback after chunk confirmation.");
-                                    operation_error = Some(DataError::OperationCancelled);
-                                    callback_cancelled = true;
-                                    continue; // Let select break on error
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to update pad status to Confirmed for {}: {}. Halting confirmation phase.", pad_info.address, e);
-                                operation_error = Some(DataError::Index(e));
-                                continue; // Let select break on error
-                            }
-                        }
-                    } else {
-                        // Confirmation failed (pad doesn't exist after write?)
-                        error!("Confirmation check failed for pad {}: Pad not found after write. Halting confirmation phase.", pad_info.address);
-                        if operation_error.is_none() {
-                            operation_error = Some(DataError::InconsistentState(format!(
-                                "Pad {} not found during confirmation",
-                                pad_info.address
-                            )));
-                        }
-                        continue; // Let select break on error
-                    }
-                }
-                Err(e) => {
-                    // Network error during confirmation check
-                    error!("Network error during confirmation for pad {}: {}. Halting confirmation phase.", pad_info.address, e);
-                    if operation_error.is_none() {
-                        operation_error = Some(DataError::InternalError(format!(
-                            "Network confirmation failed: {}",
-                            e
-                        )));
-                    }
-                    continue; // Let select break on error
-                }
-            }
-        }
-
-        // Abort remaining confirm futures if loop exited early
-        if callback_cancelled || operation_error.is_some() {
-            debug!("Aborting remaining confirmation tasks due to error or cancellation.");
-            while confirm_futures.next().await.is_some() {}
-        }
+    // Abort remaining futures if loop exited early due to error or cancellation
+    if callback_cancelled || operation_error.is_some() {
+        debug!("Aborting remaining write/confirmation tasks due to error or cancellation.");
+        while write_futures.next().await.is_some() {}
+        while confirm_futures.next().await.is_some() {}
     }
 
     // --- Final Check and Completion ---
@@ -498,14 +532,14 @@ pub(crate) async fn store_op(
         return Err(err);
     }
 
-    // Re-fetch the latest KeyInfo
+    // Re-fetch the latest KeyInfo to check final status
     let final_key_info = deps
         .index_manager
         .get_key_info(&user_key)
         .await?
         .ok_or_else(|| {
             DataError::InternalError(format!(
-                "KeyInfo for '{}' disappeared unexpectedly after writes",
+                "KeyInfo for '{}' disappeared unexpectedly after processing",
                 user_key
             ))
         })?;
@@ -524,14 +558,21 @@ pub(crate) async fn store_op(
         deps.index_manager.mark_key_complete(&user_key).await?;
     } else if !all_pads_confirmed {
         warn!("Store operation for key '{}' finished processing tasks, but not all pads reached Confirmed state. Key remains incomplete.", user_key);
+        // Consider if this state requires returning an error or if incomplete is acceptable.
+        // For now, we proceed to the Complete callback but don't mark as complete.
     }
 
     // Send Complete callback
     info!(
-        "Store operation processing finished for key '{}'.",
-        user_key
+        "Store operation processing finished for key '{}'. Final state: {}",
+        user_key,
+        if all_pads_confirmed {
+            "Complete"
+        } else {
+            "Incomplete"
+        }
     );
-    if !invoke_put_callback(&mut callback, PutEvent::Complete)
+    if !invoke_put_callback(&mut *callback_arc.lock().await, PutEvent::Complete)
         .await
         .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
     {
