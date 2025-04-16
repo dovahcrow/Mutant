@@ -1,10 +1,11 @@
 use crate::app::CliError;
 use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
-use log::{error, info, trace, warn};
+use log::{error, info};
+use mutant_lib::api::{ReserveCallback, ReserveEvent};
+use mutant_lib::error::Error as LibError;
 use std::sync::Arc;
-use tokio::task::JoinSet;
-use tokio::time::{Duration, interval};
+use tokio::sync::Mutex;
 
 #[derive(Args, Debug, Clone)]
 pub struct Reserve {
@@ -13,11 +14,15 @@ pub struct Reserve {
     count: Option<usize>,
 }
 
+// Structure to hold shared state for the callback
+#[derive(Clone)]
+struct ReserveCallbackContext {
+    pb: Arc<Mutex<ProgressBar>>,
+}
+
 impl Reserve {
     pub async fn run(&self, mutant: &mutant_lib::api::MutAnt) -> Result<(), CliError> {
-        // Default to 1 if count is not provided
         let count = self.count.unwrap_or(1);
-
         if count == 0 {
             info!("Reserve count is 0, nothing to do.");
             return Ok(());
@@ -25,6 +30,7 @@ impl Reserve {
 
         info!("Attempting to reserve {} new scratchpads...", count);
 
+        // --- Progress Bar Setup ---
         let pb = ProgressBar::new(count as u64);
         pb.set_style(
             ProgressStyle::with_template(
@@ -33,103 +39,81 @@ impl Reserve {
             .unwrap()
             .progress_chars("##-"),
         );
-        pb.set_message("Reserving pads");
+        pb.set_message("Initializing...");
+        let pb_arc = Arc::new(Mutex::new(pb)); // Wrap in Arc<Mutex> for sharing
 
-        let mut join_set = JoinSet::new();
+        // --- Callback Definition ---
+        let context = ReserveCallbackContext { pb: pb_arc.clone() };
 
-        // Clone mutant instance for use in tasks
-        let mutant = Arc::new(mutant.clone());
-
-        for i in 0..count {
-            let mutant_clone = Arc::clone(&mutant);
-            join_set.spawn(async move {
-                trace!("Task {}: Calling reserve_new_pad", i);
-                match mutant_clone.reserve_new_pad().await {
-                    Ok(created_address) => {
-                        trace!(
-                            "Task {}: Successfully reserved pad on network and added to index: {}",
-                            i, created_address
-                        );
-                        Ok(created_address)
+        let callback: ReserveCallback = Box::new(move |event: ReserveEvent| {
+            let ctx = context.clone();
+            Box::pin(async move {
+                let pb_guard = ctx.pb.lock().await;
+                match event {
+                    ReserveEvent::Starting { total_requested } => {
+                        pb_guard.set_length(total_requested as u64);
+                        pb_guard.set_position(0);
+                        pb_guard.set_message("Reserving pads...");
                     }
-                    Err(e) => {
-                        error!("Task {}: Failed to reserve pad: {}", i, e);
-                        Err(e)
+                    ReserveEvent::PadReserved { address } => {
+                        pb_guard.inc(1);
+                        pb_guard.set_message(format!("Reserved {}", address));
                     }
-                }
-            });
-        }
-
-        let mut successful_creations = 0;
-        let mut failed_creations = 0;
-
-        // Add a ticker interval
-        let mut ticker = interval(Duration::from_millis(100)); // Tick every 100ms
-
-        // Loop while there are tasks running using select!
-        while !join_set.is_empty() {
-            tokio::select! {
-                // Prioritize checking for completed tasks first
-                // biased; // Optional, uncomment if needed
-                Some(result) = join_set.join_next() => {
-                    pb.inc(1); // Increment when a task completes
-                    match result {
-                        Ok(Ok(address)) => {
-                            successful_creations += 1;
-                            pb.set_message(format!("Reserved {}", address));
-                            trace!("Successfully processed reservation for {}", address);
-                            // Save index immediately after successful reservation
-                            if let Err(e) = mutant.save_index_cache().await {
-                                // Log error but don't stop the whole process
-                                error!(
-                                    "Failed to save index cache after reserving {}: {}. Continuing...",
-                                    address, e
-                                );
-                            }
-                        }
-                        Ok(Err(lib_err)) => {
-                            failed_creations += 1;
-                            pb.set_message(format!("Failed: {}", lib_err));
-                            warn!("A pad reservation task failed: {}", lib_err);
-                        }
-                        Err(join_err) => {
-                            failed_creations += 1;
-                            pb.set_message(format!("Task failed: {}", join_err));
-                            error!("Pad reservation join error: {}", join_err);
-                        }
+                    ReserveEvent::SavingIndex { reserved_count: _ } => {
+                        // Optionally update message, or just let spinner tick
+                        pb_guard.set_message("Saving index...");
+                        pb_guard.tick(); // Ensure spinner moves during save
+                    }
+                    ReserveEvent::Complete { succeeded, failed } => {
+                        pb_guard.finish_with_message(format!(
+                            "Reservation complete: {} succeeded, {} failed",
+                            succeeded, failed
+                        ));
                     }
                 }
-                // If no task completed, check if the ticker interval elapsed
-                _ = ticker.tick() => {
-                     // Only tick the spinner if the bar hasn't finished yet
-                     if !pb.is_finished() {
-                        pb.tick();
-                     }
+                // Always tick to keep spinner active
+                if !pb_guard.is_finished() {
+                    pb_guard.tick();
                 }
+                Ok::<bool, LibError>(true) // Indicate success/continue
+            })
+        });
+
+        // --- Execute the Library Call ---
+        match mutant.reserve_pads(count, Some(callback)).await {
+            Ok(successful_creations) => {
+                info!(
+                    "Successfully reserved {} scratchpads (library call complete).",
+                    successful_creations
+                );
+                if successful_creations == 0 {
+                    error!(
+                        "No scratchpads were successfully reserved despite library call succeeding."
+                    );
+                    // Ensure progress bar is finished if it wasn't by the Complete event
+                    let pb_guard = pb_arc.lock().await;
+                    if !pb_guard.is_finished() {
+                        pb_guard.finish_with_message("Reservation complete: 0 succeeded");
+                    }
+                    return Err(CliError::MutAntInit(
+                        "Failed to reserve any scratchpads".to_string(),
+                    ));
+                }
+                // Success case already logged by library/callback finish message
+                Ok(())
+            }
+            Err(e) => {
+                error!("Pad reservation failed: {}", e);
+                // Ensure progress bar is finished on error
+                let pb_guard = pb_arc.lock().await;
+                if !pb_guard.is_finished() {
+                    pb_guard.finish_with_message(format!("Reservation failed: {}", e));
+                }
+                Err(CliError::MutAntInit(format!(
+                    "Pad reservation failed: {}",
+                    e
+                )))
             }
         }
-
-        pb.finish_with_message(format!(
-            "Reservation complete: {} succeeded, {} failed",
-            successful_creations, failed_creations
-        ));
-
-        if successful_creations == 0 {
-            error!("No scratchpads were successfully reserved.");
-            return Err(CliError::MutAntInit(
-                "Failed to reserve any scratchpads".to_string(),
-            ));
-        }
-
-        info!(
-            "Successfully reserved {} scratchpads and added them to the free list (local cache only).",
-            successful_creations
-        );
-
-        if failed_creations > 0 {
-            warn!("{} pads failed to be reserved.", failed_creations);
-        }
-
-        Ok(())
     }
 }

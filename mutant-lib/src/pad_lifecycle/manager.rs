@@ -1,6 +1,8 @@
+use crate::api::{ReserveCallback, ReserveEvent};
 use crate::events::PurgeCallback;
 use crate::events::PutCallback;
 use crate::index::IndexManager;
+use crate::network::NetworkError;
 use crate::network::{NetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::cache::{read_cached_index, write_cached_index};
 use crate::pad_lifecycle::error::PadLifecycleError;
@@ -11,8 +13,12 @@ use crate::pad_lifecycle::PadOrigin;
 use async_trait::async_trait;
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::error;
-use log::{debug, info, warn};
+use log::{debug, info, trace, warn};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+use tokio::task::JoinSet;
+use tokio::time::{interval, Duration};
 
 /// Trait defining the interface for managing the lifecycle of scratchpads,
 /// including acquisition, release, verification, import, and index caching.
@@ -52,6 +58,15 @@ pub trait PadLifecycleManager: Send + Sync {
 
     /// Imports an external pad using its private key hex.
     async fn import_external_pad(&self, private_key_hex: &str) -> Result<(), PadLifecycleError>;
+
+    /// Reserves multiple new scratchpads concurrently, saves the index incrementally,
+    /// and provides progress updates via a callback.
+    /// Returns the number of pads successfully reserved and saved.
+    async fn reserve_pads(
+        &self,
+        count: usize,
+        callback: Option<ReserveCallback>,
+    ) -> Result<usize, PadLifecycleError>;
 }
 
 // --- Implementation ---
@@ -343,5 +358,173 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         // However, the original import *did* save. Let's add a save here for consistency.
         // This requires getting the master index address/key somehow. Add to trait? No.
         // Let's make the caller responsible for saving after import.
+    }
+
+    async fn reserve_pads(
+        &self,
+        count: usize,
+        callback: Option<ReserveCallback>,
+    ) -> Result<usize, PadLifecycleError> {
+        debug!(
+            "PadLifecycleManager: reserve_pads called for count={}",
+            count
+        );
+        if count == 0 {
+            info!("Reserve count is 0, nothing to do.");
+            return Ok(0);
+        }
+
+        // --- Helper for invoking callback ---
+        let network_choice = self.network_adapter.get_network_choice(); // Get network choice for save_index_cache
+        let maybe_callback = callback.map(Arc::new);
+        let invoke =
+            |event: ReserveEvent,
+             cb_arc: &Option<Arc<ReserveCallback>>|
+             -> Pin<Box<dyn Future<Output = Result<bool, PadLifecycleError>> + Send>> {
+                match cb_arc {
+                    Some(cb) => {
+                        let cb_clone = Arc::clone(cb);
+                        Box::pin(async move {
+                            match cb_clone(event).await {
+                                Ok(true) => Ok(true),
+                                Ok(false) => {
+                                    warn!("Reserve operation cancelled by callback.");
+                                    // Map Error::CancelledByCallback to PadLifecycleError
+                                    Err(PadLifecycleError::InternalError(
+                                        "Cancelled by callback".to_string(),
+                                    ))
+                                }
+                                Err(e) => {
+                                    // Map Error::CallbackFailed to PadLifecycleError
+                                    Err(PadLifecycleError::InternalError(format!(
+                                        "Callback failed: {}",
+                                        e
+                                    )))
+                                }
+                            }
+                        })
+                    }
+                    None => Box::pin(async { Ok(true) }), // No callback, always continue
+                }
+            };
+
+        // --- Start Event ---
+        invoke(
+            ReserveEvent::Starting {
+                total_requested: count,
+            },
+            &maybe_callback,
+        )
+        .await?;
+
+        let mut join_set = JoinSet::new();
+        let mut successful_creations = 0;
+        let mut failed_creations = 0;
+
+        for i in 0..count {
+            // Clone Arcs for the task (accessing fields of self)
+            let network_adapter = Arc::clone(&self.network_adapter);
+            let index_manager = Arc::clone(&self.index_manager);
+
+            join_set.spawn(async move {
+                trace!("Reserve task {}: Generating key and address", i);
+                let secret_key = SecretKey::random(); // Use random()
+                let address = ScratchpadAddress::new(secret_key.public_key());
+                trace!("Reserve task {}: Reserving {} on network via put_raw", i, address);
+
+                // 1. Reserve pad on network using put_raw
+                match network_adapter
+                    .put_raw(&secret_key, &[], true) // Use put_raw with empty data
+                    .await
+                {
+                    Ok(created_address) => {
+                         if created_address != address {
+                             warn!("put_raw returned address {} but expected {}", created_address, address);
+                         }
+                         trace!("Reserve task {}: Network reservation successful for {}", i, address);
+                        // 2. Add pad directly to IndexManager's free list
+                        let key_bytes = secret_key.to_bytes().to_vec();
+                        match index_manager
+                            .add_free_pad(address.clone(), key_bytes) // Use add_free_pad
+                            .await {
+                                Ok(_) => {
+                                    trace!("Reserve task {}: Added {} to index free list successfully", i, address);
+                                    Ok(address) // Return address on full success
+                                },
+                                Err(e) => {
+                                    error!(
+                                        "Reserve task {}: Failed to add pad {} to index free list after network success: {}",
+                                        i, address, e
+                                    );
+                                     // Map IndexError to PadLifecycleError
+                                     Err(PadLifecycleError::Index(e))
+                                }
+                            }
+                    },
+                    Err(e) => {
+                        error!("Reserve task {}: Failed network reservation (put_raw) for {}: {}", i, address, e);
+                         // Map NetworkError to PadLifecycleError
+                         Err(PadLifecycleError::Network(NetworkError::InternalError(format!(
+                             "put_raw failed for {}: {}",
+                             address, e
+                         ))))
+                    }
+                }
+            });
+        }
+
+        // --- Process Results ---
+        let mut ticker = interval(Duration::from_millis(100));
+
+        while !join_set.is_empty() {
+            tokio::select! {
+                 Some(result) = join_set.join_next() => {
+                    match result {
+                        Ok(Ok(reserved_address)) => {
+                             // Task succeeded, now save cache using self.save_index_cache
+                             trace!("Task succeeded for {}. Saving index cache...", reserved_address);
+                             match self.save_index_cache(network_choice).await { // Call internal save_index_cache
+                                 Ok(_) => {
+                                     successful_creations += 1;
+                                     trace!("Index cache saved successfully after reserving {}", reserved_address);
+                                     // Invoke callback *after* successful save
+                                     invoke(ReserveEvent::PadReserved { address: reserved_address.clone() }, &maybe_callback).await?;
+                                     invoke(ReserveEvent::SavingIndex { reserved_count: successful_creations }, &maybe_callback).await?;
+                                 }
+                                 Err(e) => {
+                                     error!("Failed to save index cache after reserving {}: {}. Counting as failure.", reserved_address, e);
+                                     failed_creations += 1;
+                                 }
+                             }
+                        }
+                        Ok(Err(e)) => {
+                            error!("A reservation task failed: {}", e);
+                            failed_creations += 1;
+                        }
+                        Err(join_err) => {
+                            error!("A reservation task join error occurred: {}", join_err);
+                            failed_creations += 1;
+                        }
+                    }
+                }
+                 _ = ticker.tick(), if maybe_callback.is_some() => {}
+            }
+        }
+
+        // --- Complete Event ---
+        info!(
+            "Pad reservation process complete: {} succeeded, {} failed",
+            successful_creations, failed_creations
+        );
+        invoke(
+            ReserveEvent::Complete {
+                succeeded: successful_creations,
+                failed: failed_creations,
+            },
+            &maybe_callback,
+        )
+        .await?;
+
+        Ok(successful_creations)
     }
 }

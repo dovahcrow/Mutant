@@ -1,14 +1,15 @@
-use crate::api::init::initialize_layers;
-use crate::data::DataManager;
-use crate::error::Error; // Top-level error
-use crate::events::{GetCallback, InitCallback, PurgeCallback, PutCallback};
-use crate::index::IndexManager;
-use crate::index::MasterIndex; // Needed for update_internal_master_index
-use crate::network::{NetworkAdapter, NetworkChoice};
-use crate::pad_lifecycle::PadLifecycleManager;
-use crate::types::{KeyDetails, MutAntConfig, StorageStats};
-use autonomi::{ScratchpadAddress, SecretKey};
-use log::{debug, info, warn};
+use crate::api::init::initialize_layers; // Keep this specific import
+use crate::api::ReserveCallback; // Removed unused ReserveEvent
+use crate::data::manager::DataManager;
+use crate::error::Error;
+use crate::index::manager::IndexManager;
+use crate::index::structure::MasterIndex; // Keep specific structure import
+use crate::network::{NetworkAdapter, NetworkChoice}; // Removed unused NetworkError
+use crate::pad_lifecycle::PadLifecycleManager; // Removed unused PadOrigin
+use crate::types::MutAntConfig; // Import MutAntConfig
+use crate::{GetCallback, InitCallback, KeyDetails, PurgeCallback, PutCallback, StorageStats};
+use autonomi::{ScratchpadAddress, SecretKey}; // Keep for now, might remove Scratchpad later
+use log::{debug, info, warn}; // Removed unused error, trace
 use std::sync::Arc;
 
 /// The main public structure for interacting with the MutAnt library.
@@ -211,35 +212,25 @@ impl MutAnt {
             .map_err(Error::PadLifecycle)
     }
 
-    /// Creates a new, empty scratchpad on the network and adds it to the free list.
-    /// Returns the address of the newly created pad.
-    /// Note: This does *not* automatically save the master index.
-    pub async fn reserve_new_pad(&self) -> Result<ScratchpadAddress, Error> {
-        debug!("MutAnt::reserve_new_pad called");
-        let secret_key = SecretKey::random();
-        let address = ScratchpadAddress::new(secret_key.public_key());
-        let key_bytes = secret_key.to_bytes().to_vec();
-
-        // 1. Create the empty pad on the network using the underlying NetworkAdapter.
-        //    We need access to the NetworkAdapter's put_raw or a similar function.
-        //    Since MutAnt holds the NetworkAdapter, we can call it directly.
-        //    Using `put_raw` with empty data and `is_new_hint=true`.
-        debug!("Creating empty pad on network: {}", address);
-        self.network_adapter // Use the held network_adapter
-            .put_raw(&secret_key, &[], true)
+    /// Reserves multiple new scratchpads concurrently, saves the index incrementally,
+    /// and provides progress updates via a callback.
+    ///
+    /// # Arguments
+    /// * `count` - The number of pads to reserve.
+    /// * `callback` - An optional callback to receive `ReserveEvent` updates.
+    ///
+    /// # Returns
+    /// The number of pads successfully reserved and saved to the index cache.
+    pub async fn reserve_pads(
+        &self,
+        count: usize,
+        callback: Option<ReserveCallback>,
+    ) -> Result<usize, Error> {
+        debug!("MutAnt::reserve_pads called, delegating to PadLifecycleManager");
+        self.pad_lifecycle_manager
+            .reserve_pads(count, callback)
             .await
-            .map_err(Error::Network)?;
-        debug!("Successfully created empty pad on network: {}", address);
-
-        // 2. Add the newly created pad to the IndexManager's free list.
-        debug!("Adding pad {} to free list in index", address);
-        self.index_manager
-            .add_free_pad(address, key_bytes)
-            .await
-            .map_err(Error::Index)?;
-        debug!("Successfully added pad {} to free list", address);
-
-        Ok(address)
+            .map_err(Error::PadLifecycle) // Map PadLifecycleError to top-level Error
     }
 
     /// Verifies pads in the pending list against the network.

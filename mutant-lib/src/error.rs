@@ -1,4 +1,4 @@
- // Might need if API layer has specific errors later
+// Might need if API layer has specific errors later
 use crate::data::DataError;
 use crate::index::IndexError;
 use crate::network::NetworkError;
@@ -40,6 +40,12 @@ pub enum Error {
 
     #[error("Internal Library Error: {0}")]
     Internal(String),
+
+    #[error("Callback cancelled operation")]
+    CancelledByCallback,
+
+    #[error("Callback failed: {0}")]
+    CallbackFailed(String),
     // Add other top-level specific errors as needed
 }
 
