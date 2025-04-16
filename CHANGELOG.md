@@ -159,3 +159,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Rewritten progress reporting for `
+
+## [0.2.0] - 2025-04-16
+
+### Added
+- Implemented resume functionality for `put` operations. Interrupted uploads will now continue from where they left off by saving progress to the local index cache.
+
+### Changed
+- ... (Previous changes if any)
+
+### Fixed
+- ... (Previous fixes if any)

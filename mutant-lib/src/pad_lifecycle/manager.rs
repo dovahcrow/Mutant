@@ -1,7 +1,5 @@
-use crate::events::invoke_put_callback;
 use crate::events::PurgeCallback;
 use crate::events::PutCallback;
-use crate::events::PutEvent;
 use crate::index::IndexManager;
 use crate::network::{NetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::cache::{read_cached_index, write_cached_index};
@@ -42,7 +40,7 @@ pub trait PadLifecycleManager: Send + Sync {
     async fn acquire_pads(
         &self,
         count: usize,
-        callback: &mut Option<PutCallback>,
+        _callback: &mut Option<PutCallback>,
     ) -> Result<Vec<(ScratchpadAddress, SecretKey, PadOrigin)>, PadLifecycleError>;
 
     /// Verifies pads in the pending list, updates the index, and saves the result ONLY to the local cache.
@@ -202,7 +200,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
     async fn acquire_pads(
         &self,
         count: usize,
-        callback: &mut Option<PutCallback>,
+        _callback: &mut Option<PutCallback>,
     ) -> Result<Vec<(ScratchpadAddress, SecretKey, PadOrigin)>, PadLifecycleError> {
         info!("PadLifecycleManager: Acquiring {} pads...", count);
         let mut acquired_pads = Vec::with_capacity(count);

@@ -6,7 +6,6 @@ use crate::network::NetworkAdapter;
 use crate::pad_lifecycle::PadLifecycleManager;
 use crate::storage::StorageManager;
 use async_trait::async_trait;
-use log::{debug, error, info, trace};
 use std::sync::Arc;
 
 /// Trait defining the interface for high-level data operations (store, fetch, remove, update).

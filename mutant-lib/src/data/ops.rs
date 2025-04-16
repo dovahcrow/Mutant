@@ -415,6 +415,7 @@ pub(crate) async fn store_op(
                                     let index_manager_clone = Arc::clone(&index_manager);
                                     let user_key_inner_clone = user_key_clone.clone();
                                     let callback_clone = Arc::clone(&callback_arc); // Clone the Arc
+                                    let pad_lifecycle_manager_clone = Arc::clone(&deps.pad_lifecycle_manager); // Clone for use in confirm task
                                     let confirm_pad_info = PadInfo { // Create info with the correct address
                                         address: confirmed_pad_address,
                                         chunk_index: pad_info.chunk_index,
@@ -441,6 +442,13 @@ pub(crate) async fn store_op(
                                                         .await {
                                                             Ok(_) => {
                                                                 trace!("Updated status to Confirmed for pad {}", confirm_pad_info.address);
+
+                                                                // --- Persist Index Cache after PadStatus::Confirmed update ---
+                                                                let network_choice = network_adapter_clone.get_network_choice(); // Use correct clone
+                                                                if let Err(e) = pad_lifecycle_manager_clone.save_index_cache(network_choice).await { // Use the cloned manager
+                                                                    warn!("Failed to save index cache after setting pad {} to Confirmed: {}. Proceeding anyway.", confirm_pad_info.address, e);
+                                                                }
+
                                                                 // Emit ChunkConfirmed callback
                                                                 if !invoke_put_callback(
                                                                     &mut *callback_clone.lock().await,
