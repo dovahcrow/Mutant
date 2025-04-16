@@ -12,31 +12,25 @@ struct PutCallbackContext {
     res_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     upload_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     confirm_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
-    _total_bytes_for_upload: Arc<Mutex<u64>>,
     multi_progress: MultiProgress,
-    chunks_written: Arc<Mutex<usize>>,
-    total_chunks: usize,
+    total_chunks: Arc<Mutex<usize>>, // Store total chunks for progress updates
 }
 
 pub fn create_put_callback(
     multi_progress: &MultiProgress,
     quiet: bool,
 ) -> (
-    // Reservation progress bar (used before confirmation)
+    // Return Arcs for potential external use (though maybe not needed now)
     Arc<Mutex<Option<StyledProgressBar>>>,
-    // Upload progress bar (Tracks UploadProgress)
     Arc<Mutex<Option<StyledProgressBar>>>,
-    // Confirm progress bar (Tracks ScratchpadCommitComplete)
     Arc<Mutex<Option<StyledProgressBar>>>,
-    Arc<Mutex<u64>>,
     // The actual callback closure
     PutCallback,
 ) {
     let res_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let upload_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let confirm_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
-    let total_bytes_for_upload = Arc::new(Mutex::new(0u64));
-    let confirm_counter_arc = Arc::new(Mutex::new(0u64));
+    let total_chunks_arc = Arc::new(Mutex::new(0usize));
 
     // Return early with no-op callback and dummy Arcs if quiet
     if quiet {
@@ -44,13 +38,7 @@ pub fn create_put_callback(
         // The callback needs to be a Boxed Fn returning a Pinned Future
         let noop_callback: PutCallback =
             Box::new(move |_event: PutEvent| Box::pin(async move { Ok::<bool, LibError>(true) }));
-        return (
-            res_pb_opt,
-            upload_pb_opt,
-            confirm_pb_opt,
-            confirm_counter_arc,
-            noop_callback,
-        );
+        return (res_pb_opt, upload_pb_opt, confirm_pb_opt, noop_callback);
     }
 
     // Create the context instance
@@ -58,19 +46,15 @@ pub fn create_put_callback(
         res_pb_opt: res_pb_opt.clone(),
         upload_pb_opt: upload_pb_opt.clone(),
         confirm_pb_opt: confirm_pb_opt.clone(),
-        _total_bytes_for_upload: total_bytes_for_upload.clone(),
         multi_progress: multi_progress.clone(),
-        chunks_written: Arc::new(Mutex::new(0usize)),
-        total_chunks: 0,
+        total_chunks: total_chunks_arc.clone(),
     };
 
     // Clone the context for the callback
     let ctx_clone = context.clone();
-    let _confirm_counter_clone = confirm_counter_arc.clone();
 
     let callback: PutCallback = Box::new(move |event: PutEvent| {
         let ctx = ctx_clone.clone();
-        // Note: confirm_counter_arc/clone are no longer used here with the new events
 
         // Return a Pinned, Boxed Future that is Send + Sync
         Box::pin(async move {
@@ -78,86 +62,111 @@ pub fn create_put_callback(
             match event {
                 PutEvent::Starting { total_chunks } => {
                     debug!("Put Callback: Starting - Total chunks: {}", total_chunks);
+                    *ctx.total_chunks.lock().await = total_chunks; // Store total chunks
+                    let total_u64 = total_chunks as u64;
 
-                    // Initialize Upload Bar (represents chunk writes)
+                    // Initialize Reservation Bar
+                    let mut res_pb_guard = ctx.res_pb_opt.lock().await;
+                    let res_pb = res_pb_guard.get_or_insert_with(|| {
+                        let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
+                        pb.set_message("Reserving pads...".to_string());
+                        pb
+                    });
+                    res_pb.set_length(total_u64);
+                    res_pb.set_position(0);
+                    drop(res_pb_guard);
+
+                    // Initialize Upload Bar
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
                     let upload_pb = upload_pb_guard.get_or_insert_with(|| {
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
                         pb.set_message("Writing chunks...".to_string());
                         pb
                     });
-                    upload_pb.set_length(total_chunks as u64);
+                    upload_pb.set_length(total_u64);
                     upload_pb.set_position(0);
-                    drop(upload_pb_guard); // Drop guard
+                    drop(upload_pb_guard);
 
-                    // Clear other potential bars (no longer used)
+                    // Initialize Confirmation Bar
+                    let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
+                    let confirm_pb = confirm_pb_guard.get_or_insert_with(|| {
+                        let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
+                        pb.set_message("Confirming writes...".to_string());
+                        pb
+                    });
+                    confirm_pb.set_length(total_u64);
+                    confirm_pb.set_position(0);
+                    drop(confirm_pb_guard);
+
+                    Ok::<bool, LibError>(true)
+                }
+                PutEvent::PadReserved { count } => {
+                    let mut res_pb_guard = ctx.res_pb_opt.lock().await;
+                    if let Some(pb) = res_pb_guard.as_mut() {
+                        if !pb.is_finished() {
+                            pb.inc(count as u64);
+                        }
+                    } else {
+                        warn!("Put Callback: PadReserved event but reservation bar doesn't exist.");
+                    }
+                    drop(res_pb_guard);
+                    Ok::<bool, LibError>(true)
+                }
+                PutEvent::ChunkWritten { chunk_index: _ } => {
+                    let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
+                    if let Some(pb) = upload_pb_guard.as_mut() {
+                        if !pb.is_finished() {
+                            pb.inc(1);
+                        }
+                    } else {
+                        warn!("Put Callback: ChunkWritten event but upload bar doesn't exist.");
+                    }
+                    drop(upload_pb_guard);
+                    Ok::<bool, LibError>(true)
+                }
+                PutEvent::ChunkConfirmed { chunk_index: _ } => {
+                    let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
+                    if let Some(pb) = confirm_pb_guard.as_mut() {
+                        if !pb.is_finished() {
+                            pb.inc(1);
+                        }
+                    } else {
+                        warn!(
+                            "Put Callback: ChunkConfirmed event but confirmation bar doesn't exist."
+                        );
+                    }
+                    drop(confirm_pb_guard);
+                    Ok::<bool, LibError>(true)
+                }
+                PutEvent::SavingIndex => {
+                    // This event is likely deprecated/unused now, log but do nothing to bars.
+                    warn!("Put Callback: Received unexpected SavingIndex event.");
+                    Ok::<bool, LibError>(true)
+                }
+                PutEvent::Complete => {
+                    debug!("Put Callback: Complete event received, clearing bars");
+                    // Finish and clear all bars
                     let mut res_pb_guard = ctx.res_pb_opt.lock().await;
                     if let Some(pb) = res_pb_guard.take() {
                         pb.finish_and_clear();
                     }
                     drop(res_pb_guard);
-                    let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
-                    if let Some(pb) = confirm_pb_guard.take() {
-                        pb.finish_and_clear();
-                    }
-                    drop(confirm_pb_guard);
-
-                    Ok::<bool, LibError>(true)
-                }
-                PutEvent::ChunkWritten { chunk_index } => {
-                    let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
-                    if let Some(upload_pb) = upload_pb_guard.as_mut() {
-                        if !upload_pb.is_finished() {
-                            upload_pb.set_position((chunk_index + 1) as u64);
-                        }
-                    } else {
-                        warn!("Put Callback: ChunkWritten event but upload bar doesn't exist.");
-                    }
-                    drop(upload_pb_guard); // Drop guard
-                    Ok::<bool, LibError>(true)
-                }
-                PutEvent::SavingIndex => {
-                    let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
-                    if let Some(upload_pb) = upload_pb_guard.as_mut() {
-                        if !upload_pb.is_finished() {
-                            upload_pb.set_message("Saving index...".to_string());
-                        }
-                    } else {
-                        warn!("Put Callback: SavingIndex event but upload bar doesn't exist.");
-                    }
-                    drop(upload_pb_guard); // Drop guard
-                    Ok::<bool, LibError>(true)
-                }
-                PutEvent::Complete => {
-                    debug!("Put Callback: Complete event received, clearing bars");
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
                     if let Some(pb) = upload_pb_guard.take() {
                         pb.finish_and_clear();
                     }
                     drop(upload_pb_guard);
-                    // Clear others just in case
-                    let mut res_pb_guard = ctx.res_pb_opt.lock().await;
-                    if let Some(pb) = res_pb_guard.take() {
-                        pb.finish_and_clear();
-                    }
-                    drop(res_pb_guard);
                     let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
                     if let Some(pb) = confirm_pb_guard.take() {
                         pb.finish_and_clear();
                     }
                     drop(confirm_pb_guard);
                     Ok::<bool, LibError>(true)
-                } // REMOVED old variants: ReservingPads, StartingUpload, UploadProgress, StoreComplete, PadConfirmed, PadCreateSuccess, Finished, ErrorOccurred
+                }
             }
         })
     });
 
     // Return the Arcs needed by handle_put (res and confirm are dummies now)
-    (
-        res_pb_opt,
-        upload_pb_opt,
-        confirm_pb_opt,
-        confirm_counter_arc,
-        callback,
-    )
+    (res_pb_opt, upload_pb_opt, confirm_pb_opt, callback)
 }

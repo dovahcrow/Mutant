@@ -45,7 +45,7 @@ pub async fn handle_put(
     };
 
     // Conditionally create callbacks based on quiet flag
-    let (res_pb_opt, upload_pb_opt, confirm_pb_opt, _confirm_counter_arc, callback) =
+    let (res_pb_opt, upload_pb_opt, confirm_pb_opt, callback) =
         create_put_callback(multi_progress, quiet);
 
     // Pass data as slice &[u8]
