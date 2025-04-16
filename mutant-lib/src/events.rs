@@ -47,8 +47,12 @@ pub type PurgeCallback = Box<
 /// Events reported during data storage (put/update) operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PutEvent {
-    /// Starting the operation. Provides total chunks to be processed.
-    Starting { total_chunks: usize },
+    /// Starting the operation. Provides total chunks and initial progress for resumes.
+    Starting {
+        total_chunks: usize,
+        initial_written_count: usize, // Number of chunks already Written or Confirmed
+        initial_confirmed_count: usize, // Number of chunks already Confirmed
+    },
     /// A pad has been reserved (acquired from pool or generated).
     /// `count` is the number of pads reserved in this batch (usually 1).
     PadReserved { count: usize },

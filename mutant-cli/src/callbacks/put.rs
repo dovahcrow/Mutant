@@ -55,8 +55,15 @@ pub fn create_put_callback(
 
         Box::pin(async move {
             match event {
-                PutEvent::Starting { total_chunks } => {
-                    debug!("Put Callback: Starting - Total chunks: {}", total_chunks);
+                PutEvent::Starting {
+                    total_chunks,
+                    initial_written_count,
+                    initial_confirmed_count,
+                } => {
+                    debug!(
+                        "Put Callback: Starting - Total chunks: {}, Initial Written: {}, Initial Confirmed: {}",
+                        total_chunks, initial_written_count, initial_confirmed_count
+                    );
                     *ctx.total_chunks.lock().await = total_chunks;
                     let total_u64 = total_chunks as u64;
 
@@ -79,7 +86,7 @@ pub fn create_put_callback(
                         pb
                     });
                     upload_pb.set_length(total_u64);
-                    upload_pb.set_position(0);
+                    upload_pb.set_position(initial_written_count as u64); // Set initial position
                     drop(upload_pb_guard);
 
                     // Initialize Confirmation Bar
@@ -90,7 +97,7 @@ pub fn create_put_callback(
                         pb
                     });
                     confirm_pb.set_length(total_u64);
-                    confirm_pb.set_position(0);
+                    confirm_pb.set_position(initial_confirmed_count as u64); // Set initial position
                     drop(confirm_pb_guard);
 
                     Ok::<bool, LibError>(true)

@@ -102,11 +102,27 @@ pub(crate) async fn store_op(
                 )));
             }
 
-            // --- Send Starting Event for Resume ---
+            // --- Calculate Initial Progress for Resume ---
+            let mut initial_written_count = 0;
+            let mut initial_confirmed_count = 0;
+            for pad in &key_info.pads {
+                match pad.status {
+                    PadStatus::Written => initial_written_count += 1,
+                    PadStatus::Confirmed => {
+                        initial_written_count += 1; // Confirmed also counts as Written for the first bar
+                        initial_confirmed_count += 1;
+                    }
+                    PadStatus::Generated => {}
+                }
+            }
+
+            // --- Send Starting Event for Resume (with initial progress) ---
             if !invoke_put_callback(
                 &mut *callback_arc.lock().await,
                 PutEvent::Starting {
                     total_chunks: num_chunks,
+                    initial_written_count,
+                    initial_confirmed_count,
                 },
             )
             .await
@@ -232,11 +248,13 @@ pub(crate) async fn store_op(
                 return Ok(());
             }
 
-            // Invoke Starting event *before* acquiring pads
+            // Invoke Starting event *before* acquiring pads (with 0 initial progress for new uploads)
             if !invoke_put_callback(
                 &mut *callback_arc.lock().await,
                 PutEvent::Starting {
                     total_chunks: num_chunks,
+                    initial_written_count: 0,
+                    initial_confirmed_count: 0,
                 },
             )
             .await
