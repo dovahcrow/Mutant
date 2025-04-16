@@ -78,6 +78,14 @@ impl Reserve {
                             successful_creations += 1;
                             pb.set_message(format!("Reserved {}", address));
                             trace!("Successfully processed reservation for {}", address);
+                            // Save index immediately after successful reservation
+                            if let Err(e) = mutant.save_index_cache().await {
+                                // Log error but don't stop the whole process
+                                error!(
+                                    "Failed to save index cache after reserving {}: {}. Continuing...",
+                                    address, e
+                                );
+                            }
                         }
                         Ok(Err(lib_err)) => {
                             failed_creations += 1;
@@ -112,14 +120,6 @@ impl Reserve {
                 "Failed to reserve any scratchpads".to_string(),
             ));
         }
-
-        // Save the index only once after all successful reservations TO LOCAL CACHE
-        info!(
-            "Saving index cache after reserving {} pads...",
-            successful_creations
-        );
-        mutant.save_index_cache().await?;
-        info!("Index cache saved successfully.");
 
         info!(
             "Successfully reserved {} scratchpads and added them to the free list (local cache only).",

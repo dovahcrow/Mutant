@@ -6,6 +6,7 @@
 ### Changed
 - Parallelized pad verification during `purge` command for faster execution.
 - Improved `reserve` command progress bar to show continuous activity using a spinner.
+- Made `reserve` command save the index cache incrementally after each successful pad reservation for better fault tolerance.
 
 ### Fixed
 - **Devnet:** Corrected the format of the hardcoded devnet private key by adding the `0x` prefix.
