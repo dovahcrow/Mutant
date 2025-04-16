@@ -45,7 +45,7 @@ pub async fn handle_put(
     };
 
     // Conditionally create callbacks based on quiet flag
-    let (/* removed */ upload_pb_opt, confirm_pb_opt, callback) =
+    let (res_pb_opt, upload_pb_opt, confirm_pb_opt, callback) =
         create_put_callback(multi_progress, quiet);
 
     // Pass data as slice &[u8]
@@ -66,6 +66,7 @@ pub async fn handle_put(
     match result {
         Ok(_) => {
             debug!("Put operation successful for key: {}", key);
+            clear_pb(&res_pb_opt);
             clear_pb(&upload_pb_opt);
             clear_pb(&confirm_pb_opt);
             ExitCode::SUCCESS
@@ -89,12 +90,13 @@ pub async fn handle_put(
                 // Other errors
                 _ => format!(
                     "Error during {}: {}",
-                    if force { "update" } else { "store" }, // Use original key for message
-                    e
+                    if force { "update" } else { "store" },
+                    e,
                 ),
             };
 
             eprintln!("{}", error_message);
+            abandon_pb(&res_pb_opt, error_message.clone());
             abandon_pb(&upload_pb_opt, error_message.clone());
             abandon_pb(&confirm_pb_opt, error_message);
 

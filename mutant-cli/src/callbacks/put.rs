@@ -9,11 +9,12 @@ use tokio::sync::Mutex;
 // Define the context struct to hold shared state and styles
 #[derive(Clone)]
 struct PutCallbackContext {
-    // res_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>, // Removed reservation bar
+    res_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     upload_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     confirm_pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
     multi_progress: MultiProgress,
     total_chunks: Arc<Mutex<usize>>, // Store total chunks for progress updates
+    quiet: bool,
 }
 
 pub fn create_put_callback(
@@ -21,13 +22,13 @@ pub fn create_put_callback(
     quiet: bool,
 ) -> (
     // Return Arcs for potential external use (though maybe not needed now)
-    // Arc<Mutex<Option<StyledProgressBar>>>, // Removed reservation bar
+    Arc<Mutex<Option<StyledProgressBar>>>,
     Arc<Mutex<Option<StyledProgressBar>>>,
     Arc<Mutex<Option<StyledProgressBar>>>,
     // The actual callback closure
     PutCallback,
 ) {
-    // let res_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>)); // Removed reservation bar
+    let res_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let upload_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let confirm_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let total_chunks_arc = Arc::new(Mutex::new(0usize));
@@ -38,20 +39,17 @@ pub fn create_put_callback(
         // The callback needs to be a Boxed Fn returning a Pinned Future
         let noop_callback: PutCallback =
             Box::new(move |_event: PutEvent| Box::pin(async move { Ok::<bool, LibError>(true) }));
-        return (
-            /* res_pb_opt, */ upload_pb_opt,
-            confirm_pb_opt,
-            noop_callback,
-        ); // Removed res_pb_opt
+        return (res_pb_opt, upload_pb_opt, confirm_pb_opt, noop_callback);
     }
 
     // Create the context instance
     let context = PutCallbackContext {
-        // res_pb_opt: res_pb_opt.clone(), // Removed reservation bar
+        res_pb_opt: res_pb_opt.clone(),
         upload_pb_opt: upload_pb_opt.clone(),
         confirm_pb_opt: confirm_pb_opt.clone(),
         multi_progress: multi_progress.clone(),
         total_chunks: total_chunks_arc.clone(),
+        quiet: quiet,
     };
 
     // Clone the context for the callback
@@ -69,7 +67,7 @@ pub fn create_put_callback(
                     *ctx.total_chunks.lock().await = total_chunks; // Store total chunks
                     let total_u64 = total_chunks as u64;
 
-                    /* Removed Reservation Bar Initialization
+                    // Restored Reservation Bar Initialization
                     let mut res_pb_guard = ctx.res_pb_opt.lock().await;
                     let res_pb = res_pb_guard.get_or_insert_with(|| {
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
@@ -79,7 +77,6 @@ pub fn create_put_callback(
                     res_pb.set_length(total_u64);
                     res_pb.set_position(0);
                     drop(res_pb_guard);
-                    */
 
                     // Initialize Upload Bar
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
@@ -106,21 +103,41 @@ pub fn create_put_callback(
                     Ok::<bool, LibError>(true)
                 }
                 PutEvent::PadReserved { count: _ } => {
-                    /* Removed Reservation Handling
+                    // *** CHANGE: Do nothing on PadReserved for progress bars ***
+                    // The reservation bar now increments upon ChunkWritten, signifying network creation success.
+                    // We only log the event for debugging.
+                    debug!("Put Callback: PadReserved event received (ignored for progress bar).");
+                    /* Previous logic removed:
                     let mut res_pb_guard = ctx.res_pb_opt.lock().await;
                     if let Some(pb) = res_pb_guard.as_mut() {
                         if !pb.is_finished() {
                             pb.inc(count as u64);
                         }
                     } else {
-                        warn!("Put Callback: PadReserved event but reservation bar doesn't exist.");
+                        warn!(
+                            \"Put Callback: PadReserved event but reservation bar doesn\'t exist (race?).\"
+                        );
                     }
                     drop(res_pb_guard);
                     */
-                    // Do nothing for this event now
                     Ok::<bool, LibError>(true)
                 }
                 PutEvent::ChunkWritten { chunk_index: _ } => {
+                    // *** CHANGE: Increment both Reservation and Upload bars ***
+                    // Increment Reservation Bar (signifies network pad existence/creation)
+                    let mut res_pb_guard = ctx.res_pb_opt.lock().await;
+                    if let Some(pb) = res_pb_guard.as_mut() {
+                        if !pb.is_finished() {
+                            pb.inc(1);
+                        }
+                    } else {
+                        warn!(
+                            "Put Callback: ChunkWritten event but reservation bar doesn't exist."
+                        );
+                    }
+                    drop(res_pb_guard); // Drop guard before locking the next mutex
+
+                    // Increment Upload Bar
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
                     if let Some(pb) = upload_pb_guard.as_mut() {
                         if !pb.is_finished() {
@@ -154,13 +171,12 @@ pub fn create_put_callback(
                 PutEvent::Complete => {
                     debug!("Put Callback: Complete event received, clearing bars");
                     // Finish and clear all bars
-                    /* Removed Reservation Bar Clearing
                     let mut res_pb_guard = ctx.res_pb_opt.lock().await;
                     if let Some(pb) = res_pb_guard.take() {
                         pb.finish_and_clear();
                     }
                     drop(res_pb_guard);
-                    */
+
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
                     if let Some(pb) = upload_pb_guard.take() {
                         pb.finish_and_clear();
@@ -177,10 +193,6 @@ pub fn create_put_callback(
         })
     });
 
-    // Return the Arcs needed by handle_put (res and confirm are dummies now)
-    (
-        /* res_pb_opt, */ upload_pb_opt,
-        confirm_pb_opt,
-        callback,
-    ) // Removed res_pb_opt
+    // Return the Arcs needed by handle_put
+    (res_pb_opt, upload_pb_opt, confirm_pb_opt, callback)
 }
