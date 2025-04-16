@@ -343,6 +343,15 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
                 }
             }
         }
+        Commands::Reserve(reserve_cmd) => {
+            match reserve_cmd.run(&mutant).await {
+                Ok(_) => Ok(ExitCode::SUCCESS),
+                Err(e) => {
+                    error!("Reserve command failed: {}", e);
+                    Err(e) // Propagate the error
+                }
+            }
+        }
     };
 
     let exit_code = match command_result {

@@ -52,4 +52,6 @@ pub enum Commands {
     },
     /// Verify pending pads, moving valid ones to the free list
     Purge,
+    /// Creates new empty scratchpads and adds them to the free list
+    Reserve(crate::commands::reserve::Reserve),
 }
