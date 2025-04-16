@@ -95,26 +95,19 @@ pub(crate) async fn save_index(
     key: &SecretKey,
     index: &MasterIndex,
 ) -> Result<(), IndexError> {
-    debug!("Attempting to save MasterIndex to address: {}", address);
+    trace!("Persistence: Saving MasterIndex to address {}", address);
+    // Serialize the index
     let serialized_data = serialize_index(index)?;
-    debug!("Serialized index size: {} bytes", serialized_data.len());
-    let written_address = storage_manager
-        .write_pad_data(key, &serialized_data)
+
+    // Use StorageManager to write the data
+    // Since we are overwriting, the is_new hint is false
+    storage_manager
+        .write_pad_data(key, &serialized_data, false) // Pass false for is_new hint
         .await
         .map_err(|e| {
-            error!("Storage error during index save to {}: {}", address, e);
-            IndexError::Storage(e)
+            error!("Failed to write index via StorageManager: {}", e);
+            IndexError::IndexPersistenceError(format!("Failed to write index to storage: {}", e))
         })?;
-    if written_address != *address {
-        warn!(
-            "Index save address mismatch: Expected {}, Got {}. This might indicate an issue.",
-            address, written_address
-        );
-        // Continue anyway, assuming the data is written correctly to the key's derived address.
-    }
-    debug!(
-        "Successfully saved MasterIndex (Address: {})",
-        written_address
-    );
+    debug!("Persistence: MasterIndex saved successfully.");
     Ok(())
 }

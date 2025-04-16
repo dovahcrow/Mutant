@@ -5,7 +5,7 @@ use crate::network::NetworkChoice;
 use async_trait::async_trait;
 use autonomi::client::payment::PaymentOption;
 use autonomi::{Bytes, Client, Scratchpad, ScratchpadAddress, SecretKey, Wallet};
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
@@ -22,11 +22,13 @@ pub trait NetworkAdapter: Send + Sync {
 
     /// Puts raw data into a scratchpad associated with the given secret key.
     /// Creates the scratchpad if it doesn't exist, updates it otherwise.
+    /// If `is_new_hint` is true, it may skip existence checks and attempt creation directly.
     /// Returns the address of the scratchpad.
     async fn put_raw(
         &self,
         key: &SecretKey,
         data: &[u8],
+        is_new_hint: bool,
     ) -> Result<ScratchpadAddress, NetworkError>;
 
     /// Checks if a scratchpad exists at the given address.
@@ -114,26 +116,53 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
         &self,
         key: &SecretKey,
         data: &[u8],
+        is_new_hint: bool,
     ) -> Result<ScratchpadAddress, NetworkError> {
-        trace!("NetworkAdapter::put_raw called, data_len: {}", data.len());
+        trace!(
+            "NetworkAdapter::put_raw called, data_len: {}, is_new_hint: {}",
+            data.len(),
+            is_new_hint
+        );
         let client = self.get_or_init_client().await?;
 
-        // The 'key' parameter is now used from the function arguments,
-        // but we still derive the address from it.
         let public_key = key.public_key();
         let address = ScratchpadAddress::new(public_key);
-        let data_bytes = Bytes::copy_from_slice(data); // Convert to autonomi::Bytes
-
-        // Use default content type
+        let data_bytes = Bytes::copy_from_slice(data);
         let content_type = 0u64;
-        // Use PaymentOption::Wallet with the adapter's wallet
         let payment_option = PaymentOption::Wallet((*self.wallet).clone());
 
-        debug!("Checking existence of scratchpad at address: {}", address);
+        // Optimization: If hinted as new, skip the check and directly try to create.
+        if is_new_hint {
+            info!(
+                "Scratchpad hinted as new at {}, attempting create directly...",
+                address
+            );
+            let result_tuple = client
+                .scratchpad_create(key, content_type, &data_bytes, payment_option)
+                .await
+                .map_err(|e| {
+                    // Handle potential collision or other creation error
+                    error!(
+                        "Direct scratchpad_create failed for hinted new pad {}: {}",
+                        address, e
+                    );
+                    NetworkError::InternalError(format!("Failed to create scratchpad: {}", e))
+                })?;
+            let (_cost, created_addr) = result_tuple;
+            // Sanity check address?
+            if created_addr != address {
+                warn!(
+                    "Scratchpad create returned address {} but expected {}",
+                    created_addr, address
+                );
+            }
+            return Ok(created_addr);
+        }
 
+        // Default path: Check existence first
+        debug!("Checking existence of scratchpad at address: {}", address);
         match client.scratchpad_check_existance(&address).await {
             Ok(true) => {
-                // Pad exists, update it
                 info!("Scratchpad exists at {}, updating...", address);
                 client
                     .scratchpad_update(key, content_type, &data_bytes)
@@ -141,27 +170,27 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
                     .map_err(|e| {
                         NetworkError::InternalError(format!("Failed to update scratchpad: {}", e))
                     })?;
-                Ok(address) // Return address on success
+                Ok(address)
             }
             Ok(false) => {
-                // Pad does not exist, create it
                 info!("Scratchpad does not exist at {}, creating...", address);
                 let result_tuple = client
                     .scratchpad_create(key, content_type, &data_bytes, payment_option)
                     .await
-                    // Convert Autonomi error to NetworkError::InternalError
                     .map_err(|e| {
                         NetworkError::InternalError(format!("Failed to create scratchpad: {}", e))
                     })?;
-
-                // Extract the address from the tuple result after handling the error
                 let (_cost, created_addr) = result_tuple;
+                if created_addr != address {
+                    warn!(
+                        "Scratchpad create returned address {} but expected {}",
+                        created_addr, address
+                    );
+                }
                 Ok(created_addr)
             }
             Err(e) => {
-                // Error during check existence
                 error!("Error checking scratchpad existence at {}: {}", address, e);
-                // Convert Autonomi error to NetworkError::InternalError
                 Err(NetworkError::InternalError(format!(
                     "Failed to check scratchpad existence: {}",
                     e

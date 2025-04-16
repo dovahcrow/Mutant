@@ -16,11 +16,13 @@ pub trait StorageManager: Send + Sync {
     ) -> Result<Scratchpad, StorageError>;
 
     /// Writes potentially transformed data to a scratchpad using its associated secret key.
+    /// The `is_new` hint tells the underlying network layer if it can skip existence checks.
     /// Returns the address of the written pad.
     async fn write_pad_data(
         &self,
         key: &SecretKey,
         data: &[u8],
+        is_new: bool,
     ) -> Result<ScratchpadAddress, StorageError>;
 
     // Potential future additions:
@@ -63,13 +65,21 @@ impl StorageManager for DefaultStorageManager {
         &self,
         key: &SecretKey,
         data: &[u8],
+        is_new: bool,
     ) -> Result<ScratchpadAddress, StorageError> {
-        trace!("StorageManager::write_pad_data, data_len: {}", data.len());
+        trace!(
+            "StorageManager::write_pad_data, data_len: {}, is_new_hint: {}",
+            data.len(),
+            is_new
+        );
         // TODO: Add encryption/checksum generation here if implemented in pad_io.rs
         let transformed_data = data; // Placeholder
 
-        // Call network adapter's put_raw with the key
-        let address = self.network_adapter.put_raw(key, transformed_data).await?; // Propagate NetworkError (converted via From)
+        // Call network adapter's put_raw with the key and hint
+        let address = self
+            .network_adapter
+            .put_raw(key, transformed_data, is_new)
+            .await?;
         Ok(address)
     }
 }

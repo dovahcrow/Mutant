@@ -6,6 +6,7 @@ use crate::events::{
 use crate::index::structure::PadStatus;
 use crate::index::{IndexManager, KeyInfo, PadInfo};
 use crate::pad_lifecycle::PadLifecycleManager;
+use crate::pad_lifecycle::PadOrigin;
 use crate::storage::StorageManager;
 use autonomi::{ScratchpadAddress, SecretKey};
 use chrono::Utc;
@@ -30,6 +31,7 @@ enum PadTask {
         pad_info: PadInfo, // Contains address, chunk_index, initial status (Generated)
         secret_key: SecretKey,
         chunk_data: Vec<u8>,
+        origin: PadOrigin, // Store origin
     },
     // Add Confirm task later if needed
 }
@@ -124,6 +126,7 @@ pub(crate) async fn store_op(
                                 pad_info: pad_info.clone(), // Clone needed info
                                 secret_key,
                                 chunk_data: chunk.clone(), // Clone chunk data
+                                origin: PadOrigin::Generated, // Set origin
                             });
                         } else {
                             warn!(
@@ -192,45 +195,53 @@ pub(crate) async fn store_op(
                 return Ok(());
             }
 
-            // Acquire necessary pads
+            // Acquire necessary pads (now returns origin)
             debug!("Acquiring {} pads...", num_chunks);
-            let acquired_pads = deps.pad_lifecycle_manager.acquire_pads(num_chunks).await?;
-            // Error handling for insufficient pads is handled by acquire_pads returning Err
+            let acquired_pads_with_origin =
+                deps.pad_lifecycle_manager.acquire_pads(num_chunks).await?;
 
-            debug!("Successfully acquired {} pads.", acquired_pads.len());
+            debug!(
+                "Successfully acquired {} pads.",
+                acquired_pads_with_origin.len()
+            );
 
             // Prepare initial KeyInfo and tasks
             let mut initial_pads = Vec::with_capacity(num_chunks);
             let mut initial_pad_keys = HashMap::with_capacity(num_chunks);
 
             for (i, chunk) in chunks.iter().enumerate() {
-                if i >= acquired_pads.len() {
+                if i >= acquired_pads_with_origin.len() {
                     // Should not happen if acquire_pads worked correctly
                     error!(
                         "Logic error: Acquired pads count ({}) less than chunk index ({})",
-                        acquired_pads.len(),
+                        acquired_pads_with_origin.len(),
                         i
                     );
                     return Err(DataError::InternalError(
                         "Pad acquisition count mismatch".to_string(),
                     ));
                 }
-                let (pad_address, secret_key) = acquired_pads[i].clone(); // Clone Arc needed parts
+                // Destructure the tuple including origin
+                let (pad_address, secret_key, pad_origin) = acquired_pads_with_origin[i].clone();
 
                 let pad_info = PadInfo {
                     address: pad_address,
                     chunk_index: i,
-                    status: PadStatus::Generated, // Start as Generated
+                    status: PadStatus::Generated,
                 };
 
                 initial_pads.push(pad_info.clone());
                 initial_pad_keys.insert(pad_address, secret_key.to_bytes().to_vec());
 
-                debug!("Task: Write chunk {} to new pad {}", i, pad_address);
+                debug!(
+                    "Task: Write chunk {} to new pad {} (Origin: {:?})",
+                    i, pad_address, pad_origin
+                );
                 tasks_to_run.push(PadTask::Write {
-                    pad_info,                  // Move ownership
-                    secret_key,                // Move ownership
-                    chunk_data: chunk.clone(), // Clone chunk data
+                    pad_info,
+                    secret_key,
+                    chunk_data: chunk.clone(),
+                    origin: pad_origin, // Include origin in task
                 });
             }
 
@@ -285,16 +296,16 @@ pub(crate) async fn store_op(
                 pad_info,
                 secret_key,
                 chunk_data,
+                origin,
             } => {
                 let storage_manager = Arc::clone(&deps.storage_manager);
                 let user_key_clone = user_key.clone();
                 let index_manager = Arc::clone(&deps.index_manager);
-                // TODO: Add existence check here if required by plan?
-                // let network_adapter = Arc::clone(&deps.network_adapter);
+                let is_new_hint = origin == PadOrigin::Generated;
 
                 write_futures.push(async move {
                     let write_result = storage_manager
-                        .write_pad_data(&secret_key, &chunk_data)
+                        .write_pad_data(&secret_key, &chunk_data, is_new_hint)
                         .await;
 
                     // Return pad info along with result for context

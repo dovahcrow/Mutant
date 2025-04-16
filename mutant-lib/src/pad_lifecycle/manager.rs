@@ -6,6 +6,7 @@ use crate::pad_lifecycle::error::PadLifecycleError;
 use crate::pad_lifecycle::import;
 use crate::pad_lifecycle::pool::acquire_free_pad;
 use crate::pad_lifecycle::verification::verify_pads_concurrently;
+use crate::pad_lifecycle::PadOrigin;
 use async_trait::async_trait;
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::error;
@@ -35,11 +36,11 @@ pub trait PadLifecycleManager: Send + Sync {
         network_choice: NetworkChoice,
     ) -> Result<(), PadLifecycleError>;
 
-    /// Acquires a specified number of free pads from the pool.
+    /// Acquires a specified number of pads, indicating their origin.
     async fn acquire_pads(
         &self,
         count: usize,
-    ) -> Result<Vec<(ScratchpadAddress, SecretKey)>, PadLifecycleError>;
+    ) -> Result<Vec<(ScratchpadAddress, SecretKey, PadOrigin)>, PadLifecycleError>;
 
     /// Verifies pads in the pending list, updates the index, and saves the result ONLY to the local cache.
     async fn purge(
@@ -198,13 +199,14 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
     async fn acquire_pads(
         &self,
         count: usize,
-    ) -> Result<Vec<(ScratchpadAddress, SecretKey)>, PadLifecycleError> {
+    ) -> Result<Vec<(ScratchpadAddress, SecretKey, PadOrigin)>, PadLifecycleError> {
         info!("PadLifecycleManager: Acquiring {} pads...", count);
         let mut acquired_pads = Vec::with_capacity(count);
         for i in 0..count {
             match acquire_free_pad(self.index_manager.as_ref()).await {
                 Ok(pad) => {
-                    acquired_pads.push(pad);
+                    // Pad came from the free pool
+                    acquired_pads.push((pad.0, pad.1, PadOrigin::FromFreePool));
                 }
                 Err(PadLifecycleError::PadAcquisitionFailed(msg))
                     if msg == "No free pads available in the index" =>
@@ -216,12 +218,15 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
                         count
                     );
                     let new_pad = self.generate_and_add_new_pad().await?;
-                    acquired_pads.push(new_pad);
+                    // Pad was newly generated
+                    acquired_pads.push((new_pad.0, new_pad.1, PadOrigin::Generated));
                 }
                 Err(e) => {
                     // Other error from acquire_free_pad, propagate it
                     error!("Failed to acquire pad {} out of {}: {}", i + 1, count, e);
                     // The caller (data::ops) handles releasing any partially acquired pads on error.
+                    // NOTE: With the new resumable logic, explicit release on partial acquisition failure
+                    // in the CALLER might also need removal/rethinking.
                     return Err(e);
                 }
             }
