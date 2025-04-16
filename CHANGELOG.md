@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `purge` command is now the sole mechanism responsible for verifying pads in the `pending_verification_pads` list and moving them to the free pool.
 - **Refactored `put` operation in `mutant-lib` to perform chunk writes and network confirmations concurrently, improving upload throughput.**
 - **CLI:** Renamed "Reserving pads..." progress message during `put` to "Acquiring pads..." for clarity when reusing free pads.
+- **CLI:** Refactored `put` progress display to use two bars:
+  - "Creating pads...": Increments on `ChunkWritten` (network create/update success).
+  - "Confirming pads...": Increments on `ChunkConfirmed` (network check success).
 
 ### Fixed
 - Corrected pad lifecycle management to ensure pads from cancelled or failed `put` operations are not prematurely released or discarded, allowing for proper resumption.
@@ -154,40 +157,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Rewritten progress reporting for `put` operation to decouple write and confirmation phases for clearer progress reporting.**
-
-## [0.2.0] - 2025-04-16
-
-### Added
-
-- Introduced `purge` command to verify and reclaim potentially orphaned pads.
-- Added `import-pad` command to add externally generated pads.
-- Implemented resumable uploads (`put` command).
-- Added progress bars for `put`, `get`, and `purge` operations.
-- Introduced `PadStatus` (`Generated`, `Written`, `Confirmed`) for granular tracking.
-- Added `--force` flag to `put` command (currently ignored, intended for overwrite).
-- Basic local caching for the master index.
-
-### Changed
-
-- Refactored pad lifecycle management significantly.
-- `IndexManager` now handles transitions between free/pending lists.
-- `put` operation now writes initial `KeyInfo` before data transfer.
-- `rm` operation now correctly moves pads to `pending_verification_pads` (if `Generated`) or `free_pads` (if `Written`/`Confirmed`).
-- Pad acquisition (`acquire_pads`) optimized to use free pads first.
-- Progress reporting uses distinct events (`PutEvent`, `GetEvent`, `PurgeEvent`).
-- Decoupled write and confirmation phases in `put` operation for clearer progress reporting.
-
-### Fixed
-
-- Prevented premature release of pads during cancelled/failed `put` operations.
-- Resolved various build errors and warnings during refactoring.
-- Corrected progress bar display for pad reservation and write/confirm phases.
-
-## [0.1.2] - Unreleased
-
-### Changed
-- **CLI:** Restore progress increment for "Acquiring pads..." bar based on `PadReserved` event.
-
-[Unreleased]: https://github.com/Champii/MutAnt/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/Champii/MutAnt/compare/v0.1.1...v0.2.0
+- **Rewritten progress reporting for `
