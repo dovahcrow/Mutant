@@ -108,7 +108,7 @@ pub enum PurgeEvent {
 // --- Helper Functions for Invoking Callbacks ---
 
 /// Helper to invoke an optional PutCallback safely.
-pub(crate) async fn invoke_put_callback(
+pub async fn invoke_put_callback(
     callback: &mut Option<PutCallback>,
     event: PutEvent,
 ) -> Result<bool, Error> {

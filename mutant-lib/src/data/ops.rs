@@ -198,10 +198,12 @@ pub(crate) async fn store_op(
                 return Ok(());
             }
 
-            // Acquire necessary pads (now returns origin)
+            // Acquire necessary pads (now returns origin and takes callback)
             debug!("Acquiring {} pads...", num_chunks);
-            let acquired_pads_with_origin =
-                deps.pad_lifecycle_manager.acquire_pads(num_chunks).await?;
+            let acquired_pads_with_origin = deps
+                .pad_lifecycle_manager
+                .acquire_pads(num_chunks, &mut callback)
+                .await?;
 
             debug!(
                 "Successfully acquired {} pads.",
@@ -321,22 +323,6 @@ pub(crate) async fn store_op(
             PadTask::Confirm { .. } => {
                 unreachable!("Confirm task found during initial future population");
             }
-        }
-    }
-
-    // Emit PadReserved event(s) after initial tasks are known
-    // TODO: Refine how PadReserved is emitted (e.g., per pad or batch?)
-    if active_write_tasks > 0 {
-        if !invoke_put_callback(
-            &mut callback,
-            PutEvent::PadReserved {
-                count: active_write_tasks,
-            },
-        )
-        .await
-        .map_err(|e| DataError::InternalError(format!("Callback failed: {}", e)))?
-        {
-            return Err(DataError::OperationCancelled);
         }
     }
 

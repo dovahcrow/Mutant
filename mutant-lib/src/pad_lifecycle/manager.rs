@@ -1,4 +1,7 @@
+use crate::events::invoke_put_callback;
 use crate::events::PurgeCallback;
+use crate::events::PutCallback;
+use crate::events::PutEvent;
 use crate::index::{IndexManager, PadInfo};
 use crate::network::{NetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::cache::{read_cached_index, write_cached_index};
@@ -36,10 +39,11 @@ pub trait PadLifecycleManager: Send + Sync {
         network_choice: NetworkChoice,
     ) -> Result<(), PadLifecycleError>;
 
-    /// Acquires a specified number of pads, indicating their origin.
+    /// Acquires a specified number of pads, indicating their origin and reporting progress.
     async fn acquire_pads(
         &self,
         count: usize,
+        callback: &mut Option<PutCallback>,
     ) -> Result<Vec<(ScratchpadAddress, SecretKey, PadOrigin)>, PadLifecycleError>;
 
     /// Verifies pads in the pending list, updates the index, and saves the result ONLY to the local cache.
@@ -199,14 +203,15 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
     async fn acquire_pads(
         &self,
         count: usize,
+        callback: &mut Option<PutCallback>,
     ) -> Result<Vec<(ScratchpadAddress, SecretKey, PadOrigin)>, PadLifecycleError> {
         info!("PadLifecycleManager: Acquiring {} pads...", count);
         let mut acquired_pads = Vec::with_capacity(count);
         for i in 0..count {
-            match acquire_free_pad(self.index_manager.as_ref()).await {
+            let pad_result = match acquire_free_pad(self.index_manager.as_ref()).await {
                 Ok(pad) => {
                     // Pad came from the free pool
-                    acquired_pads.push((pad.0, pad.1, PadOrigin::FromFreePool));
+                    Ok((pad.0, pad.1, PadOrigin::FromFreePool))
                 }
                 Err(PadLifecycleError::PadAcquisitionFailed(msg))
                     if msg == "No free pads available in the index" =>
@@ -217,16 +222,38 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
                         i + 1,
                         count
                     );
-                    let new_pad = self.generate_and_add_new_pad().await?;
-                    // Pad was newly generated
-                    acquired_pads.push((new_pad.0, new_pad.1, PadOrigin::Generated));
+                    match self.generate_and_add_new_pad().await {
+                        Ok(new_pad) => Ok((new_pad.0, new_pad.1, PadOrigin::Generated)),
+                        Err(e) => Err(e), // Propagate generation error
+                    }
                 }
                 Err(e) => {
                     // Other error from acquire_free_pad, propagate it
+                    Err(e)
+                }
+            };
+
+            match pad_result {
+                Ok(acquired_pad_tuple) => {
+                    acquired_pads.push(acquired_pad_tuple);
+                    // Emit PadReserved event for this single pad
+                    if !invoke_put_callback(callback, PutEvent::PadReserved { count: 1 })
+                        .await
+                        // Map the top-level Error to PadLifecycleError::InternalError
+                        .map_err(|e| {
+                            PadLifecycleError::InternalError(format!(
+                                "Put callback failed during pad acquisition: {}",
+                                e
+                            ))
+                        })?
+                    {
+                        warn!("Pad acquisition cancelled by callback.");
+                        return Err(PadLifecycleError::OperationCancelled);
+                    }
+                }
+                Err(e) => {
                     error!("Failed to acquire pad {} out of {}: {}", i + 1, count, e);
-                    // The caller (data::ops) handles releasing any partially acquired pads on error.
-                    // NOTE: With the new resumable logic, explicit release on partial acquisition failure
-                    // in the CALLER might also need removal/rethinking.
+                    // Return the error, caller handles partial state (which is now stored in index)
                     return Err(e);
                 }
             }
@@ -234,6 +261,11 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         // Sanity check
         if acquired_pads.len() != count {
             warn!("Acquire pads mismatch: requested {}, got {}. This might indicate an unexpected issue.", count, acquired_pads.len());
+            // This might happen if cancelled, but we return Err(OperationCancelled) above.
+            // If it happens otherwise, it's an internal issue.
+            return Err(PadLifecycleError::InternalError(
+                "Acquired pad count mismatch".to_string(),
+            ));
         }
         debug!("Successfully acquired {} pads.", acquired_pads.len());
         Ok(acquired_pads)
