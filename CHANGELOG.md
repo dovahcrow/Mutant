@@ -23,13 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - "Creating pads...": Increments on `ChunkWritten` (network create/update success).
   - "Confirming pads...": Increments on `ChunkConfirmed` (network check success).
 - Modified the `purge` command logic to only discard pending pads if the network explicitly returns a "Record Not Found" status. Pads encountering other network errors during verification are now returned to the pending list for future retries.
-- **BREAKING**: `MutAnt::init` now returns `Result<Self, Error>` instead of `Result<Option<Self>, Error>`.
-  The `Option` was redundant as failure modes are covered by the `Error` enum.
-- Refactored internal layers for better separation of concerns (Network, Storage, Index, PadLifecycle, Data).
-- Pad Lifecycle Management (`PadLifecycleManager`) now explicitly handles pad acquisition (from pool or new reservation) and state transitions.
-- Data Operations (`DataManager`) orchestrate storage, index updates, and pad lifecycle changes.
-- Store confirmation (`put`) now verifies by fetching and attempting decryption, not just checking existence.
-- **Refactor:** `reserve` command logic (`reserve_pads` function) no longer attempts network creation via `put_raw`. It now only generates the key/address and adds the pad metadata to the index manager's free list, deferring network interaction until data is actually written.
 
 ### Fixed
 - Corrected pad lifecycle management to ensure pads from cancelled or failed `put` operations are not prematurely released or discarded, allowing for proper resumption.
@@ -44,9 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Progress bars during resumed `put` operations now correctly initialize to show the previously completed progress.
 - **CLI:** Redirect progress bar output to `stdout` to prevent interference with logs written to `stderr`.
 - Handle `NotEnoughCopies` network errors during `put` resume existence checks. Instead of aborting or retrying the same pad, the operation now acquires a *new* replacement pad, adds the original problematic pad to the `pending_verification_pads` list for later checking (e.g., via `purge`), updates the index to use the new pad for the corresponding chunk, logs a warning, and proceeds with the operation. The index cache is saved immediately after the replacement to persist the state.
-- Potential issue where empty scratchpad creation during reservation might lead to downstream errors.
-- Store operation confirmation was insufficient, potentially marking data as confirmed even if it was corrupted or undecryptable.
-- Payment failure errors during `reserve` caused by attempting premature network creation with empty data.
 
 ### Removed
 - Removed redundant pad release functions (`pad_lifecycle::pool::release_pads_to_free`, `pad_lifecycle::manager::release_pads`) as the logic is now handled within `IndexManager` and `purge`.

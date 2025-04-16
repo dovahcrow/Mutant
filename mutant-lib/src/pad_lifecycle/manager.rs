@@ -10,6 +10,7 @@ use crate::pad_lifecycle::import;
 use crate::pad_lifecycle::pool::acquire_free_pad;
 use crate::pad_lifecycle::verification::verify_pads_concurrently;
 use crate::pad_lifecycle::PadOrigin;
+use crate::storage::StorageManager;
 use async_trait::async_trait;
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::error;
@@ -74,16 +75,19 @@ pub trait PadLifecycleManager: Send + Sync {
 pub struct DefaultPadLifecycleManager {
     index_manager: Arc<dyn IndexManager>,
     network_adapter: Arc<dyn NetworkAdapter>,
+    storage_manager: Arc<dyn StorageManager>,
 }
 
 impl DefaultPadLifecycleManager {
     pub fn new(
         index_manager: Arc<dyn IndexManager>,
         network_adapter: Arc<dyn NetworkAdapter>,
+        storage_manager: Arc<dyn StorageManager>,
     ) -> Self {
         Self {
             index_manager,
             network_adapter,
+            storage_manager,
         }
     }
 
@@ -424,34 +428,53 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         for i in 0..count {
             // Clone Arcs for the task (accessing fields of self)
             let index_manager = Arc::clone(&self.index_manager);
+            let storage_manager = Arc::clone(&self.storage_manager); // Clone storage manager
 
             join_set.spawn(async move {
                 trace!("Reserve task {}: Generating key and address", i);
                 let secret_key = SecretKey::random(); // Use random()
                 let address = ScratchpadAddress::new(secret_key.public_key());
-                trace!("Reserve task {}: Adding {} to index free list", i, address);
+                trace!("Reserve task {}: Reserving {} on network via write_pad_data", i, address);
 
-                // 1. Add pad directly to IndexManager's free list (NO network call here)
-                let key_bytes = secret_key.to_bytes().to_vec();
-                match index_manager
-                    .add_free_pad(address.clone(), key_bytes) // Use add_free_pad
+                // 1. Reserve pad on network using StorageManager::write_pad_data
+                match storage_manager
+                    .write_pad_data(&secret_key, &[], true) // Use StorageManager
                     .await
                 {
-                    Ok(_) => {
-                        trace!(
-                            "Reserve task {}: Added {} to index free list successfully",
-                            i,
-                            address
-                        );
-                        Ok(address) // Return address on success
-                    }
+                    Ok(created_address) => {
+                         if created_address != address {
+                             warn!("write_pad_data returned address {} but expected {}", created_address, address);
+                         }
+                         trace!("Reserve task {}: Network reservation successful for {}", i, address);
+                        // 2. Add pad directly to IndexManager's free list
+                        let key_bytes = secret_key.to_bytes().to_vec();
+                        match index_manager
+                            .add_free_pad(address.clone(), key_bytes) // Use add_free_pad
+                            .await {
+                                Ok(_) => {
+                                    trace!("Reserve task {}: Added {} to index free list successfully", i, address);
+                                    Ok(address) // Return address on full success
+                                },
+                                Err(e) => {
+                                    error!(
+                                        "Reserve task {}: Failed to add pad {} to index free list after network success: {}",
+                                        i, address, e
+                                    );
+                                     // Map IndexError to PadLifecycleError
+                                     Err(PadLifecycleError::Index(e))
+                                }
+                            }
+                    },
                     Err(e) => {
-                        error!(
-                            "Reserve task {}: Failed to add pad {} to index free list: {}",
-                            i, address, e
-                        );
-                        // Map IndexError to PadLifecycleError
-                        Err(PadLifecycleError::Index(e))
+                        error!("Reserve task {}: Failed network reservation (write_pad_data) for {}: {}", i, address, e);
+                         // Map StorageError (from write_pad_data) to PadLifecycleError
+                         // Assuming StorageError has a suitable From impl or mapping
+                         // If not, we need to adjust error handling.
+                         // Let's assume StorageError maps to Network for now, needs verification.
+                         Err(PadLifecycleError::Network(NetworkError::InternalError(format!(
+                             "write_pad_data failed for {}: {}",
+                             address, e
+                         ))))
                     }
                 }
             });

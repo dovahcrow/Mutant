@@ -129,6 +129,7 @@ pub(crate) async fn initialize_layers(
     let pad_lifecycle_manager = Arc::new(DefaultPadLifecycleManager::new(
         Arc::clone(&index_manager) as Arc<dyn IndexManager>,
         Arc::clone(&network_adapter) as Arc<dyn NetworkAdapter>,
+        Arc::clone(&storage_manager) as Arc<dyn StorageManager>,
     ));
     info!("StorageManager, IndexManager, PadLifecycleManager initialized.");
 
