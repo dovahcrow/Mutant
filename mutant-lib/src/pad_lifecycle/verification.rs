@@ -13,12 +13,20 @@ use tokio::task::JoinSet;
 /// Pads that are successfully fetched are considered verified. Pads that result in a
 /// "RecordNotFound" error or other network errors are considered failed/discarded.
 ///
-/// Returns a tuple containing a list of verified pads (address and key bytes) and the count of failed pads.
+/// Returns a tuple containing:
+/// - A list of verified pads (address and key bytes).
+/// - A list of addresses for pads that failed verification or were not found.
 pub(crate) async fn verify_pads_concurrently(
     network_adapter: Arc<dyn NetworkAdapter>, // Use Arc for sharing across tasks
     pads_to_verify: Vec<(ScratchpadAddress, Vec<u8>)>,
     mut callback: Option<PurgeCallback>,
-) -> Result<(Vec<(ScratchpadAddress, Vec<u8>)>, usize), PadLifecycleError> {
+) -> Result<
+    (
+        Vec<(ScratchpadAddress, Vec<u8>)>, // Verified pads
+        Vec<ScratchpadAddress>,            // Failed/Not Found pad addresses
+    ),
+    PadLifecycleError,
+> {
     let initial_count = pads_to_verify.len();
     info!(
         "Verification: Starting concurrent check for {} pads.",
@@ -27,7 +35,6 @@ pub(crate) async fn verify_pads_concurrently(
 
     if initial_count == 0 {
         debug!("Verification: No pads to verify.");
-        // Emit starting/complete events even if count is 0? Yes, for consistency.
         invoke_purge_callback(&mut callback, PurgeEvent::Starting { total_count: 0 })
             .await
             .map_err(|e| {
@@ -44,11 +51,12 @@ pub(crate) async fn verify_pads_concurrently(
         .map_err(|e| {
             PadLifecycleError::InternalError(format!("Callback invocation failed: {}", e))
         })?;
-        return Ok((Vec::new(), 0));
+        return Ok((Vec::new(), Vec::new())); // Return empty lists
     }
 
     let verified_pads_arc = Arc::new(Mutex::new(Vec::with_capacity(initial_count)));
-    let failed_pads_count_arc = Arc::new(AtomicUsize::new(0));
+    // Use a Mutex protected Vec for failed addresses instead of AtomicUsize
+    let failed_addresses_arc = Arc::new(Mutex::new(Vec::new()));
     let mut first_error: Option<PadLifecycleError> = None;
     let mut callback_cancelled = false;
 
@@ -67,38 +75,41 @@ pub(crate) async fn verify_pads_concurrently(
     for (address, key_bytes) in pads_to_verify {
         let adapter_clone = Arc::clone(&network_adapter);
         let verified_clone = Arc::clone(&verified_pads_arc);
-        let failed_clone = Arc::clone(&failed_pads_count_arc);
+        let failed_clone = Arc::clone(&failed_addresses_arc); // Clone failed addresses Arc
+        let task_address = address; // Capture address for error reporting
 
         join_set.spawn(async move {
-            trace!("Verification task starting for address: {}", address);
+            trace!("Verification task starting for address: {}", task_address);
             // Use check_existence instead of get_raw
-            match adapter_clone.check_existence(&address).await {
+            match adapter_clone.check_existence(&task_address).await {
                 Ok(true) => {
                     // Pad exists on the network
                     debug!(
                         "Successfully verified pad existence at address: {}",
-                        address
+                        task_address
                     );
                     let mut verified_guard = verified_clone.lock().await;
-                    verified_guard.push((address, key_bytes)); // Keep original key bytes
+                    verified_guard.push((task_address, key_bytes)); // Keep original key bytes
                     Ok(()) // Indicate success
                 }
                 Ok(false) => {
                     // Pad does not exist on the network
                     info!(
-                        "Pad at address {} not found on network. Discarding.",
-                        address
+                        "Pad at address {} not found on network. Recording as failed.",
+                        task_address
                     );
-                    failed_clone.fetch_add(1, Ordering::SeqCst);
+                    let mut failed_guard = failed_clone.lock().await;
+                    failed_guard.push(task_address);
                     Ok(()) // Indicate success (task completed, pad handled as failed)
                 }
                 Err(e) => {
                     // Network error during check
                     warn!(
-                        "Network error verifying pad at address {}: {}. Discarding.",
-                        address, e
+                        "Network error verifying pad at address {}: {}. Recording as failed.",
+                        task_address, e
                     );
-                    failed_clone.fetch_add(1, Ordering::SeqCst);
+                    let mut failed_guard = failed_clone.lock().await;
+                    failed_guard.push(task_address);
                     Err(e) // Propagate the network error
                 }
             }
@@ -123,12 +134,12 @@ pub(crate) async fn verify_pads_concurrently(
                         first_error = Some(PadLifecycleError::Network(task_err));
                     }
                 }
-                // If task_result was Ok(true), it means success, already handled by pushing to verified_pads_arc
             }
             Err(join_error) => {
                 // Task panicked or was cancelled
                 error!("JoinError during pad verification: {}", join_error);
-                failed_pads_count_arc.fetch_add(1, Ordering::SeqCst); // Count join errors as failures
+                // Cannot reliably determine which pad failed, difficult to add to failed list here.
+                // Log the error, the pad won't be in verified, and won't be removed from pending by address.
                 if first_error.is_none() {
                     first_error = Some(PadLifecycleError::InternalError(format!(
                         "Pad verification task failed: {}",
@@ -156,18 +167,23 @@ pub(crate) async fn verify_pads_concurrently(
         }
     }
 
-    let final_failed_count = failed_pads_count_arc.load(Ordering::SeqCst);
-    // Use into_inner after Arc::try_unwrap
+    // Use into_inner after Arc::try_unwrap for both lists
     let verified_pads = Arc::try_unwrap(verified_pads_arc)
         .map_err(|_| {
             PadLifecycleError::InternalError("Failed to unwrap verified pads Arc".to_string())
         })?
-        .into_inner(); // Consumes the Mutex
+        .into_inner();
+    let failed_addresses = Arc::try_unwrap(failed_addresses_arc)
+        .map_err(|_| {
+            PadLifecycleError::InternalError("Failed to unwrap failed addresses Arc".to_string())
+        })?
+        .into_inner();
 
     let final_verified_count = verified_pads.len();
+    let final_failed_count = failed_addresses.len();
 
     info!(
-        "Verification complete. Verified: {}, Discarded/Failed: {}",
+        "Verification complete. Verified: {}, Failed/Not Found: {}",
         final_verified_count, final_failed_count
     );
 
@@ -186,6 +202,6 @@ pub(crate) async fn verify_pads_concurrently(
     if let Some(e) = first_error {
         Err(e)
     } else {
-        Ok((verified_pads, final_failed_count))
+        Ok((verified_pads, failed_addresses))
     }
 }

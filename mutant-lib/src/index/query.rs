@@ -1,5 +1,5 @@
 use crate::index::error::IndexError;
-use crate::index::structure::{KeyInfo, MasterIndex, DEFAULT_SCRATCHPAD_SIZE};
+use crate::index::structure::{KeyInfo, MasterIndex, PadInfo, PadStatus, DEFAULT_SCRATCHPAD_SIZE};
 use crate::types::{KeyDetails, StorageStats};
 use autonomi::ScratchpadAddress;
 use log::{debug, trace, warn};
@@ -44,7 +44,12 @@ pub(crate) fn get_key_details_internal(index: &MasterIndex, key: &str) -> Option
     trace!("Query: get_key_details_internal for key '{}'", key);
     index.index.get(key).map(|info| {
         let percentage = if !info.is_complete && !info.pads.is_empty() {
-            Some((info.populated_pads_count as f32 / info.pads.len() as f32) * 100.0)
+            let confirmed_count = info
+                .pads
+                .iter()
+                .filter(|p| p.status == PadStatus::Confirmed)
+                .count();
+            Some((confirmed_count as f32 / info.pads.len() as f32) * 100.0)
         } else {
             None
         };
@@ -66,7 +71,12 @@ pub(crate) fn list_all_key_details_internal(index: &MasterIndex) -> Vec<KeyDetai
         .iter()
         .map(|(key, info)| {
             let percentage = if !info.is_complete && !info.pads.is_empty() {
-                Some((info.populated_pads_count as f32 / info.pads.len() as f32) * 100.0)
+                let confirmed_count = info
+                    .pads
+                    .iter()
+                    .filter(|p| p.status == PadStatus::Confirmed)
+                    .count();
+                Some((confirmed_count as f32 / info.pads.len() as f32) * 100.0)
             } else {
                 None
             };
@@ -152,14 +162,48 @@ pub(crate) fn take_free_pad_internal(
     index.free_pads.pop()
 }
 
-/// Adds multiple pads to the pending verification list.
-pub(crate) fn add_pending_pads_internal(
+/// Adds multiple pads to the free list. Checks for duplicates.
+pub(crate) fn add_free_pads_internal(
     index: &mut MasterIndex,
     pads: Vec<(ScratchpadAddress, Vec<u8>)>,
 ) -> Result<(), IndexError> {
-    trace!("Query: add_pending_pads_internal ({} pads)", pads.len());
-    // TODO: Check for duplicates within the input list and existing pending list?
-    index.pending_verification_pads.extend(pads);
+    trace!("Query: add_free_pads_internal ({} pads)", pads.len());
+    for (address, key_bytes) in pads {
+        if !index.free_pads.iter().any(|(addr, _)| *addr == address) {
+            index.free_pads.push((address, key_bytes));
+        } else {
+            warn!(
+                "Attempted to add duplicate pad to free list via batch: {}",
+                address
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Adds multiple pads to the pending verification list.
+pub(crate) fn add_pending_verification_pads_internal(
+    index: &mut MasterIndex,
+    pads: Vec<(ScratchpadAddress, Vec<u8>)>,
+) -> Result<(), IndexError> {
+    trace!(
+        "Query: add_pending_verification_pads_internal ({} pads)",
+        pads.len()
+    );
+    for (address, key_bytes) in pads {
+        if !index
+            .pending_verification_pads
+            .iter()
+            .any(|(addr, _)| *addr == address)
+        {
+            index.pending_verification_pads.push((address, key_bytes));
+        } else {
+            warn!(
+                "Attempted to add duplicate pad to pending list via batch: {}",
+                address
+            );
+        }
+    }
     Ok(())
 }
 
@@ -171,30 +215,66 @@ pub(crate) fn take_pending_pads_internal(
     std::mem::take(&mut index.pending_verification_pads)
 }
 
-/// Updates free/pending lists based on verification results.
-/// Moves verified pads to the free list.
-pub(crate) fn update_pad_lists_internal(
+/// Removes a specific pad address from the pending verification list.
+pub(crate) fn remove_from_pending_internal(
     index: &mut MasterIndex,
-    verified: Vec<(ScratchpadAddress, Vec<u8>)>,
-    _failed_count: usize, // Parameter kept for potential future use (e.g., logging)
+    address_to_remove: &ScratchpadAddress,
 ) -> Result<(), IndexError> {
     trace!(
-        "Query: update_pad_lists_internal ({} verified)",
-        verified.len()
+        "Query: remove_from_pending_internal for address '{}'",
+        address_to_remove
     );
-    // Add verified pads to the free list, checking for duplicates just in case
-    for (addr, key) in verified {
-        if !index.free_pads.iter().any(|(a, _)| *a == addr) {
-            index.free_pads.push((addr, key));
-        } else {
-            warn!(
-                "Pad {} verified but already found in free list during update.",
-                addr
-            );
-        }
-    }
-    // Pending list should already be empty (taken by take_pending_pads_internal)
+    index
+        .pending_verification_pads
+        .retain(|(addr, _)| addr != address_to_remove);
     Ok(())
+}
+
+/// Updates the status of a specific pad within a key's info.
+pub(crate) fn update_pad_status_internal(
+    index: &mut MasterIndex,
+    key: &str,
+    pad_address: &ScratchpadAddress,
+    new_status: PadStatus,
+) -> Result<(), IndexError> {
+    trace!(
+        "Query: update_pad_status_internal for key '{}', pad '{}', status {:?}",
+        key,
+        pad_address,
+        new_status
+    );
+    if let Some(key_info) = index.index.get_mut(key) {
+        if let Some(pad_info) = key_info.pads.iter_mut().find(|p| p.address == *pad_address) {
+            pad_info.status = new_status;
+            Ok(())
+        } else {
+            // Pad address provided does not exist within this key's pad list.
+            warn!(
+                "Attempted to update status for pad {} which is not found in key '{}'",
+                pad_address, key
+            );
+            Err(IndexError::InconsistentState(format!(
+                "Pad {} not found in key {}",
+                pad_address, key
+            )))
+        }
+    } else {
+        Err(IndexError::KeyNotFound(key.to_string()))
+    }
+}
+
+/// Sets the is_complete flag for a specific key to true.
+pub(crate) fn mark_key_complete_internal(
+    index: &mut MasterIndex,
+    key: &str,
+) -> Result<(), IndexError> {
+    trace!("Query: mark_key_complete_internal for key '{}'", key);
+    if let Some(key_info) = index.index.get_mut(key) {
+        key_info.is_complete = true;
+        Ok(())
+    } else {
+        Err(IndexError::KeyNotFound(key.to_string()))
+    }
 }
 
 /// Resets the index to a default state.

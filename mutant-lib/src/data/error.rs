@@ -37,5 +37,16 @@ pub enum DataError {
 
     #[error("Internal data operation error: {0}")]
     InternalError(String),
-    // Add other specific data operation errors as needed
+
+    #[error("Inconsistent state detected: {0}")]
+    InconsistentState(String),
+
+    #[error("Cryptography error: {0}")]
+    CryptoError(String),
+}
+
+impl From<blsttc::Error> for DataError {
+    fn from(err: blsttc::Error) -> Self {
+        DataError::CryptoError(format!("BLSTTC error: {}", err))
+    }
 }

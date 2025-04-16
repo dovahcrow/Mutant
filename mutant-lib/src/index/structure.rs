@@ -8,6 +8,19 @@ use std::collections::HashMap;
 /// Default usable size within a scratchpad, leaving margin for overhead.
 pub(crate) const DEFAULT_SCRATCHPAD_SIZE: usize = (4 * 1024 * 1024) - 512; // 4MB minus 512 bytes margin
 
+// --- Enums ---
+
+/// Represents the state of a scratchpad associated with a key's data chunk.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum PadStatus {
+    /// Key generated, creation/write pending or in progress.
+    Generated,
+    /// Network write call returned success, confirmation might be pending.
+    Written,
+    /// Write is confirmed on the network (final state for occupied pad).
+    Confirmed,
+}
+
 // --- Core Index Structures ---
 
 /// Represents information about a single scratchpad used to store a chunk of data for a key.
@@ -17,6 +30,8 @@ pub struct PadInfo {
     pub address: ScratchpadAddress,
     /// The index of the data chunk stored in this pad (0-based).
     pub chunk_index: usize,
+    /// The current status of this pad within the key's lifecycle.
+    pub status: PadStatus,
     // Potentially add: `checksum: Option<[u8; 32]>` if implementing checksums
 }
 
@@ -31,11 +46,8 @@ pub struct KeyInfo {
     pub data_size: usize,
     /// Timestamp of the last modification.
     pub modified: DateTime<Utc>,
-    /// Flag indicating if the data storage process was fully completed.
+    /// Flag indicating if the data storage process was fully completed and confirmed.
     pub is_complete: bool,
-    /// Number of pads that have successfully received their data chunk.
-    /// Used for tracking progress of incomplete uploads.
-    pub populated_pads_count: usize,
     // Potentially add: `encryption_metadata: Option<Vec<u8>>`
 }
 

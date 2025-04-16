@@ -4,7 +4,7 @@ use crate::network::{NetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::cache::{read_cached_index, write_cached_index};
 use crate::pad_lifecycle::error::PadLifecycleError;
 use crate::pad_lifecycle::import;
-use crate::pad_lifecycle::pool::{acquire_free_pad, release_pads_to_free};
+use crate::pad_lifecycle::pool::acquire_free_pad;
 use crate::pad_lifecycle::verification::verify_pads_concurrently;
 use async_trait::async_trait;
 use autonomi::{ScratchpadAddress, SecretKey};
@@ -40,13 +40,6 @@ pub trait PadLifecycleManager: Send + Sync {
         &self,
         count: usize,
     ) -> Result<Vec<(ScratchpadAddress, SecretKey)>, PadLifecycleError>;
-
-    /// Releases a list of pads back to the free pool. Requires providing the key bytes.
-    async fn release_pads(
-        &self,
-        pads_info: Vec<PadInfo>,
-        pad_keys: &HashMap<ScratchpadAddress, Vec<u8>>, // Address -> Key Bytes map
-    ) -> Result<(), PadLifecycleError>;
 
     /// Verifies pads in the pending list, updates the index, and saves the result ONLY to the local cache.
     async fn purge(
@@ -85,14 +78,15 @@ impl DefaultPadLifecycleManager {
         let secret_key = SecretKey::random();
         let public_key = secret_key.public_key();
         let address = ScratchpadAddress::new(public_key);
-        let key_bytes = secret_key.to_bytes().to_vec();
+        // let key_bytes = secret_key.to_bytes().to_vec(); // Key bytes no longer needed here
 
-        // Add to pending list in index manager (requires verification later)
-        // Wrap the single pad in a vector for add_pending_pads
-        self.index_manager
-            .add_pending_pads(vec![(address, key_bytes)])
-            .await?;
-        debug!("Generated and added new pad {} to pending list.", address);
+        // Pad is no longer added to pending here. It will be added to KeyInfo by the caller (store_op)
+        // with status Generated.
+        // self.index_manager
+        //     .add_pending_pads(vec![(address, key_bytes)])
+        //     .await?;
+        // debug!("Generated new pad {}, it will be associated with a key shortly.", address);
+        debug!("Generated new pad {}. Returning address and key.", address);
 
         Ok((address, secret_key))
     }
@@ -240,49 +234,49 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         Ok(acquired_pads)
     }
 
-    async fn release_pads(
-        &self,
-        pads_info: Vec<PadInfo>,
-        pad_keys: &HashMap<ScratchpadAddress, Vec<u8>>,
-    ) -> Result<(), PadLifecycleError> {
-        info!("PadLifecycleManager: Releasing {} pads...", pads_info.len());
-        release_pads_to_free(self.index_manager.as_ref(), pads_info, pad_keys).await
-        // Note: This doesn't automatically save the index state change. Assumed handled later.
-    }
-
     async fn purge(
         &self,
         callback: Option<PurgeCallback>,
         network_choice: NetworkChoice,
     ) -> Result<(), PadLifecycleError> {
         info!("PadLifecycleManager: Starting purge operation...");
-        // 1. Take all pending pads from index
-        let pending_pads = self.index_manager.take_pending_pads().await?;
-        let initial_count = pending_pads.len();
-        debug!("Took {} pads from pending list.", initial_count);
 
-        // 2. Verify them concurrently
-        let (verified_pads, failed_count) = verify_pads_concurrently(
-            Arc::clone(&self.network_adapter), // Clone Arc for verification fn
-            pending_pads,
+        // 1. Take all pads from the pending list
+        let pads_to_verify = self.index_manager.take_pending_pads().await?;
+        let initial_count = pads_to_verify.len();
+
+        if initial_count == 0 {
+            info!("Purge: No pads in pending list to verify.");
+            // Callback handled within verify_pads_concurrently
+        } else {
+            info!("Purge: Verifying {} pads...", initial_count);
+        }
+
+        // 2. Verify pads concurrently
+        let (verified_pads, failed_addresses) = verify_pads_concurrently(
+            Arc::clone(&self.network_adapter),
+            pads_to_verify, // Pass the taken pads
             callback,
         )
         .await?;
-        debug!(
-            "Verification result: {} verified, {} failed.",
-            verified_pads.len(),
-            failed_count
-        );
 
-        // 3. Update index lists (add verified to free)
-        self.index_manager
-            .update_pad_lists(verified_pads, failed_count)
-            .await?;
-        debug!("Index lists updated with verification results.");
+        // 3. Update index manager: Add verified pads to the free list
+        info!(
+            "Purge complete. {} verified (added to free list), {} failed/not found (discarded).",
+            verified_pads.len(),
+            failed_addresses.len() // Use length of failed_addresses
+        );
+        if !verified_pads.is_empty() {
+            self.index_manager.add_free_pads(verified_pads).await?;
+            debug!("Index lists updated with verification results (added verified to free list).");
+        }
+
+        // Note: Failed pads are implicitly removed because we called take_pending_pads earlier.
 
         // 4. Save the updated index ONLY to local cache
         self.save_index_cache(network_choice).await?;
         info!("Purge complete. Updated index saved to local cache.");
+
         Ok(())
     }
 

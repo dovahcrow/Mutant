@@ -3,6 +3,7 @@ use crate::data::error::DataError;
 use crate::events::{
     invoke_get_callback, invoke_put_callback, GetCallback, GetEvent, PutCallback, PutEvent,
 };
+use crate::index::structure::PadStatus;
 use crate::index::{IndexManager, KeyInfo, PadInfo};
 use crate::pad_lifecycle::PadLifecycleManager;
 use crate::storage::StorageManager;
@@ -19,8 +20,18 @@ pub(crate) struct DataManagerDependencies {
     pub index_manager: Arc<dyn IndexManager>,
     pub pad_lifecycle_manager: Arc<dyn PadLifecycleManager>,
     pub storage_manager: Arc<dyn StorageManager>,
-    // Add master index address/key if needed for saving index directly?
-    // No, IndexManager::save should encapsulate that.
+    // Add network_adapter if needed for existence checks? Yes.
+    pub network_adapter: Arc<dyn crate::network::NetworkAdapter>,
+}
+
+// Define structure for tasks to be executed concurrently
+enum PadTask {
+    Write {
+        pad_info: PadInfo, // Contains address, chunk_index, initial status (Generated)
+        secret_key: SecretKey,
+        chunk_data: Vec<u8>,
+    },
+    // Add Confirm task later if needed
 }
 
 // --- Store Operation ---
@@ -34,248 +45,400 @@ pub(crate) async fn store_op(
     info!("DataOps: Starting store operation for key '{}'", user_key);
     let data_size = data_bytes.len();
 
-    // 1. Get chunk size and chunk data
+    // 1. Get chunk size and chunk data (do this early)
     let chunk_size = deps.index_manager.get_scratchpad_size().await?;
     let chunks = chunk_data(data_bytes, chunk_size)?;
     let num_chunks = chunks.len();
     debug!("Data chunked into {} pieces.", num_chunks);
 
+    // 2. Check for existing KeyInfo (New vs Resume)
+    let existing_key_info = deps.index_manager.get_key_info(&user_key).await?;
+
+    let mut tasks_to_run = Vec::new();
+    let mut current_key_info: KeyInfo; // Holds the state to be used/updated
+
+    match existing_key_info {
+        // --- Resume Path ---
+        Some(mut key_info) => {
+            info!(
+                "Found existing KeyInfo for key '{}'. Attempting resume.",
+                user_key
+            );
+            if key_info.is_complete {
+                info!(
+                    "Key '{}' is already marked as complete. Nothing to do.",
+                    user_key
+                );
+                // TODO: Add force flag handling later if needed
+                return Ok(()); // Or return KeyAlreadyExists? Ok seems better for idempotent resume.
+            }
+
+            // Verify consistency
+            if key_info.data_size != data_size {
+                error!(
+                    "Data size mismatch for key '{}'. Expected {}, got {}. Cannot resume.",
+                    user_key, key_info.data_size, data_size
+                );
+                return Err(DataError::InconsistentState(format!(
+                    "Data size mismatch for key '{}'",
+                    user_key
+                )));
+            }
+            if key_info.pads.len() != num_chunks {
+                error!(
+                    "Chunk count mismatch for key '{}'. Index has {}, data has {}. Cannot resume.",
+                    user_key,
+                    key_info.pads.len(),
+                    num_chunks
+                );
+                return Err(DataError::InconsistentState(format!(
+                    "Chunk count mismatch for key '{}'",
+                    user_key
+                )));
+            }
+
+            // Identify tasks based on pad status
+            debug!("Identifying resume tasks based on pad status...");
+            for pad_info in &key_info.pads {
+                match pad_info.status {
+                    PadStatus::Generated => {
+                        if let Some(key_bytes) = key_info.pad_keys.get(&pad_info.address) {
+                            let secret_key = SecretKey::from_bytes(
+                                key_bytes.clone().try_into().map_err(|_| {
+                                    DataError::InternalError(
+                                        "Invalid key size in index".to_string(),
+                                    )
+                                })?,
+                            )?;
+                            let chunk = chunks.get(pad_info.chunk_index).ok_or_else(|| {
+                                DataError::InternalError(format!(
+                                    "Chunk index {} out of bounds during resume",
+                                    pad_info.chunk_index
+                                ))
+                            })?;
+                            debug!(
+                                "Task: Write chunk {} to pad {}",
+                                pad_info.chunk_index, pad_info.address
+                            );
+                            tasks_to_run.push(PadTask::Write {
+                                pad_info: pad_info.clone(), // Clone needed info
+                                secret_key,
+                                chunk_data: chunk.clone(), // Clone chunk data
+                            });
+                        } else {
+                            warn!(
+                                "Missing secret key for pad {} in KeyInfo during resume. Skipping.",
+                                pad_info.address
+                            );
+                            // This shouldn't happen with consistent index, treat as error?
+                            return Err(DataError::InternalError(format!(
+                                "Missing key for pad {} during resume",
+                                pad_info.address
+                            )));
+                        }
+                    }
+                    PadStatus::Written => {
+                        debug!(
+                            "Pad {} for chunk {} already marked Written. Skipping write task.",
+                            pad_info.address, pad_info.chunk_index
+                        );
+                        // TODO: Add Confirmation task here if explicit confirmation step is needed
+                    }
+                    PadStatus::Confirmed => {
+                        debug!(
+                            "Pad {} for chunk {} already marked Confirmed. Skipping.",
+                            pad_info.address, pad_info.chunk_index
+                        );
+                    }
+                }
+            }
+            info!("Prepared {} tasks for resume.", tasks_to_run.len());
+            // Update modified timestamp
+            key_info.modified = Utc::now();
+            deps.index_manager
+                .insert_key_info(user_key.clone(), key_info.clone())
+                .await?; // Update modified time
+            current_key_info = key_info; // Use the loaded info
+        }
+
+        // --- New Upload Path ---
+        None => {
+            info!(
+                "No existing KeyInfo found for key '{}'. Starting new upload.",
+                user_key
+            );
+
+            // Handle empty data case first
+            if num_chunks == 0 {
+                debug!("Storing empty data for key '{}'", user_key);
+                let key_info = KeyInfo {
+                    pads: Vec::new(),
+                    pad_keys: HashMap::new(),
+                    data_size,
+                    modified: Utc::now(),
+                    is_complete: true, // Empty data is complete
+                                       // populated_pads_count removed
+                };
+                deps.index_manager
+                    .insert_key_info(user_key.clone(), key_info)
+                    .await?;
+                info!("Empty key '{}' created.", user_key);
+                if !invoke_put_callback(&mut callback, PutEvent::Complete)
+                    .await
+                    .map_err(|e| DataError::InternalError(format!("Callback failed: {}", e)))?
+                {
+                    return Err(DataError::OperationCancelled);
+                }
+                return Ok(());
+            }
+
+            // Acquire necessary pads
+            debug!("Acquiring {} pads...", num_chunks);
+            let acquired_pads = deps.pad_lifecycle_manager.acquire_pads(num_chunks).await?;
+            // Error handling for insufficient pads is handled by acquire_pads returning Err
+
+            debug!("Successfully acquired {} pads.", acquired_pads.len());
+
+            // Prepare initial KeyInfo and tasks
+            let mut initial_pads = Vec::with_capacity(num_chunks);
+            let mut initial_pad_keys = HashMap::with_capacity(num_chunks);
+
+            for (i, chunk) in chunks.iter().enumerate() {
+                if i >= acquired_pads.len() {
+                    // Should not happen if acquire_pads worked correctly
+                    error!(
+                        "Logic error: Acquired pads count ({}) less than chunk index ({})",
+                        acquired_pads.len(),
+                        i
+                    );
+                    return Err(DataError::InternalError(
+                        "Pad acquisition count mismatch".to_string(),
+                    ));
+                }
+                let (pad_address, secret_key) = acquired_pads[i].clone(); // Clone Arc needed parts
+
+                let pad_info = PadInfo {
+                    address: pad_address,
+                    chunk_index: i,
+                    status: PadStatus::Generated, // Start as Generated
+                };
+
+                initial_pads.push(pad_info.clone());
+                initial_pad_keys.insert(pad_address, secret_key.to_bytes().to_vec());
+
+                debug!("Task: Write chunk {} to new pad {}", i, pad_address);
+                tasks_to_run.push(PadTask::Write {
+                    pad_info,                  // Move ownership
+                    secret_key,                // Move ownership
+                    chunk_data: chunk.clone(), // Clone chunk data
+                });
+            }
+
+            let key_info = KeyInfo {
+                pads: initial_pads,
+                pad_keys: initial_pad_keys,
+                data_size,
+                modified: Utc::now(),
+                is_complete: false, // Not complete yet
+            };
+
+            // Insert initial KeyInfo into the index *before* starting writes
+            deps.index_manager
+                .insert_key_info(user_key.clone(), key_info.clone())
+                .await?;
+            info!(
+                "Initial KeyInfo for '{}' created with {} pads.",
+                user_key,
+                key_info.pads.len()
+            );
+            current_key_info = key_info; // Use the newly created info
+        }
+    }
+
+    // --- Callback for Starting ---
+    // Sent after initial setup (new or resume) is done and tasks are prepared
+    let total_tasks = tasks_to_run.len(); // Number of actual writes/confirms needed
     if !invoke_put_callback(
         &mut callback,
         PutEvent::Starting {
-            total_chunks: num_chunks,
+            total_chunks: num_chunks, // Keep total chunks for overall progress
         },
     )
     .await
     .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
     {
+        info!("Operation cancelled by callback after setup.");
+        // No pads need releasing here as the index state is saved.
         return Err(DataError::OperationCancelled);
     }
 
-    // Check if key already exists *before* acquiring pads
-    if deps.index_manager.get_key_info(&user_key).await?.is_some() {
-        info!(
-            "Key '{}' already exists. Use --force to overwrite.",
-            user_key
-        );
-        return Err(DataError::KeyAlreadyExists(user_key));
-    }
-
-    // Handle empty data case: store metadata but no pads
-    if num_chunks == 0 {
-        debug!("Storing empty data for key '{}'", user_key);
-        let key_info = KeyInfo {
-            pads: Vec::new(),
-            pad_keys: HashMap::new(), // Empty map for empty data
-            data_size,
-            modified: Utc::now(),
-            is_complete: true,
-            populated_pads_count: 0,
-        };
-        deps.index_manager
-            .insert_key_info(user_key, key_info)
-            .await?;
-        // Save index immediately for empty data? Yes, seems consistent.
-        // Need master index address/key here... This suggests IndexManager::save needs adjustment
-        // or these details need to be passed down. Let's assume IndexManager handles it for now.
-        // deps.index_manager.save(???, ???).await?; // How to get address/key?
-        // TODO: Revisit index saving strategy. For now, skip explicit save here. API layer will save.
-        if !invoke_put_callback(&mut callback, PutEvent::Complete)
-            .await
-            .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
-        {
-            return Err(DataError::OperationCancelled);
-        }
-        return Ok(());
-    }
-
-    // 2. Acquire necessary pads
-    debug!("Acquiring {} pads...", num_chunks);
-    let acquired_pads = deps.pad_lifecycle_manager.acquire_pads(num_chunks).await?;
-    if acquired_pads.len() < num_chunks {
-        // Should not happen if acquire_pads works correctly, but check defensively
-        error!(
-            "Acquired {} pads, but {} were needed. Releasing acquired pads.",
-            acquired_pads.len(),
-            num_chunks
-        );
-        // Release the partially acquired pads - requires keys map
-        let keys_map: HashMap<_, _> = acquired_pads
-            .iter()
-            .map(|(a, k)| (*a, k.to_bytes().to_vec()))
-            .collect();
-        let pad_infos_to_release = acquired_pads
-            .iter()
-            .map(|(a, _)| PadInfo {
-                address: *a,
-                chunk_index: 0,
-            })
-            .collect(); // chunk_index doesn't matter here
-        if let Err(e) = deps
-            .pad_lifecycle_manager
-            .release_pads(pad_infos_to_release, &keys_map)
-            .await
-        {
-            warn!(
-                "Failed to release partially acquired pads during store failure: {}",
-                e
-            );
-        }
-        return Err(DataError::InsufficientFreePads(format!(
-            "Needed {} pads, but only {} were available/acquired",
-            num_chunks,
-            acquired_pads.len()
-        )));
-    }
-    debug!("Successfully acquired {} pads.", acquired_pads.len());
-
-    // 3. Write chunks concurrently
+    // --- Concurrent Processing (Steps 3b onwards) ---
+    debug!("Starting concurrent processing of {} tasks...", total_tasks);
     let mut write_futures = FuturesUnordered::new();
-    let mut pad_info_list = Vec::with_capacity(num_chunks);
-    let mut populated_count = 0;
+    let mut operation_error: Option<DataError> = None; // Store first error encountered
+    let mut callback_cancelled = false;
 
-    for (i, chunk) in chunks.into_iter().enumerate() {
-        let (pad_address, pad_key) = acquired_pads[i].clone(); // Clone Arc'd key/address
-        let storage_manager = Arc::clone(&deps.storage_manager);
-        pad_info_list.push(PadInfo {
-            address: pad_address,
-            chunk_index: i,
-        });
+    // Populate FuturesUnordered from the prepared tasks
+    for task in tasks_to_run {
+        match task {
+            PadTask::Write {
+                pad_info,
+                secret_key,
+                chunk_data,
+            } => {
+                let storage_manager = Arc::clone(&deps.storage_manager);
+                let user_key_clone = user_key.clone();
+                let index_manager = Arc::clone(&deps.index_manager);
+                // TODO: Add existence check here if required by plan?
+                // let network_adapter = Arc::clone(&deps.network_adapter);
 
-        write_futures.push(async move {
-            let result = storage_manager.write_pad_data(&pad_key, &chunk).await;
-            (i, result) // Return index and Result<ScratchpadAddress, StorageError>
-        });
+                write_futures.push(async move {
+                    let write_result = storage_manager
+                        .write_pad_data(&secret_key, &chunk_data)
+                        .await;
+
+                    // Return pad info along with result for context
+                    (pad_info, write_result)
+                });
+            }
+        }
     }
 
-    // PadInfo list needs to be built after writes complete
-    let mut final_pad_info_list = vec![None; num_chunks];
-
-    while let Some((chunk_index, result)) = write_futures.next().await {
+    // Process completed futures
+    let mut processed_count = 0;
+    while let Some((pad_info, result)) = write_futures.next().await {
+        processed_count += 1;
         match result {
             Ok(written_address) => {
-                populated_count += 1;
-                trace!(
-                    "Successfully wrote chunk {} to pad {}",
-                    chunk_index,
-                    written_address // Use the returned address
-                );
-                // Store the PadInfo for the index later
-                if chunk_index < final_pad_info_list.len() {
-                    final_pad_info_list[chunk_index] = Some(PadInfo {
-                        address: written_address,
-                        chunk_index,
-                    });
-                } else {
-                    error!(
-                        "Invalid chunk index {} returned during store write (max expected {})",
-                        chunk_index,
-                        num_chunks - 1
-                    );
-                    // TODO: Handle cancellation/failure more robustly
-                    return Err(DataError::InternalError(format!(
-                        "Invalid chunk index {} encountered during store",
-                        chunk_index
-                    )));
+                // Sanity check: ensure returned address matches expected
+                if written_address != pad_info.address {
+                    warn!(
+                         "StorageManager returned address {} but expected {}. Using returned address.",
+                         written_address, pad_info.address
+                     );
+                    // Update pad_info with the actual address if needed, though KeyInfo holds the source of truth
                 }
 
-                if !invoke_put_callback(&mut callback, PutEvent::ChunkWritten { chunk_index })
+                trace!(
+                    "Successfully wrote chunk {} to pad {}",
+                    pad_info.chunk_index,
+                    written_address // Use the returned address
+                );
+
+                // Update pad status in index
+                match deps
+                    .index_manager
+                    .update_pad_status(&user_key, &written_address, PadStatus::Written)
                     .await
-                    .map_err(|e| {
-                        DataError::InternalError(format!("Callback invocation failed: {}", e))
-                    })?
                 {
-                    error!("Store operation cancelled by callback during chunk writing.");
-                    // Release ALL acquired pads if cancelled
-                    let keys_map: HashMap<_, _> = acquired_pads
-                        .iter()
-                        .map(|(a, k)| (*a, k.to_bytes().to_vec()))
-                        .collect();
-                    if let Err(e) = deps
-                        .pad_lifecycle_manager
-                        .release_pads(pad_info_list, &keys_map)
-                        .await
-                    {
-                        warn!("Failed to release pads after store cancellation: {}", e);
+                    Ok(_) => {
+                        trace!("Updated status to Written for pad {}", written_address);
+                        // Update local copy of KeyInfo status for final check?
+                        // It's simpler to re-fetch KeyInfo at the end if needed.
                     }
-                    return Err(DataError::OperationCancelled);
+                    Err(e) => {
+                        error!(
+                            "Failed to update pad status to Written for {}: {}. Halting operation.",
+                            written_address, e
+                        );
+                        operation_error = Some(DataError::Index(e));
+                        break; // Stop processing further tasks
+                    }
+                }
+
+                // Invoke callback
+                if !invoke_put_callback(
+                    &mut callback,
+                    PutEvent::ChunkWritten {
+                        chunk_index: pad_info.chunk_index,
+                    },
+                )
+                .await
+                .map_err(|e| {
+                    DataError::InternalError(format!("Callback invocation failed: {}", e))
+                })? {
+                    error!("Store operation cancelled by callback during chunk writing.");
+                    operation_error = Some(DataError::OperationCancelled);
+                    callback_cancelled = true;
+                    // No need to release pads explicitly here.
+                    break; // Stop processing
                 }
             }
             Err(e) => {
-                // Get the address associated with this failed chunk index for logging
-                let failed_address_str = final_pad_info_list
-                    .get(chunk_index)
-                    .and_then(|opt| opt.as_ref())
-                    .map(|pi| pi.address.to_string())
-                    .unwrap_or_else(|| "<unknown address>".to_string()); // Log string instead
                 error!(
-                    "Failed to write chunk {} to pad {}: {}",
-                    chunk_index, failed_address_str, e
+                    "Failed to write chunk {} to pad {}: {}. Halting operation.",
+                    pad_info.chunk_index, pad_info.address, e
                 );
-                // TODO: Handle partial write failure (release pads, mark as incomplete?)
-                // Release ALL acquired pads on failure
-                let keys_map: HashMap<_, _> = acquired_pads
-                    .iter()
-                    .map(|(a, k)| (*a, k.to_bytes().to_vec()))
-                    .collect();
-                if let Err(rel_e) = deps
-                    .pad_lifecycle_manager
-                    .release_pads(pad_info_list, &keys_map)
-                    .await
-                {
-                    warn!(
-                        "Failed to release pads after store write failure: {}",
-                        rel_e
-                    );
+                // Store the first error and stop processing further tasks
+                if operation_error.is_none() {
+                    operation_error = Some(DataError::Storage(e.into()));
                 }
-                return Err(DataError::Storage(e.into())); // Convert StorageError
+                break; // Stop processing
             }
+        }
+        // Break loop immediately if an error or cancellation occurred
+        if operation_error.is_some() {
+            break;
         }
     }
 
-    debug!("All {} chunks written successfully.", num_chunks);
+    // Abort remaining futures if cancelled or error occurred
+    if callback_cancelled || operation_error.is_some() {
+        debug!("Aborting remaining write tasks due to error or cancellation.");
+        write_futures.abort_all();
+    }
 
-    // Collect the final PadInfo list, ensuring all slots are filled
-    let pad_info_list: Vec<PadInfo> = final_pad_info_list
-        .into_iter()
-        .map(|opt| opt.expect("Missing PadInfo after successful write"))
-        .collect();
+    // --- Final Check and Completion ---
 
-    // Prepare pad keys map for KeyInfo
-    let pad_keys_map: HashMap<ScratchpadAddress, Vec<u8>> = acquired_pads
-        .into_iter()
-        .map(|(addr, key)| (addr, key.to_bytes().to_vec()))
-        .collect();
+    // If an error occurred or was cancelled, return the error
+    if let Some(err) = operation_error {
+        warn!("Store operation for key '{}' failed: {}", user_key, err);
+        // The index state reflects the progress made before the error.
+        return Err(err);
+    }
 
-    // 4. Update index
-    let key_info = KeyInfo {
-        pads: pad_info_list, // Already ordered by chunk index
-        pad_keys: pad_keys_map,
-        data_size,
-        modified: Utc::now(),
-        is_complete: true, // Assuming all writes succeeded if we reached here
-        populated_pads_count: populated_count,
-    };
+    // If we finished processing all tasks without error, check if the key is fully complete
+    // Re-fetch the latest KeyInfo to be absolutely sure of the state
+    let final_key_info = deps
+        .index_manager
+        .get_key_info(&user_key)
+        .await?
+        .ok_or_else(|| {
+            DataError::InternalError(format!(
+                "KeyInfo for '{}' disappeared unexpectedly after writes",
+                user_key
+            ))
+        })?;
 
-    deps.index_manager
-        .insert_key_info(user_key.clone(), key_info)
-        .await?;
-    debug!("Index updated for key '{}'", user_key);
+    let all_pads_written = final_key_info
+        .pads
+        .iter()
+        .all(|p| p.status == PadStatus::Written || p.status == PadStatus::Confirmed);
 
-    // 5. Save index (explicitly triggered by API layer, not here)
-    // if !invoke_put_callback(&mut callback, PutEvent::SavingIndex).await? {
-    //     return Err(DataError::OperationCancelled);
-    // }
-    // deps.index_manager.save(???, ???).await?; // How to get address/key?
+    if all_pads_written && !final_key_info.is_complete {
+        debug!(
+            "All pads for key '{}' are now Written. Marking key as complete.",
+            user_key
+        );
+        deps.index_manager.mark_key_complete(&user_key).await?;
+    } else if !all_pads_written {
+        warn!("Store operation for key '{}' finished processing tasks, but not all pads reached Written state. Key remains incomplete.", user_key);
+        // This case might happen if some tasks were confirmations and failed, or if there's a logic bug.
+    }
 
+    // Send Complete callback only if the operation finished without external error/cancellation
+    info!(
+        "Store operation processing finished for key '{}'.",
+        user_key
+    );
     if !invoke_put_callback(&mut callback, PutEvent::Complete)
         .await
         .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
     {
-        return Err(DataError::OperationCancelled);
+        // Don't return error here, just log, as the operation itself is done.
+        warn!("Operation cancelled by callback after completion.");
     }
 
-    info!("DataOps: Store operation complete for key '{}'", user_key);
     Ok(())
 }
 
