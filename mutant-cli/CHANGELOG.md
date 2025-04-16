@@ -5,6 +5,7 @@
 
 ### Changed
 - Parallelized pad verification during `purge` command for faster execution.
+- Improved `reserve` command progress bar to show continuous activity using a spinner.
 
 ### Fixed
 - **Devnet:** Corrected the format of the hardcoded devnet private key by adding the `0x` prefix.

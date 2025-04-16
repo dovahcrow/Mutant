@@ -4,6 +4,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use log::{error, info, trace, warn};
 use std::sync::Arc;
 use tokio::task::JoinSet;
+use tokio::time::{Duration, interval};
 
 #[derive(Args, Debug, Clone)]
 pub struct Reserve {
@@ -27,7 +28,7 @@ impl Reserve {
         let pb = ProgressBar::new(count as u64);
         pb.set_style(
             ProgressStyle::with_template(
-                "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} ({eta}) {msg}",
+                "{spinner:.green} [{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} ({eta}) {msg}",
             )
             .unwrap()
             .progress_chars("##-"),
@@ -62,23 +63,40 @@ impl Reserve {
         let mut successful_creations = 0;
         let mut failed_creations = 0;
 
-        while let Some(result) = join_set.join_next().await {
-            pb.inc(1);
-            match result {
-                Ok(Ok(address)) => {
-                    successful_creations += 1;
-                    pb.set_message(format!("Reserved {}", address));
-                    trace!("Successfully processed reservation for {}", address);
+        // Add a ticker interval
+        let mut ticker = interval(Duration::from_millis(100)); // Tick every 100ms
+
+        // Loop while there are tasks running using select!
+        while !join_set.is_empty() {
+            tokio::select! {
+                // Prioritize checking for completed tasks first
+                // biased; // Optional, uncomment if needed
+                Some(result) = join_set.join_next() => {
+                    pb.inc(1); // Increment when a task completes
+                    match result {
+                        Ok(Ok(address)) => {
+                            successful_creations += 1;
+                            pb.set_message(format!("Reserved {}", address));
+                            trace!("Successfully processed reservation for {}", address);
+                        }
+                        Ok(Err(lib_err)) => {
+                            failed_creations += 1;
+                            pb.set_message(format!("Failed: {}", lib_err));
+                            warn!("A pad reservation task failed: {}", lib_err);
+                        }
+                        Err(join_err) => {
+                            failed_creations += 1;
+                            pb.set_message(format!("Task failed: {}", join_err));
+                            error!("Pad reservation join error: {}", join_err);
+                        }
+                    }
                 }
-                Ok(Err(lib_err)) => {
-                    failed_creations += 1;
-                    pb.set_message(format!("Failed: {}", lib_err));
-                    warn!("A pad reservation task failed: {}", lib_err);
-                }
-                Err(join_err) => {
-                    failed_creations += 1;
-                    pb.set_message(format!("Task failed: {}", join_err));
-                    error!("Pad reservation join error: {}", join_err);
+                // If no task completed, check if the ticker interval elapsed
+                _ = ticker.tick() => {
+                     // Only tick the spinner if the bar hasn't finished yet
+                     if !pb.is_finished() {
+                        pb.tick();
+                     }
                 }
             }
         }
