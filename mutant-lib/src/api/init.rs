@@ -226,6 +226,7 @@ pub(crate) async fn initialize_layers(
         Arc::clone(&index_manager) as Arc<dyn IndexManager>,
         Arc::clone(&pad_lifecycle_manager) as Arc<dyn PadLifecycleManager>,
         Arc::clone(&storage_manager) as Arc<dyn StorageManager>,
+        Arc::clone(&network_adapter) as Arc<dyn NetworkAdapter>,
     ));
     info!("DataManager initialized.");
 

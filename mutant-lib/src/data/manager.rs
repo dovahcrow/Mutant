@@ -2,9 +2,11 @@ use crate::data::error::DataError;
 use crate::data::ops::{self, DataManagerDependencies};
 use crate::events::{GetCallback, PutCallback};
 use crate::index::IndexManager;
+use crate::network::NetworkAdapter;
 use crate::pad_lifecycle::PadLifecycleManager;
 use crate::storage::StorageManager;
 use async_trait::async_trait;
+use log::warn;
 use std::sync::Arc;
 
 /// Trait defining the interface for high-level data operations (store, fetch, remove, update).
@@ -52,12 +54,14 @@ impl DefaultDataManager {
         index_manager: Arc<dyn IndexManager>,
         pad_lifecycle_manager: Arc<dyn PadLifecycleManager>,
         storage_manager: Arc<dyn StorageManager>,
+        network_adapter: Arc<dyn NetworkAdapter>,
     ) -> Self {
         Self {
             deps: DataManagerDependencies {
                 index_manager,
                 pad_lifecycle_manager,
                 storage_manager,
+                network_adapter,
             },
         }
     }
@@ -92,6 +96,9 @@ impl DataManager for DefaultDataManager {
         data_bytes: &[u8],
         callback: Option<PutCallback>,
     ) -> Result<(), DataError> {
-        ops::update_op(&self.deps, user_key, data_bytes, callback).await
+        warn!("Update operation is currently disabled.");
+        Err(DataError::InternalError(
+            "Update operation not implemented".to_string(),
+        ))
     }
 }

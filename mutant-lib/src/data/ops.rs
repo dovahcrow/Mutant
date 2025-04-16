@@ -385,7 +385,10 @@ pub(crate) async fn store_op(
     // Abort remaining futures if cancelled or error occurred
     if callback_cancelled || operation_error.is_some() {
         debug!("Aborting remaining write tasks due to error or cancellation.");
-        write_futures.abort_all();
+        // Drop remaining futures instead of abort_all()
+        while write_futures.next().await.is_some() {
+            // Consuming the futures drops them
+        }
     }
 
     // --- Final Check and Completion ---
@@ -659,31 +662,15 @@ pub(crate) async fn remove_op(
     let removed_info = deps.index_manager.remove_key_info(user_key).await?;
 
     match removed_info {
-        Some(key_info) => {
+        Some(_key_info) => {
+            // Use _key_info as it's not needed after removal
             debug!("Removed key info for '{}' from index.", user_key);
-            // 2. Release associated pads
-            if !key_info.pads.is_empty() {
-                debug!("Releasing {} associated pads...", key_info.pads.len());
-                // Use the keys stored within the KeyInfo itself
-                if !key_info.pad_keys.is_empty() {
-                    deps.pad_lifecycle_manager
-                        .release_pads(key_info.pads, &key_info.pad_keys) // Pass pad_keys directly
-                        .await?; // Propagate error if release fails
-                } else {
-                    warn!(
-                        "Pad keys missing in KeyInfo for key '{}'. Cannot release pads.",
-                        user_key
-                    );
-                    // Should this be an error? Maybe InternalError?
-                }
-            } else {
-                debug!("No pads associated with key '{}' to release.", user_key);
-            }
+            // The call to index_manager.remove_key_info above handles
+            // sorting the pads associated with the removed key into
+            // either the free_pads or pending_verification_pads list
+            // based on their status. No explicit release call needed here.
 
-            // 3. Save index (explicitly triggered by API layer)
-            // deps.index_manager.save(???, ???).await?;
-
-            info!("DataOps: Remove operation complete for key '{}'", user_key);
+            info!("DataOps: Remove operation complete for key '{}'.", user_key);
             Ok(())
         }
         None => {
@@ -695,21 +682,7 @@ pub(crate) async fn remove_op(
     }
 }
 
-// --- Update Operation ---
-// TODO: Implement update_op. This is complex:
-// 1. Fetch existing KeyInfo. Error if not found.
-// 2. Chunk new data.
-// 3. Compare new chunk count with old pad count.
-// 4. If counts differ:
-//    - Acquire new pads if needed.
-//    - Identify pads to release if shrinking. Need keys for release!
-// 5. Write new/updated chunks concurrently (potentially overwriting existing pads).
-// 6. Release any now-unused pads.
-// 7. Update KeyInfo (new size, timestamp, potentially new pad list).
-// 8. Update index.
-// 9. Save index (via API layer).
-// Requires careful handling of partial failures and pad key management.
-
+/* --> START COMMENTING OUT update_op
 pub(crate) async fn update_op(
     deps: &DataManagerDependencies,
     user_key: String,
@@ -736,6 +709,8 @@ pub(crate) async fn update_op(
     // Pass ownership of user_key and callback to store_op
     store_op(deps, user_key, data_bytes, callback).await
 }
+*/
+// <-- END COMMENTING OUT update_op
 
 // --- Helper: Checksum Calculation --- (assuming this is still needed elsewhere or can be removed later)
 // ... existing code ...
