@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - "Confirming writes..." bar increments on `ChunkConfirmed` event.
 - Corrected timing of `PadReserved` event emission during `put` operations. The event is now triggered within the write task completion handler in `DataOps`, *after* a successful network write (which implies pad reservation/creation), ensuring the progress bar accurately reflects confirmed pad reservations.
 - Progress bars during resumed `put` operations now correctly initialize to show the previously completed progress.
+- **CLI:** Redirect progress bar output to `stdout` to prevent interference with logs written to `stderr`.
 
 ### Removed
 - Removed redundant pad release functions (`pad_lifecycle::pool::release_pads_to_free`, `pad_lifecycle::manager::release_pads`) as the logic is now handled within `IndexManager` and `purge`.

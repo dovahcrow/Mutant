@@ -1,7 +1,7 @@
 use clap::Parser;
 use dialoguer::{Select, theme::ColorfulTheme};
 use directories::{BaseDirs, ProjectDirs};
-use indicatif::MultiProgress;
+use indicatif::{MultiProgress, ProgressDrawTarget};
 use log::{debug, error, info, warn};
 // Use the new top-level re-exports from mutant_lib
 // Use full paths as re-exports seem problematic
@@ -284,7 +284,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         NetworkChoice::Mainnet
     };
 
-    let mp = MultiProgress::new();
+    let mp = MultiProgress::with_draw_target(ProgressDrawTarget::stdout());
     let _mp_clone_for_task = mp.clone();
     let init_callback_fn: Option<InitCallback> = if !cli.quiet {
         let (_pb_opt, cb) = create_init_callback(&mp, cli.quiet);
