@@ -236,20 +236,20 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
             match pad_result {
                 Ok(acquired_pad_tuple) => {
                     acquired_pads.push(acquired_pad_tuple);
-                    // Emit PadReserved event for this single pad
-                    if !invoke_put_callback(callback, PutEvent::PadReserved { count: 1 })
-                        .await
-                        // Map the top-level Error to PadLifecycleError::InternalError
-                        .map_err(|e| {
-                            PadLifecycleError::InternalError(format!(
-                                "Put callback failed during pad acquisition: {}",
-                                e
-                            ))
-                        })?
-                    {
-                        warn!("Pad acquisition cancelled by callback.");
-                        return Err(PadLifecycleError::OperationCancelled);
-                    }
+                    // Emit PadReserved event for this single pad - MOVED AFTER LOOP
+                    // if !invoke_put_callback(callback, PutEvent::PadReserved { count: 1 })
+                    //     .await
+                    //     // Map the top-level Error to PadLifecycleError::InternalError
+                    //     .map_err(|e| {
+                    //         PadLifecycleError::InternalError(format!(
+                    //             "Put callback failed during pad acquisition: {}",
+                    //             e
+                    //         ))
+                    //     })?
+                    // {
+                    //     warn!("Pad acquisition cancelled by callback.");
+                    //     return Err(PadLifecycleError::OperationCancelled);
+                    // }
                 }
                 Err(e) => {
                     error!("Failed to acquire pad {} out of {}: {}", i + 1, count, e);
@@ -268,6 +268,28 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
             ));
         }
         debug!("Successfully acquired {} pads.", acquired_pads.len());
+
+        // --- Send aggregated PadReserved event --- Moved from inside the loop
+        if acquired_pads.len() > 0 {
+            if !invoke_put_callback(
+                callback,
+                PutEvent::PadReserved {
+                    count: acquired_pads.len(),
+                },
+            )
+            .await
+            .map_err(|e| {
+                PadLifecycleError::InternalError(format!(
+                    "Put callback failed after pad acquisition loop: {}",
+                    e
+                ))
+            })? {
+                warn!("Pad acquisition loop completed but cancelled by callback before returning.");
+                return Err(PadLifecycleError::OperationCancelled);
+            }
+        }
+        // --- End aggregated event ---
+
         Ok(acquired_pads)
     }
 
