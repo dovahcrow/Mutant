@@ -133,9 +133,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - The specific changelog entry for updating the progress message to "Creating remote master index..." as this is now covered by the refactoring of init steps.
 
-[Unreleased]: https://github.com/Champii/MutAnt/compare/v0.1.1...HEAD
-[0.1.1]: https://github.com/Champii/MutAnt/compare/v0.1.0...v0.1.1
-
 ## [0.1.1] - 2024-04-10
 
 ### Fixed
@@ -186,6 +183,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevented premature release of pads during cancelled/failed `put` operations.
 - Resolved various build errors and warnings during refactoring.
 - Corrected progress bar display for pad reservation and write/confirm phases.
+
+## [0.1.2] - Unreleased
+
+### Changed
+- **CLI:** Restore progress increment for "Acquiring pads..." bar based on `PadReserved` event.
 
 [Unreleased]: https://github.com/Champii/MutAnt/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/Champii/MutAnt/compare/v0.1.1...v0.2.0

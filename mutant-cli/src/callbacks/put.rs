@@ -67,7 +67,7 @@ pub fn create_put_callback(
                     *ctx.total_chunks.lock().await = total_chunks; // Store total chunks
                     let total_u64 = total_chunks as u64;
 
-                    // Initialize and immediately finish Acquisition Bar
+                    // Initialize Acquisition Bar (starts at 0)
                     let mut res_pb_guard = ctx.res_pb_opt.lock().await;
                     let res_pb = res_pb_guard.get_or_insert_with(|| {
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
@@ -75,24 +75,21 @@ pub fn create_put_callback(
                         pb
                     });
                     res_pb.set_length(total_u64);
-                    // Set position to length to mark as complete immediately
-                    // as acquisition (reuse/generate) happens before first write event.
-                    res_pb.set_position(total_u64);
+                    res_pb.set_position(0); // Ensure it starts at 0
                     drop(res_pb_guard);
 
-                    // Initialize Upload Bar
+                    // Initialize Upload Bar (starts at 0)
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
                     let upload_pb = upload_pb_guard.get_or_insert_with(|| {
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
-                        // Correct message for upload bar
                         pb.set_message("Writing chunks...".to_string());
                         pb
                     });
                     upload_pb.set_length(total_u64);
-                    upload_pb.set_position(0); // Start at 0
+                    upload_pb.set_position(0);
                     drop(upload_pb_guard);
 
-                    // Initialize Confirmation Bar
+                    // Initialize Confirmation Bar (starts at 0)
                     let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
                     let confirm_pb = confirm_pb_guard.get_or_insert_with(|| {
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
@@ -100,14 +97,22 @@ pub fn create_put_callback(
                         pb
                     });
                     confirm_pb.set_length(total_u64);
-                    confirm_pb.set_position(0); // Start at 0
+                    confirm_pb.set_position(0);
                     drop(confirm_pb_guard);
 
                     Ok::<bool, LibError>(true)
                 }
-                PutEvent::PadReserved { count: _ } => {
-                    // Do nothing here for progress bars.
-                    debug!("Put Callback: PadReserved event received (ignored for progress bar).");
+                PutEvent::PadReserved { count } => {
+                    // Increment Acquisition Bar
+                    let mut res_pb_guard = ctx.res_pb_opt.lock().await;
+                    if let Some(pb) = res_pb_guard.as_mut() {
+                        if !pb.is_finished() {
+                            pb.inc(count as u64); // Increment by count (usually 1)
+                        }
+                    } else {
+                        warn!("Put Callback: PadReserved event but acquisition bar doesn't exist.");
+                    }
+                    drop(res_pb_guard);
                     Ok::<bool, LibError>(true)
                 }
                 PutEvent::ChunkWritten { chunk_index: _ } => {
