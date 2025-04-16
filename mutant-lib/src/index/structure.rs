@@ -1,3 +1,4 @@
+use crate::pad_lifecycle::PadOrigin;
 use autonomi::ScratchpadAddress;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,8 @@ pub struct PadInfo {
     pub chunk_index: usize,
     /// The current status of this pad within the key's lifecycle.
     pub status: PadStatus,
+    /// The origin of the pad.
+    pub origin: PadOrigin,
     // Potentially add: `checksum: Option<[u8; 32]>` if implementing checksums
 }
 

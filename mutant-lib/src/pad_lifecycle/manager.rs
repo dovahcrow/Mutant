@@ -208,7 +208,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
             let pad_result = match acquire_free_pad(self.index_manager.as_ref()).await {
                 Ok(pad) => {
                     // Pad came from the free pool
-                    Ok((pad.0, pad.1, PadOrigin::FromFreePool))
+                    Ok((pad.0, pad.1, PadOrigin::FreePool))
                 }
                 Err(PadLifecycleError::PadAcquisitionFailed(msg))
                     if msg == "No free pads available in the index" =>
