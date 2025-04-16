@@ -235,20 +235,29 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
             match pad_result {
                 Ok(acquired_pad_tuple) => {
                     acquired_pads.push(acquired_pad_tuple);
-                    // Emit PadReserved event for this single pad - MOVED AFTER LOOP
-                    // if !invoke_put_callback(callback, PutEvent::PadReserved { count: 1 })
-                    //     .await
-                    //     // Map the top-level Error to PadLifecycleError::InternalError
-                    //     .map_err(|e| {
-                    //         PadLifecycleError::InternalError(format!(
-                    //             "Put callback failed during pad acquisition: {}",
-                    //             e
-                    //         ))
-                    //     })?
-                    // {
-                    //     warn!("Pad acquisition cancelled by callback.");
-                    //     return Err(PadLifecycleError::OperationCancelled);
-                    // }
+                    // REMOVED: PutEvent::PadReserved emission. This will be handled by the caller
+                    // after successful network operation for the pad.
+                    /*
+                    if !invoke_put_callback(callback, PutEvent::PadReserved { count: 1 })
+                        .await
+                        // Map the top-level Error to PadLifecycleError::InternalError
+                        .map_err(|e| {
+                            PadLifecycleError::InternalError(format!(
+                                "Put callback failed during pad acquisition: {}",
+                                e
+                            ))
+                        })?
+                    {
+                        warn!("Pad acquisition cancelled by callback.");
+                        // If cancelled, we need to decide how to handle partially acquired pads.
+                        // Currently, the acquired pads are just dropped here. Their state
+                        // (if taken from free list) might be inconsistent if the operation is cancelled.
+                        // If generated, they just don't get added to the index.
+                        // Let's return OperationCancelled. The caller (store_op) saves the index
+                        // state before starting writes, so cancellation here is relatively clean.
+                        return Err(PadLifecycleError::OperationCancelled);
+                    }
+                    */
                 }
                 Err(e) => {
                     error!("Failed to acquire pad {} out of {}: {}", i + 1, count, e);
@@ -269,24 +278,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         debug!("Successfully acquired {} pads.", acquired_pads.len());
 
         // --- Send aggregated PadReserved event --- Moved from inside the loop
-        if acquired_pads.len() > 0 {
-            if !invoke_put_callback(
-                callback,
-                PutEvent::PadReserved {
-                    count: acquired_pads.len(),
-                },
-            )
-            .await
-            .map_err(|e| {
-                PadLifecycleError::InternalError(format!(
-                    "Put callback failed after pad acquisition loop: {}",
-                    e
-                ))
-            })? {
-                warn!("Pad acquisition loop completed but cancelled by callback before returning.");
-                return Err(PadLifecycleError::OperationCancelled);
-            }
-        }
+        // REMOVED - Event is now sent inside the loop, and that is also removed
         // --- End aggregated event ---
 
         Ok(acquired_pads)

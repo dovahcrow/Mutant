@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - "Acquiring pads..." bar now completes instantly.
   - "Writing chunks..." bar increments on `ChunkWritten` event.
   - "Confirming writes..." bar increments on `ChunkConfirmed` event.
+- Corrected timing of `PadReserved` event emission during `put` operations. The event is now triggered after the pad acquisition phase completes in `DataOps`, rather than prematurely during pad generation in `PadLifecycleManager`. This ensures the "Acquiring pads..." progress bar reflects the actual reservation process more accurately.
 
 ### Removed
 - Removed redundant pad release functions (`pad_lifecycle::pool::release_pads_to_free`, `pad_lifecycle::manager::release_pads`) as the logic is now handled within `IndexManager` and `purge`.

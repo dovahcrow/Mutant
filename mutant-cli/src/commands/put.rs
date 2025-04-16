@@ -44,9 +44,9 @@ pub async fn handle_put(
         }
     };
 
-    // Conditionally create callbacks based on quiet flag
-    // Adjusted destructuring for two bars
-    let (create_pb_opt, confirm_pb_opt, callback) = create_put_callback(multi_progress, quiet);
+    // Restore destructuring for three bars
+    let (res_pb_opt, upload_pb_opt, confirm_pb_opt, callback) =
+        create_put_callback(multi_progress, quiet);
 
     // Pass data as slice &[u8]
     let result = if force {
@@ -63,8 +63,9 @@ pub async fn handle_put(
     match result {
         Ok(_) => {
             debug!("Put operation successful for key: {}", key);
-            // Clear only the two remaining bars
-            clear_pb(&create_pb_opt);
+            // Clear all three bars
+            clear_pb(&res_pb_opt);
+            clear_pb(&upload_pb_opt);
             clear_pb(&confirm_pb_opt);
             ExitCode::SUCCESS
         }
@@ -88,8 +89,9 @@ pub async fn handle_put(
             };
 
             eprintln!("{}", error_message);
-            // Abandon only the two remaining bars
-            abandon_pb(&create_pb_opt, error_message.clone());
+            // Abandon all three bars
+            abandon_pb(&res_pb_opt, error_message.clone());
+            abandon_pb(&upload_pb_opt, error_message.clone());
             abandon_pb(&confirm_pb_opt, error_message);
 
             ExitCode::FAILURE

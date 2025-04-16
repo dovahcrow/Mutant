@@ -71,7 +71,7 @@ impl StyledProgressBar {
     }
 
     /// Returns the current length of the progress bar.
-    pub fn _length(&self) -> Option<u64> {
+    pub fn length(&self) -> Option<u64> {
         self.pb.length()
     }
 
