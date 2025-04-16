@@ -211,6 +211,37 @@ impl MutAnt {
             .map_err(Error::PadLifecycle)
     }
 
+    /// Creates a new, empty scratchpad on the network and adds it to the free list.
+    /// Returns the address of the newly created pad.
+    /// Note: This does *not* automatically save the master index.
+    pub async fn reserve_new_pad(&self) -> Result<ScratchpadAddress, Error> {
+        debug!("MutAnt::reserve_new_pad called");
+        let secret_key = SecretKey::random();
+        let address = ScratchpadAddress::new(secret_key.public_key());
+        let key_bytes = secret_key.to_bytes().to_vec();
+
+        // 1. Create the empty pad on the network using the underlying NetworkAdapter.
+        //    We need access to the NetworkAdapter's put_raw or a similar function.
+        //    Since MutAnt holds the NetworkAdapter, we can call it directly.
+        //    Using `put_raw` with empty data and `is_new_hint=true`.
+        debug!("Creating empty pad on network: {}", address);
+        self.network_adapter // Use the held network_adapter
+            .put_raw(&secret_key, &[], true)
+            .await
+            .map_err(Error::Network)?;
+        debug!("Successfully created empty pad on network: {}", address);
+
+        // 2. Add the newly created pad to the IndexManager's free list.
+        debug!("Adding pad {} to free list in index", address);
+        self.index_manager
+            .add_free_pad(address, key_bytes)
+            .await
+            .map_err(Error::Index)?;
+        debug!("Successfully added pad {} to free list", address);
+
+        Ok(address)
+    }
+
     /// Verifies pads in the pending list against the network.
     /// Moves verified pads to the free list. Discards invalid ones.
     /// Saves the updated index state ONLY to the local cache.

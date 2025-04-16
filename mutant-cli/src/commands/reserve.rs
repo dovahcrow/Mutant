@@ -7,21 +7,24 @@ use tokio::task::JoinSet;
 
 #[derive(Args, Debug, Clone)]
 pub struct Reserve {
-    /// Number of scratchpads to reserve
-    #[arg(short, long, value_name = "COUNT", default_value_t = 1)]
-    count: usize,
+    /// Number of scratchpads to reserve [default: 1]
+    #[arg(value_name = "COUNT")]
+    count: Option<usize>,
 }
 
 impl Reserve {
     pub async fn run(&self, mutant: &mutant_lib::api::MutAnt) -> Result<(), CliError> {
-        if self.count == 0 {
+        // Default to 1 if count is not provided
+        let count = self.count.unwrap_or(1);
+
+        if count == 0 {
             info!("Reserve count is 0, nothing to do.");
             return Ok(());
         }
 
-        info!("Attempting to reserve {} new scratchpads...", self.count);
+        info!("Attempting to reserve {} new scratchpads...", count);
 
-        let pb = ProgressBar::new(self.count as u64);
+        let pb = ProgressBar::new(count as u64);
         pb.set_style(
             ProgressStyle::with_template(
                 "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} ({eta}) {msg}",
@@ -36,7 +39,7 @@ impl Reserve {
         // Clone mutant instance for use in tasks
         let mutant = Arc::new(mutant.clone());
 
-        for i in 0..self.count {
+        for i in 0..count {
             let mutant_clone = Arc::clone(&mutant);
             join_set.spawn(async move {
                 trace!("Task {}: Calling reserve_new_pad", i);
@@ -92,16 +95,16 @@ impl Reserve {
             ));
         }
 
-        // Save the index only once after all successful reservations
+        // Save the index only once after all successful reservations TO LOCAL CACHE
         info!(
-            "Saving master index after reserving {} pads...",
+            "Saving index cache after reserving {} pads...",
             successful_creations
         );
-        mutant.save_master_index().await?;
-        info!("Master index saved successfully.");
+        mutant.save_index_cache().await?;
+        info!("Index cache saved successfully.");
 
         info!(
-            "Successfully reserved {} scratchpads and added them to the free list.",
+            "Successfully reserved {} scratchpads and added them to the free list (local cache only).",
             successful_creations
         );
 

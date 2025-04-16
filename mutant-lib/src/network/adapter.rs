@@ -203,13 +203,17 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
                     Ok(address)
                 }
                 Err(e) => {
-                    // Handle potential errors like "not found" from the update call
+                    // Handle potential errors like "not found" or "does not exist" from the update call
                     // The error type might be opaque, requiring string matching or specific handling
                     // based on autonomi client's error specifics.
-                    if e.to_string().contains("not found") {
-                        warn!("Attempted to update non-existent scratchpad {}. This might indicate an index inconsistency.", address);
-                        // Should we attempt creation here? Let's try it.
-                        warn!("Falling back to creating scratchpad {} after update failed (not found).", address);
+                    let error_string = e.to_string().to_lowercase(); // Convert to lowercase for case-insensitive check
+                    if error_string.contains("not found") || error_string.contains("does not exist")
+                    {
+                        warn!(
+                            "Attempted to update non-existent scratchpad {}. Error: {}. Falling back to creation.",
+                            address, e
+                        );
+                        // Fallback to create
                         match client
                             .scratchpad_create(key, content_type, &data_bytes, payment_option)
                             .await
@@ -217,9 +221,9 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
                             Ok((_cost, created_addr)) => {
                                 if created_addr != address {
                                     warn!(
-                                             "Scratchpad create (fallback) returned address {} but expected {}",
-                                             created_addr, address
-                                         );
+                                        "Scratchpad create (fallback) returned address {} but expected {}",
+                                        created_addr, address
+                                    );
                                 }
                                 info!("Successfully created scratchpad {} via fallback.", address);
                                 Ok(address)
@@ -230,12 +234,15 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
                                     address, create_err
                                 );
                                 Err(NetworkError::InternalError(format!(
-                                    "Update not found, then create failed for {}: {}",
-                                    address, create_err
+                                    "Update failed ({}), then create failed for {}: {}",
+                                    e,
+                                    address,
+                                    create_err // Include original update error in message
                                 )))
                             }
                         }
                     } else {
+                        // Other update error
                         error!("Failed to update scratchpad {}: {}", address, e);
                         Err(NetworkError::InternalError(format!(
                             "Failed to update scratchpad {}: {}",
