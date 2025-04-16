@@ -64,10 +64,10 @@ pub struct KeyInfo {
 pub struct MasterIndex {
     /// Maps user-defined keys to their corresponding metadata and pad lists.
     pub index: HashMap<String, KeyInfo>,
-    /// List of scratchpads (address and private key bytes) available for storing new data.
-    pub free_pads: Vec<(ScratchpadAddress, Vec<u8>)>, // Store key bytes directly
+    /// List of scratchpads (address, private key bytes, initial counter) available for storing new data.
+    pub free_pads: Vec<(ScratchpadAddress, Vec<u8>, u64)>, // Add counter
     /// List of scratchpads (address and private key bytes) that need network verification.
-    pub pending_verification_pads: Vec<(ScratchpadAddress, Vec<u8>)>,
+    pub pending_verification_pads: Vec<(ScratchpadAddress, Vec<u8>)>, // No counter needed here
     /// The usable size of scratchpads assumed by this index. Data is chunked based on this.
     pub scratchpad_size: usize,
     // Potentially add: `version: u32` for future format changes
@@ -77,7 +77,7 @@ impl Default for MasterIndex {
     fn default() -> Self {
         MasterIndex {
             index: HashMap::new(),
-            free_pads: Vec::new(),
+            free_pads: Vec::new(), // Initialize correctly
             pending_verification_pads: Vec::new(),
             scratchpad_size: DEFAULT_SCRATCHPAD_SIZE,
         }

@@ -4,13 +4,13 @@ use autonomi::{ScratchpadAddress, SecretKey};
 use blsttc::SK_SIZE;
 use log::{debug, trace, warn};
 
-/// Acquires a single free pad from the index manager.
+/// Acquires a single free pad from the index manager, returning its initial counter.
 pub(crate) async fn acquire_free_pad(
     index_manager: &dyn IndexManager,
-) -> Result<(ScratchpadAddress, SecretKey), PadLifecycleError> {
+) -> Result<(ScratchpadAddress, SecretKey, u64), PadLifecycleError> {
     trace!("Pool: Attempting to acquire free pad");
     match index_manager.take_free_pad().await? {
-        Some((address, key_bytes)) => {
+        Some((address, key_bytes, initial_counter)) => {
             // Attempt to parse the secret key bytes
             let key_bytes_len = key_bytes.len(); // Get length before moving
             let key_array: [u8; SK_SIZE] = key_bytes.try_into().map_err(|_| {
@@ -34,8 +34,11 @@ pub(crate) async fn acquire_free_pad(
                     address
                 ))
             })?;
-            debug!("Pool: Acquired free pad {}", address);
-            Ok((address, key))
+            debug!(
+                "Pool: Acquired free pad {} with initial counter {}",
+                address, initial_counter
+            );
+            Ok((address, key, initial_counter))
         }
         None => {
             debug!("Pool: No free pads available");

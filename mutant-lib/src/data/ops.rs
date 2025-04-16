@@ -329,7 +329,7 @@ pub(crate) async fn store_op(
 
                             // --- Determine is_new_hint using pre-fetched results --- START
                             let is_new_hint = match pad_info.origin {
-                                PadOrigin::FreePool => {
+                                PadOrigin::FreePool { initial_counter: _ } => {
                                     trace!(
                                         "Resume Task: Pad {} from FreePool, setting is_new_hint=false",
                                         pad_info.address
@@ -620,21 +620,19 @@ pub(crate) async fn store_op(
             } => {
                 // Clone for the write task future
                 let storage_manager_clone = Arc::clone(&storage_manager);
-                // Remove clone for network_adapter - no longer needed here
-                // let network_adapter_clone = Arc::clone(&network_adapter);
+                let secret_key_write = secret_key.clone(); // Clone key for write task
+                let pad_info_write = pad_info.clone(); // Clone pad_info for write task
 
                 pending_writes += 1;
                 write_futures.push(async move {
-                    // Remove the complex existence check logic from here
-                    // The hint is now determined *before* task creation.
                     let write_result = storage_manager_clone
-                        .write_pad_data(&secret_key, &chunk_data, is_new_hint) // Use the hint from the task
+                        .write_pad_data(&secret_key_write, &chunk_data, is_new_hint)
                         .await
                         .map(|_| ()) // Discard the address on success, keep unit type
                         .map_err(|e| DataError::Storage(e.into())); // Map StorageError to DataError
 
-                    // Return original pad_info along with the result
-                    (pad_info, write_result)
+                    // Return original pad_info, the key used, and the result
+                    (pad_info_write, secret_key_write, write_result)
                 });
             }
         }
@@ -652,11 +650,11 @@ pub(crate) async fn store_op(
             biased;
 
             // --- Process Write Task Completion ---
-            Some((pad_info, result)) = write_futures.next(), if pending_writes > 0 => {
+            Some((completed_pad_info, completed_secret_key, write_result)) = write_futures.next(), if pending_writes > 0 => {
                 pending_writes -= 1;
-                match result {
+                match write_result {
                     Ok(()) => {
-                        trace!("Write successful for chunk {}, pad {}", pad_info.chunk_index, pad_info.address);
+                        trace!("Write successful for chunk {}, pad {}", completed_pad_info.chunk_index, completed_pad_info.address);
 
                         // *** Emit PadReserved event HERE upon successful write ***
                         if !invoke_put_callback(
@@ -674,16 +672,16 @@ pub(crate) async fn store_op(
 
                         // Update status to Written
                         match index_manager
-                            .update_pad_status(&user_key_clone, &pad_info.address, PadStatus::Written)
+                            .update_pad_status(&user_key_clone, &completed_pad_info.address, PadStatus::Written)
                             .await
                         {
                             Ok(_) => {
-                                trace!("Updated status to Written for pad {}", pad_info.address);
+                                trace!("Updated status to Written for pad {}", completed_pad_info.address);
 
                                 // Emit ChunkWritten callback
                                  if !invoke_put_callback(
                                      &mut *callback_arc.lock().await,
-                                     PutEvent::ChunkWritten { chunk_index: pad_info.chunk_index }
+                                     PutEvent::ChunkWritten { chunk_index: completed_pad_info.chunk_index }
                                      )
                                      .await
                                      .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
@@ -695,84 +693,107 @@ pub(crate) async fn store_op(
                                  }
 
                                 // --- Spawn Confirmation Task ---
-                                let network_adapter_clone = Arc::clone(&network_adapter);
+                                // Clone managers and other needed variables
+                                let storage_manager_clone = Arc::clone(&storage_manager);
                                 let index_manager_clone = Arc::clone(&index_manager);
                                 let user_key_inner_clone = user_key_clone.clone();
-                                let callback_clone = Arc::clone(&callback_arc); // Clone the Arc
-                                let pad_lifecycle_manager_clone = Arc::clone(&deps.pad_lifecycle_manager); // Clone for use in confirm task
-                                let confirm_pad_info = PadInfo { // Create info with the correct address
-                                    address: pad_info.address,
-                                    chunk_index: pad_info.chunk_index,
-                                    status: PadStatus::Written, // Status is now Written
-                                    origin: pad_info.origin, // *** Propagate origin from outer scope ***
-                                    needs_reverification: pad_info.needs_reverification, // Propagate flag
-                                };
+                                let callback_clone = Arc::clone(&callback_arc);
+                                let pad_lifecycle_manager_clone = Arc::clone(&deps.pad_lifecycle_manager);
+                                let network_adapter_clone = Arc::clone(&network_adapter);
+                                // Use the pad_info and key received from the completed write task
+                                let confirm_pad_info = completed_pad_info.clone(); // Use completed_pad_info
+                                let confirm_secret_key = completed_secret_key.clone(); // Use completed_secret_key
 
-                                debug!("Spawning confirmation task for pad {}", pad_info.address);
+                                debug!("Spawning confirmation task (fetch & decrypt) for pad {}", confirm_pad_info.address);
                                 pending_confirms += 1;
                                 confirm_futures.push(async move {
-                                    let confirmation_result = network_adapter_clone
-                                        .check_existence(&confirm_pad_info.address)
+                                    // Fetch the scratchpad using the cloned storage manager
+                                    let fetch_result = storage_manager_clone
+                                        .read_pad_scratchpad(&confirm_pad_info.address)
                                         .await;
 
-                                    match confirmation_result {
-                                        Ok(exists) => {
-                                            if exists {
-                                                trace!(
-                                                    "Confirmation check successful for chunk {}, pad {}",
-                                                    confirm_pad_info.chunk_index, confirm_pad_info.address
-                                                );
-                                                // Update status to Confirmed
-                                                match index_manager_clone
-                                                    .update_pad_status(&user_key_inner_clone, &confirm_pad_info.address, PadStatus::Confirmed)
-                                                    .await {
-                                                        Ok(_) => {
-                                                            trace!("Updated status to Confirmed for pad {}", confirm_pad_info.address);
+                                    match fetch_result {
+                                        Ok(scratchpad) => {
+                                            // Attempt decryption using the key passed into this task
+                                            match scratchpad.decrypt_data(&confirm_secret_key) {
+                                                Ok(_) => {
+                                                    // Decryption successful! -> Proceed to update status logic
+                                                    let final_counter = scratchpad.counter(); // Get counter after successful decrypt
+                                                    trace!(
+                                                        "Confirmation (fetch & decrypt) successful for chunk {}, pad {}. Final counter: {}",
+                                                        confirm_pad_info.chunk_index, confirm_pad_info.address, final_counter
+                                                    );
 
-                                                            // --- Persist Index Cache after PadStatus::Confirmed update ---
-                                                            let network_choice = network_adapter_clone.get_network_choice(); // Use correct clone
-                                                            if let Err(e) = pad_lifecycle_manager_clone.save_index_cache(network_choice).await { // Use the cloned manager
-                                                                warn!("Failed to save index cache after setting pad {} to Confirmed: {}. Proceeding anyway.", confirm_pad_info.address, e);
+                                                    // Check counter increment for FreePool pads
+                                                    match confirm_pad_info.origin {
+                                                        PadOrigin::FreePool { initial_counter } => {
+                                                            if final_counter <= initial_counter {
+                                                                error!(
+                                                                    "Confirmation failed for pad {}: Counter did not increment. Initial: {}, Final: {}. Halting.",
+                                                                    confirm_pad_info.address, initial_counter, final_counter
+                                                                );
+                                                                return Err(DataError::InconsistentState(format!(
+                                                                    "Counter check failed for pad {} ({} -> {})", // Removed .to_string()
+                                                                    confirm_pad_info.address, initial_counter, final_counter
+                                                                )));
                                                             }
-
-                                                            // Emit ChunkConfirmed callback
-                                                            if !invoke_put_callback(
-                                                                &mut *callback_clone.lock().await,
-                                                                PutEvent::ChunkConfirmed {
-                                                                    chunk_index: confirm_pad_info.chunk_index,
-                                                                },
-                                                            )
-                                                            .await
-                                                            .map_err(|e| {
-                                                                DataError::InternalError(format!(
-                                                                    "Callback invocation failed: {}",
-                                                                    e
-                                                                ))
-                                                            })? {
-                                                                error!("Store operation cancelled by callback after chunk confirmation.");
-                                                                // Indicate cancellation via error
-                                                                return Err(DataError::OperationCancelled);
-                                                            }
-                                                            Ok(confirm_pad_info.chunk_index) // Indicate success
+                                                            trace!("Counter check passed for FreePool pad {}.", confirm_pad_info.address);
                                                         }
-                                                        Err(e) => {
-                                                            error!("Failed to update pad status to Confirmed for {}: {}", confirm_pad_info.address, e);
-                                                            Err(DataError::Index(e)) // Return index error
+                                                        PadOrigin::Generated => {
+                                                            trace!("Skipping counter check for Generated pad {}.", confirm_pad_info.address);
+                                                            // No counter check needed for newly generated pads (first write)
                                                         }
                                                     }
-                                            } else {
-                                                // Confirmation failed (pad doesn't exist after write?)
-                                                error!("Confirmation check failed for pad {}: Pad not found after write.", confirm_pad_info.address);
-                                                Err(DataError::InconsistentState(format!(
-                                                    "Pad {} not found during confirmation",
-                                                    confirm_pad_info.address
-                                                )))
+
+                                                    // Original logic for successful confirmation:
+                                                    match index_manager_clone
+                                                        .update_pad_status(&user_key_inner_clone, &confirm_pad_info.address, PadStatus::Confirmed)
+                                                        .await {
+                                                            Ok(_) => {
+                                                                trace!("Updated status to Confirmed for pad {}", confirm_pad_info.address);
+                                                                let network_choice = network_adapter_clone.get_network_choice();
+                                                                if let Err(e) = pad_lifecycle_manager_clone.save_index_cache(network_choice).await {
+                                                                    warn!("Failed to save index cache after setting pad {} to Confirmed: {}. Proceeding anyway.", confirm_pad_info.address, e);
+                                                                }
+                                                                if !invoke_put_callback(
+                                                                    &mut *callback_clone.lock().await,
+                                                                    PutEvent::ChunkConfirmed {
+                                                                        chunk_index: confirm_pad_info.chunk_index,
+                                                                    },
+                                                                )
+                                                                .await
+                                                                .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))? {
+                                                                    error!("Store operation cancelled by callback after chunk confirmation.");
+                                                                    return Err(DataError::OperationCancelled);
+                                                                }
+                                                                Ok(confirm_pad_info.chunk_index)
+                                                            }
+                                                            Err(e) => {
+                                                                error!("Failed to update pad status to Confirmed for {}: {}", confirm_pad_info.address, e);
+                                                                Err(DataError::Index(e))
+                                                            }
+                                                        }
+                                                }
+                                                Err(decrypt_err) => {
+                                                    // Decryption failed
+                                                    error!(
+                                                        "Confirmation failed for pad {}: Decryption error: {}. Halting operation.",
+                                                        confirm_pad_info.address, decrypt_err
+                                                    );
+                                                    Err(DataError::InconsistentState(format!(
+                                                        "Confirmation failed (decryption) for {}",
+                                                        confirm_pad_info.address
+                                                    )))
+                                                }
                                             }
                                         }
-                                        Err(e) => {
-                                            // Network error during confirmation check
-                                            error!("Network error during confirmation for pad {}: {}", confirm_pad_info.address, e);
-                                            Err(DataError::InternalError(format!("Network confirmation failed: {}", e)))
+                                        Err(fetch_err) => {
+                                            // Fetch failed (StorageError)
+                                            error!(
+                                                "Confirmation failed for pad {}: Storage error during fetch: {}",
+                                                confirm_pad_info.address, fetch_err
+                                            );
+                                            Err(DataError::Storage(fetch_err.into()))
                                         }
                                     }
                                 }); // End of confirm_futures.push async block
@@ -782,7 +803,7 @@ pub(crate) async fn store_op(
                                 // Handle IndexError from update_pad_status
                                 error!(
                                     "Failed to update pad status to Written for {}: {}. Halting.",
-                                    pad_info.address, e
+                                    completed_pad_info.address, e
                                 );
                                 operation_error = Some(DataError::Index(e)); // Correct: Wrap IndexError
                                 continue;
@@ -793,7 +814,7 @@ pub(crate) async fn store_op(
                         // Handle DataError from the write future itself
                         error!(
                             "Failed to write chunk {} to pad {}: {}. Halting.",
-                            pad_info.chunk_index, pad_info.address, e
+                            completed_pad_info.chunk_index, completed_pad_info.address, e
                         );
                         if operation_error.is_none() {
                             operation_error = Some(e); // Correct: Assign DataError directly

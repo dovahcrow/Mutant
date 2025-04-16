@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - "Creating pads...": Increments on `ChunkWritten` (network create/update success).
   - "Confirming pads...": Increments on `ChunkConfirmed` (network check success).
 - Modified the `purge` command logic to only discard pending pads if the network explicitly returns a "Record Not Found" status. Pads encountering other network errors during verification are now returned to the pending list for future retries.
+- Store confirmation (`put`) now verifies by fetching and attempting decryption, not just checking existence.
+- Confirmation for updated pads (from free pool) now verifies that the scratchpad counter has incremented.
 
 ### Fixed
 - Corrected pad lifecycle management to ensure pads from cancelled or failed `put` operations are not prematurely released or discarded, allowing for proper resumption.
@@ -37,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Progress bars during resumed `put` operations now correctly initialize to show the previously completed progress.
 - **CLI:** Redirect progress bar output to `stdout` to prevent interference with logs written to `stderr`.
 - Handle `NotEnoughCopies` network errors during `put` resume existence checks. Instead of aborting or retrying the same pad, the operation now acquires a *new* replacement pad, adds the original problematic pad to the `pending_verification_pads` list for later checking (e.g., via `purge`), updates the index to use the new pad for the corresponding chunk, logs a warning, and proceeds with the operation. The index cache is saved immediately after the replacement to persist the state.
+- Store operation confirmation was insufficient, potentially marking data as confirmed even if it was corrupted or undecryptable, or if an update didn't actually increment the counter.
 
 ### Removed
 - Removed redundant pad release functions (`pad_lifecycle::pool::release_pads_to_free`, `pad_lifecycle::manager::release_pads`) as the logic is now handled within `IndexManager` and `purge`.

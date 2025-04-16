@@ -3,6 +3,7 @@ use crate::index::structure::{KeyInfo, MasterIndex, PadStatus, DEFAULT_SCRATCHPA
 use crate::types::{KeyDetails, StorageStats};
 use autonomi::ScratchpadAddress;
 use log::{debug, trace, warn};
+use std::collections::HashMap;
 
 // --- Internal Query & Modification Functions ---
 // These functions operate directly on the MasterIndex state and are
@@ -165,41 +166,47 @@ pub(crate) fn get_stats_internal(index: &MasterIndex) -> Result<StorageStats, In
     })
 }
 
-/// Adds a pad to the free list. Checks for duplicates.
-pub(crate) fn add_free_pad_internal(
+/// Adds a pad (with counter) to the free list. Checks for duplicates.
+pub(crate) fn add_free_pad_with_counter_internal(
     index: &mut MasterIndex,
     address: ScratchpadAddress,
     key_bytes: Vec<u8>,
+    counter: u64,
 ) -> Result<(), IndexError> {
-    trace!("Query: add_free_pad_internal for address '{}'", address);
-    if index.free_pads.iter().any(|(addr, _)| *addr == address) {
+    trace!(
+        "Query: add_free_pad_with_counter_internal for address '{}' (counter: {})",
+        address,
+        counter
+    );
+    if index.free_pads.iter().any(|(addr, _, _)| *addr == address) {
         warn!("Attempted to add duplicate pad to free list: {}", address);
-        // Decide on behavior: error or ignore? Ignore seems reasonable for robustness.
         return Ok(());
-        // return Err(IndexError::InconsistentState(format!("Pad {} already in free list", address)));
     }
-    // Also check occupied pads? This might be expensive. Assume checks happen higher up (e.g., during import).
-    index.free_pads.push((address, key_bytes));
+    index.free_pads.push((address, key_bytes, counter));
     Ok(())
 }
 
-/// Takes a single pad from the free list, if available.
+/// Takes a single pad from the free list, if available, returning counter.
 pub(crate) fn take_free_pad_internal(
     index: &mut MasterIndex,
-) -> Option<(ScratchpadAddress, Vec<u8>)> {
+) -> Option<(ScratchpadAddress, Vec<u8>, u64)> {
+    // Return tuple includes counter
     trace!("Query: take_free_pad_internal");
     index.free_pads.pop()
 }
 
-/// Adds multiple pads to the free list. Checks for duplicates.
-pub(crate) fn add_free_pads_internal(
+/// Adds multiple pads (with counters) to the free list. Checks for duplicates.
+pub(crate) fn add_free_pads_with_counters_internal(
     index: &mut MasterIndex,
-    pads: Vec<(ScratchpadAddress, Vec<u8>)>,
+    pads: Vec<(ScratchpadAddress, Vec<u8>, u64)>,
 ) -> Result<(), IndexError> {
-    trace!("Query: add_free_pads_internal ({} pads)", pads.len());
-    for (address, key_bytes) in pads {
-        if !index.free_pads.iter().any(|(addr, _)| *addr == address) {
-            index.free_pads.push((address, key_bytes));
+    trace!(
+        "Query: add_free_pads_with_counters_internal ({} pads)",
+        pads.len()
+    );
+    for (address, key_bytes, counter) in pads {
+        if !index.free_pads.iter().any(|(addr, _, _)| *addr == address) {
+            index.free_pads.push((address, key_bytes, counter));
         } else {
             warn!(
                 "Attempted to add duplicate pad to free list via batch: {}",

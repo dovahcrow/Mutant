@@ -98,26 +98,39 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
             .flat_map(|key_info| key_info.pads.iter().map(|pad_info| pad_info.address))
             .collect();
 
-        let mut potential_free_pads_map: HashMap<ScratchpadAddress, Vec<u8>> = HashMap::new();
-        potential_free_pads_map.extend(local_index.free_pads.iter().cloned());
-        potential_free_pads_map.extend(remote_index.free_pads.iter().cloned());
+        let mut potential_free_pads_map: HashMap<ScratchpadAddress, (Vec<u8>, u64)> =
+            HashMap::new();
+        potential_free_pads_map.extend(
+            local_index
+                .free_pads
+                .iter()
+                .map(|(addr, key, counter)| (*addr, (key.clone(), *counter))),
+        );
+        potential_free_pads_map.extend(
+            remote_index
+                .free_pads
+                .iter()
+                .map(|(addr, key, counter)| (*addr, (key.clone(), *counter))),
+        );
 
-        let final_free_pads: Vec<(ScratchpadAddress, Vec<u8>)> = potential_free_pads_map
+        let final_free_pads: Vec<(ScratchpadAddress, Vec<u8>, u64)> = potential_free_pads_map
             .into_iter()
             .filter(|(addr, _)| !occupied_pads.contains(addr))
+            // Map back to the 3-element tuple format expected by MasterIndex
+            .map(|(addr, (key, counter))| (addr, key, counter))
             .collect();
 
         let remote_pads_addr_set: HashSet<_> = remote_index
             .free_pads
             .iter()
-            .map(|(addr, _)| *addr)
+            .map(|(addr, _, _)| *addr) // Destructure 3 elements
             .collect();
         let local_pads_added = final_free_pads
             .iter()
-            .filter(|(addr, _)| !remote_pads_addr_set.contains(addr))
+            .filter(|(addr, _, _)| !remote_pads_addr_set.contains(addr)) // Destructure 3 elements
             .count();
 
-        merged_index.free_pads = final_free_pads;
+        merged_index.free_pads = final_free_pads; // Type should now match
 
         if local_index.scratchpad_size != 0
             && local_index.scratchpad_size != remote_index.scratchpad_size

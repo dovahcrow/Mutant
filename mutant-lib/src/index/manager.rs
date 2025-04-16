@@ -65,7 +65,7 @@ pub trait IndexManager: Send + Sync {
     ) -> Result<(), IndexError>;
 
     /// Takes a single pad from the free list, if available.
-    async fn take_free_pad(&self) -> Result<Option<(ScratchpadAddress, Vec<u8>)>, IndexError>;
+    async fn take_free_pad(&self) -> Result<Option<(ScratchpadAddress, Vec<u8>, u64)>, IndexError>;
 
     /// Takes all pads currently in the pending verification list.
     async fn take_pending_pads(&self) -> Result<Vec<(ScratchpadAddress, Vec<u8>)>, IndexError>;
@@ -119,7 +119,7 @@ pub trait IndexManager: Send + Sync {
 // --- Implementation ---
 
 pub struct DefaultIndexManager {
-    state: Arc<Mutex<MasterIndex>>,
+    state: Mutex<MasterIndex>,
     storage_manager: Arc<dyn StorageManager>,
     network_adapter: Arc<dyn NetworkAdapter>,
 }
@@ -130,7 +130,7 @@ impl DefaultIndexManager {
         network_adapter: Arc<dyn NetworkAdapter>,
     ) -> Self {
         Self {
-            state: Arc::new(Mutex::new(MasterIndex::default())), // Start with default
+            state: Mutex::new(MasterIndex::default()),
             storage_manager,
             network_adapter,
         }
@@ -227,12 +227,7 @@ impl IndexManager for DefaultIndexManager {
         let mut state_guard = self.state.lock().await;
         let removed_info = query::remove_key_info_internal(&mut *state_guard, key);
 
-        if let Some(info) = &removed_info {
-            debug!(
-                "Processing removed key '{}': {} pads found.",
-                key,
-                info.pads.len()
-            );
+        if let Some(ref info) = removed_info {
             let mut pads_to_free = Vec::new();
             let mut pads_to_verify = Vec::new();
 
@@ -240,9 +235,9 @@ impl IndexManager for DefaultIndexManager {
                 if let Some(key_bytes) = info.pad_keys.get(&pad_info.address) {
                     match pad_info.status {
                         PadStatus::Generated => {
-                            // Pad generation started, but write wasn't confirmed. Needs verification.
+                            // Pad was generated but maybe not written. Needs verification.
                             trace!(
-                                "Key '{}', Pad {}: Status Generated -> Adding to pending verification",
+                                "Key '{}', Pad {}: Status Generated -> Adding to pending list",
                                 key,
                                 pad_info.address
                             );
@@ -256,7 +251,31 @@ impl IndexManager for DefaultIndexManager {
                                 pad_info.address,
                                 pad_info.status
                             );
-                            pads_to_free.push((pad_info.address, key_bytes.clone()));
+                            // Fetch counter before adding to free list
+                            match self
+                                .storage_manager
+                                .read_pad_scratchpad(&pad_info.address)
+                                .await
+                            {
+                                Ok(scratchpad) => {
+                                    let counter = scratchpad.counter();
+                                    trace!(
+                                        "Fetched counter {} for pad {} before adding to free list.",
+                                        counter,
+                                        pad_info.address
+                                    );
+                                    pads_to_free.push((
+                                        pad_info.address,
+                                        key_bytes.clone(),
+                                        counter,
+                                    )); // Store counter
+                                }
+                                Err(e) => {
+                                    warn!("Failed to fetch scratchpad to get counter for pad {} during remove_key_info: {}. Pad will not be added to free list.", pad_info.address, e);
+                                    // Decide: Add to pending? Or just log and discard?
+                                    // Let's log and discard for now to avoid potential loops if fetch keeps failing.
+                                }
+                            }
                         }
                     }
                 } else {
@@ -265,17 +284,17 @@ impl IndexManager for DefaultIndexManager {
                         key,
                         pad_info.address
                     );
-                    // Decide how to handle this inconsistency. Log and skip for now.
                 }
             }
 
             if !pads_to_free.is_empty() {
                 debug!(
-                    "Key '{}': Adding {} pads to the free list.",
+                    "Key '{}': Adding {} pads with counters to the free list.",
                     key,
                     pads_to_free.len()
                 );
-                query::add_free_pads_internal(&mut *state_guard, pads_to_free)?;
+                // Use the modified internal function that accepts counters
+                query::add_free_pads_with_counters_internal(&mut *state_guard, pads_to_free)?;
             }
             if !pads_to_verify.is_empty() {
                 debug!(
@@ -288,7 +307,6 @@ impl IndexManager for DefaultIndexManager {
         }
 
         Ok(removed_info)
-        // Note: Does not automatically save. Higher layers decide when to persist.
     }
 
     async fn list_keys(&self) -> Result<Vec<String>, IndexError> {
@@ -316,24 +334,66 @@ impl IndexManager for DefaultIndexManager {
         address: ScratchpadAddress,
         key_bytes: Vec<u8>,
     ) -> Result<(), IndexError> {
-        let mut state_guard = self.state.lock().await;
-        query::add_free_pad_internal(&mut *state_guard, address, key_bytes)
-        // Note: Does not automatically save.
+        // Fetch counter before adding
+        match self.storage_manager.read_pad_scratchpad(&address).await {
+            Ok(scratchpad) => {
+                let counter = scratchpad.counter();
+                trace!(
+                    "Fetched counter {} for pad {} before adding to free list.",
+                    counter,
+                    address
+                );
+                let mut state_guard = self.state.lock().await;
+                query::add_free_pad_with_counter_internal(
+                    &mut *state_guard,
+                    address,
+                    key_bytes,
+                    counter,
+                )
+            }
+            Err(e) => {
+                warn!("Failed to fetch scratchpad to get counter for pad {} during add_free_pad: {}. Pad will not be added to free list.", address, e);
+                // Return Ok even if fetch failed, as the primary goal (not adding a bad entry) is met?
+                // Or return an error? Let's return Ok, but log the warning.
+                Ok(())
+            }
+        }
     }
 
     async fn add_free_pads(
         &self,
-        pads: Vec<(ScratchpadAddress, Vec<u8>)>,
+        pads: Vec<(ScratchpadAddress, Vec<u8>)>, // Takes pads without counters
     ) -> Result<(), IndexError> {
-        let mut state_guard = self.state.lock().await;
-        query::add_free_pads_internal(&mut *state_guard, pads)
-        // Note: Does not automatically save.
+        let mut pads_with_counters = Vec::with_capacity(pads.len());
+        for (address, key_bytes) in pads {
+            match self.storage_manager.read_pad_scratchpad(&address).await {
+                Ok(scratchpad) => {
+                    let counter = scratchpad.counter();
+                    trace!(
+                        "Fetched counter {} for pad {} before adding to free list.",
+                        counter,
+                        address
+                    );
+                    pads_with_counters.push((address, key_bytes, counter));
+                }
+                Err(e) => {
+                    warn!("Failed to fetch scratchpad to get counter for pad {} during add_free_pads: {}. Pad will not be added to free list.", address, e);
+                    // Skip adding this pad
+                }
+            }
+        }
+
+        if !pads_with_counters.is_empty() {
+            let mut state_guard = self.state.lock().await;
+            // Use the modified internal function
+            query::add_free_pads_with_counters_internal(&mut *state_guard, pads_with_counters)?;
+        }
+        Ok(())
     }
 
-    async fn take_free_pad(&self) -> Result<Option<(ScratchpadAddress, Vec<u8>)>, IndexError> {
+    async fn take_free_pad(&self) -> Result<Option<(ScratchpadAddress, Vec<u8>, u64)>, IndexError> {
         let mut state_guard = self.state.lock().await;
         Ok(query::take_free_pad_internal(&mut *state_guard))
-        // Note: Does not automatically save.
     }
 
     async fn take_pending_pads(&self) -> Result<Vec<(ScratchpadAddress, Vec<u8>)>, IndexError> {

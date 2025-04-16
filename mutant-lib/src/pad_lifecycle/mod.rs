@@ -17,5 +17,5 @@ pub enum PadOrigin {
     /// Pad was newly generated.
     Generated,
     /// Pad was taken from the existing free pool.
-    FreePool,
+    FreePool { initial_counter: u64 },
 }

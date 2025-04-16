@@ -225,9 +225,15 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         let mut acquired_pads = Vec::with_capacity(count);
         for i in 0..count {
             let pad_result = match acquire_free_pad(self.index_manager.as_ref()).await {
-                Ok(pad) => {
+                Ok(pad_tuple) => {
+                    // pad_tuple is (address, key, counter)
                     // Pad came from the free pool
-                    Ok((pad.0, pad.1, PadOrigin::FreePool))
+                    let (address, key, initial_counter) = pad_tuple;
+                    Ok((
+                        address,
+                        key,
+                        PadOrigin::FreePool { initial_counter }, // Construct correct origin
+                    ))
                 }
                 Err(PadLifecycleError::PadAcquisitionFailed(msg))
                     if msg == "No free pads available in the index" =>
@@ -438,7 +444,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
 
                 // 1. Reserve pad on network using StorageManager::write_pad_data
                 match storage_manager
-                    .write_pad_data(&secret_key, &[], true) // Use StorageManager
+                    .write_pad_data(&secret_key, &[0u8], true) // Use StorageManager with &[0u8]
                     .await
                 {
                     Ok(created_address) => {
