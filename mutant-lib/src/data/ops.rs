@@ -145,6 +145,10 @@ pub(crate) async fn store_op(
 
             // --- Perform existence checks concurrently --- START
             let mut existence_results = HashMap::new();
+            // --- List to track pads needing replacement --- START
+            let mut pads_needing_replacement = Vec::new();
+            // --- List to track pads needing replacement --- END
+
             if !checks_needed.is_empty() {
                 debug!(
                     "Performing concurrent existence checks for {} generated pads...",
@@ -160,10 +164,6 @@ pub(crate) async fn store_op(
                     });
                 }
 
-                // --- Get mutable access to key_info here to update PadInfo flags --- START
-                let mut key_info_mut = key_info;
-                // --- Get mutable access to key_info here to update PadInfo flags --- END
-
                 while let Some((address, result)) = check_futures.next().await {
                     match result {
                         Ok(exists) => {
@@ -171,49 +171,25 @@ pub(crate) async fn store_op(
                         }
                         Err(e) => {
                             // --- Handle NotEnoughCopies specifically --- START
-                            if e.to_string().contains("NotEnoughCopies") {
+                            let error_string = e.to_string(); // Avoid multiple calls to to_string()
+                            if error_string.contains("NotEnoughCopies") {
                                 warn!(
-                                    "Network existence check for pad {} failed with NotEnoughCopies during resume. Marking for re-verification and treating as non-existent for now.",
+                                    "Network existence check for pad {} failed with NotEnoughCopies during resume. Marking for replacement.",
                                     address
                                 );
-                                if let Some(pad) =
-                                    key_info_mut.pads.iter_mut().find(|p| p.address == address)
-                                {
-                                    pad.needs_reverification = true;
-                                    // Also mark the overall key as incomplete because we have a suspect pad
-                                    key_info_mut.is_complete = false;
-                                    // Treat as non-existent for the purpose of resume tasks
-                                    existence_results.insert(address, false);
-
-                                    // --- Persist Index Cache Immediately --- START
-                                    let network_choice = deps.network_adapter.get_network_choice();
-                                    if let Err(cache_err) = deps
-                                        .pad_lifecycle_manager
-                                        .save_index_cache(network_choice)
-                                        .await
-                                    {
-                                        warn!(
-                                            "Failed to immediately save index cache after marking pad {} for re-verification: {}. Proceeding anyway.",
-                                            address, cache_err
-                                        );
-                                    } else {
-                                        debug!("Index cache saved immediately after marking pad {} for re-verification.", address);
-                                    }
-                                    // --- Persist Index Cache Immediately --- END
-                                } else {
-                                    error!(
-                                        "Logic error: Could not find PadInfo for address {} after existence check failure.",
-                                        address
-                                    );
-                                    // Proceed cautiously, but this indicates an issue
-                                    existence_results.insert(address, false); // Assume non-existent to be safe
-                                }
+                                // Mark for replacement after the loop
+                                pads_needing_replacement.push(address);
+                                // Treat as non-existent for initial task scan, will be replaced shortly
+                                existence_results.insert(address, false);
                             } else {
                                 // --- Handle other errors as before --- START
                                 error!(
                                     "Network error checking existence for pad {} during resume preparation: {}. Aborting.",
                                     address, e
                                 );
+                                // Store error and break loop for consistency?
+                                // Or return immediately as this is not a recoverable replacement scenario?
+                                // Let's return immediately for non-NotEnoughCopies errors.
                                 return Err(DataError::InternalError(format!(
                                     "Network existence check failed during resume preparation: {}",
                                     e
@@ -224,12 +200,92 @@ pub(crate) async fn store_op(
                         }
                     }
                 }
-                // --- Assign the potentially modified key_info back --- START
-                key_info = key_info_mut;
-                // --- Assign the potentially modified key_info back --- END
                 debug!("Concurrent existence checks complete.");
             }
             // --- Perform existence checks concurrently --- END
+
+            // --- Replace pads that failed existence check --- START
+            if !pads_needing_replacement.is_empty() {
+                info!(
+                    "Replacing {} pads that failed existence check...",
+                    pads_needing_replacement.len()
+                );
+                // Get mutable access to key_info again
+                let mut key_info_mut = key_info;
+                key_info_mut.is_complete = false; // Mark incomplete due to replacement
+
+                for old_address in pads_needing_replacement {
+                    debug!("Acquiring replacement for pad {}", old_address);
+                    // Use ? to propagate DataError from acquire_pads
+                    let acquired = deps
+                        .pad_lifecycle_manager
+                        .acquire_pads(1, &mut *callback_arc.lock().await)
+                        .await?;
+
+                    // Handle the success case (guaranteed Ok due to ?)
+                    if acquired.len() == 1 {
+                        let (new_address, new_secret_key, new_origin) =
+                            acquired.into_iter().next().unwrap(); // Safe unwrap
+                        info!(
+                            "Acquired replacement pad {} for original pad {}",
+                            new_address, old_address
+                        );
+
+                        if let Some(pad_info_mut) = key_info_mut
+                            .pads
+                            .iter_mut()
+                            .find(|p| p.address == old_address)
+                        {
+                            // Update KeyInfo to use the new pad
+                            pad_info_mut.address = new_address;
+                            pad_info_mut.origin = new_origin;
+                            pad_info_mut.needs_reverification = false; // New pad doesn't need reverification yet
+                            pad_info_mut.status = PadStatus::Generated; // Ensure status is Generated for the new pad
+
+                            // Update pad keys map
+                            key_info_mut.pad_keys.remove(&old_address); // Remove old key entry
+                            key_info_mut
+                                .pad_keys
+                                .insert(new_address, new_secret_key.to_bytes().to_vec());
+                        // Insert new key
+                        } else {
+                            error!(
+                                "Logic error: Could not find PadInfo for address {} to replace after existence check failure.",
+                                old_address
+                            );
+                            return Err(DataError::InternalError(format!(
+                                "Failed to find pad {} for replacement",
+                                old_address
+                            )));
+                        }
+                    } else {
+                        // Handles len != 1 case
+                        error!("Pad acquisition returned unexpected number of pads ({}) when acquiring replacement.", acquired.len());
+                        return Err(DataError::InternalError(
+                            "Unexpected number of pads returned during replacement".to_string(),
+                        ));
+                    }
+                }
+                // --- Persist Index Cache Immediately After ALL Replacements --- START
+                let network_choice = deps.network_adapter.get_network_choice();
+                if let Err(cache_err) = deps
+                    .pad_lifecycle_manager
+                    .save_index_cache(network_choice)
+                    .await
+                {
+                    warn!(
+                        "Failed to save index cache after replacing pads: {}. Proceeding anyway.",
+                        cache_err
+                    );
+                } else {
+                    debug!("Index cache saved after replacing pads.");
+                }
+                // --- Persist Index Cache Immediately After ALL Replacements --- END
+
+                // Assign replaced key_info back
+                key_info = key_info_mut;
+            }
+            // --- Replace pads that failed existence check --- END
 
             // --- Identify tasks based on pad status (using check results) --- START
             debug!("Identifying resume tasks based on pad status...");
@@ -258,20 +314,27 @@ pub(crate) async fn store_op(
                                         "Resume Task: Pad {} from FreePool, setting is_new_hint=false",
                                         pad_info.address
                                     );
-                                    false
+                                    false // Always update free pool pads
                                 }
                                 PadOrigin::Generated => {
-                                    let exists = existence_results.get(&pad_info.address).copied().ok_or_else(|| {
-                                        // This should not happen if logic is correct
-                                        error!("Logic error: Existence result missing for generated pad {}", pad_info.address);
-                                        DataError::InternalError("Missing existence check result".to_string())
-                                    })?;
-                                    let hint = !exists;
-                                    trace!(
-                                        "Resume Task: Pad {} was Generated, exists: {}. Setting is_new_hint={}",
-                                        pad_info.address, exists, hint
-                                    );
-                                    hint
+                                    // Check if we have an existence result for this specific pad address
+                                    if let Some(exists) = existence_results.get(&pad_info.address) {
+                                        // We checked this one earlier and it didn't fail with NotEnoughCopies
+                                        let hint = !*exists;
+                                        trace!(
+                                            "Resume Task: Pad {} (Generated) has existence result: {}. Setting is_new_hint={}",
+                                            pad_info.address, exists, hint
+                                        );
+                                        hint
+                                    } else {
+                                        // This pad must be a replacement acquired due to NotEnoughCopies on the original,
+                                        // or the check loop was skipped. Assume new.
+                                        trace!(
+                                            "Resume Task: Pad {} (Generated) has no existence result, assuming new (hint=true)",
+                                            pad_info.address
+                                        );
+                                        true
+                                    }
                                 }
                             };
                             // --- Determine is_new_hint using pre-fetched results --- END
