@@ -71,7 +71,7 @@ pub fn create_put_callback(
                     let mut res_pb_guard = ctx.res_pb_opt.lock().await;
                     let res_pb = res_pb_guard.get_or_insert_with(|| {
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
-                        pb.set_message("Reserving pads...".to_string());
+                        pb.set_message("Acquiring pads...".to_string());
                         pb
                     });
                     res_pb.set_length(total_u64);
@@ -82,7 +82,7 @@ pub fn create_put_callback(
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
                     let upload_pb = upload_pb_guard.get_or_insert_with(|| {
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
-                        pb.set_message("Writing chunks...".to_string());
+                        pb.set_message("Acquiring pads...".to_string());
                         pb
                     });
                     upload_pb.set_length(total_u64);
