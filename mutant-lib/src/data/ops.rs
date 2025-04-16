@@ -20,7 +20,7 @@ use tokio::time::{sleep, Duration};
 
 // --- Constants ---
 const CONFIRMATION_RETRY_DELAY: Duration = Duration::from_secs(1);
-const CONFIRMATION_RETRY_LIMIT: u32 = 15;
+const CONFIRMATION_RETRY_LIMIT: u32 = 360;
 
 // Helper structure to pass down dependencies to operation functions
 // Using Arcs for shared ownership across potential concurrent tasks
