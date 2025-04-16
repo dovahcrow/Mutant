@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - "Confirming pads...": Increments on `ChunkConfirmed` (network check success).
 - Modified the `purge` command logic to only discard pending pads if the network explicitly returns a "Record Not Found" status. Pads encountering other network errors during verification are now returned to the pending list for future retries.
 - Store confirmation (`put`) now verifies by fetching and attempting decryption, not just checking existence.
-- Confirmation for updated pads (from free pool) now verifies that the scratchpad counter has incremented.
+- Confirmation for updated pads (from free pool) now verifies that the scratchpad counter has incremented, retrying several times with delays to allow for network propagation.
 
 ### Fixed
 - Corrected pad lifecycle management to ensure pads from cancelled or failed `put` operations are not prematurely released or discarded, allowing for proper resumption.
@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI:** Redirect progress bar output to `stdout` to prevent interference with logs written to `stderr`.
 - Handle `NotEnoughCopies` network errors during `put` resume existence checks. Instead of aborting or retrying the same pad, the operation now acquires a *new* replacement pad, adds the original problematic pad to the `pending_verification_pads` list for later checking (e.g., via `purge`), updates the index to use the new pad for the corresponding chunk, logs a warning, and proceeds with the operation. The index cache is saved immediately after the replacement to persist the state.
 - Store operation confirmation was insufficient, potentially marking data as confirmed even if it was corrupted or undecryptable, or if an update didn't actually increment the counter.
+- Confirmation could fail prematurely if network propagation delayed the visibility of the updated scratchpad counter.
 
 ### Removed
 - Removed redundant pad release functions (`pad_lifecycle::pool::release_pads_to_free`, `pad_lifecycle::manager::release_pads`) as the logic is now handled within `IndexManager` and `purge`.
@@ -89,10 +90,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Differentiate local index cache based on network choice (Devnet vs Mainnet). Cache files are now stored in `~/.local/share/mutant/{devnet,mainnet}/index.cbor`.
 - Add `--push-force` flag to `sync` command to overwrite the remote master index with the local cache.
-- `mutant import <private_key>` command to add an existing free scratchpad (specified by its private key hex) to the `free_pads` list in the Master Index. This allows transferring or recovering unused pads.
-- `mutant sync` command to synchronize the local index cache with the remote index. Added a `--push-force` flag to overwrite the remote index with the local cache.
-- Start of development for v0.1.1
-- Added `reset` command to `mutant-cli` to clear the master index. Requires explicit confirmation by typing 'reset'.
-- **Configuration:** Added `MutAntConfig` struct and `NetworkChoice` enum (Devnet/Mainnet) to allow configuring the MutAnt instance upon initialization. The `init` method now uses default configuration, while `init_with_progress` accepts a `MutAntConfig`.
-- **Documentation:** Added a "Setup" section to `README.md` explaining the `ant wallet import` prerequisite.
-- **Documentation:** Added `
+- `
