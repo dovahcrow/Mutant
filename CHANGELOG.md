@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Display completion percentage for incomplete keys in `ls` output (e.g., `*mykey (50.0%)`).
+- Added detailed statistics section for incomplete uploads in `stats` output.
 - Implemented resumable `put` operations. Uploads can now be interrupted and resumed, picking up from the last successfully written chunk.
 - Introduced granular pad statuses (`Generated`, `Written`, `Confirmed`) in the index to track chunk progress accurately.
 - Optimized `put` operation for newly generated pads by skipping unnecessary network existence checks before the initial write.

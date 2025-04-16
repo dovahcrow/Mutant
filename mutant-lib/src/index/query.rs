@@ -108,9 +108,31 @@ pub(crate) fn get_stats_internal(index: &MasterIndex) -> Result<StorageStats, In
     let mut occupied_pads_count = 0;
     let mut occupied_data_size_total: u64 = 0;
 
+    // Stats for incomplete keys
+    let mut incomplete_keys_count = 0;
+    let mut incomplete_keys_data_bytes = 0;
+    let mut incomplete_keys_total_pads = 0;
+    let mut incomplete_keys_pads_generated = 0;
+    let mut incomplete_keys_pads_written = 0;
+    let mut incomplete_keys_pads_confirmed = 0;
+
     for key_info in index.index.values() {
         occupied_pads_count += key_info.pads.len();
         occupied_data_size_total += key_info.data_size as u64;
+
+        // Aggregate stats for incomplete keys
+        if !key_info.is_complete {
+            incomplete_keys_count += 1;
+            incomplete_keys_data_bytes += key_info.data_size as u64;
+            incomplete_keys_total_pads += key_info.pads.len();
+            for pad_info in &key_info.pads {
+                match pad_info.status {
+                    PadStatus::Generated => incomplete_keys_pads_generated += 1,
+                    PadStatus::Written => incomplete_keys_pads_written += 1,
+                    PadStatus::Confirmed => incomplete_keys_pads_confirmed += 1,
+                }
+            }
+        }
     }
 
     let total_pads_count = occupied_pads_count + free_pads_count + pending_verification_pads_count;
@@ -133,6 +155,13 @@ pub(crate) fn get_stats_internal(index: &MasterIndex) -> Result<StorageStats, In
         free_pad_space_bytes,
         occupied_data_bytes: occupied_data_size_total,
         wasted_space_bytes,
+        // Populate incomplete stats
+        incomplete_keys_count,
+        incomplete_keys_data_bytes,
+        incomplete_keys_total_pads,
+        incomplete_keys_pads_generated,
+        incomplete_keys_pads_written,
+        incomplete_keys_pads_confirmed,
     })
 }
 

@@ -45,6 +45,20 @@ pub struct StorageStats {
     pub occupied_data_bytes: u64,
     /// The difference between the space allocated by occupied pads and the actual data stored (internal fragmentation).
     pub wasted_space_bytes: u64,
+
+    // --- Stats specific to incomplete uploads ---
+    /// The number of keys that are currently incomplete.
+    pub incomplete_keys_count: usize,
+    /// The total data size (in bytes) represented by incomplete keys.
+    pub incomplete_keys_data_bytes: u64,
+    /// The total number of pads associated with incomplete keys.
+    pub incomplete_keys_total_pads: usize,
+    /// The number of pads for incomplete keys still in the 'Generated' state (write pending).
+    pub incomplete_keys_pads_generated: usize,
+    /// The number of pads for incomplete keys in the 'Written' state (confirmation pending).
+    pub incomplete_keys_pads_written: usize,
+    /// The number of pads for incomplete keys already in the 'Confirmed' state.
+    pub incomplete_keys_pads_confirmed: usize,
 }
 
 /// Holds detailed information about a specific user key stored in MutAnt.

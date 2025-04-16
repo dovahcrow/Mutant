@@ -126,6 +126,33 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
                 format_bytes(stats.free_pad_space_bytes)
             );
 
+            // --- Display Incomplete Upload Stats ---
+            if stats.incomplete_keys_count > 0 {
+                println!("\nIncomplete Uploads:");
+                println!("-------------------");
+                println!("  Keys:                {}", stats.incomplete_keys_count);
+                println!(
+                    "  Total Data Size:     {}",
+                    format_bytes(stats.incomplete_keys_data_bytes)
+                );
+                println!(
+                    "  Pads Associated:     {}",
+                    stats.incomplete_keys_total_pads
+                );
+                println!(
+                    "    Confirmed:         {}",
+                    stats.incomplete_keys_pads_confirmed
+                );
+                println!(
+                    "    Written (Pending): {}",
+                    stats.incomplete_keys_pads_written
+                );
+                println!(
+                    "    Generated (Pending): {}",
+                    stats.incomplete_keys_pads_generated
+                );
+            }
+
             ExitCode::SUCCESS
         }
         Err(e) => {
