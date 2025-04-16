@@ -315,3 +315,17 @@ pub(crate) fn reset_index_internal(index: &mut MasterIndex) {
     };
     debug!("Index reset to default state.");
 }
+
+/// Adds a list of pads (address and key bytes) to the pending verification list.
+pub(crate) fn add_pending_pads_internal(
+    index: &mut MasterIndex,
+    pads: Vec<(ScratchpadAddress, Vec<u8>)>, // This is the correct type
+) -> Result<(), IndexError> {
+    trace!(
+        "Query: add_pending_pads_internal adding {} pads",
+        pads.len()
+    );
+    // Extend the existing list with the provided pads
+    index.pending_verification_pads.extend(pads);
+    Ok(())
+}

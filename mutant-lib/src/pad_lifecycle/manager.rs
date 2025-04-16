@@ -301,7 +301,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         }
 
         // 2. Verify pads concurrently
-        let (verified_pads, failed_addresses) = verify_pads_concurrently(
+        let (verified_pads, not_found_addresses, retry_pads) = verify_pads_concurrently(
             Arc::clone(&self.network_adapter),
             pads_to_verify, // Pass the taken pads
             callback,
@@ -310,18 +310,26 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
 
         // 3. Update index manager: Add verified pads to the free list
         info!(
-            "Purge complete. {} verified (added to free list), {} failed/not found (discarded).",
+            "Purge results: {} verified (added to free list), {} not found (discarded), {} errors (returned to pending list).",
             verified_pads.len(),
-            failed_addresses.len() // Use length of failed_addresses
+            not_found_addresses.len(), // Use length of not_found_addresses
+            retry_pads.len() // Use length of retry_pads
         );
         if !verified_pads.is_empty() {
             self.index_manager.add_free_pads(verified_pads).await?;
             debug!("Index lists updated with verification results (added verified to free list).");
         }
 
-        // Note: Failed pads are implicitly removed because we called take_pending_pads earlier.
+        // 4. Add pads with errors back to the pending list
+        if !retry_pads.is_empty() {
+            self.index_manager.add_pending_pads(retry_pads).await?; // Assuming add_pending_pads exists
+            debug!("Index lists updated with verification results (added retry pads back to pending list).");
+        }
 
-        // 4. Save the updated index ONLY to local cache
+        // Note: Not Found pads are implicitly removed because we called take_pending_pads earlier
+        // and they are not added back to free or pending.
+
+        // 5. Save the updated index ONLY to local cache
         self.save_index_cache(network_choice).await?;
         info!("Purge complete. Updated index saved to local cache.");
 

@@ -15,6 +15,7 @@ use tokio::task::JoinSet;
 /// Returns a tuple containing:
 /// - A list of verified pads (address and key bytes).
 /// - A list of addresses for pads that failed verification or were not found.
+/// - A list of pads (address and key bytes) that encountered errors and should be retried.
 pub(crate) async fn verify_pads_concurrently(
     network_adapter: Arc<dyn NetworkAdapter>, // Use Arc for sharing across tasks
     pads_to_verify: Vec<(ScratchpadAddress, Vec<u8>)>,
@@ -22,7 +23,8 @@ pub(crate) async fn verify_pads_concurrently(
 ) -> Result<
     (
         Vec<(ScratchpadAddress, Vec<u8>)>, // Verified pads
-        Vec<ScratchpadAddress>,            // Failed/Not Found pad addresses
+        Vec<ScratchpadAddress>,            // Not Found pad addresses (to discard)
+        Vec<(ScratchpadAddress, Vec<u8>)>, // Pads to retry later (error during check)
     ),
     PadLifecycleError,
 > {
@@ -50,12 +52,13 @@ pub(crate) async fn verify_pads_concurrently(
         .map_err(|e| {
             PadLifecycleError::InternalError(format!("Callback invocation failed: {}", e))
         })?;
-        return Ok((Vec::new(), Vec::new())); // Return empty lists
+        return Ok((Vec::new(), Vec::new(), Vec::new())); // Return empty lists
     }
 
     let verified_pads_arc = Arc::new(Mutex::new(Vec::with_capacity(initial_count)));
     // Use a Mutex protected Vec for failed addresses instead of AtomicUsize
-    let failed_addresses_arc = Arc::new(Mutex::new(Vec::new()));
+    let not_found_addresses_arc = Arc::new(Mutex::new(Vec::new()));
+    let retry_pads_arc = Arc::new(Mutex::new(Vec::new())); // New list for retries
     let mut first_error: Option<PadLifecycleError> = None;
     let mut callback_cancelled = false;
 
@@ -74,8 +77,10 @@ pub(crate) async fn verify_pads_concurrently(
     for (address, key_bytes) in pads_to_verify {
         let adapter_clone = Arc::clone(&network_adapter);
         let verified_clone = Arc::clone(&verified_pads_arc);
-        let failed_clone = Arc::clone(&failed_addresses_arc); // Clone failed addresses Arc
+        let not_found_clone = Arc::clone(&not_found_addresses_arc); // Clone not_found addresses Arc
+        let retry_clone = Arc::clone(&retry_pads_arc); // Clone retry pads Arc
         let task_address = address; // Capture address for error reporting
+        let task_key_bytes = key_bytes.clone(); // Capture key bytes for retry list
 
         join_set.spawn(async move {
             trace!("Verification task starting for address: {}", task_address);
@@ -89,27 +94,29 @@ pub(crate) async fn verify_pads_concurrently(
                     );
                     let mut verified_guard = verified_clone.lock().await;
                     verified_guard.push((task_address, key_bytes)); // Keep original key bytes
-                    Ok(()) // Indicate success
+                    Ok(VerificationStatus::Verified)
                 }
                 Ok(false) => {
-                    // Pad does not exist on the network
+                    // Pad does not exist on the network (RecordNotFound)
                     info!(
-                        "Pad at address {} not found on network. Recording as failed.",
+                        "Pad at address {} not found on network. Recording as not found (discard).",
                         task_address
                     );
-                    let mut failed_guard = failed_clone.lock().await;
-                    failed_guard.push(task_address);
-                    Ok(()) // Indicate success (task completed, pad handled as failed)
+                    let mut not_found_guard = not_found_clone.lock().await;
+                    not_found_guard.push(task_address);
+                    Ok(VerificationStatus::NotFound)
                 }
                 Err(e) => {
-                    // Network error during check
+                    // Network error during check - Mark for retry
                     warn!(
-                        "Network error verifying pad at address {}: {}. Recording as failed.",
+                        "Network error verifying pad at address {}: {}. Recording to retry later.",
                         task_address, e
                     );
-                    let mut failed_guard = failed_clone.lock().await;
-                    failed_guard.push(task_address);
-                    Err(e) // Propagate the network error
+                    let mut retry_guard = retry_clone.lock().await;
+                    // Store both address and key for retry
+                    retry_guard.push((task_address, task_key_bytes));
+                    // Propagate the network error to potentially be the first_error
+                    Err((e, VerificationStatus::Error))
                 }
             }
         });
@@ -127,10 +134,23 @@ pub(crate) async fn verify_pads_concurrently(
         match res {
             Ok(task_result) => {
                 // Task completed successfully (returned Ok or Err from the task itself)
-                if let Err(task_err) = task_result {
-                    // Task returned an error (e.g., network error)
-                    if first_error.is_none() {
-                        first_error = Some(PadLifecycleError::Network(task_err));
+                match task_result {
+                    Ok(VerificationStatus::Verified) | Ok(VerificationStatus::NotFound) => {
+                        // Handled within the task by pushing to appropriate list
+                    }
+                    Ok(VerificationStatus::Error) => {
+                        // This case shouldn't happen if Err is returned correctly
+                        error!("Verification task returned Ok(Error), which is unexpected.");
+                    }
+                    Err((task_err, VerificationStatus::Error)) => {
+                        // Task returned an error (network error) - already added to retry list
+                        if first_error.is_none() {
+                            first_error = Some(PadLifecycleError::Network(task_err));
+                        }
+                    }
+                    Err((_, _)) => {
+                        // Should not happen with current task logic
+                        error!("Verification task returned unexpected Err variant");
                     }
                 }
             }
@@ -166,32 +186,39 @@ pub(crate) async fn verify_pads_concurrently(
         }
     }
 
-    // Use into_inner after Arc::try_unwrap for both lists
+    // Use into_inner after Arc::try_unwrap for all lists
     let verified_pads = Arc::try_unwrap(verified_pads_arc)
         .map_err(|_| {
             PadLifecycleError::InternalError("Failed to unwrap verified pads Arc".to_string())
         })?
         .into_inner();
-    let failed_addresses = Arc::try_unwrap(failed_addresses_arc)
+    let not_found_addresses = Arc::try_unwrap(not_found_addresses_arc)
         .map_err(|_| {
-            PadLifecycleError::InternalError("Failed to unwrap failed addresses Arc".to_string())
+            PadLifecycleError::InternalError("Failed to unwrap not_found addresses Arc".to_string())
+        })?
+        .into_inner();
+    let retry_pads = Arc::try_unwrap(retry_pads_arc)
+        .map_err(|_| {
+            PadLifecycleError::InternalError("Failed to unwrap retry pads Arc".to_string())
         })?
         .into_inner();
 
     let final_verified_count = verified_pads.len();
-    let final_failed_count = failed_addresses.len();
+    let final_not_found_count = not_found_addresses.len();
+    let final_retry_count = retry_pads.len(); // Count pads marked for retry
 
     info!(
-        "Verification complete. Verified: {}, Failed/Not Found: {}",
-        final_verified_count, final_failed_count
+        "Verification complete. Verified: {}, Not Found (Discarded): {}, Errors (Retry): {}",
+        final_verified_count, final_not_found_count, final_retry_count
     );
 
-    // Emit Complete event
+    // Emit Complete event - Note: 'failed_count' now represents 'not_found_count'
+    // We might want a new event type or field later if differentiating retry vs not_found in the event is important.
     invoke_purge_callback(
         &mut callback,
         PurgeEvent::Complete {
             verified_count: final_verified_count,
-            failed_count: final_failed_count,
+            failed_count: final_not_found_count, // Report 'Not Found' count as 'failed'
         },
     )
     .await
@@ -199,8 +226,27 @@ pub(crate) async fn verify_pads_concurrently(
 
     // Return the first error encountered, or Ok with results
     if let Some(e) = first_error {
+        // If an error occurred, still return the categorized lists
+        // The caller (purge) will decide how to handle the overall operation error
+        // based on the presence of retry_pads.
+        warn!(
+            "Verification encountered errors, returning partial results and first error: {}",
+            e
+        );
+        // We still return Ok here because the operation partially succeeded in categorizing pads.
+        // The caller needs the lists to decide final state.
+        // Let's refine this - propagate the error, but ensure the caller can still access lists if needed.
+        // For now, propagating the error seems correct. The caller handles it.
         Err(e)
     } else {
-        Ok((verified_pads, failed_addresses))
+        Ok((verified_pads, not_found_addresses, retry_pads))
     }
+}
+
+// Add an enum to represent the outcome of a single verification task
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VerificationStatus {
+    Verified,
+    NotFound,
+    Error,
 }

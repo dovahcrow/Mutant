@@ -108,6 +108,12 @@ pub trait IndexManager: Send + Sync {
         &self,
         master_index_address: &ScratchpadAddress,
     ) -> Result<MasterIndex, IndexError>;
+
+    /// Adds multiple pads (address and key bytes) to the pending verification list.
+    async fn add_pending_pads(
+        &self,
+        pads: Vec<(ScratchpadAddress, Vec<u8>)>, // Use Vec<u8> for key
+    ) -> Result<(), IndexError>;
 }
 
 // --- Implementation ---
@@ -416,5 +422,14 @@ impl IndexManager for DefaultIndexManager {
             master_index_address,
         )
         .await
+    }
+
+    async fn add_pending_pads(
+        &self,
+        pads: Vec<(ScratchpadAddress, Vec<u8>)>, // Use Vec<u8> for key
+    ) -> Result<(), IndexError> {
+        let mut state_guard = self.state.lock().await;
+        query::add_pending_pads_internal(&mut *state_guard, pads)
+        // Note: Does not automatically save.
     }
 }
