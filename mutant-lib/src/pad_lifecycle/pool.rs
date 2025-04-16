@@ -1,4 +1,4 @@
-use crate::index::{IndexManager, PadInfo};
+use crate::index::IndexManager;
 use crate::pad_lifecycle::error::PadLifecycleError;
 use autonomi::{ScratchpadAddress, SecretKey};
 use blsttc::SK_SIZE;

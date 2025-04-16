@@ -2,7 +2,7 @@ use crate::events::invoke_put_callback;
 use crate::events::PurgeCallback;
 use crate::events::PutCallback;
 use crate::events::PutEvent;
-use crate::index::{IndexManager, PadInfo};
+use crate::index::IndexManager;
 use crate::network::{NetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::cache::{read_cached_index, write_cached_index};
 use crate::pad_lifecycle::error::PadLifecycleError;
@@ -14,7 +14,6 @@ use async_trait::async_trait;
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::error;
 use log::{debug, info, warn};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Trait defining the interface for managing the lifecycle of scratchpads,

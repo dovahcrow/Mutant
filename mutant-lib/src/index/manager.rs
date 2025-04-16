@@ -1,14 +1,13 @@
 use crate::index::error::IndexError;
 use crate::index::persistence::{load_index, save_index};
 use crate::index::query;
-use crate::index::structure::{KeyInfo, MasterIndex, PadInfo, PadStatus, DEFAULT_SCRATCHPAD_SIZE};
+use crate::index::structure::{KeyInfo, MasterIndex, PadStatus, DEFAULT_SCRATCHPAD_SIZE};
 use crate::network::NetworkAdapter;
 use crate::storage::StorageManager;
 use crate::types::{KeyDetails, StorageStats};
 use async_trait::async_trait;
 use autonomi::{ScratchpadAddress, SecretKey};
-use log::error;
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

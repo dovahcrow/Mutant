@@ -1,5 +1,5 @@
 use crate::index::error::IndexError;
-use crate::index::structure::{KeyInfo, MasterIndex, PadInfo, PadStatus, DEFAULT_SCRATCHPAD_SIZE};
+use crate::index::structure::{KeyInfo, MasterIndex, PadStatus, DEFAULT_SCRATCHPAD_SIZE};
 use crate::types::{KeyDetails, StorageStats};
 use autonomi::ScratchpadAddress;
 use log::{debug, trace, warn};

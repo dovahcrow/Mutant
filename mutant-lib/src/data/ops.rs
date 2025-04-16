@@ -8,7 +8,7 @@ use crate::index::{IndexManager, KeyInfo, PadInfo};
 use crate::pad_lifecycle::PadLifecycleManager;
 use crate::pad_lifecycle::PadOrigin;
 use crate::storage::StorageManager;
-use autonomi::{ScratchpadAddress, SecretKey};
+use autonomi::SecretKey;
 use chrono::Utc;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
@@ -34,10 +34,7 @@ enum PadTask {
         chunk_data: Vec<u8>,
         origin: PadOrigin, // Store origin
     },
-    // Confirm variant is no longer used after decoupling
-    // Confirm {
-    //     pad_info: PadInfo, // Contains address, chunk_index, current status (Written)
-    // },
+    // Confirm variant was here, removed as unused
 }
 
 // --- Store Operation ---
@@ -320,10 +317,7 @@ pub(crate) async fn store_op(
                         .await;
                     (pad_info, write_result)
                 });
-            } // Confirm variant is no longer used after decoupling
-              // PadTask::Confirm { .. } => {
-              //     unreachable!("Confirm task found during initial future population");
-              // }
+            }
         }
     }
 

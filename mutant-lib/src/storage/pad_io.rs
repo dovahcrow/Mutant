@@ -1,25 +1,13 @@
 // Remove unused imports again
 // use crate::index::PadInfo;
 // use crate::network::NetworkAdapter;
+// use autonomi::{Scratchpad, ScratchpadAddress, SecretKey};
 
 // This module is intended for handling pad-level data transformations,
-// like encryption, compression, or specific encoding, before raw bytes
-// are handed off to the StorageManager.
-// Currently, it's a pass-through.
+// encryption/decryption specifics for the pad format.
+// Placeholder for potential future use if complex pad structure evolves.
 
-// Placeholder function for potential data reading/transformation from a pad
-pub(crate) async fn read_data_from_pad(/* ... */) -> Result<Vec<u8>, ()> {
-    // TODO: Implement logic using NetworkAdapter to fetch raw pad data
-    // and then apply necessary transformations (decryption, decompression etc.)
-    unimplemented!("Pad reading logic not yet implemented")
-}
-
-// Placeholder function for potential data writing/transformation to a pad
-pub(crate) async fn write_data_to_pad(/* ... */) -> Result<(), ()> {
-    // TODO: Implement logic to apply necessary transformations (encryption, compression etc.)
-    // and then use NetworkAdapter to write raw pad data
-    unimplemented!("Pad writing logic not yet implemented")
-}
+// Removed unused imports and functions
 
 /* // Currently unused, commented out
 // Placeholder function for potential encryption logic

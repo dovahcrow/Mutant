@@ -3,7 +3,6 @@ use crate::network::NetworkAdapter;
 use crate::pad_lifecycle::error::PadLifecycleError;
 use autonomi::ScratchpadAddress;
 use log::{debug, error, info, trace, warn};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
