@@ -102,6 +102,20 @@ pub(crate) async fn store_op(
                 )));
             }
 
+            // --- Send Starting Event for Resume ---
+            if !invoke_put_callback(
+                &mut *callback_arc.lock().await,
+                PutEvent::Starting {
+                    total_chunks: num_chunks,
+                },
+            )
+            .await
+            .map_err(|e| DataError::InternalError(format!("Callback failed: {}", e)))?
+            {
+                warn!("Put operation cancelled by callback during Starting event (resume).");
+                return Err(DataError::OperationCancelled);
+            }
+
             // Identify tasks based on pad status
             debug!("Identifying resume tasks based on pad status...");
             for pad_info in &key_info.pads {
@@ -165,6 +179,26 @@ pub(crate) async fn store_op(
                 .insert_key_info(user_key.clone(), key_info.clone())
                 .await?; // Update modified time
             _current_key_info = key_info; // Use the loaded info
+
+            // --- Persist Index Cache after updating modified timestamp for resume ---
+            let network_choice = deps.network_adapter.get_network_choice();
+            if let Err(e) = deps
+                .pad_lifecycle_manager
+                .save_index_cache(network_choice)
+                .await
+            {
+                warn!(
+                    "Failed to save index cache after resume update: {}. Proceeding anyway.",
+                    e
+                );
+                // Don't necessarily fail the operation, but log the warning.
+            } else {
+                // Added debug log for successful save
+                debug!(
+                    "Successfully saved index cache after resume update for key '{}'.",
+                    user_key
+                );
+            }
         }
 
         // --- New Upload Path ---
@@ -282,6 +316,27 @@ pub(crate) async fn store_op(
                 key_info.pads.len()
             );
             _current_key_info = key_info; // Use the newly created info
+
+            // --- Persist Index Cache after initial KeyInfo insertion ---
+            let network_choice = deps.network_adapter.get_network_choice();
+            if let Err(e) = deps
+                .pad_lifecycle_manager
+                .save_index_cache(network_choice)
+                .await
+            {
+                // Corrected variable name in log message
+                warn!(
+                    "Failed to save initial index cache for key '{}': {}. Proceeding anyway.",
+                    user_key, e
+                );
+                // Don't necessarily fail the operation, but log the warning.
+            } else {
+                // Added debug log for successful save
+                debug!(
+                    "Successfully saved initial index cache for key '{}'.",
+                    user_key
+                );
+            }
         }
     }
 
