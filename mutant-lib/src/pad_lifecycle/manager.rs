@@ -423,51 +423,35 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
 
         for i in 0..count {
             // Clone Arcs for the task (accessing fields of self)
-            let network_adapter = Arc::clone(&self.network_adapter);
             let index_manager = Arc::clone(&self.index_manager);
 
             join_set.spawn(async move {
                 trace!("Reserve task {}: Generating key and address", i);
                 let secret_key = SecretKey::random(); // Use random()
                 let address = ScratchpadAddress::new(secret_key.public_key());
-                trace!("Reserve task {}: Reserving {} on network via put_raw", i, address);
+                trace!("Reserve task {}: Adding {} to index free list", i, address);
 
-                // 1. Reserve pad on network using put_raw
-                match network_adapter
-                    .put_raw(&secret_key, &[], true) // Use put_raw with empty data
+                // 1. Add pad directly to IndexManager's free list (NO network call here)
+                let key_bytes = secret_key.to_bytes().to_vec();
+                match index_manager
+                    .add_free_pad(address.clone(), key_bytes) // Use add_free_pad
                     .await
                 {
-                    Ok(created_address) => {
-                         if created_address != address {
-                             warn!("put_raw returned address {} but expected {}", created_address, address);
-                         }
-                         trace!("Reserve task {}: Network reservation successful for {}", i, address);
-                        // 2. Add pad directly to IndexManager's free list
-                        let key_bytes = secret_key.to_bytes().to_vec();
-                        match index_manager
-                            .add_free_pad(address.clone(), key_bytes) // Use add_free_pad
-                            .await {
-                                Ok(_) => {
-                                    trace!("Reserve task {}: Added {} to index free list successfully", i, address);
-                                    Ok(address) // Return address on full success
-                                },
-                                Err(e) => {
-                                    error!(
-                                        "Reserve task {}: Failed to add pad {} to index free list after network success: {}",
-                                        i, address, e
-                                    );
-                                     // Map IndexError to PadLifecycleError
-                                     Err(PadLifecycleError::Index(e))
-                                }
-                            }
-                    },
+                    Ok(_) => {
+                        trace!(
+                            "Reserve task {}: Added {} to index free list successfully",
+                            i,
+                            address
+                        );
+                        Ok(address) // Return address on success
+                    }
                     Err(e) => {
-                        error!("Reserve task {}: Failed network reservation (put_raw) for {}: {}", i, address, e);
-                         // Map NetworkError to PadLifecycleError
-                         Err(PadLifecycleError::Network(NetworkError::InternalError(format!(
-                             "put_raw failed for {}: {}",
-                             address, e
-                         ))))
+                        error!(
+                            "Reserve task {}: Failed to add pad {} to index free list: {}",
+                            i, address, e
+                        );
+                        // Map IndexError to PadLifecycleError
+                        Err(PadLifecycleError::Index(e))
                     }
                 }
             });
