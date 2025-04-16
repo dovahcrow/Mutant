@@ -224,22 +224,6 @@ pub(crate) async fn store_op(
                 acquired_pads_with_origin.len()
             );
 
-            // Emit PadReserved events now that acquisition is complete
-            // This is better than emitting during generation, though not perfectly tied
-            // to individual network confirmations yet.
-            for _ in 0..acquired_pads_with_origin.len() {
-                if !invoke_put_callback(
-                    &mut *callback_arc.lock().await,
-                    PutEvent::PadReserved { count: 1 },
-                )
-                .await
-                .map_err(|e| DataError::InternalError(format!("Callback failed: {}", e)))?
-                {
-                    warn!("Put operation cancelled by callback after pad acquisition.");
-                    return Err(DataError::OperationCancelled);
-                }
-            }
-
             // Prepare initial KeyInfo and tasks
             let mut initial_pads = Vec::with_capacity(num_chunks);
             let mut initial_pad_keys = HashMap::with_capacity(num_chunks);
@@ -390,6 +374,20 @@ pub(crate) async fn store_op(
                         let confirmed_pad_address = written_address; // Use the potentially corrected address
 
                         trace!("Write successful for chunk {}, pad {}", pad_info.chunk_index, confirmed_pad_address);
+
+                        // *** Emit PadReserved event HERE upon successful write ***
+                        if !invoke_put_callback(
+                            &mut *callback_arc.lock().await,
+                            PutEvent::PadReserved { count: 1 }
+                        )
+                        .await
+                        .map_err(|e| DataError::InternalError(format!("Callback invocation failed for PadReserved: {}", e)))?
+                        {
+                             error!("Store operation cancelled by callback after pad reservation (write success).");
+                             operation_error = Some(DataError::OperationCancelled);
+                             callback_cancelled = true;
+                             continue; // Let select break on error check
+                        }
 
                         // Update status to Written
                         match index_manager
