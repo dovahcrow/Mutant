@@ -236,6 +236,26 @@ pub(crate) async fn store_op(
                             .iter_mut()
                             .find(|p| p.address == old_address)
                         {
+                            // --- Add old pad to pending list --- START
+                            if let Some(old_key_bytes) =
+                                key_info_mut.pad_keys.get(&old_address).cloned()
+                            {
+                                trace!(
+                                    "Adding abandoned pad {} to pending verification list",
+                                    old_address
+                                );
+                                if let Err(e) = deps
+                                    .index_manager
+                                    .add_pending_pads(vec![(old_address, old_key_bytes)])
+                                    .await
+                                {
+                                    warn!("Failed to add abandoned pad {} to pending list: {}. Proceeding anyway.", old_address, e);
+                                }
+                            } else {
+                                warn!("Could not find key for abandoned pad {} to add to pending list.", old_address);
+                            }
+                            // --- Add old pad to pending list --- END
+
                             // Update KeyInfo to use the new pad
                             pad_info_mut.address = new_address;
                             pad_info_mut.origin = new_origin;
