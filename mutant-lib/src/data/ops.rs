@@ -160,23 +160,57 @@ pub(crate) async fn store_op(
                     });
                 }
 
+                // --- Get mutable access to key_info here to update PadInfo flags --- START
+                let mut key_info_mut = key_info;
+                // --- Get mutable access to key_info here to update PadInfo flags --- END
+
                 while let Some((address, result)) = check_futures.next().await {
                     match result {
                         Ok(exists) => {
                             existence_results.insert(address, exists);
                         }
                         Err(e) => {
-                            error!(
-                                "Network error checking existence for pad {} during resume preparation: {}. Aborting.",
-                                address, e
-                            );
-                            return Err(DataError::InternalError(format!(
-                                "Network existence check failed during resume preparation: {}",
-                                e
-                            )));
+                            // --- Handle NotEnoughCopies specifically --- START
+                            if e.to_string().contains("NotEnoughCopies") {
+                                warn!(
+                                    "Network existence check for pad {} failed with NotEnoughCopies during resume. Marking for re-verification and treating as non-existent for now.",
+                                    address
+                                );
+                                if let Some(pad) =
+                                    key_info_mut.pads.iter_mut().find(|p| p.address == address)
+                                {
+                                    pad.needs_reverification = true;
+                                    // Also mark the overall key as incomplete because we have a suspect pad
+                                    key_info_mut.is_complete = false;
+                                    // Treat as non-existent for the purpose of resume tasks
+                                    existence_results.insert(address, false);
+                                } else {
+                                    error!(
+                                        "Logic error: Could not find PadInfo for address {} after existence check failure.",
+                                        address
+                                    );
+                                    // Proceed cautiously, but this indicates an issue
+                                    existence_results.insert(address, false); // Assume non-existent to be safe
+                                }
+                            } else {
+                                // --- Handle other errors as before --- START
+                                error!(
+                                    "Network error checking existence for pad {} during resume preparation: {}. Aborting.",
+                                    address, e
+                                );
+                                return Err(DataError::InternalError(format!(
+                                    "Network existence check failed during resume preparation: {}",
+                                    e
+                                )));
+                                // --- Handle other errors as before --- END
+                            }
+                            // --- Handle NotEnoughCopies specifically --- END
                         }
                     }
                 }
+                // --- Assign the potentially modified key_info back --- START
+                key_info = key_info_mut;
+                // --- Assign the potentially modified key_info back --- END
                 debug!("Concurrent existence checks complete.");
             }
             // --- Perform existence checks concurrently --- END
@@ -377,7 +411,8 @@ pub(crate) async fn store_op(
                     address: pad_address,
                     chunk_index: i,
                     status: PadStatus::Generated,
-                    origin: pad_origin, // Store the origin
+                    origin: pad_origin,          // Store the origin
+                    needs_reverification: false, // Initialize new field
                 };
 
                 initial_pads.push(pad_info.clone());
@@ -571,6 +606,7 @@ pub(crate) async fn store_op(
                                     chunk_index: pad_info.chunk_index,
                                     status: PadStatus::Written, // Status is now Written
                                     origin: pad_info.origin, // *** Propagate origin from outer scope ***
+                                    needs_reverification: pad_info.needs_reverification, // Propagate flag
                                 };
 
                                 debug!("Spawning confirmation task for pad {}", pad_info.address);

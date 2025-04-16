@@ -24,7 +24,7 @@ pub enum PadStatus {
 
 // --- Core Index Structures ---
 
-/// Represents information about a single scratchpad used to store a chunk of data for a key.
+/// Represents the status and location of a single data chunk within a scratchpad.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PadInfo {
     /// The network address of the scratchpad.
@@ -35,6 +35,10 @@ pub struct PadInfo {
     pub status: PadStatus,
     /// The origin of the pad.
     pub origin: PadOrigin,
+    /// Flag indicating if this pad encountered a network issue (e.g., NotEnoughCopies)
+    /// during verification and needs to be checked again later.
+    #[serde(default)] // Ensure deserialization works for older formats
+    pub needs_reverification: bool,
     // Potentially add: `checksum: Option<[u8; 32]>` if implementing checksums
 }
 
