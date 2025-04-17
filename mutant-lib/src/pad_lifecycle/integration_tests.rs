@@ -1,11 +1,9 @@
 #![cfg(test)]
 
-use crate::index::error::IndexError;
 use crate::index::manager::{DefaultIndexManager, IndexManager};
-use crate::index::structure::{KeyInfo, PadInfo, PadStatus};
+use crate::index::structure::PadStatus;
 use crate::network::adapter::{AutonomiNetworkAdapter, NetworkAdapter};
 use crate::network::NetworkChoice;
-use crate::pad_lifecycle::error::PadLifecycleError;
 use crate::pad_lifecycle::manager::{DefaultPadLifecycleManager, PadLifecycleManager};
 use crate::pad_lifecycle::PadOrigin;
 use crate::storage::manager::{DefaultStorageManager, StorageManager};
@@ -284,7 +282,7 @@ async fn test_purge_existing_pads() {
         index_manager,
         pad_lifecycle_manager,
         _master_key,
-        master_addr, // Need master_addr for network choice resolution if needed
+        _master_addr, // Need master_addr for network choice resolution if needed
     ) = setup_test_components_with_initialized_index().await;
 
     // --- Setup: Add existing pads to the pending list ---

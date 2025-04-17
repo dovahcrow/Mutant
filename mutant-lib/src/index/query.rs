@@ -113,7 +113,7 @@ pub(crate) fn get_stats_internal(index: &MasterIndex) -> Result<StorageStats, In
     let mut incomplete_keys_data_bytes = 0;
     let mut incomplete_keys_total_pads = 0;
     let mut incomplete_keys_pads_generated = 0;
-    let mut incomplete_keys_pads_allocated = 0; // Added for completeness
+    let mut _incomplete_keys_pads_allocated = 0; // Added for completeness
     let mut incomplete_keys_pads_written = 0;
     let mut incomplete_keys_pads_confirmed = 0;
 
@@ -132,7 +132,7 @@ pub(crate) fn get_stats_internal(index: &MasterIndex) -> Result<StorageStats, In
                 match pad_info.status {
                     PadStatus::Generated => incomplete_keys_pads_generated += 1,
                     PadStatus::Allocated => {
-                        incomplete_keys_pads_allocated += 1;
+                        _incomplete_keys_pads_allocated += 1;
                         allocated_written_pads_count += 1; // Count as used but not confirmed
                     }
                     PadStatus::Written => {

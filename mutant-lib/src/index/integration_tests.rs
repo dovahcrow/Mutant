@@ -1,7 +1,6 @@
 #![cfg(test)]
 
 // Local errors/types
-use crate::index::error::IndexError;
 use crate::index::manager::{DefaultIndexManager, IndexManager};
 use crate::index::structure::{KeyInfo, PadInfo, PadStatus};
 // Crate-level traits and types
@@ -9,13 +8,11 @@ use crate::network::adapter::{AutonomiNetworkAdapter, NetworkAdapter}; // Import
 use crate::network::NetworkChoice;
 use crate::pad_lifecycle::PadOrigin;
 use crate::storage::manager::{DefaultStorageManager, StorageManager}; // Import trait
-use crate::types::StorageStats;
-// External Crate types
-use autonomi::{Bytes, PublicKey, ScratchpadAddress, SecretKey};
+                                                                      // External Crate types
+use autonomi::{ScratchpadAddress, SecretKey};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tempfile::tempdir; // Requires 'tempfile' dev-dependency
 
 const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -51,7 +48,7 @@ fn get_test_master_keys(test_id: &str) -> (SecretKey, ScratchpadAddress) {
 }
 
 /// Generates a random pad (key and address) for testing.
-fn generate_random_pad(id: &str) -> (ScratchpadAddress, SecretKey, Vec<u8>) {
+fn generate_random_pad(_id: &str) -> (ScratchpadAddress, SecretKey, Vec<u8>) {
     let key = SecretKey::random(); // Use random for unique pads
     let addr = ScratchpadAddress::new(key.public_key());
     let key_bytes = key.to_bytes().to_vec(); // Store key bytes
