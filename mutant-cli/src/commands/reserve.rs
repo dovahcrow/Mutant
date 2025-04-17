@@ -9,12 +9,10 @@ use tokio::sync::Mutex;
 
 #[derive(Args, Debug, Clone)]
 pub struct Reserve {
-    /// Number of scratchpads to reserve [default: 1]
     #[arg(value_name = "COUNT")]
     count: Option<usize>,
 }
 
-// Structure to hold shared state for the callback
 #[derive(Clone)]
 struct ReserveCallbackContext {
     pb: Arc<Mutex<ProgressBar>>,
@@ -30,7 +28,6 @@ impl Reserve {
 
         info!("Attempting to reserve {} new scratchpads...", count);
 
-        // --- Progress Bar Setup ---
         let pb = ProgressBar::new(count as u64);
         pb.set_style(
             ProgressStyle::with_template(
@@ -40,9 +37,8 @@ impl Reserve {
             .progress_chars("##-"),
         );
         pb.set_message("Initializing...");
-        let pb_arc = Arc::new(Mutex::new(pb)); // Wrap in Arc<Mutex> for sharing
+        let pb_arc = Arc::new(Mutex::new(pb));
 
-        // --- Callback Definition ---
         let context = ReserveCallbackContext { pb: pb_arc.clone() };
 
         let callback: ReserveCallback = Box::new(move |event: ReserveEvent| {
@@ -60,9 +56,8 @@ impl Reserve {
                         pb_guard.set_message(format!("Reserved {}", address));
                     }
                     ReserveEvent::SavingIndex { reserved_count: _ } => {
-                        // Optionally update message, or just let spinner tick
                         pb_guard.set_message("Saving index...");
-                        pb_guard.tick(); // Ensure spinner moves during save
+                        pb_guard.tick();
                     }
                     ReserveEvent::Complete { succeeded, failed } => {
                         pb_guard.finish_with_message(format!(
@@ -71,15 +66,14 @@ impl Reserve {
                         ));
                     }
                 }
-                // Always tick to keep spinner active
+
                 if !pb_guard.is_finished() {
                     pb_guard.tick();
                 }
-                Ok::<bool, LibError>(true) // Indicate success/continue
+                Ok::<bool, LibError>(true)
             })
         });
 
-        // --- Execute the Library Call ---
         match mutant.reserve_pads(count, Some(callback)).await {
             Ok(successful_creations) => {
                 info!(
@@ -90,7 +84,7 @@ impl Reserve {
                     error!(
                         "No scratchpads were successfully reserved despite library call succeeding."
                     );
-                    // Ensure progress bar is finished if it wasn't by the Complete event
+
                     let pb_guard = pb_arc.lock().await;
                     if !pb_guard.is_finished() {
                         pb_guard.finish_with_message("Reservation complete: 0 succeeded");
@@ -99,12 +93,12 @@ impl Reserve {
                         "Failed to reserve any scratchpads".to_string(),
                     ));
                 }
-                // Success case already logged by library/callback finish message
+
                 Ok(())
             }
             Err(e) => {
                 error!("Pad reservation failed: {}", e);
-                // Ensure progress bar is finished on error
+
                 let pb_guard = pb_arc.lock().await;
                 if !pb_guard.is_finished() {
                     pb_guard.finish_with_message(format!("Reservation failed: {}", e));

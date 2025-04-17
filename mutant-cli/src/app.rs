@@ -3,8 +3,7 @@ use dialoguer::{Select, theme::ColorfulTheme};
 use directories::{BaseDirs, ProjectDirs};
 use indicatif::{MultiProgress, ProgressDrawTarget};
 use log::{debug, error, info, warn};
-// Use the new top-level re-exports from mutant_lib
-// Use full paths as re-exports seem problematic
+
 use mutant_lib::api::MutAnt;
 use mutant_lib::error::Error as LibError;
 use mutant_lib::events::InitCallback;
@@ -72,13 +71,9 @@ impl std::fmt::Display for CliError {
 
 impl std::error::Error for CliError {}
 
-// Implement conversion from the library error type
-// Implement conversion from the library error type (now directly mutant_lib::Error)
 impl From<LibError> for CliError {
     fn from(lib_err: LibError) -> Self {
-        // You might want more sophisticated mapping here later,
-        // but for now, just wrap the display output.
-        CliError::MutAntInit(lib_err.to_string()) // Reusing MutAntInit for simplicity
+        CliError::MutAntInit(lib_err.to_string())
     }
 }
 
@@ -263,10 +258,9 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
 
     let cli = Cli::parse();
 
-    // Determine private key: Use hardcoded for local, otherwise load from wallet.
     let private_key = if cli.local {
         info!("Using hardcoded local/devnet secret key for testing.");
-        // Standard Anvil/Hardhat dev key 0, prefixed with 0x
+
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
     } else {
         match initialize_wallet().await {
@@ -343,15 +337,13 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
                 }
             }
         }
-        Commands::Reserve(reserve_cmd) => {
-            match reserve_cmd.run(&mutant).await {
-                Ok(_) => Ok(ExitCode::SUCCESS),
-                Err(e) => {
-                    error!("Reserve command failed: {}", e);
-                    Err(e) // Propagate the error
-                }
+        Commands::Reserve(reserve_cmd) => match reserve_cmd.run(&mutant).await {
+            Ok(_) => Ok(ExitCode::SUCCESS),
+            Err(e) => {
+                error!("Reserve command failed: {}", e);
+                Err(e)
             }
-        }
+        },
     };
 
     let exit_code = match command_result {

@@ -1,5 +1,5 @@
 use super::progress::StyledProgressBar;
-// Use full paths as re-exports seem problematic
+
 use indicatif::MultiProgress;
 use log::{debug, warn};
 use mutant_lib::error::Error as LibError;
@@ -14,7 +14,6 @@ pub fn create_get_callback(
     let download_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
 
     if quiet {
-        // The callback needs to be a Boxed Fn returning a Pinned Future
         let noop_callback: GetCallback =
             Box::new(move |_event: GetEvent| Box::pin(async move { Ok::<bool, LibError>(true) }));
         return (download_pb_opt, noop_callback);
@@ -23,18 +22,14 @@ pub fn create_get_callback(
     let pb_clone = download_pb_opt.clone();
     let mp_clone = multi_progress.clone();
 
-    // Update callback signature to return Result<bool, Error>
     let callback: GetCallback = Box::new(move |event: GetEvent| {
         let pb_arc = pb_clone.clone();
         let multi_progress = mp_clone.clone();
 
-        // Return a Pinned, Boxed Future that is Send + Sync
         Box::pin(async move {
-            // Lock the mutex, perform operations, then drop the guard
-            // *before* any .await calls or before returning Ok.
             match event {
                 GetEvent::Starting { total_chunks } => {
-                    let mut pb_guard = pb_arc.lock().await; // Lock
+                    let mut pb_guard = pb_arc.lock().await;
                     let pb = pb_guard.get_or_insert_with(|| {
                         let pb = StyledProgressBar::new(&multi_progress);
                         pb.set_style(super::progress::get_default_steps_style());
@@ -47,10 +42,10 @@ pub fn create_get_callback(
                         "Get Callback: Starting - Set length to {} chunks",
                         total_chunks
                     );
-                    drop(pb_guard); // Drop guard before returning
+                    drop(pb_guard);
                 }
                 GetEvent::ChunkFetched { chunk_index } => {
-                    let mut pb_guard = pb_arc.lock().await; // Lock
+                    let mut pb_guard = pb_arc.lock().await;
                     if let Some(pb) = pb_guard.as_mut() {
                         if !pb.is_finished() {
                             pb.set_position((chunk_index + 1) as u64);
@@ -60,19 +55,19 @@ pub fn create_get_callback(
                             "Get Callback: ChunkFetched event received but progress bar does not exist."
                         );
                     }
-                    drop(pb_guard); // Drop guard before returning
+                    drop(pb_guard);
                 }
                 GetEvent::Reassembling => {
-                    let mut pb_guard = pb_arc.lock().await; // Lock
+                    let mut pb_guard = pb_arc.lock().await;
                     if let Some(pb) = pb_guard.as_mut() {
                         if !pb.is_finished() {
                             pb.set_message("Reassembling data...".to_string());
                         }
                     }
-                    drop(pb_guard); // Drop guard before returning
+                    drop(pb_guard);
                 }
                 GetEvent::Complete => {
-                    let mut pb_guard = pb_arc.lock().await; // Lock
+                    let mut pb_guard = pb_arc.lock().await;
                     if let Some(pb) = pb_guard.take() {
                         if !pb.is_finished() {
                             pb.finish_and_clear();
@@ -83,10 +78,10 @@ pub fn create_get_callback(
                             "Get Callback: Complete event received but progress bar was already finished or never existed."
                         );
                     }
-                    drop(pb_guard); // Drop guard before returning
+                    drop(pb_guard);
                 }
             }
-            Ok::<bool, LibError>(true) // Return true to continue
+            Ok::<bool, LibError>(true)
         })
     });
 

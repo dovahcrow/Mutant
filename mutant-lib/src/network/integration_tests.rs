@@ -1,18 +1,13 @@
 #![cfg(test)]
 
-// Removed unused LibError import
 use crate::index::structure::PadStatus;
 use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::{NetworkAdapter, NetworkChoice, NetworkError};
 use autonomi::{ScratchpadAddress, SecretKey};
-// Removed unused hex import
-// Removed unused rand imports
 
-// Key used by the CLI --local flag (standard Anvil/Hardhat dev key 0)
 const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-/// Helper to initialize an adapter for tests
 async fn setup_adapter() -> AutonomiNetworkAdapter {
     AutonomiNetworkAdapter::new(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet)
         .expect("Test adapter setup failed")
@@ -38,8 +33,7 @@ async fn test_adapter_new_success() {
         "Wallet address seems empty"
     );
 
-    // Check existence with a random key
-    let check_key = SecretKey::random(); // Use a truly random key here
+    let check_key = SecretKey::random();
     let check_addr = ScratchpadAddress::new(check_key.public_key());
     let check_exist_res = adapter.check_existence(&check_addr).await;
     assert!(
@@ -63,7 +57,7 @@ async fn test_adapter_new_invalid_key() {
     );
 
     match result.err().unwrap() {
-        NetworkError::InvalidKeyInput(_) => { /* Corrected Expected error */ }
+        NetworkError::InvalidKeyInput(_) => {}
         e => panic!(
             "Expected InvalidKeyInput due to hex decode error, but got {:?}",
             e
@@ -86,7 +80,6 @@ async fn test_check_existence_nonexistent() {
     );
 }
 
-// Basic put/check cycle
 #[tokio::test]
 async fn test_put_raw_create_and_check() {
     let adapter = setup_adapter().await;
@@ -183,7 +176,7 @@ async fn test_put_raw_create_fails_if_exists() {
 
     assert!(result.is_err(), "Second create should fail");
     match result.err().unwrap() {
-        NetworkError::InconsistentState(_) => { /* Expected */ }
+        NetworkError::InconsistentState(_) => {}
         e => panic!("Expected InconsistentState, got {:?}", e),
     }
 }
@@ -199,7 +192,7 @@ async fn test_put_raw_update_fails_if_not_exists() {
 
     assert!(result.is_err(), "Update should fail for non-existent pad");
     match result.err().unwrap() {
-        NetworkError::InconsistentState(_) => { /* Expected */ }
+        NetworkError::InconsistentState(_) => {}
         e => panic!("Expected InconsistentState, got {:?}", e),
     }
 }

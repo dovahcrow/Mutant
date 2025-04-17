@@ -2,7 +2,7 @@ use crate::callbacks::StyledProgressBar;
 use crate::callbacks::put::create_put_callback;
 use indicatif::MultiProgress;
 use log::{debug, warn};
-// Use new top-level re-exports
+
 use mutant_lib::{Error as LibError, MutAnt, data::DataError};
 use std::io::{self, Read};
 use std::process::ExitCode;
@@ -24,7 +24,6 @@ pub async fn handle_put(
         force
     );
 
-    // Get data as Vec<u8>
     let data_vec: Vec<u8> = match value {
         Some(v) => {
             debug!("handle_put: Using value from argument");
@@ -44,11 +43,9 @@ pub async fn handle_put(
         }
     };
 
-    // Restore destructuring for three bars
     let (res_pb_opt, upload_pb_opt, confirm_pb_opt, callback) =
         create_put_callback(multi_progress, quiet);
 
-    // Pass data as slice &[u8]
     let result = if force {
         debug!("Forcing update for key: {}", key);
         mutant
@@ -63,7 +60,7 @@ pub async fn handle_put(
     match result {
         Ok(_) => {
             debug!("Put operation successful for key: {}", key);
-            // Clear all three bars
+
             clear_pb(&res_pb_opt);
             clear_pb(&upload_pb_opt);
             clear_pb(&confirm_pb_opt);
@@ -89,7 +86,7 @@ pub async fn handle_put(
             };
 
             eprintln!("{}", error_message);
-            // Abandon all three bars
+
             abandon_pb(&res_pb_opt, error_message.clone());
             abandon_pb(&upload_pb_opt, error_message.clone());
             abandon_pb(&confirm_pb_opt, error_message);
@@ -99,7 +96,6 @@ pub async fn handle_put(
     }
 }
 
-// Helper functions to clear or abandon progress bars - kept local to put.rs
 fn clear_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>) {
     if let Ok(mut guard) = pb_opt.try_lock() {
         if let Some(pb) = guard.take() {

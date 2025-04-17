@@ -1,4 +1,3 @@
-// use autonomi::client::data_types::ScratchpadError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -16,12 +15,11 @@ pub enum NetworkError {
     ConfigError(String),
 
     #[error("Internal network adapter error: {0}")]
-    InternalError(String), // Added for internal issues like unimplemented methods
+    InternalError(String),
 
     #[error("Invalid private key input: {0}")]
     InvalidKeyInput(String),
 
     #[error("State inconsistency detected: {0}")]
     InconsistentState(String),
-    // Add other specific network-related errors as needed
 }

@@ -116,21 +116,20 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
         let final_free_pads: Vec<(ScratchpadAddress, Vec<u8>, u64)> = potential_free_pads_map
             .into_iter()
             .filter(|(addr, _)| !occupied_pads.contains(addr))
-            // Map back to the 3-element tuple format expected by MasterIndex
             .map(|(addr, (key, counter))| (addr, key, counter))
             .collect();
 
         let remote_pads_addr_set: HashSet<_> = remote_index
             .free_pads
             .iter()
-            .map(|(addr, _, _)| *addr) // Destructure 3 elements
+            .map(|(addr, _, _)| *addr)
             .collect();
         let local_pads_added = final_free_pads
             .iter()
-            .filter(|(addr, _, _)| !remote_pads_addr_set.contains(addr)) // Destructure 3 elements
+            .filter(|(addr, _, _)| !remote_pads_addr_set.contains(addr))
             .count();
 
-        merged_index.free_pads = final_free_pads; // Type should now match
+        merged_index.free_pads = final_free_pads;
 
         if local_index.scratchpad_size != 0
             && local_index.scratchpad_size != remote_index.scratchpad_size

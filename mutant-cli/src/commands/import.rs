@@ -1,6 +1,6 @@
 use log::{error, info};
-// Use new top-level re-exports
-use mutant_lib::{Error as LibError, MutAnt, pad_lifecycle::PadLifecycleError}; // Import PadLifecycleError for matching
+
+use mutant_lib::{Error as LibError, MutAnt, pad_lifecycle::PadLifecycleError};
 use std::process::ExitCode;
 
 pub async fn handle_import(mutant: MutAnt, private_key: String) -> ExitCode {
@@ -13,7 +13,7 @@ pub async fn handle_import(mutant: MutAnt, private_key: String) -> ExitCode {
             println!("Successfully imported free pad.");
             ExitCode::SUCCESS
         }
-        // Update error matching for new structure
+
         Err(LibError::PadLifecycle(PadLifecycleError::ImportConflict(msg))) => {
             eprintln!("Import failed: {}", msg);
             ExitCode::FAILURE
@@ -22,7 +22,7 @@ pub async fn handle_import(mutant: MutAnt, private_key: String) -> ExitCode {
             eprintln!("Import failed due to invalid private key: {}", msg);
             ExitCode::FAILURE
         }
-        // Catch other PadLifecycle errors specifically if needed
+
         Err(LibError::PadLifecycle(e)) => {
             error!("Unexpected pad lifecycle error during import: {}", e);
             eprintln!("An unexpected error occurred during import: {}", e);

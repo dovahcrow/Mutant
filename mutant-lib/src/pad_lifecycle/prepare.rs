@@ -1,5 +1,3 @@
-// Logic for preparing pads and KeyInfo before store operations.
-
 use crate::data::error::DataError;
 use crate::data::ops::common::{DataManagerDependencies, WriteTaskInput};
 use crate::events::PutCallback;
@@ -14,11 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Prepares the KeyInfo and identifies necessary write tasks for a store operation.
-/// Handles both new uploads and resumes, including existence checks and pad replacements.
-/// Persists the initial or updated KeyInfo before returning.
 pub(crate) async fn prepare_pads_for_store(
-    // Consider passing individual Arcs if deps struct proves too broad
     deps: &DataManagerDependencies,
     user_key: &str,
     data_size: usize,
@@ -77,7 +71,7 @@ pub(crate) async fn prepare_pads_for_store(
                         initial_written_count += 1;
                         initial_confirmed_count += 1;
                     }
-                    PadStatus::Generated | PadStatus::Allocated => { /* Needs processing */ }
+                    PadStatus::Generated | PadStatus::Allocated => {}
                 }
             }
 
@@ -249,7 +243,6 @@ pub(crate) async fn prepare_pads_for_store(
 
             debug!("Prepare: Identifying resume tasks based on pad status...");
             for pad_info in final_prepared_key_info.pads.iter() {
-                // Process pads that haven't reached Confirmed status
                 if pad_info.status == PadStatus::Generated
                     || pad_info.status == PadStatus::Allocated
                 {
@@ -266,17 +259,14 @@ pub(crate) async fn prepare_pads_for_store(
                             ))
                         })?;
 
-                        // Determine if existence check result is relevant (only for originally Generated pads)
-                        // For Allocated pads, we already know they exist.
                         let pad_exists_known = match pad_info.origin {
-                            PadOrigin::FreePool { .. } => true, // From free pool, assumed to exist.
+                            PadOrigin::FreePool { .. } => true,
                             PadOrigin::Generated => existence_results
                                 .get(&pad_info.address)
                                 .copied()
                                 .unwrap_or(false),
                         };
-                        // If the pad doesn't exist (check failed/NotEnoughCopies/etc.), we rely on replacement logic having run already.
-                        // If it *does* exist (or we assume it does), proceed with write task.
+
                         if pad_exists_known {
                             debug!(
                                 "Prepare: Task: Write chunk {} to pad {} (Origin: {:?}, Status: {:?})",
@@ -288,8 +278,6 @@ pub(crate) async fn prepare_pads_for_store(
                                 chunk_data: chunk.clone(),
                             });
                         } else {
-                            // This case should ideally be handled by the replacement logic earlier.
-                            // If we reach here, it means a Generated pad was found not to exist, but wasn't replaced.
                             warn!("Prepare: Skipping write task for pad {} which was found not to exist and wasn't replaced.", pad_info.address);
                         }
                     } else {
@@ -319,7 +307,6 @@ pub(crate) async fn prepare_pads_for_store(
                 user_key
             );
 
-            // Handle empty data case first
             if num_chunks == 0 {
                 debug!("Prepare: Storing empty data for key '{}'", user_key);
                 let key_info = KeyInfo {
@@ -327,27 +314,24 @@ pub(crate) async fn prepare_pads_for_store(
                     pad_keys: HashMap::new(),
                     data_size,
                     modified: Utc::now(),
-                    is_complete: true, // Empty data is complete
+                    is_complete: true,
                 };
-                // Persist the empty KeyInfo
+
                 deps.index_manager
                     .insert_key_info(user_key.to_string(), key_info.clone())
                     .await?;
                 info!("Prepare: Empty key '{}' created and persisted.", user_key);
-                // Send Complete callback immediately for empty data
+
                 if !invoke_put_callback(&mut *callback_arc.lock().await, PutEvent::Complete)
                     .await
                     .map_err(|e| DataError::InternalError(format!("Callback failed: {}", e)))?
                 {
-                    // If callback cancels, it's not really an error for the preparation step itself,
-                    // but we should signal it back.
                     return Err(DataError::OperationCancelled);
                 }
-                // Return the completed empty KeyInfo and no tasks
+
                 return Ok((key_info, Vec::new()));
             }
 
-            // Invoke Starting event *before* acquiring pads
             if !invoke_put_callback(
                 &mut *callback_arc.lock().await,
                 PutEvent::Starting {
@@ -363,7 +347,6 @@ pub(crate) async fn prepare_pads_for_store(
                 return Err(DataError::OperationCancelled);
             }
 
-            // Acquire necessary pads
             debug!("Prepare: Acquiring {} pads...", num_chunks);
             let acquired_pads_with_origin = deps
                 .pad_lifecycle_manager
@@ -375,7 +358,6 @@ pub(crate) async fn prepare_pads_for_store(
                 acquired_pads_with_origin.len()
             );
 
-            // Prepare initial KeyInfo and tasks
             let mut initial_pads = Vec::with_capacity(num_chunks);
             let mut initial_pad_keys = HashMap::with_capacity(num_chunks);
 
@@ -392,10 +374,9 @@ pub(crate) async fn prepare_pads_for_store(
                 }
                 let (pad_address, secret_key, pad_origin) = acquired_pads_with_origin[i].clone();
 
-                // Set initial status based on origin
                 let initial_status = match pad_origin {
                     PadOrigin::Generated => PadStatus::Generated,
-                    PadOrigin::FreePool { .. } => PadStatus::Allocated, // Already exists
+                    PadOrigin::FreePool { .. } => PadStatus::Allocated,
                 };
 
                 let pad_info = PadInfo {
@@ -428,7 +409,6 @@ pub(crate) async fn prepare_pads_for_store(
                 is_complete: false,
             };
 
-            // Insert initial KeyInfo into the index *before* returning
             deps.index_manager
                 .insert_key_info(user_key.to_string(), key_info.clone())
                 .await?;
@@ -438,7 +418,6 @@ pub(crate) async fn prepare_pads_for_store(
                 key_info.pads.len()
             );
 
-            // --- Persist Index Cache after initial KeyInfo insertion ---
             let network_choice = deps.network_adapter.get_network_choice();
             if let Err(e) = deps
                 .pad_lifecycle_manager
@@ -455,7 +434,7 @@ pub(crate) async fn prepare_pads_for_store(
                     user_key
                 );
             }
-            // Return the initial key info and the tasks
+
             Ok((key_info, tasks_to_run))
         }
     }

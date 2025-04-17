@@ -3,8 +3,6 @@ use crate::network::NetworkChoice;
 use autonomi::Client;
 use log::info;
 
-// Placeholder for client creation logic.
-// This might handle lazy initialization or specific client configurations.
 pub(crate) async fn create_client(network_choice: NetworkChoice) -> Result<Client, NetworkError> {
     info!(
         "Initializing Autonomi network connection for {:?}...",
@@ -26,7 +24,3 @@ pub(crate) async fn create_client(network_choice: NetworkChoice) -> Result<Clien
     );
     Ok(client)
 }
-
-// Placeholder for retry logic if needed directly on client operations.
-// Example:
-// pub(crate) async fn get_with_retry(...) -> ... { ... }

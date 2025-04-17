@@ -1,6 +1,6 @@
 use humansize::{BINARY, format_size};
 use log::{debug, info};
-// Use new top-level re-export
+
 use mutant_lib::MutAnt;
 use nu_ansi_term::Color;
 use std::process::ExitCode;
@@ -44,7 +44,6 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
             );
             println!("-------------------");
 
-            // Calculate percentages
             let occupied_pads_pct = if stats.total_pads > 0 {
                 stats.occupied_pads as f64 / stats.total_pads as f64 * 100.0
             } else {
@@ -88,7 +87,6 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
                 stats.free_pads
             );
 
-            // Add notice if there are pending pads
             if stats.pending_verification_pads > 0 {
                 println!(
                     "\n{}",
@@ -126,7 +124,6 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
                 format_bytes(stats.free_pad_space_bytes)
             );
 
-            // --- Display Incomplete Upload Stats ---
             if stats.incomplete_keys_count > 0 {
                 println!("\nIncomplete Uploads:");
                 println!("-------------------");
@@ -162,7 +159,6 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
     }
 }
 
-// Helper functions (keep these here or move to a shared utils module within CLI if needed)
 fn format_bytes(bytes: u64) -> String {
     format_size(bytes, BINARY)
 }

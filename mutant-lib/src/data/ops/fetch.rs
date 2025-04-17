@@ -1,15 +1,12 @@
-// Fetch operation logic
 use crate::data::chunking::reassemble_data;
 use crate::data::error::DataError;
 use crate::events::{invoke_get_callback, GetCallback, GetEvent};
-// Remove unused import
-// use crate::storage::StorageManager;
+
 use autonomi::SecretKey;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
-// Needed for pad_keys lookup
+
 use std::sync::Arc;
-// Only needed if using tokio specifics like time::sleep
 
 use super::common::DataManagerDependencies;
 
@@ -20,19 +17,15 @@ pub(crate) async fn fetch_op(
 ) -> Result<Vec<u8>, DataError> {
     info!("DataOps: Starting fetch operation for key '{}'", user_key);
 
-    // 1. Get KeyInfo and MasterIndex copy
     let key_info = deps
         .index_manager
         .get_key_info(user_key)
         .await?
         .ok_or_else(|| DataError::KeyNotFound(user_key.to_string()))?;
 
-    // Fetch the current index for validation and pad info
-    // Use underscore as index_copy is not directly used after this.
-    let _index_copy = deps.index_manager.get_index_copy().await?; // Fetch once
+    let _index_copy = deps.index_manager.get_index_copy().await?;
 
     if !key_info.is_complete {
-        // Handle incomplete data - return error or partial data? Error for now.
         warn!("Attempting to fetch incomplete data for key '{}'", user_key);
         return Err(DataError::InternalError(format!(
             "Data for key '{}' is marked as incomplete",
@@ -55,7 +48,6 @@ pub(crate) async fn fetch_op(
         return Err(DataError::OperationCancelled);
     }
 
-    // Handle empty data case
     if num_chunks == 0 {
         debug!("Fetching empty data for key '{}'", user_key);
         if key_info.data_size != 0 {
@@ -63,7 +55,6 @@ pub(crate) async fn fetch_op(
                 "Index inconsistency: 0 pads but data_size is {}",
                 key_info.data_size
             );
-            // Return empty vec anyway? Or error? Let's return empty vec.
         }
         if !invoke_get_callback(&mut callback, GetEvent::Complete)
             .await
@@ -74,9 +65,8 @@ pub(crate) async fn fetch_op(
         return Ok(Vec::new());
     }
 
-    // 2. Fetch chunks concurrently
     let mut fetch_futures = FuturesUnordered::new();
-    let mut sorted_pads = key_info.pads.clone(); // Clone to avoid borrow issues later
+    let mut sorted_pads = key_info.pads.clone();
     sorted_pads.sort_by_key(|p| p.chunk_index);
 
     let storage_manager = Arc::clone(&deps.storage_manager);
@@ -86,11 +76,10 @@ pub(crate) async fn fetch_op(
         let index = pad_info.chunk_index;
         fetch_futures.push(async move {
             let result = sm_clone.read_pad_scratchpad(&address).await;
-            (index, address, result) // Return index, address, and Result<Scratchpad, StorageError>
+            (index, address, result)
         });
     }
 
-    // Collect fetched *and decrypted* chunks
     let mut fetched_decrypted_chunks: Vec<Option<Vec<u8>>> = vec![None; num_chunks];
     let mut fetched_count = 0;
 
@@ -103,7 +92,6 @@ pub(crate) async fn fetch_op(
                     pad_address
                 );
 
-                // Find the pad key from the KeyInfo.pad_keys map
                 let key_bytes_vec = key_info.pad_keys.get(&pad_address).ok_or_else(|| {
                     error!("Secret key for pad {} not found in KeyInfo", pad_address);
                     DataError::InternalError(format!("Pad key missing for {}", pad_address))
@@ -134,13 +122,12 @@ pub(crate) async fn fetch_op(
                     })?
                 };
 
-                // Decrypt the data using scratchpad.decrypt_data() - NOW INSIDE THE BLOCK
                 let decrypted_data = scratchpad.decrypt_data(&pad_secret_key).map_err(|e| {
                     error!(
                         "Failed to decrypt chunk {} from pad {}: {}",
                         chunk_index, pad_address, e
                     );
-                    // Use InternalError for decryption failures
+
                     DataError::InternalError(format!(
                         "Chunk decryption failed for pad {}",
                         pad_address
@@ -187,7 +174,7 @@ pub(crate) async fn fetch_op(
             "Fetched {} chunks, but expected {}",
             fetched_count, num_chunks
         );
-        // This implies some futures didn't complete or returned invalid indices, should not happen without error above.
+
         return Err(DataError::InternalError(
             "Mismatch between expected and fetched chunk count".to_string(),
         ));
@@ -195,7 +182,6 @@ pub(crate) async fn fetch_op(
 
     debug!("All {} chunks fetched and decrypted.", num_chunks);
 
-    // 3. Reassemble *decrypted* data
     if !invoke_get_callback(&mut callback, GetEvent::Reassembling)
         .await
         .map_err(|e| DataError::InternalError(format!("Callback invocation failed: {}", e)))?
@@ -213,5 +199,5 @@ pub(crate) async fn fetch_op(
     }
 
     info!("DataOps: Fetch operation complete for key '{}'", user_key);
-    Ok(reassembled_data) // Return the reassembled decrypted data
+    Ok(reassembled_data)
 }

@@ -11,72 +11,54 @@ use log::{debug, error, info, trace, warn};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Trait defining the interface for managing the Master Index.
-/// Handles loading, saving, querying, and modifying the index state.
 #[async_trait]
 pub trait IndexManager: Send + Sync {
-    /// Loads the index from persistence (using StorageManager) or initializes a default one in memory.
-    /// This should be called once during initialization.
     async fn load_or_initialize(
         &self,
         master_index_address: &ScratchpadAddress,
         master_index_key: &SecretKey,
     ) -> Result<(), IndexError>;
 
-    /// Saves the current in-memory index state to persistence.
     async fn save(
         &self,
         master_index_address: &ScratchpadAddress,
         _master_index_key: &SecretKey,
     ) -> Result<(), IndexError>;
 
-    /// Retrieves a clone of the KeyInfo for a specific key.
     async fn get_key_info(&self, key: &str) -> Result<Option<KeyInfo>, IndexError>;
 
-    /// Inserts or updates the KeyInfo for a specific key.
     async fn insert_key_info(&self, key: String, info: KeyInfo) -> Result<(), IndexError>;
 
-    /// Removes the KeyInfo for a specific key, returning the old info if it existed.
     async fn remove_key_info(&self, key: &str) -> Result<Option<KeyInfo>, IndexError>;
 
-    /// Lists all user keys currently stored.
     async fn list_keys(&self) -> Result<Vec<String>, IndexError>;
 
-    /// Retrieves detailed information (KeyDetails) for a specific key.
     async fn get_key_details(&self, key: &str) -> Result<Option<KeyDetails>, IndexError>;
 
-    /// Retrieves detailed information (KeyDetails) for all keys.
     async fn list_all_key_details(&self) -> Result<Vec<KeyDetails>, IndexError>;
 
-    /// Calculates and returns current storage statistics.
     async fn get_storage_stats(&self) -> Result<StorageStats, IndexError>;
 
-    /// Adds a pad (address and key bytes) to the free list.
     async fn add_free_pad(
         &self,
         address: ScratchpadAddress,
         key_bytes: Vec<u8>,
     ) -> Result<(), IndexError>;
 
-    /// Adds multiple pads (address and key bytes) to the free list.
     async fn add_free_pads(
         &self,
         pads: Vec<(ScratchpadAddress, Vec<u8>)>,
     ) -> Result<(), IndexError>;
 
-    /// Takes a single pad from the free list, if available.
     async fn take_free_pad(&self) -> Result<Option<(ScratchpadAddress, Vec<u8>, u64)>, IndexError>;
 
-    /// Takes all pads currently in the pending verification list.
     async fn take_pending_pads(&self) -> Result<Vec<(ScratchpadAddress, Vec<u8>)>, IndexError>;
 
-    /// Removes a specific pad (address) from the pending verification list.
     async fn remove_from_pending(
         &self,
         address_to_remove: &ScratchpadAddress,
     ) -> Result<(), IndexError>;
 
-    /// Updates the status of a specific pad within a key's metadata.
     async fn update_pad_status(
         &self,
         key: &str,
@@ -84,41 +66,30 @@ pub trait IndexManager: Send + Sync {
         new_status: PadStatus,
     ) -> Result<(), IndexError>;
 
-    /// Marks a key as fully complete (all pads confirmed).
     async fn mark_key_complete(&self, key: &str) -> Result<(), IndexError>;
 
-    /// Resets the in-memory index to default and persists the reset.
     async fn reset(
         &self,
         master_index_address: &ScratchpadAddress,
         master_index_key: &SecretKey,
     ) -> Result<(), IndexError>;
 
-    /// Returns a clone of the current in-memory MasterIndex. Use with caution for sync/backup.
     async fn get_index_copy(&self) -> Result<MasterIndex, IndexError>;
 
-    /// Overwrites the current in-memory MasterIndex with the provided one. Use with caution for sync/restore.
     async fn update_index(&self, new_index: MasterIndex) -> Result<(), IndexError>;
 
-    /// Gets the configured scratchpad size from the index.
     async fn get_scratchpad_size(&self) -> Result<usize, IndexError>;
 
-    /// Fetches the MasterIndex directly from the persistence layer (remote), bypassing in-memory state.
     async fn fetch_remote(
         &self,
         master_index_address: &ScratchpadAddress,
-        // NOTE: This function CANNOT decrypt the loaded index without the key!
-        // It will likely return a DecryptionError if the index exists.
     ) -> Result<MasterIndex, IndexError>;
 
-    /// Adds multiple pads (address and key bytes) to the pending verification list.
     async fn add_pending_pads(
         &self,
-        pads: Vec<(ScratchpadAddress, Vec<u8>)>, // Use Vec<u8> for key
+        pads: Vec<(ScratchpadAddress, Vec<u8>)>,
     ) -> Result<(), IndexError>;
 }
-
-// --- Implementation ---
 
 pub struct DefaultIndexManager {
     state: Mutex<MasterIndex>,
@@ -157,7 +128,7 @@ impl IndexManager for DefaultIndexManager {
         {
             Ok(loaded_index) => {
                 let mut state_guard = self.state.lock().await;
-                // Ensure loaded index has a valid scratchpad size
+
                 if loaded_index.scratchpad_size == 0 {
                     warn!(
                         "Loaded index has scratchpad_size 0, setting to default: {}",
@@ -167,31 +138,27 @@ impl IndexManager for DefaultIndexManager {
                         scratchpad_size: DEFAULT_SCRATCHPAD_SIZE,
                         ..loaded_index
                     };
-                    // Persist the corrected index? Or wait for next explicit save?
-                    // Let's wait for explicit save for now to avoid unnecessary writes during init.
                 } else {
                     *state_guard = loaded_index;
                 }
                 info!("Index loaded successfully from storage.");
                 Ok(())
             }
-            // Treat ANY deserialization error (not found, corrupted, version mismatch) as a reason to initialize default.
+
             Err(IndexError::DeserializationError(e)) => {
                 warn!(
                     "Failed to load or deserialize index from storage ({}). Initializing with default in memory.",
                     e
                 );
-                // State already holds default, so nothing to change in memory.
-                // We don't automatically save the default here; PadLifecycleManager handles caching if needed.
+
                 Ok(())
             }
-            // Re-introduce handling for KeyNotFound just in case the persistence layer changes behavior.
-            // This path should ideally not be hit if persistence correctly returns DeserializationError for not found.
+
             Err(IndexError::KeyNotFound(_)) => {
                 warn!("Index key not found (unexpected persistence state?). Initializing with default in memory.");
                 Ok(())
             }
-            // Propagate other errors (e.g., storage connection issues)
+
             Err(e) => {
                 error!("Failed to load index from storage: {}", e);
                 Err(e)
@@ -224,7 +191,6 @@ impl IndexManager for DefaultIndexManager {
     async fn insert_key_info(&self, key: String, info: KeyInfo) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
         query::insert_key_info_internal(&mut *state_guard, key, info)
-        // Note: Does not automatically save. Higher layers decide when to persist.
     }
 
     async fn remove_key_info(&self, key: &str) -> Result<Option<KeyInfo>, IndexError> {
@@ -232,15 +198,13 @@ impl IndexManager for DefaultIndexManager {
         let removed_info = query::remove_key_info_internal(&mut *state_guard, key);
 
         if let Some(ref info) = removed_info {
-            // List for pads that need network verification before reuse (only Generated)
             let mut pads_to_verify = Vec::new();
-            // List for pads to be added directly to free list internally (no network check needed)
+
             let mut pads_to_free_directly = Vec::new();
 
             for pad_info in &info.pads {
                 if let Some(pad_key) = info.pad_keys.get(&pad_info.address).cloned() {
                     match pad_info.status {
-                        // Allocated, Written, Confirmed -> Add directly to free pool with default counter
                         PadStatus::Allocated | PadStatus::Written | PadStatus::Confirmed => {
                             trace!(
                                 "Pad {} for removed key '{}' is {:?}. Adding directly to free pool.",
@@ -248,10 +212,10 @@ impl IndexManager for DefaultIndexManager {
                                 key,
                                 pad_info.status
                             );
-                            // Add address, key, and a default counter (e.g., 0)
+
                             pads_to_free_directly.push((pad_info.address, pad_key, 0u64));
                         }
-                        // Generated pads need counter verification before reuse
+
                         PadStatus::Generated => {
                             trace!(
                                 "Pad {} for removed key '{}' is {:?}. Adding to pending verification.",
@@ -260,8 +224,7 @@ impl IndexManager for DefaultIndexManager {
                                 pad_info.status
                             );
                             pads_to_verify.push((pad_info.address, pad_key));
-                        } // Note: No other states are expected for pads attached to a valid key.
-                          // If the PadStatus enum changes, this match might need updating.
+                        }
                     }
                 } else {
                     warn!(
@@ -271,29 +234,26 @@ impl IndexManager for DefaultIndexManager {
                 }
             }
 
-            // Add pads directly to the free list within the locked state
             if !pads_to_free_directly.is_empty() {
                 debug!(
                     "Key '{}': Directly adding {} pads to the free list.",
                     key,
                     pads_to_free_directly.len()
                 );
-                // Use the internal function that accepts counters
+
                 query::add_free_pads_with_counters_internal(
                     &mut *state_guard,
                     pads_to_free_directly,
                 )?;
-                // Note: We deliberately don't fetch counters here for performance and local operation.
             }
 
-            // Add Generated pads to the pending verification list (no change here)
             if !pads_to_verify.is_empty() {
                 debug!(
                     "Key '{}': Adding {} pads to the pending verification list.",
                     key,
                     pads_to_verify.len()
                 );
-                // Use the internal function for pending pads (checks duplicates)
+
                 query::add_pending_verification_pads_internal(&mut *state_guard, pads_to_verify)?;
             }
         }
@@ -326,7 +286,6 @@ impl IndexManager for DefaultIndexManager {
         address: ScratchpadAddress,
         key_bytes: Vec<u8>,
     ) -> Result<(), IndexError> {
-        // Fetch counter before adding
         match self.storage_manager.read_pad_scratchpad(&address).await {
             Ok(scratchpad) => {
                 let counter = scratchpad.counter();
@@ -345,8 +304,7 @@ impl IndexManager for DefaultIndexManager {
             }
             Err(e) => {
                 warn!("Failed to fetch scratchpad to get counter for pad {} during add_free_pad: {}. Pad will not be added to free list.", address, e);
-                // Return Ok even if fetch failed, as the primary goal (not adding a bad entry) is met?
-                // Or return an error? Let's return Ok, but log the warning.
+
                 Ok(())
             }
         }
@@ -354,7 +312,7 @@ impl IndexManager for DefaultIndexManager {
 
     async fn add_free_pads(
         &self,
-        pads: Vec<(ScratchpadAddress, Vec<u8>)>, // Takes pads without counters
+        pads: Vec<(ScratchpadAddress, Vec<u8>)>,
     ) -> Result<(), IndexError> {
         let mut pads_with_counters = Vec::with_capacity(pads.len());
         for (address, key_bytes) in pads {
@@ -370,14 +328,13 @@ impl IndexManager for DefaultIndexManager {
                 }
                 Err(e) => {
                     warn!("Failed to fetch scratchpad to get counter for pad {} during add_free_pads: {}. Pad will not be added to free list.", address, e);
-                    // Skip adding this pad
                 }
             }
         }
 
         if !pads_with_counters.is_empty() {
             let mut state_guard = self.state.lock().await;
-            // Use the modified internal function
+
             query::add_free_pads_with_counters_internal(&mut *state_guard, pads_with_counters)?;
         }
         Ok(())
@@ -391,7 +348,6 @@ impl IndexManager for DefaultIndexManager {
     async fn take_pending_pads(&self) -> Result<Vec<(ScratchpadAddress, Vec<u8>)>, IndexError> {
         let mut state_guard = self.state.lock().await;
         Ok(query::take_pending_pads_internal(&mut *state_guard))
-        // Note: Does not automatically save.
     }
 
     async fn remove_from_pending(
@@ -400,7 +356,6 @@ impl IndexManager for DefaultIndexManager {
     ) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
         query::remove_from_pending_internal(&mut *state_guard, address_to_remove)
-        // Note: Does not automatically save.
     }
 
     async fn update_pad_status(
@@ -411,13 +366,11 @@ impl IndexManager for DefaultIndexManager {
     ) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
         query::update_pad_status_internal(&mut *state_guard, key, pad_address, new_status)
-        // Note: Does not automatically save.
     }
 
     async fn mark_key_complete(&self, key: &str) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
         query::mark_key_complete_internal(&mut *state_guard, key)
-        // Note: Does not automatically save.
     }
 
     async fn reset(
@@ -427,11 +380,10 @@ impl IndexManager for DefaultIndexManager {
     ) -> Result<(), IndexError> {
         info!("IndexManager: Resetting index...");
         {
-            // Scope for the lock guard
             let mut state_guard = self.state.lock().await;
             query::reset_index_internal(&mut *state_guard);
-        } // Lock released here
-          // Persist the reset state immediately
+        }
+
         self.save(master_index_address, master_index_key).await?;
         info!("Index reset and saved successfully.");
         Ok(())
@@ -447,7 +399,6 @@ impl IndexManager for DefaultIndexManager {
         let mut state_guard = self.state.lock().await;
         *state_guard = new_index;
         Ok(())
-        // Note: Does not automatically save. Sync logic handles persistence.
     }
 
     async fn get_scratchpad_size(&self) -> Result<usize, IndexError> {
@@ -456,38 +407,32 @@ impl IndexManager for DefaultIndexManager {
         if size == 0 {
             warn!("Index reports scratchpad size of 0, returning default.");
             Ok(DEFAULT_SCRATCHPAD_SIZE)
-            // Or return error? Err(IndexError::InconsistentState("Scratchpad size is zero".to_string()))
         } else {
             Ok(size)
         }
     }
-    // Removed extra brace here
 
     async fn fetch_remote(
         &self,
         master_index_address: &ScratchpadAddress,
-        // NOTE: This function CANNOT decrypt the loaded index without the key!
-        // It will likely return a DecryptionError if the index exists.
     ) -> Result<MasterIndex, IndexError> {
         debug!("IndexManager: Fetching remote index directly...");
-        // HACK: Create a dummy key because we don't have the real one here.
-        // load_index will attempt decryption and fail if the index exists.
+
         let dummy_key = SecretKey::random();
         load_index(
             self.storage_manager.as_ref(),
             self.network_adapter.as_ref(),
             master_index_address,
-            &dummy_key, // Pass dummy key
+            &dummy_key,
         )
         .await
     }
 
     async fn add_pending_pads(
         &self,
-        pads: Vec<(ScratchpadAddress, Vec<u8>)>, // Use Vec<u8> for key
+        pads: Vec<(ScratchpadAddress, Vec<u8>)>,
     ) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
         query::add_pending_pads_internal(&mut *state_guard, pads)
-        // Note: Does not automatically save.
     }
 }

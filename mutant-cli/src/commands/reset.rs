@@ -1,11 +1,9 @@
 use log::{error, info};
-// Use the new top-level re-exports
+
 use dialoguer::Confirm;
 use mutant_lib::MutAnt;
 use std::process::ExitCode;
 
-/// Executes the core logic for resetting the master index.
-/// Confirmation should be handled by the caller.
 pub async fn handle_reset(mutant: MutAnt) -> ExitCode {
     if !Confirm::new()
         .with_prompt(
@@ -15,12 +13,11 @@ pub async fn handle_reset(mutant: MutAnt) -> ExitCode {
         .unwrap_or(false)
     {
         println!("Reset cancelled.");
-        return ExitCode::SUCCESS; // Or a specific code for cancellation?
+        return ExitCode::SUCCESS;
     }
 
     info!("Proceeding with index reset...");
     match mutant.reset().await {
-        // Call the public reset method
         Ok(_) => {
             println!("Index reset successfully.");
             ExitCode::SUCCESS

@@ -11,21 +11,16 @@ use crate::storage::manager::{DefaultStorageManager, StorageManager};
 use autonomi::{ScratchpadAddress, SecretKey};
 use std::sync::Arc;
 
-// --- Test Setup Helper ---
-
-// Use a known devnet key for setting up adapters/managers consistently
 const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-/// Creates the components needed for DataManager integration tests.
-/// Initializes the IndexManager with a random master key.
 async fn setup_data_test_components() -> (
     Arc<dyn NetworkAdapter>,
     Arc<dyn StorageManager>,
     Arc<dyn IndexManager>,
     Arc<dyn PadLifecycleManager>,
     DefaultDataManager,
-    SecretKey, // Return master key for potential use in tests
+    SecretKey,
     ScratchpadAddress,
 ) {
     let network_adapter: Arc<dyn NetworkAdapter> = Arc::new(
@@ -40,11 +35,9 @@ async fn setup_data_test_components() -> (
     ));
     let index_manager: Arc<dyn IndexManager> = index_manager_impl.clone();
 
-    // Generate random master key/address for index isolation
     let master_key = SecretKey::random();
     let master_addr = ScratchpadAddress::new(master_key.public_key());
 
-    // Initialize the index manager (load or create default)
     index_manager_impl
         .load_or_initialize(&master_addr, &master_key)
         .await
@@ -74,8 +67,6 @@ async fn setup_data_test_components() -> (
         master_addr,
     )
 }
-
-// --- Chunking Unit Tests ---
 
 #[test]
 fn test_chunking_basic() {
@@ -113,7 +104,7 @@ fn test_chunking_empty_data() {
     let data = vec![];
     let chunk_size = 10;
     let chunks = chunk_data(&data, chunk_size).unwrap();
-    assert_eq!(chunks.len(), 0); // Should be 0 chunks for empty data
+    assert_eq!(chunks.len(), 0);
 }
 
 #[test]
@@ -152,7 +143,7 @@ fn test_reassemble_empty() {
 #[test]
 fn test_reassemble_size_mismatch_too_small() {
     let chunks = vec![Some(vec![1, 2]), Some(vec![3])];
-    let expected_size = 4; // Expecting more data
+    let expected_size = 4;
     let result = reassemble_data(chunks, expected_size);
     assert!(result.is_err());
     match result.err().unwrap() {
@@ -166,7 +157,7 @@ fn test_reassemble_size_mismatch_too_small() {
 #[test]
 fn test_reassemble_size_mismatch_too_large() {
     let chunks = vec![Some(vec![1, 2]), Some(vec![3, 4, 5])];
-    let expected_size = 3; // Expecting less data
+    let expected_size = 3;
     let result = reassemble_data(chunks, expected_size);
     assert!(result.is_err());
     match result.err().unwrap() {
@@ -189,8 +180,6 @@ fn test_reassemble_missing_chunk() {
     }
 }
 
-// --- Integration Tests for DataManager ---
-
 #[tokio::test]
 async fn test_store_very_large_data_multi_pad() {
     let (
@@ -204,11 +193,10 @@ async fn test_store_very_large_data_multi_pad() {
     ) = setup_data_test_components().await;
 
     let key = "very_large_data_key".to_string();
-    // Create data larger than 3 pads (16 MiB / ~4 MiB per pad = 4 pads)
-    let data_size = 16 * 1024 * 1024;
-    let data = vec![1u8; data_size]; // Use a non-zero byte for content
 
-    // Store
+    let data_size = 16 * 1024 * 1024;
+    let data = vec![1u8; data_size];
+
     let store_result = data_manager.store(key.clone(), &data, None).await;
     assert!(
         store_result.is_ok(),
@@ -216,7 +204,6 @@ async fn test_store_very_large_data_multi_pad() {
         store_result.err()
     );
 
-    // Verify index has exactly 4 pads
     let key_info_res = index_manager.get_key_info(&key).await;
     assert!(
         key_info_res.is_ok(),
@@ -229,7 +216,7 @@ async fn test_store_very_large_data_multi_pad() {
         "Key info not found after store (very large)"
     );
     let key_info = key_info_opt.unwrap();
-    let expected_pads = 5; // 16MiB / (~4MiB - 512 bytes) requires 5 pads
+    let expected_pads = 5;
     assert_eq!(
         key_info.pads.len(),
         expected_pads,
@@ -239,7 +226,6 @@ async fn test_store_very_large_data_multi_pad() {
     );
     assert_eq!(key_info.data_size, data.len());
 
-    // Fetch
     let fetch_result = data_manager.fetch(&key, None).await;
     assert!(
         fetch_result.is_ok(),
@@ -252,7 +238,6 @@ async fn test_store_very_large_data_multi_pad() {
         "Fetched very large data mismatch"
     );
 
-    // Remove
     let remove_result = data_manager.remove(&key).await;
     assert!(
         remove_result.is_ok(),
@@ -260,7 +245,6 @@ async fn test_store_very_large_data_multi_pad() {
         remove_result.err()
     );
 
-    // Verify removed from index
     let key_info_after_remove_res = index_manager.get_key_info(&key).await;
     assert!(
         key_info_after_remove_res.is_ok(),

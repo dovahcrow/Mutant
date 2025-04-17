@@ -1,6 +1,6 @@
 use humansize::{BINARY, format_size};
 use log::{debug, info};
-// Use new top-level re-export
+
 use mutant_lib::MutAnt;
 use std::process::ExitCode;
 
@@ -36,11 +36,10 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
                         let key_display = if detail.is_finished {
                             detail.key.clone()
                         } else {
-                            // Display percentage if available
                             if let Some(percentage) = detail.completion_percentage {
                                 format!("*{} ({:.1}%)", detail.key, percentage)
                             } else {
-                                format!("*{}", detail.key) // Fallback if no percentage
+                                format!("*{}", detail.key)
                             }
                         };
                         println!(
@@ -61,24 +60,23 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
         }
     } else {
         info!("Fetching key details (for status markers)...");
-        // Fetch details even for short list to show status markers (* or %)
+
         match mutant.list_key_details().await {
             Ok(details) => {
                 if details.is_empty() {
                     println!("No keys stored.");
                 } else {
                     let mut details = details;
-                    // Sort by key
+
                     details.sort_by(|a, b| a.key.cmp(&b.key));
                     for detail in details {
                         if detail.is_finished {
                             println!("{}", detail.key);
                         } else {
-                            // Display percentage if available
                             if let Some(percentage) = detail.completion_percentage {
                                 println!("*{} ({:.1}%)", detail.key, percentage);
                             } else {
-                                println!("*{}", detail.key); // Fallback if no percentage
+                                println!("*{}", detail.key);
                             }
                         }
                     }

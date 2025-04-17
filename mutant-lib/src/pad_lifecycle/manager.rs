@@ -22,15 +22,8 @@ use std::sync::Arc;
 use tokio::task::JoinSet;
 use tokio::time::{interval, Duration};
 
-/// Trait defining the interface for managing the lifecycle of scratchpads,
-/// including acquisition, release, verification, import, and index caching.
 #[async_trait]
 pub trait PadLifecycleManager: Send + Sync {
-    /// Initializes the index state, trying the local cache first, then loading from the
-    /// IndexManager's persistence layer.
-    /// Returns Ok(true) if the index was loaded successfully (from cache or remote)
-    /// Returns Ok(false) if the index was not found remotely and a default was initialized (prompt needed).
-    /// Returns Err if any other error occurs during loading.
     async fn initialize_index(
         &self,
         master_index_address: &ScratchpadAddress,
@@ -38,40 +31,31 @@ pub trait PadLifecycleManager: Send + Sync {
         network_choice: NetworkChoice,
     ) -> Result<bool, PadLifecycleError>;
 
-    /// Saves the current in-memory index state (obtained from IndexManager) to the local cache.
     async fn save_index_cache(
         &self,
         network_choice: NetworkChoice,
     ) -> Result<(), PadLifecycleError>;
 
-    /// Acquires a specified number of pads, indicating their origin and reporting progress.
     async fn acquire_pads(
         &self,
         count: usize,
         _callback: &mut Option<PutCallback>,
     ) -> Result<Vec<(ScratchpadAddress, SecretKey, PadOrigin)>, PadLifecycleError>;
 
-    /// Verifies pads in the pending list, updates the index, and saves the result ONLY to the local cache.
     async fn purge(
         &self,
         callback: Option<PurgeCallback>,
         network_choice: NetworkChoice,
     ) -> Result<(), PadLifecycleError>;
 
-    /// Imports an external pad using its private key hex.
     async fn import_external_pad(&self, private_key_hex: &str) -> Result<(), PadLifecycleError>;
 
-    /// Reserves multiple new scratchpads concurrently, saves the index incrementally,
-    /// and provides progress updates via a callback.
-    /// Returns the number of pads successfully reserved and saved.
     async fn reserve_pads(
         &self,
         count: usize,
         callback: Option<ReserveCallback>,
     ) -> Result<usize, PadLifecycleError>;
 }
-
-// --- Implementation ---
 
 pub struct DefaultPadLifecycleManager {
     index_manager: Arc<dyn IndexManager>,
@@ -96,18 +80,11 @@ impl DefaultPadLifecycleManager {
         &self,
     ) -> Result<(ScratchpadAddress, SecretKey), PadLifecycleError> {
         debug!("Generating a new pad...");
-        // Generate new keypair
+
         let secret_key = SecretKey::random();
         let public_key = secret_key.public_key();
         let address = ScratchpadAddress::new(public_key);
-        // let key_bytes = secret_key.to_bytes().to_vec(); // Key bytes no longer needed here
 
-        // Pad is no longer added to pending here. It will be added to KeyInfo by the caller (store_op)
-        // with status Generated.
-        // self.index_manager
-        //     .add_pending_pads(vec![(address, key_bytes)])
-        //     .await?;
-        // debug!("Generated new pad {}, it will be associated with a key shortly.", address);
         debug!("Generated new pad {}. Returning address and key.", address);
 
         Ok((address, secret_key))
@@ -123,43 +100,39 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         network_choice: NetworkChoice,
     ) -> Result<bool, PadLifecycleError> {
         info!("PadLifecycleManager: Initializing index state...");
-        // 1. Try reading from cache
+
         match read_cached_index(network_choice).await {
             Ok(Some(cached_index)) => {
                 info!("Index successfully loaded from local cache.");
-                // Update in-memory state with cached version
+
                 self.index_manager.update_index(cached_index).await?;
-                Ok(true) // Index loaded successfully
+                Ok(true)
             }
             Ok(None) => {
                 info!("Local cache miss. Attempting load via IndexManager...");
-                // 2. Cache miss, try loading via IndexManager (which handles remote load/default init)
+
                 match self
                     .index_manager
                     .load_or_initialize(master_index_address, master_index_key)
                     .await
                 {
                     Ok(_) => {
-                        // load_or_initialize succeeded. Now check if it actually loaded something or used default.
-                        // We can infer this by checking if the index is still default (e.g., empty index map).
-                        // A more robust way might be for load_or_initialize to return status.
-                        // Let's check if the index map is empty.
                         let index_copy = self.index_manager.get_index_copy().await?;
                         if index_copy.index.is_empty()
                             && index_copy.free_pads.is_empty()
                             && index_copy.pending_verification_pads.is_empty()
                         {
                             info!("IndexManager initialized a default index (not found remotely).");
-                            // Save this default state to cache immediately? Yes, seems reasonable.
+
                             self.save_index_cache(network_choice).await?;
-                            Ok(false) // Indicate prompt needed for remote creation
+                            Ok(false)
                         } else {
                             info!(
                                 "Index successfully loaded via IndexManager (likely from remote)."
                             );
-                            // Save the newly loaded index to cache
+
                             self.save_index_cache(network_choice).await?;
-                            Ok(true) // Index loaded successfully
+                            Ok(true)
                         }
                     }
                     Err(e) => {
@@ -170,7 +143,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
             }
             Err(e) => {
                 error!("Failed to read local cache: {}", e);
-                // Proceed to load via IndexManager even if cache read fails? Yes.
+
                 info!("Cache read failed. Attempting load via IndexManager...");
                 match self
                     .index_manager
@@ -184,7 +157,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
                             && index_copy.pending_verification_pads.is_empty()
                         {
                             info!("IndexManager initialized a default index (not found remotely).");
-                            // Attempt cache save despite earlier read error
+
                             if let Err(cache_err) = self.save_index_cache(network_choice).await {
                                 warn!("Failed to save default index to cache after initial read error: {}", cache_err);
                             }
@@ -201,7 +174,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
                     }
                     Err(load_err) => {
                         error!("Failed to load or initialize index via IndexManager after cache read error: {}", load_err);
-                        Err(PadLifecycleError::Index(load_err)) // Return the load error
+                        Err(PadLifecycleError::Index(load_err))
                     }
                 }
             }
@@ -227,19 +200,12 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         for i in 0..count {
             let pad_result = match acquire_free_pad(self.index_manager.as_ref()).await {
                 Ok(pad_tuple) => {
-                    // pad_tuple is (address, key, counter)
-                    // Pad came from the free pool
                     let (address, key, initial_counter) = pad_tuple;
-                    Ok((
-                        address,
-                        key,
-                        PadOrigin::FreePool { initial_counter }, // Construct correct origin
-                    ))
+                    Ok((address, key, PadOrigin::FreePool { initial_counter }))
                 }
                 Err(PadLifecycleError::PadAcquisitionFailed(msg))
                     if msg == "No free pads available in the index" =>
                 {
-                    // No free pads, generate a new one
                     debug!(
                         "No free pads available, generating new pad ({} out of {} needed)...",
                         i + 1,
@@ -247,63 +213,32 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
                     );
                     match self.generate_and_add_new_pad().await {
                         Ok(new_pad) => Ok((new_pad.0, new_pad.1, PadOrigin::Generated)),
-                        Err(e) => Err(e), // Propagate generation error
+                        Err(e) => Err(e),
                     }
                 }
-                Err(e) => {
-                    // Other error from acquire_free_pad, propagate it
-                    Err(e)
-                }
+                Err(e) => Err(e),
             };
 
             match pad_result {
                 Ok(acquired_pad_tuple) => {
                     acquired_pads.push(acquired_pad_tuple);
-                    // REMOVED: PutEvent::PadReserved emission. This will be handled by the caller
-                    // after successful network operation for the pad.
-                    /*
-                    if !invoke_put_callback(callback, PutEvent::PadReserved { count: 1 })
-                        .await
-                        // Map the top-level Error to PadLifecycleError::InternalError
-                        .map_err(|e| {
-                            PadLifecycleError::InternalError(format!(
-                                "Put callback failed during pad acquisition: {}",
-                                e
-                            ))
-                        })?
-                    {
-                        warn!("Pad acquisition cancelled by callback.");
-                        // If cancelled, we need to decide how to handle partially acquired pads.
-                        // Currently, the acquired pads are just dropped here. Their state
-                        // (if taken from free list) might be inconsistent if the operation is cancelled.
-                        // If generated, they just don't get added to the index.
-                        // Let's return OperationCancelled. The caller (store_op) saves the index
-                        // state before starting writes, so cancellation here is relatively clean.
-                        return Err(PadLifecycleError::OperationCancelled);
-                    }
-                    */
                 }
                 Err(e) => {
                     error!("Failed to acquire pad {} out of {}: {}", i + 1, count, e);
-                    // Return the error, caller handles partial state (which is now stored in index)
+
                     return Err(e);
                 }
             }
         }
-        // Sanity check
+
         if acquired_pads.len() != count {
             warn!("Acquire pads mismatch: requested {}, got {}. This might indicate an unexpected issue.", count, acquired_pads.len());
-            // This might happen if cancelled, but we return Err(OperationCancelled) above.
-            // If it happens otherwise, it's an internal issue.
+
             return Err(PadLifecycleError::InternalError(
                 "Acquired pad count mismatch".to_string(),
             ));
         }
         debug!("Successfully acquired {} pads.", acquired_pads.len());
-
-        // --- Send aggregated PadReserved event --- Moved from inside the loop
-        // REMOVED - Event is now sent inside the loop, and that is also removed
-        // --- End aggregated event ---
 
         Ok(acquired_pads)
     }
@@ -315,47 +250,35 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
     ) -> Result<(), PadLifecycleError> {
         info!("PadLifecycleManager: Starting purge operation...");
 
-        // 1. Take all pads from the pending list
         let pads_to_verify = self.index_manager.take_pending_pads().await?;
         let initial_count = pads_to_verify.len();
 
         if initial_count == 0 {
             info!("Purge: No pads in pending list to verify.");
-            // Callback handled within verify_pads_concurrently
         } else {
             info!("Purge: Verifying {} pads...", initial_count);
         }
 
-        // 2. Verify pads concurrently
-        let (verified_pads, not_found_addresses, retry_pads) = verify_pads_concurrently(
-            Arc::clone(&self.network_adapter),
-            pads_to_verify, // Pass the taken pads
-            callback,
-        )
-        .await?;
+        let (verified_pads, not_found_addresses, retry_pads) =
+            verify_pads_concurrently(Arc::clone(&self.network_adapter), pads_to_verify, callback)
+                .await?;
 
-        // 3. Update index manager: Add verified pads to the free list
         info!(
             "Purge results: {} verified (added to free list), {} not found (discarded), {} errors (returned to pending list).",
             verified_pads.len(),
-            not_found_addresses.len(), // Use length of not_found_addresses
-            retry_pads.len() // Use length of retry_pads
+            not_found_addresses.len(), 
+            retry_pads.len() 
         );
         if !verified_pads.is_empty() {
             self.index_manager.add_free_pads(verified_pads).await?;
             debug!("Index lists updated with verification results (added verified to free list).");
         }
 
-        // 4. Add pads with errors back to the pending list
         if !retry_pads.is_empty() {
-            self.index_manager.add_pending_pads(retry_pads).await?; // Assuming add_pending_pads exists
+            self.index_manager.add_pending_pads(retry_pads).await?;
             debug!("Index lists updated with verification results (added retry pads back to pending list).");
         }
 
-        // Note: Not Found pads are implicitly removed because we called take_pending_pads earlier
-        // and they are not added back to free or pending.
-
-        // 5. Save the updated index ONLY to local cache
         self.save_index_cache(network_choice).await?;
         info!("Purge complete. Updated index saved to local cache.");
 
@@ -365,10 +288,6 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
     async fn import_external_pad(&self, private_key_hex: &str) -> Result<(), PadLifecycleError> {
         info!("PadLifecycleManager: Importing external pad...");
         import::import_pad(self.index_manager.as_ref(), private_key_hex).await
-        // Note: This doesn't automatically save the index state change. Assumed handled later by caller if needed.
-        // However, the original import *did* save. Let's add a save here for consistency.
-        // This requires getting the master index address/key somehow. Add to trait? No.
-        // Let's make the caller responsible for saving after import.
     }
 
     async fn reserve_pads(
@@ -385,8 +304,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
             return Ok(0);
         }
 
-        // --- Helper for invoking callback ---
-        let network_choice = self.network_adapter.get_network_choice(); // Get network choice for save_index_cache
+        let network_choice = self.network_adapter.get_network_choice();
         let maybe_callback = callback.map(Arc::new);
         let invoke =
             |event: ReserveEvent,
@@ -400,26 +318,22 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
                                 Ok(true) => Ok(true),
                                 Ok(false) => {
                                     warn!("Reserve operation cancelled by callback.");
-                                    // Map Error::CancelledByCallback to PadLifecycleError
+
                                     Err(PadLifecycleError::InternalError(
                                         "Cancelled by callback".to_string(),
                                     ))
                                 }
-                                Err(e) => {
-                                    // Map Error::CallbackFailed to PadLifecycleError
-                                    Err(PadLifecycleError::InternalError(format!(
-                                        "Callback failed: {}",
-                                        e
-                                    )))
-                                }
+                                Err(e) => Err(PadLifecycleError::InternalError(format!(
+                                    "Callback failed: {}",
+                                    e
+                                ))),
                             }
                         })
                     }
-                    None => Box::pin(async { Ok(true) }), // No callback, always continue
+                    None => Box::pin(async { Ok(true) }),
                 }
             };
 
-        // --- Start Event ---
         invoke(
             ReserveEvent::Starting {
                 total_requested: count,
@@ -433,17 +347,16 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         let mut failed_creations = 0;
 
         for i in 0..count {
-            // Clone Arcs for the task (accessing fields of self)
             let index_manager = Arc::clone(&self.index_manager);
-            let storage_manager = Arc::clone(&self.storage_manager); // Clone storage manager
+            let storage_manager = Arc::clone(&self.storage_manager);
 
             join_set.spawn(async move {
                 trace!("Reserve task {}: Generating key and address", i);
-                let secret_key = SecretKey::random(); // Use random()
+                let secret_key = SecretKey::random(); 
                 let address = ScratchpadAddress::new(secret_key.public_key());
                 trace!("Reserve task {}: Reserving {} on network via write_pad_data", i, address);
 
-                // 1. Reserve pad on network using StorageManager::write_pad_data
+                
                 match storage_manager
                     .write_pad_data(&secret_key, &[0u8], &PadStatus::Generated)
                     .await
@@ -453,31 +366,31 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
                              warn!("write_pad_data returned address {} but expected {}", created_address, address);
                          }
                          trace!("Reserve task {}: Network reservation successful for {}", i, address);
-                        // 2. Add pad directly to IndexManager's free list
+                        
                         let key_bytes = secret_key.to_bytes().to_vec();
                         match index_manager
-                            .add_free_pad(address.clone(), key_bytes) // Use add_free_pad
+                            .add_free_pad(address.clone(), key_bytes) 
                             .await {
                                 Ok(_) => {
                                     trace!("Reserve task {}: Added {} to index free list successfully", i, address);
-                                    Ok(address) // Return address on full success
+                                    Ok(address) 
                                 },
                                 Err(e) => {
                                     error!(
                                         "Reserve task {}: Failed to add pad {} to index free list after network success: {}",
                                         i, address, e
                                     );
-                                     // Map IndexError to PadLifecycleError
+                                     
                                      Err(PadLifecycleError::Index(e))
                                 }
                             }
                     },
                     Err(e) => {
                         error!("Reserve task {}: Failed network reservation (write_pad_data) for {}: {}", i, address, e);
-                         // Map StorageError (from write_pad_data) to PadLifecycleError
-                         // Assuming StorageError has a suitable From impl or mapping
-                         // If not, we need to adjust error handling.
-                         // Let's assume StorageError maps to Network for now, needs verification.
+                         
+                         
+                         
+                         
                          Err(PadLifecycleError::Network(NetworkError::InternalError(format!(
                              "write_pad_data failed for {}: {}",
                              address, e
@@ -487,7 +400,6 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
             });
         }
 
-        // --- Process Results ---
         let mut ticker = interval(Duration::from_millis(100));
 
         while !join_set.is_empty() {
@@ -495,13 +407,13 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
                  Some(result) = join_set.join_next() => {
                     match result {
                         Ok(Ok(reserved_address)) => {
-                             // Task succeeded, now save cache using self.save_index_cache
+
                              trace!("Task succeeded for {}. Saving index cache...", reserved_address);
-                             match self.save_index_cache(network_choice).await { // Call internal save_index_cache
+                             match self.save_index_cache(network_choice).await {
                                  Ok(_) => {
                                      successful_creations += 1;
                                      trace!("Index cache saved successfully after reserving {}", reserved_address);
-                                     // Invoke callback *after* successful save
+
                                      invoke(ReserveEvent::PadReserved { address: reserved_address.clone() }, &maybe_callback).await?;
                                      invoke(ReserveEvent::SavingIndex { reserved_count: successful_creations }, &maybe_callback).await?;
                                  }
@@ -525,7 +437,6 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
             }
         }
 
-        // --- Complete Event ---
         info!(
             "Pad reservation process complete: {} succeeded, {} failed",
             successful_creations, failed_creations

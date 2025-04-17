@@ -1,9 +1,9 @@
 use dialoguer::Confirm;
 use indicatif::MultiProgress;
-// Use the new top-level re-exports
+
 use crate::callbacks::progress::StyledProgressBar;
 use mutant_lib::{Error as LibError, InitCallback, InitProgressEvent};
-use std::sync::Arc; // Use std::sync::Mutex for non-async guards
+use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
 pub fn create_init_callback(
@@ -27,7 +27,7 @@ pub fn create_init_callback(
                         let confirmation = Confirm::new()
                             .with_prompt("No local cache found, and no remote index exists. Create remote index now?")
                             .interact()
-                            // Map dialoguer error to a suitable LibError variant
+                            
                             .map_err(|e| LibError::Internal(format!("Dialoguer interaction failed: {}", e)))
                         ?;
                         Ok(Some(confirmation))
@@ -35,7 +35,6 @@ pub fn create_init_callback(
                     _ => Ok(None),
                 }
             } else {
-                // Lock the TokioMutex asynchronously
                 let mut pb_guard = pb_arc.lock().await;
 
                 let result = match event {
@@ -89,7 +88,7 @@ pub fn create_init_callback(
                             Confirm::new()
                                 .with_prompt("No local cache found, and no remote index exists. Create remote index now?")
                                 .interact()
-                                // Map dialoguer error to a suitable LibError variant
+                                
                                 .map_err(|e| LibError::Internal(format!("Dialoguer interaction failed: {}", e)))
                         })?;
                         Ok(Some(confirmation))

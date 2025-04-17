@@ -2,8 +2,8 @@ use crate::callbacks::StyledProgressBar;
 use crate::callbacks::get::create_get_callback;
 use indicatif::MultiProgress;
 use log::debug;
-// Use new top-level re-exports
-use mutant_lib::{Error as LibError, MutAnt, data::DataError}; // Import DataError for matching
+
+use mutant_lib::{Error as LibError, MutAnt, data::DataError};
 use std::io::{self, Write};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -30,16 +30,14 @@ pub async fn handle_get(
             }
         }
         Err(e) => {
-            // Update error matching for the new Error structure
             let error_message = match e {
-                // Check for the specific DataError variants propagated through LibError::Data
                 LibError::Data(DataError::KeyNotFound(k)) => {
                     format!("Error: Key '{}' not found.", k)
                 }
                 LibError::Data(DataError::InternalError(msg)) if msg.contains("incomplete") => {
-                    format!("Cannot fetch key '{}': {}", key, msg) // Use the message from the error
+                    format!("Cannot fetch key '{}': {}", key, msg)
                 }
-                // Handle other library errors
+
                 _ => format!("Error getting data for key '{}': {}", key, e),
             };
 

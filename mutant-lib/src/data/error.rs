@@ -15,22 +15,22 @@ pub enum DataError {
     InsufficientFreePads(String),
 
     #[error("Failed to update data: {0}")]
-    DataUpdateError(String), // Specific errors during update logic
+    DataUpdateError(String),
 
     #[error("Key not found for operation: {0}")]
-    KeyNotFound(String), // If an operation requires a key that doesn't exist
+    KeyNotFound(String),
 
     #[error("Key already exists: {0}. Use --force to overwrite.")]
-    KeyAlreadyExists(String), // Attempted to store a key that already exists without force
+    KeyAlreadyExists(String),
 
     #[error("Index layer error during data operation: {0}")]
-    Index(#[from] IndexError), // Propagate index errors
+    Index(#[from] IndexError),
 
     #[error("Pad lifecycle layer error during data operation: {0}")]
-    PadLifecycle(#[from] PadLifecycleError), // Propagate lifecycle errors
+    PadLifecycle(#[from] PadLifecycleError),
 
     #[error("Storage layer error during data operation: {0}")]
-    Storage(#[from] StorageError), // Propagate storage errors
+    Storage(#[from] StorageError),
 
     #[error("Operation cancelled by callback")]
     OperationCancelled,

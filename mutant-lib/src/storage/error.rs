@@ -7,16 +7,14 @@ pub enum StorageError {
     PadIOError(String),
 
     #[error("Encryption operation failed: {0}")]
-    EncryptionError(String), // Placeholder if encryption is added
+    EncryptionError(String),
 
     #[error("Decryption operation failed: {0}")]
-    DecryptionError(String), // Placeholder if encryption is added
+    DecryptionError(String),
 
     #[error("Network layer error: {0}")]
-    Network(#[from] NetworkError), // Propagate network errors
+    Network(#[from] NetworkError),
 
     #[error("Data transformation error: {0}")]
-    TransformationError(String), // For checksums or other transformations
-
-                                 // Add other specific storage-related errors as needed
+    TransformationError(String),
 }
