@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhanced store confirmation logic to verify decrypted data size matches expected size, improving robustness against stale reads after pad reuse.
 
 ### Changed
+- Changed `rm` key logic: Only `Generated` pads go to pending verification; `Allocated`, `Written`, and `Confirmed` pads go directly to the free pool (counters fetched automatically).
 - Reduced default usable scratchpad size (`DEFAULT_SCRATCHPAD_SIZE`) to leave a 4KB margin instead of 512B, as an experiment to mitigate potential issues with nearly full pads on mainnet.
 - Display completion percentage for incomplete keys in `ls` output (e.g., `*mykey (50.0%)`).
 - Added detailed statistics section for incomplete uploads in `stats` output.
@@ -67,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved chunking tests from inline module to `data::integration_tests`.
 - Added integration tests for `DataManager` (`store`, `fetch`, `remove`), including checks for non-existent keys and multi-chunk data.
 - Added specific integration test (`test_store_very_large_data_multi_pad`) for storing 16MiB data, verifying correct multi-pad chunking (5 pads).
+- Changed `rm` key logic: Only `Generated` pads go to pending verification; `Allocated`, `Written`, and `Confirmed` pads go directly to the free pool (counters fetched automatically).
 
 ### Changed
 - **Refactor (mutant-lib):** Refactored `data::ops::store::store_op` by:
@@ -83,6 +85,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - "Creating pads...": Increments on `ChunkWritten` (network create/update success).
   - "Confirming pads...": Increments on `ChunkConfirmed` (network check success).
 - Modified the `purge` command logic to only discard pending pads if the network explicitly returns a "Record Not Found" status. Pads encountering other network errors during verification are now returned to the pending list for future retries.
-- Store confirmation (`put`) now verifies by fetching and attempting decryption, not just checking existence.
-- Confirmation for updated pads (from free pool) now verifies that the scratchpad counter has incremented, retrying several times with delays to allow for network propagation.
-- Replaced `
+- Store confirmation (`

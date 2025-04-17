@@ -233,31 +233,29 @@ impl IndexManager for DefaultIndexManager {
         let removed_info = query::remove_key_info_internal(&mut *state_guard, key);
 
         if let Some(ref info) = removed_info {
-            let mut pads_to_free = Vec::new();
+            // List for pads to be added to free pool (counter will be fetched by add_free_pads)
+            let mut pads_to_add_free = Vec::new();
             let mut pads_to_verify = Vec::new();
 
             for pad_info in &info.pads {
                 if let Some(pad_key) = info.pad_keys.get(&pad_info.address).cloned() {
                     match pad_info.status {
-                        PadStatus::Confirmed => {
+                        // Allocated, Written, Confirmed -> Move to free pool
+                        PadStatus::Allocated | PadStatus::Written | PadStatus::Confirmed => {
                             trace!(
-                                "Pad {} for removed key '{}' is Confirmed. Releasing to free pool.",
+                                "Pad {} for removed key '{}' is {:?}. Releasing to free pool.",
                                 pad_info.address,
-                                key
+                                key,
+                                pad_info.status
                             );
-                            // Determine counter based on origin
-                            let counter = match pad_info.origin {
-                                PadOrigin::FreePool { initial_counter } => initial_counter,
-                                PadOrigin::Generated => 0, // Assume 0 if generated and somehow confirmed?
-                            };
-                            pads_to_free.push((pad_info.address, pad_key, counter));
+                            pads_to_add_free.push((pad_info.address, pad_key));
                         }
-                        PadStatus::Generated | PadStatus::Allocated | PadStatus::Written => {
+                        // Generated -> Needs verification
+                        PadStatus::Generated => {
                             trace!(
                                 "Pad {} for removed key '{}' is {:?}. Adding to pending verification.",
                                 pad_info.address, key, pad_info.status
                             );
-                            // Pending verification only needs address and key
                             pads_to_verify.push((pad_info.address, pad_key));
                         }
                     }
@@ -270,15 +268,20 @@ impl IndexManager for DefaultIndexManager {
                 }
             }
 
-            if !pads_to_free.is_empty() {
+            // Add pads to free list (will fetch counters)
+            if !pads_to_add_free.is_empty() {
+                drop(state_guard); // Release lock before async call
                 debug!(
-                    "Key '{}': Adding {} pads with counters to the free list.",
+                    "Key '{}': Adding {} pads to the free list (will fetch counters).",
                     key,
-                    pads_to_free.len()
+                    pads_to_add_free.len()
                 );
-                // Use the modified internal function that accepts counters
-                query::add_free_pads_with_counters_internal(&mut *state_guard, pads_to_free)?;
+                // Call the public method which handles fetching counters
+                self.add_free_pads(pads_to_add_free).await?;
+                state_guard = self.state.lock().await; // Reacquire lock
             }
+
+            // Add pads to verification list
             if !pads_to_verify.is_empty() {
                 debug!(
                     "Key '{}': Adding {} pads to the pending verification list.",
