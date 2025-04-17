@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Store operation confirmation was insufficient, potentially marking data as confirmed even if it was corrupted or undecryptable, or if an update didn't actually increment the counter.
 - Confirmation could fail prematurely if network propagation delayed the visibility of the updated scratchpad counter.
 - Fixed `rm` command to avoid network fetch for pad counter; it now uses the pad's origin initial counter when moving to the free list.
+- **Workaround:** Avoid calling `scratchpad_update` in `put_raw` due to suspected SDK bug causing data truncation on retrieval. Assume existing scratchpad is correct if `create` fails with "already exists". This may lead to stale data if the intent was to overwrite.
 
 ### Removed
 - Removed redundant pad release functions (`pad_lifecycle::pool::release_pads_to_free`, `pad_lifecycle::manager::release_pads`) as the logic is now handled within `IndexManager` and `purge`.
