@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Added basic integration tests for `PadLifecycleManager::reserve_pads` covering success and failure scenarios.
 - Added integration tests for `PadLifecycleManager::purge` covering existing, non-existent, mixed, and empty pending lists.
+- Added comprehensive architecture & implementation documentation at docs/mutant_lib/architecture.md.
 
 ### Fixed
 - **Fix:** Corrected imports and type mismatches in index integration tests (`mutant-lib/src/index/integration_tests.rs`) to allow them to compile.
