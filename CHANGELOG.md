@@ -8,45 +8,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Added basic integration tests for `PadLifecycleManager::reserve_pads` covering success and failure scenarios.
-- Added integration tests for `PadLifecycleManager::purge` covering existing, non-existent, mixed, and empty pending lists.
-- Added comprehensive architecture & implementation documentation at docs/mutant_lib/architecture.md.
+- Added comprehensive architecture & implementation documentation (`docs/mutant_lib/architecture.md`).
+- Added crate-level documentation to `mutant-lib/src/lib.rs`.
+- Added retry logic for transient errors (`NotEnoughCopies`, `Timeout`) during the initial write phase of `put`.
+- Added integration tests for `DataManager` (store, fetch, remove) and chunking.
+- Added integration tests for `PadLifecycleManager::reserve_pads` and `PadLifecycleManager::purge`.
+- Added integration tests for `StorageManager` and `NetworkAdapter`.
+- Introduced `PadStatus::Allocated` to explicitly track network existence of scratchpads before write confirmation.
+- Introduced `NetworkError::InconsistentState` variant.
+- Added retry loop to store confirmation counter check.
+- Implemented counter check for store confirmation.
+- Added `mutant reserve` command to pre-allocate empty scratchpads.
+- Added progress bars for `reserve` command with incremental index saving.
+- Added abandoned pad to pending list on `NotEnoughCopies` during `put`.
+- Added display of incomplete upload details in `ls` and `stats` output.
+- Implemented resumable `put` operations via index cache.
+- Implemented lazy network initialization.
 
 ### Fixed
-- **Fix:** Corrected imports and type mismatches in index integration tests (`mutant-lib/src/index/integration_tests.rs`) to allow them to compile.
-- Enhanced store confirmation logic to verify decrypted data size matches expected size, improving robustness against stale reads after pad reuse.
-- Treat `NotEnoughCopies` network error during store confirmation fetch as a retriable error instead of immediate failure, allowing the confirmation loop to continue.
-- Prevent `mutant rm` from performing unnecessary network checks for pads in `Allocated`, `Written`, or `Confirmed` states, making the operation local for non-`Generated` pads.
-- Implement retry logic for the initial write attempt (`write_pad_data`) within the `put` operation. Transient network errors (like `NotEnoughCopies`, `Timeout`) during write will now be retried a few times before failing the chunk write.
-- Collapse nested `else` and `if` in `invoke_init_callback` (in `events.rs`) into `else if` to satisfy Clippy's `collapsible_else_if` lint.
-- Remove `.into()` on `StorageError` conversions in `data/ops/store.rs` to satisfy Clippy's `useless_conversion` lint.
-- Replace closure `|e| DataError::Storage(e)` with direct `DataError::Storage` in `data/ops/store.rs` to satisfy Clippy's `redundant_closure` lint.
-- Remove unnecessary `.clone()` on `ScratchpadAddress` in `pad_lifecycle/manager.rs` to satisfy Clippy's `clone_on_copy` lint.
-- Align doc list items in `api/mutant.rs` to satisfy Clippy's `doc_overindented_list_items` lint.
-- Allow dead code for `IndexManager::remove_from_pending` and `NetworkAdapter::wallet` methods to satisfy Clippy's `dead_code` lint.
+- Corrected imports and types in index integration tests.
+- Enhanced store confirmation logic to verify decrypted data size matches expected size.
+- Treat `NotEnoughCopies` network error during store confirmation fetch as a retriable error.
+- Prevent `mutant rm` from performing unnecessary network checks for non-`Generated` pads.
+- Fixed various Clippy lints (`collapsible_else_if`, `useless_conversion`, `redundant_closure`, `clone_on_copy`, `doc_overindented_list_items`, `dead_code`).
+- Corrected chunk size usage in `store_op` and added a 16MiB test.
+- Correctly set `is_new_hint` based on pad origin (FreePool vs. Generated) to avoid unnecessary network calls.
+- **Workaround:** Avoid calling `scratchpad_update` in `put_raw` due to suspected SDK bug causing data truncation.
+- Fixed `rm` to use pad origin initial counter and skip network fetch.
+- Fixed handling of `NotEnoughCopies` error during `put` resume.
+- Fixed `purge` command to only discard pads on `RecordNotFound`, retrying on other errors.
+- Fixed CLI progress bars drawing to `stdout` to avoid interleaving with logs.
+- Fixed initial progress bar value for `reserve` resume.
+- Fixed `put` progress initialization on resume.
+- Fixed timing of `PadReserved` event emission.
+- Fixed `put` progress bar logic and messages.
+- Fixed skipping redundant existence checks in `put_raw` for reused pads.
+- Fixed `put` progress bar timing and phase display.
+- Fixed `rm` to save index cache after removing key.
+- Fixed `store` operation to save index cache after completion.
+- Removed `delete scratchpad` functionality (likely due to issues).
+- Fixed hardcoded devnet key format in CLI.
+- Fixed CLI to adapt to `mutant-lib` v0.2.0 API changes.
+- Fixed first testnet run issues.
 
 ### Changed
-- Changed `rm` key logic: Only `Generated` pads go to pending verification; `Allocated`, `Written`, and `Confirmed` pads go directly to the free pool (counters fetched automatically).
-- Reduced default usable scratchpad size (`DEFAULT_SCRATCHPAD_SIZE`) to leave a 4KB margin instead of 512B, as an experiment to mitigate potential issues with nearly full pads on mainnet.
-- Display completion percentage for incomplete keys in `ls` output (e.g., `*mykey (50.0%)`).
-- Added detailed statistics section for incomplete uploads in `stats` output.
-- Refactored `put` preparation logic into `PadLifecycleManager::prepare_pads_for_store` to handle resume, new uploads, and pad replacement cleanly.
-- Refactored `store_op` to use a combined write/confirm loop managed by `execute_write_confirm_tasks`.
-- Refactored `confirm_pad_write` to be a standalone function.
-- Optimized `put` operation for newly generated pads by skipping unnecessary network existence checks before the initial write.
-- Introduced `PadStatus::Allocated` to explicitly track scratchpads known to exist on the network before data write is confirmed.
-- Restrict public API of `mutant-lib` to expose only core `MutAnt` struct, config, error, events, and necessary types.
+- Restricted public API surface of `mutant-lib`, re-exporting only necessary types.
+- Refactored `rm` key logic: Only `Generated` pads go to pending verification; others go directly to free pool.
+- Reduced default usable scratchpad size margin to 4KB.
+- Refactored `put` preparation logic into `PadLifecycleManager::prepare_pads_for_store`.
+- Refactored `store_op` to use a combined write/confirm loop (`execute_write_confirm_tasks`) and standalone `confirm_pad_write` function.
+- Optimized `put` operation for newly generated pads by skipping unnecessary network existence checks.
+- Refactored `put_raw` to use `PadStatus` to determine create/update network calls instead of create-then-update.
+- Refactored `store_op` logic into preparation and execution phases.
+- Moved data operations logic (`store_op`, `fetch_op`, `remove_op`) into dedicated modules (`data/ops/`).
+- Changed `purge` command to be the sole mechanism for verifying `pending_verification_pads`.
+- Refactored `put` operation in `mutant-lib` to perform chunk writes and network confirmations concurrently.
+- Aligned `reserve` logic with `put`, fixing payment errors.
+- Centralized pad reservation logic in `PadLifecycleManager`.
+- Changed `purge` logic to only discard pads on `RecordNotFound`.
+- **CLI:** Renamed "Reserving pads..." progress message to "Acquiring pads..." during `put`.
+- **CLI:** Refactored `put` progress display to use two bars (Create/Confirm).
 
 ### Removed
-- Removed redundant pad release functions (`pad_lifecycle::pool::release_pads_to_free`, `pad_lifecycle::manager::release_pads`) as the logic is now handled within `IndexManager` and `purge`.
-
-### Testing
-- Moved chunking tests from inline module to `data::integration_tests`.
-- Added integration tests for `DataManager` (`store`, `fetch`, `remove`), including checks for non-existent keys and multi-chunk data.
-
-### Workarounds
-- **Workaround:** Avoid calling `scratchpad_update` in `put_raw` due to suspected SDK bug causing data truncation on retrieval. Assume existing scratchpad is correct if `create` fails with "already exists". This may lead to stale data if the intent was to overwrite.
-- Set `is_new_hint` correctly in `put` preparation based on pad origin (`Generated` vs `FreePool`) to avoid incorrect network calls.
+- Removed unused file (`src/unused.rs`? - commit `32e986ff`).
+- Removed redundant pad release functions (`pad_lifecycle::pool::release_pads_to_free`, `pad_lifecycle::manager::release_pads`).
+- Removed `Mutant::reserve_new_pad` function (centralized in manager).
 
 ### Documentation
 - Updated README.md to reflect workspace structure, latest CLI commands/options, and library API changes.
