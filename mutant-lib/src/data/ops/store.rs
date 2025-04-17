@@ -8,6 +8,7 @@ use crate::index::{IndexManager, PadInfo};
 use crate::pad_lifecycle::PadLifecycleManager;
 use crate::pad_lifecycle::PadOrigin;
 use crate::storage::StorageManager;
+use autonomi::SecretKey;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
 use std::sync::Arc;
@@ -174,6 +175,8 @@ async fn confirm_pad_write(
     network_adapter: Arc<dyn crate::network::NetworkAdapter>,
     user_key: String,
     pad_info: PadInfo,
+    pad_secret_key: SecretKey,
+    expected_chunk_size: usize,
     callback_arc: Arc<Mutex<Option<PutCallback>>>,
 ) -> Result<usize, DataError> {
     // --- Confirmation Retry Loop --- START
@@ -234,7 +237,54 @@ async fn confirm_pad_write(
                     }
                 };
 
+                let mut data_check_passed = false;
                 if counter_check_passed {
+                    // Counter check passed, now decrypt and check data size
+                    match scratchpad.decrypt_data(&pad_secret_key) {
+                        Ok(decrypted_data) => {
+                            if decrypted_data.len() == expected_chunk_size {
+                                trace!(
+                                    "Attempt {}: Data size check passed for pad {}. (Expected {}, Got {})",
+                                    attempt + 1,
+                                    pad_info.address,
+                                    expected_chunk_size,
+                                    decrypted_data.len()
+                                );
+                                data_check_passed = true;
+                            } else {
+                                warn!(
+                                    "Attempt {}: Data size check failed for pad {}. Expected {}, Got {}. Retrying...",
+                                    attempt + 1,
+                                    pad_info.address,
+                                    expected_chunk_size,
+                                    decrypted_data.len()
+                                );
+                                // Store specific error for size mismatch
+                                last_error =
+                                    Some(DataError::InconsistentState(format!(
+                                    "Confirmed data size mismatch for pad {} (Expected {}, Got {})",
+                                    pad_info.address, expected_chunk_size, decrypted_data.len()
+                                )));
+                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                "Attempt {}: Failed to decrypt fetched data for pad {} during confirmation: {}. Retrying...",
+                                attempt + 1,
+                                pad_info.address,
+                                e
+                            );
+                            // Store decryption error
+                            last_error = Some(DataError::InternalError(format!(
+                                "Confirmation decryption failed for {}: {}",
+                                pad_info.address, e
+                            )));
+                        }
+                    }
+                }
+
+                // Proceed only if BOTH checks passed
+                if counter_check_passed && data_check_passed {
                     // Counter check passed (or skipped), proceed to update status
                     match index_manager
                         .update_pad_status(&user_key, &pad_info.address, PadStatus::Confirmed)
@@ -350,6 +400,7 @@ async fn execute_write_confirm_tasks(
         let pad_info_write = task_input.pad_info.clone();
         let current_status = pad_info_write.status.clone();
         let chunk_data = task_input.chunk_data;
+        let expected_chunk_size = chunk_data.len(); // Capture size here
 
         pending_writes += 1;
         write_futures.push(async move {
@@ -358,7 +409,13 @@ async fn execute_write_confirm_tasks(
                 .await
                 .map(|_| ())
                 .map_err(|e| DataError::Storage(e.into()));
-            (pad_info_write, secret_key_write, write_result)
+            // Return the chunk size along with other info
+            (
+                pad_info_write,
+                secret_key_write,
+                expected_chunk_size,
+                write_result,
+            )
         });
     }
 
@@ -373,7 +430,7 @@ async fn execute_write_confirm_tasks(
             biased;
 
             // --- Process Write Task Completion ---
-            Some((completed_pad_info, _completed_secret_key, write_result)) = write_futures.next(), if pending_writes > 0 => {
+            Some((completed_pad_info, completed_secret_key, completed_chunk_size, write_result)) = write_futures.next(), if pending_writes > 0 => {
                 pending_writes -= 1;
                 match write_result {
                     Ok(()) => {
@@ -445,24 +502,28 @@ async fn execute_write_confirm_tasks(
                                 let pad_lifecycle_confirm = Arc::clone(&pad_lifecycle_manager);
                                 let storage_manager_confirm = Arc::clone(&storage_manager);
                                 let network_adapter_confirm = Arc::clone(&network_adapter);
-                                let user_key_confirm = user_key.clone();
-                                let confirm_pad_info = completed_pad_info.clone();
-                                let callback_confirm = Arc::clone(&callback_arc);
+                                let user_key_clone_confirm = user_key.clone();
+                                let callback_arc_clone_confirm = callback_arc.clone();
+                                let pad_info_confirm = completed_pad_info.clone();
+                                let pad_key_confirm = completed_secret_key.clone(); // Use completed_secret_key
+                                let expected_chunk_size_confirm = completed_chunk_size; // Use completed_chunk_size
 
                                 debug!(
                                     "Spawning confirmation task for pad {}",
-                                    confirm_pad_info.address
+                                    pad_info_confirm.address
                                 );
                                 pending_confirms += 1;
-                                confirm_futures.push(tokio::spawn(async move { // Use tokio::spawn
+                                confirm_futures.push(tokio::spawn(async move {
                                     confirm_pad_write(
                                         index_manager_confirm,
                                         pad_lifecycle_confirm,
                                         storage_manager_confirm,
                                         network_adapter_confirm,
-                                        user_key_confirm,
-                                        confirm_pad_info,
-                                        callback_confirm,
+                                        user_key_clone_confirm,
+                                        pad_info_confirm,
+                                        pad_key_confirm,
+                                        expected_chunk_size_confirm, // Use the captured size
+                                        callback_arc_clone_confirm,
                                     )
                                     .await
                                 }));
