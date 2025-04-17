@@ -1,45 +1,66 @@
-//! MutAnt: Distributed storage SDK and CLI for Rust
+//! # MutAnt
 //!
-//! MutAnt provides a robust distributed storage system on top of the Autonomi network.
+//! MutAnt is a private, mutable key-value store built on Autonomi network scratchpads, offering resilient, cost-efficient, and async-first storage.
 //!
-//! Features:
-//! - Chunked storage with configurable pad size
-//! - Automatic pad reservation, write confirmation, and error retries
-//! - Local and remote index caching for fast lookups
-//! - CLI and library APIs for seamless integration
+//! ## Why MutAnt?
+//! Addressing on-chain storage limitations, MutAnt:
+//! - **Splits** large data into scratchpad-sized chunks.
+//! - **Resumes** interrupted transfers automatically.
+//! - **Recycles** freed pads to reduce costs.
+//! - **Caches** index locally for fast lookups and syncs remotely.
+//! - **Adapts** to business logic with pluggable backends.
 //!
-//! Modules:
-//! - `api`: High-level API for storage operations (init, put, get, remove, purge)
-//! - `data`: Low-level data operations and chunk management
-//! - `index`: Master index management and persistence
-//! - `network`: Network adapter for scratchpad create/update/get
-//! - `pad_lifecycle`: Pad acquisition, release, and verification workflow
-//! - `storage`: Storage backend interfaces
+//! ## Key Highlights
 //!
-//! # Getting Started
-//! Add to your `Cargo.toml`:
+//! - **Chunk Management**: Configurable pad sizes with automatic chunking and reassembly.
+//! - **Resumption & Retries**: Transparent retry logic and transfer continuation.
+//! - **Cost Efficiency**: Reuses freed pads to minimize redundant on-chain writes.
+//! - **Flexible Interfaces**: Rust SDK (`mutant-lib`) and CLI tool (`mutant`).
+//! - **Async-First**: Built on `tokio` and `async/await`.
+//! - **Extensible Architecture**: Modular design allows custom network/storage layers.
+//!
+//! ## Quickstart
+//!
+//! Add to `Cargo.toml`:
 //! ```toml
 //! mutant-lib = { path = "../mutant-lib" }
 //! ```
 //!
-//! Basic usage:
 //! ```rust
-//! use mutant_lib::MutAnt;
+//! use mutant_lib::{MutAnt, MutAntConfig};
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
-//!     let private_key = "0x...".to_string();
-//!     let mutant = MutAnt::init(private_key).await?;
-//!     mutant.store("mykey".to_string(), b"hello").await?;
-//!     let data = mutant.fetch("mykey").await?;
-//!     println!("Data: {:?}", data);
+//!     let key_hex = "0xYOUR_PRIVATE_KEY_HEX".to_string();
+//!     let mut ant = MutAnt::init_with_progress(key_hex, MutAntConfig::default(), None).await?;
+//!     ant.store("file1".into(), b"hello").await?;
+//!     let data = ant.fetch("file1").await?;
+//!     println!("Fetched: {}", String::from_utf8_lossy(&data));
 //!     Ok(())
 //! }
 //! ```
 //!
-//! See the `mutant-cli` crate for command-line usage.
-//! For details, refer to the documentation of individual modules.
+//! ## Modules & Architecture
 //!
-//! Contributing and license information can be found in the repository root.
+//! - **api**           : Public `MutAnt` struct and methods.
+//! - **data**          : Core chunking logic and pipelines.
+//! - **index**         : Master index management and persistence.
+//! - **network**       : Autonomi scratchpad client adapter.
+//! - **pad_lifecycle** : Pad reservation, release, verification flows.
+//! - **storage**       : Storage backend abstractions.
+//! - **events**        : Progress event and callback types.
+//! - **error**         : Definitions of core error types.
+//! - **types**         : Configuration and metadata structures.
+//!
+//! ## Resources & Support
+//!
+//! - API docs   : https://docs.rs/mutant_lib
+//! - CLI help   : `mutant --help`
+//! - Repository : https://github.com/Champii/MutAnt
+//! - Issues     : https://github.com/Champii/MutAnt/issues
+//! - Contributing: `CONTRIBUTING.md`
+//!
+//! ## License
+//! Dual-licensed under MIT or Apache-2.0.
 
 /// Provides the main API entry point for interacting with MutAnt.
 mod api;
