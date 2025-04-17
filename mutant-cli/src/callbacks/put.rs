@@ -15,6 +15,7 @@ struct PutCallbackContext {
     total_chunks: Arc<Mutex<usize>>,
 }
 
+#[allow(clippy::type_complexity)]
 pub fn create_put_callback(
     multi_progress: &MultiProgress,
     quiet: bool,

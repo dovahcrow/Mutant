@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Treat `NotEnoughCopies` network error during store confirmation fetch as a retriable error instead of immediate failure, allowing the confirmation loop to continue.
 - Prevent `mutant rm` from performing unnecessary network checks for pads in `Allocated`, `Written`, or `Confirmed` states, making the operation local for non-`Generated` pads.
 - Implement retry logic for the initial write attempt (`write_pad_data`) within the `put` operation. Transient network errors (like `NotEnoughCopies`, `Timeout`) during write will now be retried a few times before failing the chunk write.
+- Collapse nested `else` and `if` in `invoke_init_callback` (in `events.rs`) into `else if` to satisfy Clippy's `collapsible_else_if` lint.
+- Remove `.into()` on `StorageError` conversions in `data/ops/store.rs` to satisfy Clippy's `useless_conversion` lint.
+- Replace closure `|e| DataError::Storage(e)` with direct `DataError::Storage` in `data/ops/store.rs` to satisfy Clippy's `redundant_closure` lint.
+- Remove unnecessary `.clone()` on `ScratchpadAddress` in `pad_lifecycle/manager.rs` to satisfy Clippy's `clone_on_copy` lint.
+- Align doc list items in `api/mutant.rs` to satisfy Clippy's `doc_overindented_list_items` lint.
+- Allow dead code for `IndexManager::remove_from_pending` and `NetworkAdapter::wallet` methods to satisfy Clippy's `dead_code` lint.
 
 ### Changed
 - Changed `rm` key logic: Only `Generated` pads go to pending verification; `Allocated`, `Written`, and `Confirmed` pads go directly to the free pool (counters fetched automatically).

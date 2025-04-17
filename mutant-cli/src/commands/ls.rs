@@ -35,12 +35,10 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
                         let date_str = detail.modified.format("%b %d %H:%M").to_string();
                         let key_display = if detail.is_finished {
                             detail.key.clone()
+                        } else if let Some(percentage) = detail.completion_percentage {
+                            format!("*{} ({:.1}%)", detail.key, percentage)
                         } else {
-                            if let Some(percentage) = detail.completion_percentage {
-                                format!("*{} ({:.1}%)", detail.key, percentage)
-                            } else {
-                                format!("*{}", detail.key)
-                            }
+                            format!("*{}", detail.key)
                         };
                         println!(
                             "{:<width$} {:<12} {}",
@@ -72,12 +70,10 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
                     for detail in details {
                         if detail.is_finished {
                             println!("{}", detail.key);
+                        } else if let Some(percentage) = detail.completion_percentage {
+                            println!("*{} ({:.1}%)", detail.key, percentage);
                         } else {
-                            if let Some(percentage) = detail.completion_percentage {
-                                println!("*{} ({:.1}%)", detail.key, percentage);
-                            } else {
-                                println!("*{}", detail.key);
-                            }
+                            println!("*{}", detail.key);
                         }
                     }
                 }

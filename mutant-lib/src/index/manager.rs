@@ -222,6 +222,7 @@ pub trait IndexManager: Send + Sync {
     /// # Errors
     ///
     /// Returns `IndexError` on internal failures.
+    #[allow(dead_code)]
     async fn remove_from_pending(
         &self,
         address_to_remove: &ScratchpadAddress,
@@ -631,6 +632,7 @@ impl IndexManager for DefaultIndexManager {
         Ok(query::take_pending_pads_internal(&mut state_guard))
     }
 
+    #[allow(dead_code)]
     async fn remove_from_pending(
         &self,
         address_to_remove: &ScratchpadAddress,

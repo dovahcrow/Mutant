@@ -414,7 +414,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
                                      successful_creations += 1;
                                      trace!("Index cache saved successfully after reserving {}", reserved_address);
 
-                                     invoke(ReserveEvent::PadReserved { address: reserved_address.clone() }, &maybe_callback).await?;
+                                     invoke(ReserveEvent::PadReserved { address: reserved_address }, &maybe_callback).await?;
                                      invoke(ReserveEvent::SavingIndex { reserved_count: successful_creations }, &maybe_callback).await?;
                                  }
                                  Err(e) => {

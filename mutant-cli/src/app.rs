@@ -181,31 +181,36 @@ async fn initialize_wallet() -> Result<String, CliError> {
     let config_path = get_config_path()?;
     let mut config = load_config(&config_path)?;
 
-    let wallet_path = loop {
-        if let Some(ref path) = config.wallet_path {
-            if path.exists() {
-                info!("Using wallet from config: {:?}", path);
-                break path.clone();
-            } else {
-                warn!(
-                    "Wallet path from config {:?} does not exist. Rescanning.",
-                    path
-                );
-                config.wallet_path = None;
-            }
+    let wallet_path = if let Some(ref path) = config.wallet_path {
+        if path.exists() {
+            info!("Using wallet from config: {:?}", path);
+            path.clone()
+        } else {
+            warn!(
+                "Wallet path from config {:?} does not exist. Rescanning.",
+                path
+            );
+            config.wallet_path = None;
+            info!("No valid wallet in config, scanning Autonomi wallet directory...");
+            let wallet_dir = get_autonomi_wallet_dir()?;
+            let available_wallets = scan_wallet_dir(&wallet_dir)?;
+            let selected_wallet = prompt_user_for_wallet(&available_wallets)?;
+            info!("Selected wallet: {:?}", selected_wallet);
+            config.wallet_path = Some(selected_wallet.clone());
+            save_config(&config_path, &config)?;
+            info!("Saved selected wallet path to config: {:?}", config_path);
+            selected_wallet
         }
-
+    } else {
         info!("No valid wallet in config, scanning Autonomi wallet directory...");
         let wallet_dir = get_autonomi_wallet_dir()?;
         let available_wallets = scan_wallet_dir(&wallet_dir)?;
-
         let selected_wallet = prompt_user_for_wallet(&available_wallets)?;
         info!("Selected wallet: {:?}", selected_wallet);
-
         config.wallet_path = Some(selected_wallet.clone());
         save_config(&config_path, &config)?;
         info!("Saved selected wallet path to config: {:?}", config_path);
-        break selected_wallet;
+        selected_wallet
     };
 
     let private_key_hex = {

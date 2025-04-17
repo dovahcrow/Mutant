@@ -37,12 +37,9 @@ pub fn create_init_callback(
             } else {
                 let mut pb_guard = pb_arc.lock().await;
 
-                let result = match event {
+                match event {
                     InitProgressEvent::Starting { total_steps } => {
-                        let pb = pb_guard.get_or_insert_with(|| {
-                            let pb = StyledProgressBar::new_for_steps(&multi_progress);
-                            pb
-                        });
+                        let pb = pb_guard.get_or_insert_with(|| StyledProgressBar::new_for_steps(&multi_progress));
                         pb.set_length(total_steps);
                         pb.set_position(0);
                         pb.set_message("Initializing...".to_string());
@@ -93,9 +90,7 @@ pub fn create_init_callback(
                         })?;
                         Ok(Some(confirmation))
                     }
-                };
-
-                result
+                }
             }
         })
     });

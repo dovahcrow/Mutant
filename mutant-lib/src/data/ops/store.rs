@@ -308,14 +308,14 @@ async fn confirm_pad_write(
                         fetch_err
                     );
 
-                    last_error = Some(DataError::Storage(fetch_err.into()));
+                    last_error = Some(DataError::Storage(fetch_err));
                 } else {
                     error!(
                         "Confirmation failed for pad {}: Non-retriable storage error during fetch: {}",
                         pad_info.address, fetch_err
                     );
 
-                    return Err(DataError::Storage(fetch_err.into()));
+                    return Err(DataError::Storage(fetch_err));
                 }
             }
         }
@@ -382,7 +382,7 @@ async fn execute_write_confirm_tasks(
                     .write_pad_data(&secret_key_write, &chunk_data, &current_status)
                     .await
                     .map(|_| ())
-                    .map_err(|e| DataError::Storage(e.into()));
+                    .map_err(DataError::Storage);
 
                 match write_attempt_result {
                     Ok(()) => {

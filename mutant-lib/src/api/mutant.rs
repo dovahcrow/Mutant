@@ -36,7 +36,7 @@ impl MutAnt {
     /// # Arguments
     ///
     /// * `private_key_hex` - The user's private key as a hexadecimal string, used to derive
-    ///                       identity and encryption keys.
+    ///   identity and encryption keys.
     ///
     /// # Errors
     ///
@@ -55,7 +55,7 @@ impl MutAnt {
     /// * `private_key_hex` - The user's private key as a hexadecimal string.
     /// * `config` - The `MutAntConfig` specifying settings like the target network.
     /// * `init_callback` - An optional callback (`InitCallback`) to receive progress updates
-    ///                     and potentially handle interactive prompts during initialization.
+    ///   and potentially handle interactive prompts during initialization.
     ///
     /// # Errors
     ///

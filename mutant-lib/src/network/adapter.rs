@@ -28,6 +28,7 @@ pub trait NetworkAdapter: Send + Sync {
 
     fn get_network_choice(&self) -> NetworkChoice;
 
+    #[allow(dead_code)]
     fn wallet(&self) -> &Wallet;
 }
 
@@ -216,6 +217,7 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
         self.network_choice
     }
 
+    #[allow(dead_code)]
     fn wallet(&self) -> &Wallet {
         &self.wallet
     }

@@ -212,12 +212,10 @@ pub(crate) async fn invoke_init_callback(
             Ok(response) => Ok(response),
             Err(e) => Err(e),
         }
+    } else if matches!(event, InitProgressEvent::PromptCreateRemoteIndex) {
+        Ok(Some(false))
     } else {
-        if matches!(event, InitProgressEvent::PromptCreateRemoteIndex) {
-            Ok(Some(false))
-        } else {
-            Ok(None)
-        }
+        Ok(None)
     }
 }
 
