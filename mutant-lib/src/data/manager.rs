@@ -1,5 +1,6 @@
 use crate::data::error::DataError;
-use crate::data::ops::{self, DataManagerDependencies};
+use crate::data::ops;
+use crate::data::ops::common::DataManagerDependencies;
 use crate::events::{GetCallback, PutCallback};
 use crate::index::IndexManager;
 use crate::network::NetworkAdapter;
@@ -74,7 +75,7 @@ impl DataManager for DefaultDataManager {
         data_bytes: &[u8],
         callback: Option<PutCallback>,
     ) -> Result<(), DataError> {
-        ops::store_op(&self.deps, user_key, data_bytes, callback).await
+        ops::store::store_op(&self.deps, user_key, data_bytes, callback).await
     }
 
     async fn fetch(
@@ -82,11 +83,11 @@ impl DataManager for DefaultDataManager {
         user_key: &str,
         callback: Option<GetCallback>,
     ) -> Result<Vec<u8>, DataError> {
-        ops::fetch_op(&self.deps, user_key, callback).await
+        ops::fetch::fetch_op(&self.deps, user_key, callback).await
     }
 
     async fn remove(&self, user_key: &str) -> Result<(), DataError> {
-        ops::remove_op(&self.deps, user_key).await
+        ops::remove::remove_op(&self.deps, user_key).await
     }
 
     async fn update(

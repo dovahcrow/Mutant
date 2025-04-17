@@ -2,7 +2,7 @@
 pub mod chunking;
 pub mod error;
 pub mod manager;
-pub mod ops; // Contains the implementation logic for store, fetch, etc.
+pub mod ops; // Declares the submodules store, fetch, remove, common
 
 pub use error::DataError;
 pub use manager::DataManager; // Re-export the trait
