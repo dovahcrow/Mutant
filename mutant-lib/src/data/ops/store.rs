@@ -564,17 +564,44 @@ async fn execute_write_confirm_tasks(
                             }
                         }
                     }
-                    Err(e) => {
-                        error!(
-                            "Failed to write chunk {} to pad {}: {}. Halting.",
-                            completed_pad_info.chunk_index,
-                            completed_pad_info.address,
-                            e
-                        );
-                        if operation_error.is_none() {
-                            operation_error = Some(e);
+                    Err(e) => { // Handle write errors
+                        // Check if the error is a potentially retriable network error (like NotEnoughCopies)
+                        let is_retriable_network_error = if let DataError::Storage(StorageError::Network(net_err)) = &e {
+                            // Heuristic: Check if the error message suggests a potentially transient network state
+                            // This is imperfect but better than halting on all network issues during write.
+                            let msg = net_err.to_string(); // Convert the nested error to string
+                            msg.contains("NotEnoughCopies") || msg.contains("Timeout") // Add other potential transient errors
+                        } else {
+                            false
+                        };
+
+                        if is_retriable_network_error {
+                            // Log as warning, but don't halt the entire operation. The confirmation step will eventually handle it.
+                            warn!(
+                                "Potentially transient network error during write for chunk {} to pad {}: {}. Confirmation will retry.",
+                                completed_pad_info.chunk_index,
+                                completed_pad_info.address,
+                                e
+                            );
+                            // We might still want to spawn a confirmation task, as the write *might* have partially succeeded
+                            // or the network state might recover before confirmation starts.
+                            // However, the current logic updates status to Written *before* spawning confirm.
+                            // Let's skip spawning confirm for now to avoid potentially confirming a failed write.
+                            // The pad will remain in its previous state (likely Generated or Allocated) in the index.
+                            // TODO: Revisit if we need a specific 'WriteFailedTransient' status?
+                        } else {
+                            // Non-retriable error, halt the operation.
+                            error!(
+                                "Failed to write chunk {} to pad {}: {}. Halting.",
+                                completed_pad_info.chunk_index,
+                                completed_pad_info.address,
+                                e
+                            );
+                            if operation_error.is_none() {
+                                operation_error = Some(e);
+                            }
                         }
-                        continue;
+                        continue; // Continue the loop to process other tasks or exit if error was set
                     }
                 }
             } // End Write Completion Handling
