@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workaround:** Avoid calling `scratchpad_update` in `put_raw` due to suspected SDK bug causing data truncation on retrieval. Assume existing scratchpad is correct if `create` fails with "already exists". This may lead to stale data if the intent was to overwrite.
 - Set `is_new_hint` correctly in `put` preparation based on pad origin (`Generated` vs `FreePool`) to avoid incorrect network calls.
 
+### Documentation
+- Updated README.md to reflect workspace structure, latest CLI commands/options, and library API changes.
+
 ## [0.2.0] - 2025-04-15
 
 ### Added
