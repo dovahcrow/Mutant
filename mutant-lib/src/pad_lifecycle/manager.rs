@@ -1,6 +1,7 @@
 use crate::api::{ReserveCallback, ReserveEvent};
 use crate::events::PurgeCallback;
 use crate::events::PutCallback;
+use crate::index::structure::PadStatus;
 use crate::index::IndexManager;
 use crate::network::NetworkError;
 use crate::network::{NetworkAdapter, NetworkChoice};
@@ -444,7 +445,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
 
                 // 1. Reserve pad on network using StorageManager::write_pad_data
                 match storage_manager
-                    .write_pad_data(&secret_key, &[0u8])
+                    .write_pad_data(&secret_key, &[0u8], &PadStatus::Generated)
                     .await
                 {
                     Ok(created_address) => {

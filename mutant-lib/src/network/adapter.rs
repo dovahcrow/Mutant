@@ -1,3 +1,4 @@
+use crate::index::structure::PadStatus;
 use crate::network::client::create_client;
 use crate::network::error::NetworkError;
 use crate::network::wallet::create_wallet;
@@ -28,6 +29,7 @@ pub trait NetworkAdapter: Send + Sync {
         &self,
         key: &SecretKey,
         data: &[u8],
+        current_status: &PadStatus,
     ) -> Result<ScratchpadAddress, NetworkError>;
 
     /// Checks if a scratchpad exists at the given address.
@@ -115,8 +117,13 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
         &self,
         key: &SecretKey,
         data: &[u8],
+        current_status: &PadStatus,
     ) -> Result<ScratchpadAddress, NetworkError> {
-        trace!("NetworkAdapter::put_raw called, data_len: {}", data.len());
+        trace!(
+            "NetworkAdapter::put_raw called, data_len: {}, status: {:?}",
+            data.len(),
+            current_status
+        );
         let client = self.get_or_init_client().await?;
 
         let public_key = key.public_key();
@@ -125,59 +132,91 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
         let content_type = 0u64;
         let payment_option = PaymentOption::Wallet((*self.wallet).clone());
 
-        // Always attempt create first
-        debug!("Attempting to create scratchpad at address: {}", address);
-        match client
-            .scratchpad_create(key, content_type, &data_bytes, payment_option.clone())
-            .await
-        {
-            Ok((_cost, created_addr)) => {
-                if created_addr != address {
-                    // This shouldn't happen if address derivation is correct, but log it.
+        match current_status {
+            PadStatus::Generated => {
+                // Expect create to work
+                debug!(
+                    "Attempting to create scratchpad {} (status: Generated)",
+                    address
+                );
+                match client
+                    .scratchpad_create(key, content_type, &data_bytes, payment_option)
+                    .await
+                {
+                    Ok((_cost, created_addr)) => {
+                        if created_addr != address {
+                            warn!(
+                                "Scratchpad create returned address {} but expected {}",
+                                created_addr, address
+                            );
+                        }
+                        info!("Successfully created new scratchpad at {}", address);
+                        Ok(address)
+                    }
+                    Err(e) if e.to_string().contains("already exists") => {
+                        error!(
+                            "Inconsistent state: Tried to create pad {}, but it already exists (status was Generated).",
+                            address
+                        );
+                        Err(NetworkError::InconsistentState(format!(
+                            "Create failed for Generated pad {}: already exists",
+                            address
+                        )))
+                    }
+                    Err(e) => {
+                        error!("Failed to create scratchpad {}: {}", address, e);
+                        Err(NetworkError::InternalError(format!(
+                            "Failed to create scratchpad {}: {}",
+                            address, e
+                        )))
+                    }
+                }
+            }
+            PadStatus::Allocated | PadStatus::Written | PadStatus::Confirmed => {
+                // Expect update to work (handle Confirmed defensively)
+                if *current_status == PadStatus::Confirmed {
                     warn!(
-                        "Scratchpad create returned address {} but expected {}",
-                        created_addr, address
+                        "Calling put_raw for a pad already marked as Confirmed: {}",
+                        address
                     );
                 }
-                info!("Successfully created new scratchpad at {}", address);
-                Ok(address)
-            }
-            Err(create_err) => {
-                // Check if the error indicates the scratchpad already exists
-                if create_err.to_string().contains("already exists") {
-                    info!("Scratchpad {} already exists. Attempting update.", address);
-                    // Attempt update as a fallback
-                    match client
-                        .scratchpad_update(key, content_type, &data_bytes)
-                        .await
-                    {
-                        Ok(_) => {
-                            // Log the problematic update attempt clearly
-                            warn!(
-                                "Executed scratchpad_update for existing pad {}. Data integrity depends on SDK behavior.",
-                                address
-                            );
-                            info!("Successfully updated existing scratchpad at {}", address);
-                            Ok(address)
-                        }
-                        Err(update_err) => {
+                debug!(
+                    "Attempting to update scratchpad {} (status: {:?})",
+                    address, current_status
+                );
+                match client
+                    .scratchpad_update(key, content_type, &data_bytes)
+                    .await
+                {
+                    Ok(_) => {
+                        warn!(
+                             "Executed scratchpad_update for pad {}. Data integrity depends on SDK behavior.",
+                             address
+                         );
+                        info!("Successfully updated existing scratchpad at {}", address);
+                        Ok(address)
+                    }
+                    Err(e) => {
+                        let error_string = e.to_string().to_lowercase();
+                        if error_string.contains("not found")
+                            || error_string.contains("does not exist")
+                        {
                             error!(
-                                "Failed to update scratchpad {} after create failed: {}",
-                                address, update_err
+                                "Inconsistent state: Tried to update pad {}, but it does not exist (status was {:?}).",
+                                address, current_status
                             );
+                            Err(NetworkError::InconsistentState(format!(
+                                "Update failed for {:?} pad {}: not found",
+                                current_status, address
+                            )))
+                        } else {
+                            error!("Failed to update scratchpad {}: {}", address, e);
                             Err(NetworkError::InternalError(format!(
-                                "Create failed ({}), then update failed for {}: {}",
-                                create_err, address, update_err
+                                "Failed to update scratchpad {}: {}",
+                                address, e
                             )))
                         }
                     }
-                } else {
-                    // Create failed for a different reason
-                    error!("Failed to create scratchpad {}: {}", address, create_err);
-                    Err(NetworkError::InternalError(format!(
-                        "Failed to create scratchpad {}: {}",
-                        address, create_err
-                    )))
                 }
             }
         }

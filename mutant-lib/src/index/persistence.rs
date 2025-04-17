@@ -1,6 +1,7 @@
 use crate::index::error::IndexError;
-use crate::index::structure::MasterIndex;
+use crate::index::structure::{KeyInfo, MasterIndex, PadStatus, DEFAULT_SCRATCHPAD_SIZE};
 use crate::network::NetworkAdapter;
+use crate::pad_lifecycle::PadOrigin;
 use crate::storage::{StorageError, StorageManager};
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::{debug, error, info, trace, warn};
@@ -100,9 +101,9 @@ pub(crate) async fn save_index(
     let serialized_data = serialize_index(index)?;
 
     // Use StorageManager to write the data
-    // Since we are overwriting, the is_new hint is false
+    // We expect the index pad to exist, so pass Allocated status
     storage_manager
-        .write_pad_data(key, &serialized_data)
+        .write_pad_data(key, &serialized_data, &PadStatus::Allocated)
         .await
         .map_err(|e| {
             error!("Failed to write index via StorageManager: {}", e);

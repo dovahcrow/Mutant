@@ -1,3 +1,4 @@
+use crate::index::structure::PadStatus;
 use crate::network::NetworkAdapter;
 use crate::storage::error::StorageError;
 use async_trait::async_trait;
@@ -22,6 +23,7 @@ pub trait StorageManager: Send + Sync {
         &self,
         key: &SecretKey,
         data: &[u8],
+        current_status: &PadStatus,
     ) -> Result<ScratchpadAddress, StorageError>;
 
     // Potential future additions:
@@ -64,13 +66,21 @@ impl StorageManager for DefaultStorageManager {
         &self,
         key: &SecretKey,
         data: &[u8],
+        current_status: &PadStatus,
     ) -> Result<ScratchpadAddress, StorageError> {
-        trace!("StorageManager::write_pad_data, data_len: {}", data.len());
+        trace!(
+            "StorageManager::write_pad_data, data_len: {}, status: {:?}",
+            data.len(),
+            current_status
+        );
         // TODO: Add encryption/checksum generation here if implemented in pad_io.rs
         let transformed_data = data; // Placeholder
 
-        // Call network adapter's put_raw with the key
-        let address = self.network_adapter.put_raw(key, transformed_data).await?;
+        // Call network adapter's put_raw with the key and status
+        let address = self
+            .network_adapter
+            .put_raw(key, transformed_data, current_status)
+            .await?;
         Ok(address)
     }
 }

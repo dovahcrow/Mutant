@@ -20,5 +20,8 @@ pub enum NetworkError {
 
     #[error("Invalid private key input: {0}")]
     InvalidKeyInput(String),
+
+    #[error("State inconsistency detected: {0}")]
+    InconsistentState(String),
     // Add other specific network-related errors as needed
 }

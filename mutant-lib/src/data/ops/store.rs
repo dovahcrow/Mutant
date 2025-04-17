@@ -339,12 +339,13 @@ async fn execute_write_confirm_tasks(
         let storage_manager_clone = Arc::clone(&storage_manager);
         let secret_key_write = task_input.secret_key.clone();
         let pad_info_write = task_input.pad_info.clone();
+        let current_status = pad_info_write.status.clone();
         let chunk_data = task_input.chunk_data;
 
         pending_writes += 1;
         write_futures.push(async move {
             let write_result = storage_manager_clone
-                .write_pad_data(&secret_key_write, &chunk_data)
+                .write_pad_data(&secret_key_write, &chunk_data, &current_status)
                 .await
                 .map(|_| ())
                 .map_err(|e| DataError::Storage(e.into()));

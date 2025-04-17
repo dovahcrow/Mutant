@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Store confirmation (`put`) now verifies by fetching and attempting decryption, not just checking existence.
 - Confirmation for updated pads (from free pool) now verifies that the scratchpad counter has incremented, retrying several times with delays to allow for network propagation.
 - Replaced `is_new_hint` mechanism with `PadStatus::Allocated`. `put_raw` now always attempts `create` first, falling back to `update` if the pad already exists. Initial status is set based on pad origin (`Allocated` for `FreePool`, `Generated` for `Generated`).
+- **Refactor `put_raw`**: Use `PadStatus` passed from caller to decide network operation (`create` for `Generated`, `update` for `Allocated`/`Written`). Raise `NetworkError::InconsistentState` if network result mismatches expectation (e.g., `create` fails with "already exists", `update` fails with "not found").
 
 ### Fixed
 - Corrected pad lifecycle management to ensure pads from cancelled or failed `put` operations are not prematurely released or discarded, allowing for proper resumption.
