@@ -389,22 +389,27 @@ pub(crate) async fn prepare_pads_for_store(
                     address: pad_address,
                     chunk_index: i,
                     status: PadStatus::Generated,
-                    origin: pad_origin,
+                    origin: pad_origin.clone(),
                     needs_reverification: false,
                 };
 
                 initial_pads.push(pad_info.clone());
                 initial_pad_keys.insert(pad_address, secret_key.to_bytes().to_vec());
 
+                let is_new_hint = match pad_origin {
+                    PadOrigin::Generated => true,
+                    PadOrigin::FreePool { .. } => false,
+                };
+
                 debug!(
-                    "Prepare: Task: Write chunk {} to new pad {} (Origin: {:?})",
-                    i, pad_address, pad_origin
+                    "Prepare: Task: Write chunk {} to new pad {} (Origin: {:?}, Hint: {})",
+                    i, pad_address, pad_origin, is_new_hint
                 );
                 tasks_to_run.push(WriteTaskInput {
                     pad_info,
                     secret_key,
                     chunk_data: chunk.clone(),
-                    is_new_hint: true, // Hint is true for new upload
+                    is_new_hint,
                 });
             }
 

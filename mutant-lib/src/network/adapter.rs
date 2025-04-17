@@ -153,12 +153,11 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
                 }
                 Err(e) if e.to_string().contains("already exists") => {
                     warn!(
-                        "Scratchpad at {} already exists. Assuming content is correct (Workaround for update issue).",
+                        "Scratchpad at {} already exists despite is_new_hint=true. Assuming content is correct (Workaround for update issue).",
                         address
                     );
-                    // Workaround: Don't try to update, just return the address.
-                    // This assumes the *caller* handles overwrites appropriately if needed,
-                    // or that retrying a create is okay.
+                    // Workaround: Don't try to update or delete, just return the address.
+                    // This indicates an inconsistency in the calling logic (prepare stage).
                     Ok(address)
                 }
                 Err(e) => {
