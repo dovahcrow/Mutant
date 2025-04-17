@@ -18,11 +18,9 @@ fn derive_master_index_info(
     private_key_hex: &str,
 ) -> Result<(ScratchpadAddress, SecretKey), Error> {
     debug!("Deriving master index key and address...");
-    let hex_to_decode = if private_key_hex.starts_with("0x") {
-        &private_key_hex[2..]
-    } else {
-        private_key_hex
-    };
+    let hex_to_decode = private_key_hex
+        .strip_prefix("0x")
+        .unwrap_or(private_key_hex);
 
     let input_key_bytes = hex::decode(hex_to_decode)
         .map_err(|e| Error::Config(format!("Failed to decode private key hex: {}", e)))?;

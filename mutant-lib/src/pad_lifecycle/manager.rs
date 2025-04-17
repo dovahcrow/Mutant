@@ -369,7 +369,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
                         
                         let key_bytes = secret_key.to_bytes().to_vec();
                         match index_manager
-                            .add_free_pad(address.clone(), key_bytes) 
+                            .add_free_pad(address, key_bytes) 
                             .await {
                                 Ok(_) => {
                                     trace!("Reserve task {}: Added {} to index free list successfully", i, address);

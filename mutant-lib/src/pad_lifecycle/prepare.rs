@@ -274,7 +274,7 @@ pub(crate) async fn prepare_pads_for_store(
                             );
                             tasks_to_run.push(WriteTaskInput {
                                 pad_info: pad_info.clone(),
-                                secret_key,
+                                secret_key: secret_key.clone(),
                                 chunk_data: chunk.clone(),
                             });
                         } else {
@@ -380,11 +380,11 @@ pub(crate) async fn prepare_pads_for_store(
                 };
 
                 let pad_info = PadInfo {
-                    address: pad_address,
                     chunk_index: i,
-                    status: initial_status.clone(),
-                    origin: pad_origin.clone(),
+                    status: PadStatus::Generated,
+                    origin: pad_origin,
                     needs_reverification: false,
+                    address: pad_address,
                 };
 
                 initial_pads.push(pad_info.clone());

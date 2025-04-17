@@ -144,20 +144,19 @@ pub(crate) async fn verify_pads_concurrently(
             }
         }
 
-        if !callback_cancelled {
-            if !invoke_purge_callback(&mut callback, PurgeEvent::PadProcessed)
+        if !callback_cancelled
+            && !invoke_purge_callback(&mut callback, PurgeEvent::PadProcessed)
                 .await
                 .map_err(|e| {
                     PadLifecycleError::InternalError(format!("Callback invocation failed: {}", e))
                 })?
-            {
-                warn!("Verification cancelled by callback.");
-                callback_cancelled = true;
-                if first_error.is_none() {
-                    first_error = Some(PadLifecycleError::OperationCancelled);
-                }
-                join_set.abort_all();
+        {
+            warn!("Verification cancelled by callback.");
+            callback_cancelled = true;
+            if first_error.is_none() {
+                first_error = Some(PadLifecycleError::OperationCancelled);
             }
+            join_set.abort_all();
         }
     }
 

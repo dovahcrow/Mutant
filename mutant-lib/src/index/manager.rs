@@ -128,6 +128,7 @@ pub trait IndexManager: Send + Sync {
     /// # Errors
     ///
     /// Returns `IndexError` on internal failures.
+    #[allow(dead_code)]
     async fn get_key_details(&self, key: &str) -> Result<Option<KeyDetails>, IndexError>;
 
     /// Lists detailed metadata (`KeyDetails`) for all keys in the index.
@@ -457,24 +458,24 @@ impl IndexManager for DefaultIndexManager {
             self.network_adapter.as_ref(),
             master_index_address,
             _master_index_key,
-            &*state_guard,
+            &state_guard,
         )
         .await
     }
 
     async fn get_key_info(&self, key: &str) -> Result<Option<KeyInfo>, IndexError> {
         let state_guard = self.state.lock().await;
-        Ok(query::get_key_info_internal(&*state_guard, key).cloned())
+        Ok(query::get_key_info_internal(&state_guard, key).cloned())
     }
 
     async fn insert_key_info(&self, key: String, info: KeyInfo) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
-        query::insert_key_info_internal(&mut *state_guard, key, info)
+        query::insert_key_info_internal(&mut state_guard, key, info)
     }
 
     async fn remove_key_info(&self, key: &str) -> Result<Option<KeyInfo>, IndexError> {
         let mut state_guard = self.state.lock().await;
-        let removed_info = query::remove_key_info_internal(&mut *state_guard, key);
+        let removed_info = query::remove_key_info_internal(&mut state_guard, key);
 
         if let Some(ref info) = removed_info {
             let mut pads_to_verify = Vec::new();
@@ -521,7 +522,7 @@ impl IndexManager for DefaultIndexManager {
                 );
 
                 query::add_free_pads_with_counters_internal(
-                    &mut *state_guard,
+                    &mut state_guard,
                     pads_to_free_directly,
                 )?;
             }
@@ -533,7 +534,7 @@ impl IndexManager for DefaultIndexManager {
                     pads_to_verify.len()
                 );
 
-                query::add_pending_verification_pads_internal(&mut *state_guard, pads_to_verify)?;
+                query::add_pending_verification_pads_internal(&mut state_guard, pads_to_verify)?;
             }
         }
 
@@ -542,22 +543,23 @@ impl IndexManager for DefaultIndexManager {
 
     async fn list_keys(&self) -> Result<Vec<String>, IndexError> {
         let state_guard = self.state.lock().await;
-        Ok(query::list_keys_internal(&*state_guard))
+        Ok(query::list_keys_internal(&state_guard))
     }
 
+    #[allow(dead_code)]
     async fn get_key_details(&self, key: &str) -> Result<Option<KeyDetails>, IndexError> {
         let state_guard = self.state.lock().await;
-        Ok(query::get_key_details_internal(&*state_guard, key))
+        Ok(query::get_key_details_internal(&state_guard, key))
     }
 
     async fn list_all_key_details(&self) -> Result<Vec<KeyDetails>, IndexError> {
         let state_guard = self.state.lock().await;
-        Ok(query::list_all_key_details_internal(&*state_guard))
+        Ok(query::list_all_key_details_internal(&state_guard))
     }
 
     async fn get_storage_stats(&self) -> Result<StorageStats, IndexError> {
         let state_guard = self.state.lock().await;
-        query::get_stats_internal(&*state_guard)
+        query::get_stats_internal(&state_guard)
     }
 
     async fn add_free_pad(
@@ -575,7 +577,7 @@ impl IndexManager for DefaultIndexManager {
                 );
                 let mut state_guard = self.state.lock().await;
                 query::add_free_pad_with_counter_internal(
-                    &mut *state_guard,
+                    &mut state_guard,
                     address,
                     key_bytes,
                     counter,
@@ -614,19 +616,19 @@ impl IndexManager for DefaultIndexManager {
         if !pads_with_counters.is_empty() {
             let mut state_guard = self.state.lock().await;
 
-            query::add_free_pads_with_counters_internal(&mut *state_guard, pads_with_counters)?;
+            query::add_free_pads_with_counters_internal(&mut state_guard, pads_with_counters)?;
         }
         Ok(())
     }
 
     async fn take_free_pad(&self) -> Result<Option<(ScratchpadAddress, Vec<u8>, u64)>, IndexError> {
         let mut state_guard = self.state.lock().await;
-        Ok(query::take_free_pad_internal(&mut *state_guard))
+        Ok(query::take_free_pad_internal(&mut state_guard))
     }
 
     async fn take_pending_pads(&self) -> Result<Vec<(ScratchpadAddress, Vec<u8>)>, IndexError> {
         let mut state_guard = self.state.lock().await;
-        Ok(query::take_pending_pads_internal(&mut *state_guard))
+        Ok(query::take_pending_pads_internal(&mut state_guard))
     }
 
     async fn remove_from_pending(
@@ -634,7 +636,7 @@ impl IndexManager for DefaultIndexManager {
         address_to_remove: &ScratchpadAddress,
     ) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
-        query::remove_from_pending_internal(&mut *state_guard, address_to_remove)
+        query::remove_from_pending_internal(&mut state_guard, address_to_remove)
     }
 
     async fn update_pad_status(
@@ -644,12 +646,12 @@ impl IndexManager for DefaultIndexManager {
         new_status: PadStatus,
     ) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
-        query::update_pad_status_internal(&mut *state_guard, key, pad_address, new_status)
+        query::update_pad_status_internal(&mut state_guard, key, pad_address, new_status)
     }
 
     async fn mark_key_complete(&self, key: &str) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
-        query::mark_key_complete_internal(&mut *state_guard, key)
+        query::mark_key_complete_internal(&mut state_guard, key)
     }
 
     async fn reset(
@@ -660,7 +662,7 @@ impl IndexManager for DefaultIndexManager {
         info!("IndexManager: Resetting index...");
         {
             let mut state_guard = self.state.lock().await;
-            query::reset_index_internal(&mut *state_guard);
+            query::reset_index_internal(&mut state_guard);
         }
 
         self.save(master_index_address, master_index_key).await?;
@@ -712,6 +714,6 @@ impl IndexManager for DefaultIndexManager {
         pads: Vec<(ScratchpadAddress, Vec<u8>)>,
     ) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
-        query::add_pending_pads_internal(&mut *state_guard, pads)
+        query::add_pending_pads_internal(&mut state_guard, pads)
     }
 }

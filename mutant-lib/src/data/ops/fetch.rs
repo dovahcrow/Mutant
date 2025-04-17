@@ -160,11 +160,8 @@ pub(crate) async fn fetch_op(
                 }
             }
             Err(e) => {
-                error!(
-                    "Failed to fetch scratchpad for chunk {}: {}",
-                    chunk_index, e
-                );
-                return Err(DataError::Storage(e.into()));
+                debug!("Failed to fetch chunk {}: {}", chunk_index, e);
+                return Err(DataError::Storage(e));
             }
         }
     }

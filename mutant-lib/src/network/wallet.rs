@@ -16,18 +16,14 @@ pub(crate) fn create_wallet(
     let network = Network::new(network_choice == NetworkChoice::Devnet)
         .map_err(|e| NetworkError::NetworkInitError(format!("Network init failed: {}", e)))?;
 
-    let hex_to_decode = if private_key_hex.starts_with("0x") {
-        &private_key_hex[2..]
-    } else {
-        private_key_hex
-    };
-
-    let input_key_bytes = hex::decode(hex_to_decode).map_err(|e| {
-        NetworkError::InvalidKeyInput(format!("Failed to decode private key hex: {}", e))
-    })?;
+    let hex_to_decode = private_key_hex
+        .strip_prefix("0x")
+        .unwrap_or(private_key_hex);
+    let pk_bytes = hex::decode(hex_to_decode)
+        .map_err(|e| NetworkError::InvalidKeyInput(format!("Invalid hex private key: {}", e)))?;
 
     let mut hasher = Sha256::new();
-    hasher.update(&input_key_bytes);
+    hasher.update(&pk_bytes);
     let hash_result = hasher.finalize();
     let key_array: [u8; 32] = hash_result.into();
     let secret_key = SecretKey::from_bytes(key_array).map_err(|e| {

@@ -121,11 +121,15 @@ pub(crate) async fn store_op(
     Ok(())
 }
 
-async fn confirm_pad_write(
+struct ConfirmContext {
     index_manager: Arc<dyn IndexManager>,
     pad_lifecycle_manager: Arc<dyn PadLifecycleManager>,
     storage_manager: Arc<dyn StorageManager>,
     network_adapter: Arc<dyn crate::network::NetworkAdapter>,
+}
+
+async fn confirm_pad_write(
+    ctx: ConfirmContext,
     user_key: String,
     pad_info: PadInfo,
     pad_secret_key: SecretKey,
@@ -140,7 +144,10 @@ async fn confirm_pad_write(
             pad_info.address
         );
 
-        let fetch_result = storage_manager.read_pad_scratchpad(&pad_info.address).await;
+        let fetch_result = ctx
+            .storage_manager
+            .read_pad_scratchpad(&pad_info.address)
+            .await;
 
         match fetch_result {
             Ok(scratchpad) => {
@@ -233,16 +240,19 @@ async fn confirm_pad_write(
                 }
 
                 if counter_check_passed && data_check_passed {
-                    match index_manager
+                    match ctx
+                        .index_manager
                         .update_pad_status(&user_key, &pad_info.address, PadStatus::Confirmed)
                         .await
                     {
                         Ok(_) => {
                             trace!("Updated status to Confirmed for pad {}", pad_info.address);
 
-                            let network_choice = network_adapter.get_network_choice();
-                            if let Err(e) =
-                                pad_lifecycle_manager.save_index_cache(network_choice).await
+                            let network_choice = ctx.network_adapter.get_network_choice();
+                            if let Err(e) = ctx
+                                .pad_lifecycle_manager
+                                .save_index_cache(network_choice)
+                                .await
                             {
                                 warn!(
                                     "Failed to save index cache after setting pad {} to Confirmed: {}. Proceeding anyway.",
@@ -281,12 +291,11 @@ async fn confirm_pad_write(
                 }
             }
             Err(fetch_err) => {
-                let is_not_enough_copies = if let StorageError::Network(net_err) = &fetch_err {
-                    if let crate::network::error::NetworkError::InternalError(msg) = net_err {
-                        msg.contains("NotEnoughCopies")
-                    } else {
-                        false
-                    }
+                let is_not_enough_copies = if let StorageError::Network(
+                    crate::network::error::NetworkError::InternalError(msg),
+                ) = &fetch_err
+                {
+                    msg.contains("NotEnoughCopies")
                 } else {
                     false
                 };
@@ -509,6 +518,12 @@ async fn execute_write_confirm_tasks(
                                 let pad_info_confirm = completed_pad_info.clone();
                                 let pad_key_confirm = completed_secret_key.clone();
                                 let expected_chunk_size_confirm = completed_chunk_size;
+                                let confirm_ctx = ConfirmContext {
+                                    index_manager: Arc::clone(&index_manager_confirm),
+                                    pad_lifecycle_manager: Arc::clone(&pad_lifecycle_confirm),
+                                    storage_manager: Arc::clone(&storage_manager_confirm),
+                                    network_adapter: Arc::clone(&network_adapter_confirm),
+                                };
 
                                 debug!(
                                     "Spawning confirmation task for pad {}",
@@ -517,10 +532,7 @@ async fn execute_write_confirm_tasks(
                                 pending_confirms += 1;
                                 confirm_futures.push(tokio::spawn(async move {
                                     confirm_pad_write(
-                                        index_manager_confirm,
-                                        pad_lifecycle_confirm,
-                                        storage_manager_confirm,
-                                        network_adapter_confirm,
+                                        confirm_ctx,
                                         user_key_clone_confirm,
                                         pad_info_confirm,
                                         pad_key_confirm,
