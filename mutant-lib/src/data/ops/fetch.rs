@@ -2,14 +2,14 @@
 use crate::data::chunking::reassemble_data;
 use crate::data::error::DataError;
 use crate::events::{invoke_get_callback, GetCallback, GetEvent};
-use crate::index::{IndexManager, KeyInfo};
-use crate::storage::StorageManager;
+// Remove unused import
+// use crate::storage::StorageManager;
 use autonomi::SecretKey;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
-use std::collections::HashMap; // Needed for pad_keys lookup
+// Needed for pad_keys lookup
 use std::sync::Arc;
-use tokio; // Only needed if using tokio specifics like time::sleep
+// Only needed if using tokio specifics like time::sleep
 
 use super::common::DataManagerDependencies;
 

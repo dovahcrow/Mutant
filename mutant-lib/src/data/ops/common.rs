@@ -1,4 +1,6 @@
 // Common definitions for data operations
+use crate::index::PadInfo;
+use autonomi::SecretKey;
 use std::sync::Arc;
 use tokio::time::Duration;
 
@@ -15,4 +17,13 @@ pub(crate) struct DataManagerDependencies {
     pub storage_manager: Arc<dyn crate::storage::StorageManager>,
     // Add network_adapter if needed for existence checks? Yes.
     pub network_adapter: Arc<dyn crate::network::NetworkAdapter>,
+}
+
+/// Structure to hold the necessary information for a single write task.
+#[derive(Clone)] // Clone needed if the preparation function returns owned values
+pub(crate) struct WriteTaskInput {
+    pub pad_info: PadInfo,
+    pub secret_key: SecretKey,
+    pub chunk_data: Vec<u8>,
+    pub is_new_hint: bool,
 }

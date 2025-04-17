@@ -3,7 +3,6 @@ use crate::index::structure::{KeyInfo, MasterIndex, PadStatus, DEFAULT_SCRATCHPA
 use crate::types::{KeyDetails, StorageStats};
 use autonomi::ScratchpadAddress;
 use log::{debug, trace, warn};
-use std::collections::HashMap;
 
 // --- Internal Query & Modification Functions ---
 // These functions operate directly on the MasterIndex state and are

@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optimized `put` operation for newly generated pads by skipping unnecessary network existence checks before the initial write.
 
 ### Changed
+- **Refactor (mutant-lib):** Refactored `data::ops::store::store_op` by:
+    - Moving preparation logic (resume check, existence check, pad acquisition/replacement, index persistence) to `pad_lifecycle::prepare::prepare_pads_for_store`.
+    - Moving confirmation logic (retry loop, counter check, index update, cache save) to an internal helper `confirm_pad_write`.
+    - Moving the concurrent write/confirm execution loop to an internal helper `execute_write_confirm_tasks`.
+    - `store_op` now acts primarily as an orchestrator.
 - **Refactor (mutant-lib):** Moved data operation logic (`store_op`, `fetch_op`, `remove_op`) from `data/ops.rs` into a new `data/ops/` directory with separate files (`store.rs`, `fetch.rs`, `remove.rs`, `common.rs`) for better modularity.
 - Refactored pad state management: `pending_verification_pads` in the index is now only used for pads associated with removed keys whose write status was uncertain (`Generated`).
 - `purge` command is now the sole mechanism responsible for verifying pads in the `pending_verification_pads` list and moving them to the free pool.
@@ -64,31 +69,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Store operation now saves the updated index to the local cache, ensuring `ls` reflects recent changes.
-- Remove operation (`rm`) now saves the updated index to the local cache, ensuring `ls` reflects the removal.
-- Initialization now proceeds with an empty in-memory index if the persisted index (local cache or remote) fails to deserialize (e.g., due to corruption or format changes), preventing errors during startup and allowing commands like `sync --push-force` to fix the remote index.
-
-## [0.1.2] - Unreleased
-
-### Changed
-- **Initialization:** When prompting to create a remote index (if local cache and remote index are missing), declining the prompt no longer aborts initialization. Instead, it skips remote index creation and proceeds to create the local index cache only.
-- **Refactor:** Split `MutAnt` initialization Step 4 (Load/Create Master Index) into sub-steps for clearer progress reporting. Creating the remote index (if prompted) is now a distinct Step 5.
-- **CLI:** Reworked `put` progress display.
-  - The `StartingUpload` event now includes `total_pads`.
-  - The CLI callback uses this event field to initialize the confirmation bar's total count immediately, ensuring it shows `[0/N]` from the start even when no new pads are reserved (update-only scenario).
-  - The upload bar now shows "Upload complete. Committing..." when byte transfer finishes but remains visible.
-  - The commit bar progresses concurrently.
-  - Both bars are cleared upon final `StoreComplete` event.
-- **Performance:** Refactored `MutAnt` initialization to be lazy. Network client initialization and remote master index fetching are now deferred until the first network operation (e.g., `put`, `get`, `sync`, `import`), making local cache-only operations like `ls` and `stats` significantly faster to start.
-- Added a 5-second delay **after** static storage write operations (create/update) complete and **before** their verification loops begin.
-- Modified `load_master_index_storage_static` in `mutant-lib` to automatically create and save a default Master Index Storage on the network if it's not found, empty, or fails to deserialize.
-- Fixed an issue where the reservation progress bar could be cleared prematurely, causing warnings.
-- **CLI:** Refactored `sync` command progress display to use a single step-based progress bar instead of multiple spinners.
-- **CLI:** Mark incomplete uploads with `*` in `mutant ls` output (both standard and long formats).
-- **Sync:** Fixed an issue where the `sync` command (and other operations that save the index) would fail if the remote master index scratchpad did not exist. The save logic now checks for existence and calls the appropriate create or update function.
-- Fixed a data corruption issue during `get` caused by the list of storage pads (`PadInfo`) not being saved in the correct chunk order during `put`/`update`. The `perform_concurrent_write_standalone` function now collects `(index, PadInfo)` pairs, sorts them by index, and stores the correctly ordered list in the master index.
-- Network initialization is now lazy: Connects only if the local index cache is missing and remote index fetch is needed.
-
-### Added
-- Differentiate local index cache based on network choice (Devnet vs Mainnet). Cache files are now stored in `~/.local/share/mutant/{devnet,mainnet}/index.cbor`.
-- Add `--push-force` flag to `sync` command to overwrite the remote master index with the local cache.
-- `
+- Remove operation (`rm`) now saves the updated index to the local cache, ensuring `ls`

@@ -4,10 +4,13 @@ pub mod error;
 pub mod import;
 pub mod manager;
 pub mod pool;
-pub mod verification;
+mod prepare;
+pub mod verification; // Internal module for store preparation logic
 
 pub use error::PadLifecycleError;
 pub use manager::PadLifecycleManager; // Re-export the trait
+                                      // Make the prepare function crate-visible from this module
+pub(crate) use prepare::prepare_pads_for_store;
 
 use serde::{Deserialize, Serialize};
 

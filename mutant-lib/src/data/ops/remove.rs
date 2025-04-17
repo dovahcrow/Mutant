@@ -1,6 +1,7 @@
 // Remove operation logic
 use crate::data::error::DataError;
-use crate::index::IndexManager;
+// Remove unused import
+// use crate::index::IndexManager;
 use log::{debug, info, warn};
 
 use super::common::DataManagerDependencies;
