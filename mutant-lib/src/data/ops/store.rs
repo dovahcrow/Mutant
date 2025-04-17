@@ -7,7 +7,7 @@ use crate::index::structure::PadStatus;
 use crate::index::{IndexManager, PadInfo};
 use crate::pad_lifecycle::PadLifecycleManager;
 use crate::pad_lifecycle::PadOrigin;
-use crate::storage::StorageManager;
+use crate::storage::{StorageError, StorageManager};
 use autonomi::SecretKey;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
@@ -336,17 +336,42 @@ async fn confirm_pad_write(
                   // else: counter check failed, loop will continue after delay
             }
             Err(fetch_err) => {
-                // Fetch failed (StorageError) - DO NOT RETRY
-                error!(
-                    "Confirmation failed for pad {}: Storage error during fetch: {}",
-                    pad_info.address, fetch_err
-                );
-                // Ensure error is wrapped correctly
-                return Err(DataError::Storage(fetch_err.into())); // Keep this error handling
+                // Check if the error is a retriable NotEnoughCopies
+                let is_not_enough_copies = if let StorageError::Network(net_err) = &fetch_err {
+                    if let crate::network::error::NetworkError::InternalError(msg) = net_err {
+                        // Check the underlying SDK error message string
+                        msg.contains("NotEnoughCopies")
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if is_not_enough_copies {
+                    // Treat NotEnoughCopies as a transient error, similar to failed counter check
+                    trace!(
+                        "Attempt {}: Transient fetch error for pad {}: {} Retrying...",
+                        attempt + 1,
+                        pad_info.address,
+                        fetch_err
+                    );
+                    // Store the error in case the loop times out
+                    last_error = Some(DataError::Storage(fetch_err.into()));
+                    // DO NOT return; allow the loop to sleep and retry
+                } else {
+                    // For other storage errors, fail immediately
+                    error!(
+                        "Confirmation failed for pad {}: Non-retriable storage error during fetch: {}",
+                        pad_info.address, fetch_err
+                    );
+                    // Return the non-retriable error
+                    return Err(DataError::Storage(fetch_err.into()));
+                }
             }
         }
 
-        // If counter check failed, wait before next attempt
+        // If counter check failed, size check failed, OR a retriable fetch error occurred, wait before next attempt
         if attempt < CONFIRMATION_RETRY_LIMIT - 1 {
             sleep(CONFIRMATION_RETRY_DELAY).await;
         }
