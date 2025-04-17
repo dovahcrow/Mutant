@@ -11,7 +11,7 @@ use crate::app::run_cli;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    if let Err(e) = Builder::from_env(Env::default().default_filter_or("info")).try_init() {
+    if let Err(e) = Builder::from_env(Env::default().default_filter_or("error")).try_init() {
         eprintln!("Failed to initialize logger: {}", e);
         return ExitCode::FAILURE;
     }
