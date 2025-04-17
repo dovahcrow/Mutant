@@ -466,7 +466,6 @@ async fn execute_write_confirm_tasks(
                         );
 
                         // Emit PadReserved event
-                        // Clone callback_arc for this block
                         let callback_arc_clone = Arc::clone(&callback_arc);
                         if !invoke_put_callback(
                             &mut *callback_arc_clone.lock().await,
@@ -486,10 +485,9 @@ async fn execute_write_confirm_tasks(
                         }
 
                         // Update status to Written
-                        // Clone index_manager for this block
                         let index_manager_clone = Arc::clone(&index_manager);
-                        let user_key_clone = user_key.clone(); // Clone user_key needed here
-                        let completed_pad_address = completed_pad_info.address; // Copy address
+                        let user_key_clone = user_key.clone();
+                        let completed_pad_address = completed_pad_info.address;
                         match index_manager_clone
                             .update_pad_status(&user_key_clone, &completed_pad_address, PadStatus::Written)
                             .await
@@ -501,7 +499,6 @@ async fn execute_write_confirm_tasks(
                                 );
 
                                 // Emit ChunkWritten callback
-                                // Clone callback_arc again
                                 let callback_arc_clone2 = Arc::clone(&callback_arc);
                                 let chunk_index = completed_pad_info.chunk_index;
                                 if !invoke_put_callback(
@@ -521,8 +518,7 @@ async fn execute_write_confirm_tasks(
                                     continue;
                                 }
 
-                                // --- Spawn Confirmation Task ---
-                                // Clone dependencies needed for confirm_pad_write
+                                // Spawn Confirmation Task
                                 let index_manager_confirm = Arc::clone(&index_manager);
                                 let pad_lifecycle_confirm = Arc::clone(&pad_lifecycle_manager);
                                 let storage_manager_confirm = Arc::clone(&storage_manager);
@@ -530,8 +526,8 @@ async fn execute_write_confirm_tasks(
                                 let user_key_clone_confirm = user_key.clone();
                                 let callback_arc_clone_confirm = callback_arc.clone();
                                 let pad_info_confirm = completed_pad_info.clone();
-                                let pad_key_confirm = completed_secret_key.clone(); // Use completed_secret_key
-                                let expected_chunk_size_confirm = completed_chunk_size; // Use completed_chunk_size
+                                let pad_key_confirm = completed_secret_key.clone();
+                                let expected_chunk_size_confirm = completed_chunk_size;
 
                                 debug!(
                                     "Spawning confirmation task for pad {}",
@@ -547,7 +543,7 @@ async fn execute_write_confirm_tasks(
                                         user_key_clone_confirm,
                                         pad_info_confirm,
                                         pad_key_confirm,
-                                        expected_chunk_size_confirm, // Use the captured size
+                                        expected_chunk_size_confirm,
                                         callback_arc_clone_confirm,
                                     )
                                     .await
@@ -564,44 +560,17 @@ async fn execute_write_confirm_tasks(
                             }
                         }
                     }
-                    Err(e) => { // Handle write errors
-                        // Check if the error is a potentially retriable network error (like NotEnoughCopies)
-                        let is_retriable_network_error = if let DataError::Storage(StorageError::Network(net_err)) = &e {
-                            // Heuristic: Check if the error message suggests a potentially transient network state
-                            // This is imperfect but better than halting on all network issues during write.
-                            let msg = net_err.to_string(); // Convert the nested error to string
-                            msg.contains("NotEnoughCopies") || msg.contains("Timeout") // Add other potential transient errors
-                        } else {
-                            false
-                        };
-
-                        if is_retriable_network_error {
-                            // Log as warning, but don't halt the entire operation. The confirmation step will eventually handle it.
-                            warn!(
-                                "Potentially transient network error during write for chunk {} to pad {}: {}. Confirmation will retry.",
-                                completed_pad_info.chunk_index,
-                                completed_pad_info.address,
-                                e
-                            );
-                            // We might still want to spawn a confirmation task, as the write *might* have partially succeeded
-                            // or the network state might recover before confirmation starts.
-                            // However, the current logic updates status to Written *before* spawning confirm.
-                            // Let's skip spawning confirm for now to avoid potentially confirming a failed write.
-                            // The pad will remain in its previous state (likely Generated or Allocated) in the index.
-                            // TODO: Revisit if we need a specific 'WriteFailedTransient' status?
-                        } else {
-                            // Non-retriable error, halt the operation.
-                            error!(
-                                "Failed to write chunk {} to pad {}: {}. Halting.",
-                                completed_pad_info.chunk_index,
-                                completed_pad_info.address,
-                                e
-                            );
-                            if operation_error.is_none() {
-                                operation_error = Some(e);
-                            }
+                    Err(e) => { // Reverted: Any write error halts the operation
+                        error!(
+                            "Failed to write chunk {} to pad {}: {}. Halting.",
+                            completed_pad_info.chunk_index,
+                            completed_pad_info.address,
+                            e
+                        );
+                        if operation_error.is_none() {
+                            operation_error = Some(e);
                         }
-                        continue; // Continue the loop to process other tasks or exit if error was set
+                        continue;
                     }
                 }
             } // End Write Completion Handling

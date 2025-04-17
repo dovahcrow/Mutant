@@ -16,7 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhanced store confirmation logic to verify decrypted data size matches expected size, improving robustness against stale reads after pad reuse.
 - Treat `NotEnoughCopies` network error during store confirmation fetch as a retriable error instead of immediate failure, allowing the confirmation loop to continue.
 - Prevent `mutant rm` from performing unnecessary network checks for pads in `Allocated`, `Written`, or `Confirmed` states, making the operation local for non-`Generated` pads.
-- Make `put` operation more resilient to transient `NotEnoughCopies` or `Timeout` network errors during the *write* phase. Such errors on a chunk now log a warning but don't halt the entire upload; the confirmation phase will handle retries.
 
 ### Changed
 - Changed `rm` key logic: Only `Generated` pads go to pending verification; `Allocated`, `Written`, and `Confirmed` pads go directly to the free pool (counters fetched automatically).
