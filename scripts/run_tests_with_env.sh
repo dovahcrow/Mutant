@@ -9,6 +9,9 @@ PROJECT_ROOT=$( cd -- "$SCRIPT_DIR/.." &> /dev/null && pwd )
 # Path to the management script (relative to the project root)
 MANAGE_SCRIPT="${PROJECT_ROOT}/scripts/manage_local_testnet.sh"
 
+# Check for optional test path argument
+TEST_PATH_FILTER="${1:-}" # Default to empty if no argument
+
 echo "INFO: Using Project Root: $PROJECT_ROOT"
 echo "INFO: Using Management Script: $MANAGE_SCRIPT"
 
@@ -79,26 +82,43 @@ echo "Running cargo test (serially)..."
 # Run tests from the project root
 cd "$PROJECT_ROOT" || exit 1
 
+# Initialize overall exit code
+OVERALL_TEST_EXIT_CODE=0
 
-# Test the cli
-if cargo test -- --nocapture --test-threads=1; then
-  TEST_EXIT_CODE=0
-  echo "--- Tests Passed ---"
+# Test the cli (or other workspace tests if desired)
+echo "--- Testing CLI Crate ---"
+if cargo test --package mutant-cli -- --nocapture --test-threads=1; then
+  echo "CLI tests Passed"
 else
-  TEST_EXIT_CODE=$?
-  echo "--- Tests Failed (Exit Code: $TEST_EXIT_CODE) ---"
+  CLI_EXIT_CODE=$?
+  echo "CLI tests Failed (Exit Code: $CLI_EXIT_CODE)"
+  OVERALL_TEST_EXIT_CODE=$CLI_EXIT_CODE # Record failure
 fi
 
 # Test the mutant library
-if cargo test --package mutant-lib -- --nocapture --test-threads=1; then
-  echo "MutAnt lib tests passed!"
-else
-  echo "MutAnt lib tests failed."
-  stop_network
-  exit 1
+echo "--- Testing Lib Crate (Filter: '${TEST_PATH_FILTER:-<all>}') ---"
+LIB_TEST_CMD="cargo test --package mutant-lib -- --nocapture --test-threads=1"
+if [ -n "$TEST_PATH_FILTER" ]; then
+  LIB_TEST_CMD="$LIB_TEST_CMD $TEST_PATH_FILTER"
 fi
 
-# --- Cleanup ---
-# Cleanup is handled automatically by the trap
+echo "Executing: $LIB_TEST_CMD"
+if eval "$LIB_TEST_CMD"; then # Use eval to handle potential spaces in filter correctly
+  echo "MutAnt lib tests passed!"
+else
+  LIB_EXIT_CODE=$?
+  echo "MutAnt lib tests failed (Exit Code: $LIB_EXIT_CODE)."
+  if [ $OVERALL_TEST_EXIT_CODE -eq 0 ]; then # Only update if not already failed
+      OVERALL_TEST_EXIT_CODE=$LIB_EXIT_CODE
+  fi
+fi
 
-exit $TEST_EXIT_CODE 
+# --- Cleanup --- is handled automatically by the trap ---
+
+# Exit with the overall test result code
+if [ $OVERALL_TEST_EXIT_CODE -eq 0 ]; then
+    echo "--- All Tests Passed --- "
+else
+    echo "--- Some Tests Failed (Overall Exit Code: $OVERALL_TEST_EXIT_CODE) --- "
+fi
+exit $OVERALL_TEST_EXIT_CODE 
