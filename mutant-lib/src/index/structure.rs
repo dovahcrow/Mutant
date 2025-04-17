@@ -7,7 +7,7 @@ use std::collections::HashMap;
 // --- Constants ---
 // TODO: Consider making this configurable or dynamically determined later.
 /// Default usable size within a scratchpad, leaving margin for overhead.
-pub(crate) const DEFAULT_SCRATCHPAD_SIZE: usize = (4 * 1024 * 1024) - 512; // 4MB minus 512 bytes margin
+pub(crate) const DEFAULT_SCRATCHPAD_SIZE: usize = (4 * 1024 * 1024) - 4096; // 4MB minus 4KB margin
 
 // --- Enums ---
 

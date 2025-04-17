@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhanced store confirmation logic to verify decrypted data size matches expected size, improving robustness against stale reads after pad reuse.
 
 ### Changed
+- Reduced default usable scratchpad size (`DEFAULT_SCRATCHPAD_SIZE`) to leave a 4KB margin instead of 512B, as an experiment to mitigate potential issues with nearly full pads on mainnet.
 - Display completion percentage for incomplete keys in `ls` output (e.g., `*mykey (50.0%)`).
 - Added detailed statistics section for incomplete uploads in `stats` output.
 - Refactored `put` preparation logic into `PadLifecycleManager::prepare_pads_for_store` to handle resume, new uploads, and pad replacement cleanly.
