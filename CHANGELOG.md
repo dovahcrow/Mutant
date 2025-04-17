@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 - Updated README.md to reflect workspace structure, latest CLI commands/options, and library API changes.
+- Adjusted introductory joke in README.md for subtlety (removed italics).
 
 ## [0.2.0] - 2025-04-15
 
