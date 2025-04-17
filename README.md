@@ -6,7 +6,9 @@
 [![Docs.rs](https://docs.rs/mutant_lib/badge.svg)](https://docs.rs/mutant_lib)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **MutAnt** brings a polished, private mutable key-value store on the Autonomi network, featuring resumable uploads, local index caching, and a powerful async Rust API + CLI.
+> **MutAnt** is a private mutable key-value store on the Autonomi network, featuring resumable uploads, local index caching, and a powerful async Rust API + CLI.
+
+**No LLM was harmed in the making of this project.**
 
 ## Table of Contents
 1. [Core Concepts](#core-concepts)
