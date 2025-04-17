@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Introduced granular pad statuses (`Generated`, `Written`, `Confirmed`) in the index to track chunk progress accurately.
 - Optimized `put` operation for newly generated pads by skipping unnecessary network existence checks before the initial write.
 - Introduced `PadStatus::Allocated` to explicitly track scratchpads known to exist on the network before data write is confirmed.
+- Added integration tests for `PadLifecycleManager::purge` covering existing, non-existent, mixed, and empty pending lists.
 
 ### Changed
 - **Refactor (mutant-lib):** Refactored `data::ops::store::store_op` by:
@@ -54,6 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workaround:** Avoid calling `scratchpad_update` in `put_raw` due to suspected SDK bug causing data truncation on retrieval. Assume existing scratchpad is correct if `create` fails with "already exists". This may lead to stale data if the intent was to overwrite.
 - Set `is_new_hint` correctly in `put` preparation based on pad origin (`Generated` vs `FreePool`) to avoid incorrect network calls.
 - **Fix:** Corrected imports and type mismatches in index integration tests (`mutant-lib/src/index/integration_tests.rs`) to allow them to compile.
+- Added integration tests for `PadLifecycleManager::purge` covering existing, non-existent, mixed, and empty pending lists.
 
 ### Removed
 - Removed redundant pad release functions (`pad_lifecycle::pool::release_pads_to_free`, `pad_lifecycle::manager::release_pads`) as the logic is now handled within `IndexManager` and `purge`.

@@ -2,6 +2,7 @@
 pub mod cache;
 pub mod error;
 pub mod import;
+pub mod integration_tests;
 pub mod manager;
 pub mod pool;
 mod prepare;

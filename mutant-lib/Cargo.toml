@@ -40,6 +40,7 @@ ring = "0.17"
 serde_json = "1.0"
 
 [dev-dependencies]
+# assert_matches = "1.5" # Removed
 dialoguer = "0.11.0"
 indicatif = { version = "0.17.7", features = ["tokio"] }
 clap = { version = "4.4.8", features = ["derive"] }
