@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Handle `NotEnoughCopies` network errors during `put` resume existence checks. Instead of aborting or retrying the same pad, the operation now acquires a *new* replacement pad, adds the original problematic pad to the `pending_verification_pads` list for later checking (e.g., via `purge`), updates the index to use the new pad for the corresponding chunk, logs a warning, and proceeds with the operation. The index cache is saved immediately after the replacement to persist the state.
 - Store operation confirmation was insufficient, potentially marking data as confirmed even if it was corrupted or undecryptable, or if an update didn't actually increment the counter.
 - Confirmation could fail prematurely if network propagation delayed the visibility of the updated scratchpad counter.
+- Fixed `rm` command to avoid network fetch for pad counter; it now uses the pad's origin initial counter when moving to the free list.
 
 ### Removed
 - Removed redundant pad release functions (`pad_lifecycle::pool::release_pads_to_free`, `pad_lifecycle::manager::release_pads`) as the logic is now handled within `IndexManager` and `purge`.

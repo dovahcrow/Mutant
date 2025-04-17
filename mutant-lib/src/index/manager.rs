@@ -3,6 +3,7 @@ use crate::index::persistence::{load_index, save_index};
 use crate::index::query;
 use crate::index::structure::{KeyInfo, MasterIndex, PadStatus, DEFAULT_SCRATCHPAD_SIZE};
 use crate::network::NetworkAdapter;
+use crate::pad_lifecycle::PadOrigin;
 use crate::storage::StorageManager;
 use crate::types::{KeyDetails, StorageStats};
 use async_trait::async_trait;
@@ -235,7 +236,6 @@ impl IndexManager for DefaultIndexManager {
                 if let Some(key_bytes) = info.pad_keys.get(&pad_info.address) {
                     match pad_info.status {
                         PadStatus::Generated => {
-                            // Pad was generated but maybe not written. Needs verification.
                             trace!(
                                 "Key '{}', Pad {}: Status Generated -> Adding to pending list",
                                 key,
@@ -244,38 +244,17 @@ impl IndexManager for DefaultIndexManager {
                             pads_to_verify.push((pad_info.address, key_bytes.clone()));
                         }
                         PadStatus::Written | PadStatus::Confirmed => {
-                            // Pad was written or confirmed, can be safely reused.
                             trace!(
                                 "Key '{}', Pad {}: Status {:?} -> Adding to free list",
                                 key,
                                 pad_info.address,
                                 pad_info.status
                             );
-                            // Fetch counter before adding to free list
-                            match self
-                                .storage_manager
-                                .read_pad_scratchpad(&pad_info.address)
-                                .await
-                            {
-                                Ok(scratchpad) => {
-                                    let counter = scratchpad.counter();
-                                    trace!(
-                                        "Fetched counter {} for pad {} before adding to free list.",
-                                        counter,
-                                        pad_info.address
-                                    );
-                                    pads_to_free.push((
-                                        pad_info.address,
-                                        key_bytes.clone(),
-                                        counter,
-                                    )); // Store counter
-                                }
-                                Err(e) => {
-                                    warn!("Failed to fetch scratchpad to get counter for pad {} during remove_key_info: {}. Pad will not be added to free list.", pad_info.address, e);
-                                    // Decide: Add to pending? Or just log and discard?
-                                    // Let's log and discard for now to avoid potential loops if fetch keeps failing.
-                                }
-                            }
+                            let counter = match pad_info.origin {
+                                PadOrigin::FreePool { initial_counter } => initial_counter,
+                                PadOrigin::Generated => 0,
+                            };
+                            pads_to_free.push((pad_info.address, key_bytes.clone(), counter));
                         }
                     }
                 } else {
