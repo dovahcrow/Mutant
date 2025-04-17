@@ -23,18 +23,24 @@
 //!
 //! Add to `Cargo.toml`:
 //! ```toml
-//! mutant-lib = { path = "../mutant-lib" }
+//! mutant-lib = "0.2"
 //! ```
 //!
 //! ```rust
 //! use mutant_lib::{MutAnt, MutAntConfig};
+//!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
 //!     let key_hex = "0xYOUR_PRIVATE_KEY_HEX".to_string();
-//!     let mut ant = MutAnt::init_with_progress(key_hex, MutAntConfig::default(), None).await?;
-//!     ant.store("file1".into(), b"hello").await?;
+//!
+//!     let mut ant = MutAnt::init(key_hex, MutAntConfig::default(), None).await?;
+//!
+//!     ant.store("file1", b"hello").await?;
+//!
 //!     let data = ant.fetch("file1").await?;
+//!
 //!     println!("Fetched: {}", String::from_utf8_lossy(&data));
+//!
 //!     Ok(())
 //! }
 //! ```
