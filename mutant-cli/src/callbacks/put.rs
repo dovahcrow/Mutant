@@ -2,7 +2,7 @@ use super::progress::StyledProgressBar;
 use indicatif::MultiProgress;
 use log::{debug, warn};
 
-use mutant_lib::{PutCallback, PutEvent, error::Error as LibError};
+use mutant_lib::{Error as LibError, PutCallback, PutEvent};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

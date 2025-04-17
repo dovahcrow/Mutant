@@ -3,7 +3,7 @@ use crate::callbacks::put::create_put_callback;
 use indicatif::MultiProgress;
 use log::{debug, warn};
 
-use mutant_lib::{Error as LibError, MutAnt, data::DataError};
+use mutant_lib::{DataError, Error as LibError, MutAnt};
 use std::io::{self, Read};
 use std::process::ExitCode;
 use std::sync::Arc;

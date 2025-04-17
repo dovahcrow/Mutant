@@ -1,6 +1,6 @@
 use log::{error, info};
 
-use mutant_lib::{Error as LibError, MutAnt, pad_lifecycle::PadLifecycleError};
+use mutant_lib::{Error as LibError, MutAnt, PadLifecycleError};
 use std::process::ExitCode;
 
 pub async fn handle_import(mutant: MutAnt, private_key: String) -> ExitCode {

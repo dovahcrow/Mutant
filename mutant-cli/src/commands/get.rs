@@ -1,9 +1,10 @@
 use crate::callbacks::StyledProgressBar;
 use crate::callbacks::get::create_get_callback;
+use futures::TryStreamExt;
 use indicatif::MultiProgress;
-use log::debug;
+use log::{debug, error, info};
 
-use mutant_lib::{Error as LibError, MutAnt, data::DataError};
+use mutant_lib::{DataError, Error as LibError, MutAnt};
 use std::io::{self, Write};
 use std::process::ExitCode;
 use std::sync::Arc;

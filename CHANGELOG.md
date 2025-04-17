@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactored `confirm_pad_write` to be a standalone function.
 - Optimized `put` operation for newly generated pads by skipping unnecessary network existence checks before the initial write.
 - Introduced `PadStatus::Allocated` to explicitly track scratchpads known to exist on the network before data write is confirmed.
+- Restrict public API of `mutant-lib` to expose only core `MutAnt` struct, config, error, events, and necessary types.
 
 ### Removed
 - Removed redundant pad release functions (`pad_lifecycle::pool::release_pads_to_free`, `pad_lifecycle::manager::release_pads`) as the logic is now handled within `IndexManager` and `purge`.

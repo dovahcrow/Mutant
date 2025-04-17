@@ -2,8 +2,8 @@ use crate::app::CliError;
 use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{error, info};
-use mutant_lib::api::{ReserveCallback, ReserveEvent};
-use mutant_lib::error::Error as LibError;
+use mutant_lib::Error as LibError;
+use mutant_lib::{MutAnt, ReserveCallback, ReserveEvent};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -19,7 +19,7 @@ struct ReserveCallbackContext {
 }
 
 impl Reserve {
-    pub async fn run(&self, mutant: &mutant_lib::api::MutAnt) -> Result<(), CliError> {
+    pub async fn run(&self, mutant: &MutAnt) -> Result<(), CliError> {
         let count = self.count.unwrap_or(1);
         if count == 0 {
             info!("Reserve count is 0, nothing to do.");
