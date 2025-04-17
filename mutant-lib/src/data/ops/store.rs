@@ -429,17 +429,75 @@ async fn execute_write_confirm_tasks(
 
         pending_writes += 1;
         write_futures.push(async move {
-            let write_result = storage_manager_clone
-                .write_pad_data(&secret_key_write, &chunk_data, &current_status)
-                .await
-                .map(|_| ())
-                .map_err(|e| DataError::Storage(e.into()));
-            // Return the chunk size along with other info
+            // --- Write Retry Loop --- START
+            let mut last_write_error: Option<DataError> = None;
+            for attempt in 0..CONFIRMATION_RETRY_LIMIT {
+                // Reuse confirmation limit for write retries
+                trace!(
+                    "Write attempt {} for chunk {}, pad {}",
+                    attempt + 1,
+                    pad_info_write.chunk_index,
+                    pad_info_write.address
+                );
+                let write_attempt_result = storage_manager_clone
+                    .write_pad_data(&secret_key_write, &chunk_data, &current_status)
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| DataError::Storage(e.into()));
+
+                match write_attempt_result {
+                    Ok(()) => {
+                        // Write succeeded
+                        last_write_error = None; // Clear any previous transient error
+                        break;
+                    }
+                    Err(e) => {
+                        // Check if the error is a potentially retriable network error
+                        let is_retriable_network_error =
+                            if let DataError::Storage(StorageError::Network(net_err)) = &e {
+                                let msg = net_err.to_string();
+                                msg.contains("NotEnoughCopies") || msg.contains("Timeout")
+                            } else {
+                                false
+                            };
+
+                        if is_retriable_network_error {
+                            warn!(
+                                "Write attempt {} failed for chunk {}, pad {}: {}. Retrying...",
+                                attempt + 1,
+                                pad_info_write.chunk_index,
+                                pad_info_write.address,
+                                e
+                            );
+                            last_write_error = Some(e); // Store the error in case all retries fail
+                            if attempt < CONFIRMATION_RETRY_LIMIT - 1 {
+                                sleep(CONFIRMATION_RETRY_DELAY).await; // Reuse confirmation delay
+                                continue;
+                            } else {
+                                // Last attempt failed
+                                break;
+                            }
+                        } else {
+                            // Non-retriable error
+                            last_write_error = Some(e);
+                            break; // Exit loop immediately
+                        }
+                    }
+                }
+            } // --- Write Retry Loop --- END
+
+            // Check the final result of the write attempts
+            let final_write_result = match last_write_error {
+                Some(err) => Err(err), // Return the last error if loop finished with one
+                None => Ok(()),        // Success
+            };
+
+            // Return the pad info and the final write result for the outer loop
             (
                 pad_info_write,
                 secret_key_write,
                 expected_chunk_size,
-                write_result,
+                final_write_result,
             )
         });
     }
