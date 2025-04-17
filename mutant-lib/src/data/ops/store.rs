@@ -44,12 +44,21 @@ pub(crate) async fn store_op(
     let data_size = data_bytes.len();
 
     // Chunk data first (will be passed to preparation function)
-    // The preparation function (`prepare_pads_for_store`) will handle getting KeyInfo,
-    // checking resume status, acquiring/replacing pads, etc.
-    // NOTE: Original chunk_size calculation removed.
-    let chunks = chunk_data(data_bytes, data_size)?;
-    // NOTE: Original num_chunks calculation removed. Using chunks.len() directly.
-    debug!("Data chunked into {} pieces.", chunks.len());
+    // Fetch the configured chunk size from the index manager
+    let chunk_size = deps.index_manager.get_scratchpad_size().await?;
+    if chunk_size == 0 {
+        // Prevent division by zero or infinite looping if size is misconfigured
+        error!("Configured scratchpad size is 0. Cannot proceed with chunking.");
+        return Err(DataError::ChunkingError(
+            "Invalid scratchpad size (0) configured".to_string(),
+        ));
+    }
+    let chunks = chunk_data(data_bytes, chunk_size)?;
+    debug!(
+        "Data chunked into {} pieces using size {}.",
+        chunks.len(),
+        chunk_size
+    );
 
     // --- Preparation Phase ---
     // Call prepare_pads_for_store to handle KeyInfo fetching, resume/new logic,

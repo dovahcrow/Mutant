@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added integration tests for `PadLifecycleManager::purge` covering existing, non-existent, mixed, and empty pending lists.
 - Moved chunking tests from inline module to `data::integration_tests`.
 - Added integration tests for `DataManager` (`store`, `fetch`, `remove`), including checks for non-existent keys and multi-chunk data.
+- Added specific integration test (`test_store_very_large_data_multi_pad`) for storing 16MiB data, verifying correct multi-pad chunking (5 pads).
 
 ### Changed
 - **Refactor (mutant-lib):** Refactored `data::ops::store::store_op` by:
@@ -39,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Refactor `put_raw`**: Use `PadStatus` passed from caller to decide network operation (`create` for `Generated`, `update` for `Allocated`/`Written`). Raise `NetworkError::InconsistentState` if network result mismatches expectation (e.g., `create` fails with "already exists", `update` fails with "not found").
 
 ### Fixed
+- Corrected `store_op` logic to use the configured `scratchpad_size` for chunking data, instead of the total data size. Fixes failure when storing data larger than a single scratchpad.
 - Corrected pad lifecycle management to ensure pads from cancelled or failed `put` operations are not prematurely released or discarded, allowing for proper resumption.
 - **Fixed `put` progress reporting by ensuring the `Starting` event is emitted *before* pad acquisition begins, allowing the reservation progress bar to initialize correctly.**
 - **Fix:** Prevent redundant existence check in `put_raw` when reusing free pads.
