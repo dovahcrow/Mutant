@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implemented resumable `put` operations. Uploads can now be interrupted and resumed, picking up from the last successfully written chunk.
 - Introduced granular pad statuses (`Generated`, `Written`, `Confirmed`) in the index to track chunk progress accurately.
 - Optimized `put` operation for newly generated pads by skipping unnecessary network existence checks before the initial write.
+- Introduced `PadStatus::Allocated` to explicitly track scratchpads known to exist on the network before data write is confirmed.
 
 ### Changed
 - **Refactor (mutant-lib):** Refactored `data::ops::store::store_op` by:
@@ -31,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Modified the `purge` command logic to only discard pending pads if the network explicitly returns a "Record Not Found" status. Pads encountering other network errors during verification are now returned to the pending list for future retries.
 - Store confirmation (`put`) now verifies by fetching and attempting decryption, not just checking existence.
 - Confirmation for updated pads (from free pool) now verifies that the scratchpad counter has incremented, retrying several times with delays to allow for network propagation.
+- Replaced `is_new_hint` mechanism with `PadStatus::Allocated`. `put_raw` now always attempts `create` first, falling back to `update` if the pad already exists. Initial status is set based on pad origin (`Allocated` for `FreePool`, `Generated` for `Generated`).
 
 ### Fixed
 - Corrected pad lifecycle management to ensure pads from cancelled or failed `put` operations are not prematurely released or discarded, allowing for proper resumption.

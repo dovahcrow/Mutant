@@ -102,7 +102,7 @@ pub(crate) async fn save_index(
     // Use StorageManager to write the data
     // Since we are overwriting, the is_new hint is false
     storage_manager
-        .write_pad_data(key, &serialized_data, false) // Pass false for is_new hint
+        .write_pad_data(key, &serialized_data)
         .await
         .map_err(|e| {
             error!("Failed to write index via StorageManager: {}", e);

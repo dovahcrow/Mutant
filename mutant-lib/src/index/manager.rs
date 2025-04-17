@@ -233,28 +233,28 @@ impl IndexManager for DefaultIndexManager {
             let mut pads_to_verify = Vec::new();
 
             for pad_info in &info.pads {
-                if let Some(key_bytes) = info.pad_keys.get(&pad_info.address) {
+                if let Some(pad_key) = info.pad_keys.get(&pad_info.address).cloned() {
                     match pad_info.status {
-                        PadStatus::Generated => {
+                        PadStatus::Confirmed => {
                             trace!(
-                                "Key '{}', Pad {}: Status Generated -> Adding to pending list",
-                                key,
-                                pad_info.address
-                            );
-                            pads_to_verify.push((pad_info.address, key_bytes.clone()));
-                        }
-                        PadStatus::Written | PadStatus::Confirmed => {
-                            trace!(
-                                "Key '{}', Pad {}: Status {:?} -> Adding to free list",
-                                key,
+                                "Pad {} for removed key '{}' is Confirmed. Releasing to free pool.",
                                 pad_info.address,
-                                pad_info.status
+                                key
                             );
+                            // Determine counter based on origin
                             let counter = match pad_info.origin {
                                 PadOrigin::FreePool { initial_counter } => initial_counter,
-                                PadOrigin::Generated => 0,
+                                PadOrigin::Generated => 0, // Assume 0 if generated and somehow confirmed?
                             };
-                            pads_to_free.push((pad_info.address, key_bytes.clone(), counter));
+                            pads_to_free.push((pad_info.address, pad_key, counter));
+                        }
+                        PadStatus::Generated | PadStatus::Allocated | PadStatus::Written => {
+                            trace!(
+                                "Pad {} for removed key '{}' is {:?}. Adding to pending verification.",
+                                pad_info.address, key, pad_info.status
+                            );
+                            // Pending verification only needs address and key
+                            pads_to_verify.push((pad_info.address, pad_key));
                         }
                     }
                 } else {

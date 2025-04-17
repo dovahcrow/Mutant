@@ -77,7 +77,7 @@ pub(crate) async fn prepare_pads_for_store(
                         initial_written_count += 1;
                         initial_confirmed_count += 1;
                     }
-                    PadStatus::Generated => {}
+                    PadStatus::Generated | PadStatus::Allocated => { /* Needs processing */ }
                 }
             }
 
@@ -249,7 +249,10 @@ pub(crate) async fn prepare_pads_for_store(
 
             debug!("Prepare: Identifying resume tasks based on pad status...");
             for pad_info in final_prepared_key_info.pads.iter() {
-                if pad_info.status == PadStatus::Generated {
+                // Process pads that haven't reached Confirmed status
+                if pad_info.status == PadStatus::Generated
+                    || pad_info.status == PadStatus::Allocated
+                {
                     if let Some(key_bytes) = final_prepared_key_info.pad_keys.get(&pad_info.address)
                     {
                         let secret_key =
@@ -263,28 +266,32 @@ pub(crate) async fn prepare_pads_for_store(
                             ))
                         })?;
 
-                        let is_new_hint = match pad_info.origin {
-                            PadOrigin::FreePool { initial_counter: _ } => false,
-                            PadOrigin::Generated => {
-                                if let Some(exists) = existence_results.get(&pad_info.address) {
-                                    !*exists
-                                } else {
-                                    true
-                                }
-                            }
+                        // Determine if existence check result is relevant (only for originally Generated pads)
+                        // For Allocated pads, we already know they exist.
+                        let pad_exists_known = match pad_info.origin {
+                            PadOrigin::FreePool { .. } => true, // From free pool, assumed to exist.
+                            PadOrigin::Generated => existence_results
+                                .get(&pad_info.address)
+                                .copied()
+                                .unwrap_or(false),
                         };
-
-                        debug!(
-                            "Prepare: Task: Write chunk {} to pad {} (Origin: {:?}, Hint: {})",
-                            pad_info.chunk_index, pad_info.address, pad_info.origin, is_new_hint
-                        );
-
-                        tasks_to_run.push(WriteTaskInput {
-                            pad_info: pad_info.clone(),
-                            secret_key,
-                            chunk_data: chunk.clone(),
-                            is_new_hint,
-                        });
+                        // If the pad doesn't exist (check failed/NotEnoughCopies/etc.), we rely on replacement logic having run already.
+                        // If it *does* exist (or we assume it does), proceed with write task.
+                        if pad_exists_known {
+                            debug!(
+                                "Prepare: Task: Write chunk {} to pad {} (Origin: {:?}, Status: {:?})",
+                                pad_info.chunk_index, pad_info.address, pad_info.origin, pad_info.status
+                            );
+                            tasks_to_run.push(WriteTaskInput {
+                                pad_info: pad_info.clone(),
+                                secret_key,
+                                chunk_data: chunk.clone(),
+                            });
+                        } else {
+                            // This case should ideally be handled by the replacement logic earlier.
+                            // If we reach here, it means a Generated pad was found not to exist, but wasn't replaced.
+                            warn!("Prepare: Skipping write task for pad {} which was found not to exist and wasn't replaced.", pad_info.address);
+                        }
                     } else {
                         warn!(
                             "Prepare: Missing secret key for pad {} in KeyInfo during resume preparation. Skipping.",
@@ -385,10 +392,16 @@ pub(crate) async fn prepare_pads_for_store(
                 }
                 let (pad_address, secret_key, pad_origin) = acquired_pads_with_origin[i].clone();
 
+                // Set initial status based on origin
+                let initial_status = match pad_origin {
+                    PadOrigin::Generated => PadStatus::Generated,
+                    PadOrigin::FreePool { .. } => PadStatus::Allocated, // Already exists
+                };
+
                 let pad_info = PadInfo {
                     address: pad_address,
                     chunk_index: i,
-                    status: PadStatus::Generated,
+                    status: initial_status.clone(),
                     origin: pad_origin.clone(),
                     needs_reverification: false,
                 };
@@ -396,20 +409,14 @@ pub(crate) async fn prepare_pads_for_store(
                 initial_pads.push(pad_info.clone());
                 initial_pad_keys.insert(pad_address, secret_key.to_bytes().to_vec());
 
-                let is_new_hint = match pad_origin {
-                    PadOrigin::Generated => true,
-                    PadOrigin::FreePool { .. } => false,
-                };
-
                 debug!(
-                    "Prepare: Task: Write chunk {} to new pad {} (Origin: {:?}, Hint: {})",
-                    i, pad_address, pad_origin, is_new_hint
+                    "Prepare: Task: Write chunk {} to new pad {} (Origin: {:?}, Status: {:?})",
+                    i, pad_address, pad_origin, initial_status
                 );
                 tasks_to_run.push(WriteTaskInput {
                     pad_info,
                     secret_key,
                     chunk_data: chunk.clone(),
-                    is_new_hint,
                 });
             }
 

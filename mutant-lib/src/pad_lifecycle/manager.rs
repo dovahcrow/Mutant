@@ -444,7 +444,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
 
                 // 1. Reserve pad on network using StorageManager::write_pad_data
                 match storage_manager
-                    .write_pad_data(&secret_key, &[0u8], true) // Use StorageManager with &[0u8]
+                    .write_pad_data(&secret_key, &[0u8])
                     .await
                 {
                     Ok(created_address) => {

@@ -16,6 +16,8 @@ pub(crate) const DEFAULT_SCRATCHPAD_SIZE: usize = (4 * 1024 * 1024) - 512; // 4M
 pub enum PadStatus {
     /// Key generated, creation/write pending or in progress.
     Generated,
+    /// Pad exists on the network (created or updated), but data write not yet confirmed.
+    Allocated,
     /// Network write call returned success, confirmation might be pending.
     Written,
     /// Write is confirmed on the network (final state for occupied pad).

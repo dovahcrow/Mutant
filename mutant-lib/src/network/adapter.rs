@@ -28,7 +28,6 @@ pub trait NetworkAdapter: Send + Sync {
         &self,
         key: &SecretKey,
         data: &[u8],
-        is_new_hint: bool,
     ) -> Result<ScratchpadAddress, NetworkError>;
 
     /// Checks if a scratchpad exists at the given address.
@@ -116,13 +115,8 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
         &self,
         key: &SecretKey,
         data: &[u8],
-        is_new_hint: bool,
     ) -> Result<ScratchpadAddress, NetworkError> {
-        trace!(
-            "NetworkAdapter::put_raw called, data_len: {}, is_new_hint: {}",
-            data.len(),
-            is_new_hint
-        );
+        trace!("NetworkAdapter::put_raw called, data_len: {}", data.len());
         let client = self.get_or_init_client().await?;
 
         let public_key = key.public_key();
@@ -131,115 +125,59 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
         let content_type = 0u64;
         let payment_option = PaymentOption::Wallet((*self.wallet).clone());
 
-        if is_new_hint {
-            // If hinted as new, try creating directly.
-            debug!(
-                "Attempting to create new scratchpad at address: {}",
-                address
-            );
-            match client
-                .scratchpad_create(key, content_type, &data_bytes, payment_option.clone())
-                .await
-            {
-                Ok((_cost, created_addr)) => {
-                    if created_addr != address {
-                        warn!(
-                            "Scratchpad create returned address {} but expected {}",
-                            created_addr, address
-                        );
-                    }
-                    info!("Successfully created new scratchpad at {}", address);
-                    Ok(address)
-                }
-                Err(e) if e.to_string().contains("already exists") => {
+        // Always attempt create first
+        debug!("Attempting to create scratchpad at address: {}", address);
+        match client
+            .scratchpad_create(key, content_type, &data_bytes, payment_option.clone())
+            .await
+        {
+            Ok((_cost, created_addr)) => {
+                if created_addr != address {
+                    // This shouldn't happen if address derivation is correct, but log it.
                     warn!(
-                        "Scratchpad at {} already exists despite is_new_hint=true. Assuming content is correct (Workaround for update issue).",
-                        address
+                        "Scratchpad create returned address {} but expected {}",
+                        created_addr, address
                     );
-                    // Workaround: Don't try to update or delete, just return the address.
-                    // This indicates an inconsistency in the calling logic (prepare stage).
-                    Ok(address)
                 }
-                Err(e) => {
-                    error!("Failed to create new scratchpad {}: {}", address, e);
+                info!("Successfully created new scratchpad at {}", address);
+                Ok(address)
+            }
+            Err(create_err) => {
+                // Check if the error indicates the scratchpad already exists
+                if create_err.to_string().contains("already exists") {
+                    info!("Scratchpad {} already exists. Attempting update.", address);
+                    // Attempt update as a fallback
+                    match client
+                        .scratchpad_update(key, content_type, &data_bytes)
+                        .await
+                    {
+                        Ok(_) => {
+                            // Log the problematic update attempt clearly
+                            warn!(
+                                "Executed scratchpad_update for existing pad {}. Data integrity depends on SDK behavior.",
+                                address
+                            );
+                            info!("Successfully updated existing scratchpad at {}", address);
+                            Ok(address)
+                        }
+                        Err(update_err) => {
+                            error!(
+                                "Failed to update scratchpad {} after create failed: {}",
+                                address, update_err
+                            );
+                            Err(NetworkError::InternalError(format!(
+                                "Create failed ({}), then update failed for {}: {}",
+                                create_err, address, update_err
+                            )))
+                        }
+                    }
+                } else {
+                    // Create failed for a different reason
+                    error!("Failed to create scratchpad {}: {}", address, create_err);
                     Err(NetworkError::InternalError(format!(
                         "Failed to create scratchpad {}: {}",
-                        address, e
+                        address, create_err
                     )))
-                }
-            }
-        } else {
-            // If not hinted as new, directly attempt update.
-            debug!(
-                "Attempting to update existing scratchpad at address: {}",
-                address
-            );
-            match client
-                .scratchpad_update(key, content_type, &data_bytes)
-                .await
-            {
-                Ok(_) => {
-                    // This path might still be reachable if is_new_hint was false.
-                    // Let's add a stronger warning here, as update is problematic.
-                    warn!("Executed scratchpad_update for existing pad {} despite potential issues (Workaround active). Data integrity not guaranteed.", address);
-                    info!(
-                        "Attempted update for existing scratchpad at {} (Workaround).",
-                        address
-                    );
-                    Ok(address)
-                }
-                Err(e) => {
-                    // Handle potential errors like "not found" or "does not exist" from the update call
-                    // The error type might be opaque, requiring string matching or specific handling
-                    // based on autonomi client's error specifics.
-                    let error_string = e.to_string().to_lowercase(); // Convert to lowercase for case-insensitive check
-                    if error_string.contains("not found") || error_string.contains("does not exist")
-                    {
-                        warn!(
-                            "Attempted to update non-existent scratchpad {}. Error: {}. Falling back to creation.",
-                            address, e
-                        );
-                        // Fallback to create
-                        match client
-                            .scratchpad_create(key, content_type, &data_bytes, payment_option)
-                            .await
-                        {
-                            Ok((_cost, created_addr)) => {
-                                if created_addr != address {
-                                    warn!(
-                                        "Scratchpad create (fallback) returned address {} but expected {}",
-                                        created_addr, address
-                                    );
-                                }
-                                warn!("Executed scratchpad_create (fallback) for {} despite potential issues (Workaround active). Data integrity not guaranteed.", address);
-                                info!(
-                                    "Successfully created scratchpad {} via fallback (Workaround).",
-                                    address
-                                );
-                                Ok(address)
-                            }
-                            Err(create_err) => {
-                                error!(
-                                    "Failed to create scratchpad {} during fallback: {}",
-                                    address, create_err
-                                );
-                                Err(NetworkError::InternalError(format!(
-                                    "Update failed ({}), then create failed for {}: {}",
-                                    e,
-                                    address,
-                                    create_err // Include original update error in message
-                                )))
-                            }
-                        }
-                    } else {
-                        // Other update error
-                        error!("Failed to update scratchpad {}: {}", address, e);
-                        // If update fails for other reasons, still propagate the error.
-                        Err(NetworkError::InternalError(format!(
-                            "Failed to update scratchpad {}: {}",
-                            address, e
-                        )))
-                    }
                 }
             }
         }

@@ -22,8 +22,7 @@ pub(crate) struct DataManagerDependencies {
 /// Structure to hold the necessary information for a single write task.
 #[derive(Clone)] // Clone needed if the preparation function returns owned values
 pub(crate) struct WriteTaskInput {
-    pub pad_info: PadInfo,
-    pub secret_key: SecretKey,
-    pub chunk_data: Vec<u8>,
-    pub is_new_hint: bool,
+    pub(crate) pad_info: PadInfo,
+    pub(crate) secret_key: SecretKey,
+    pub(crate) chunk_data: Vec<u8>,
 }

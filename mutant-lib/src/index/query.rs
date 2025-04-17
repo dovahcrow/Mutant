@@ -127,8 +127,9 @@ pub(crate) fn get_stats_internal(index: &MasterIndex) -> Result<StorageStats, In
             incomplete_keys_total_pads += key_info.pads.len();
             for pad_info in &key_info.pads {
                 match pad_info.status {
-                    PadStatus::Generated => incomplete_keys_pads_generated += 1,
-                    PadStatus::Written => incomplete_keys_pads_written += 1,
+                    PadStatus::Generated | PadStatus::Allocated | PadStatus::Written => {
+                        incomplete_keys_total_pads += 1
+                    }
                     PadStatus::Confirmed => incomplete_keys_pads_confirmed += 1,
                 }
             }
