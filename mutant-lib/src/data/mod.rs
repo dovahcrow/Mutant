@@ -1,6 +1,7 @@
 // Layer 4: Data Operations
 pub mod chunking;
 pub mod error;
+mod integration_tests;
 pub mod manager;
 pub mod ops; // Declares the submodules store, fetch, remove, common
 

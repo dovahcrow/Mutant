@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optimized `put` operation for newly generated pads by skipping unnecessary network existence checks before the initial write.
 - Introduced `PadStatus::Allocated` to explicitly track scratchpads known to exist on the network before data write is confirmed.
 - Added integration tests for `PadLifecycleManager::purge` covering existing, non-existent, mixed, and empty pending lists.
+- Moved chunking tests from inline module to `data::integration_tests`.
+- Added integration tests for `DataManager` (`store`, `fetch`, `remove`), including checks for non-existent keys and multi-chunk data.
 
 ### Changed
 - **Refactor (mutant-lib):** Refactored `data::ops::store::store_op` by:
