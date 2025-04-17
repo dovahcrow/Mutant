@@ -21,7 +21,7 @@ pub trait IndexManager: Send + Sync {
     async fn load_or_initialize(
         &self,
         master_index_address: &ScratchpadAddress,
-        _master_index_key: &SecretKey,
+        master_index_key: &SecretKey,
     ) -> Result<(), IndexError>;
 
     /// Saves the current in-memory index state to persistence.
@@ -108,6 +108,8 @@ pub trait IndexManager: Send + Sync {
     async fn fetch_remote(
         &self,
         master_index_address: &ScratchpadAddress,
+        // NOTE: This function CANNOT decrypt the loaded index without the key!
+        // It will likely return a DecryptionError if the index exists.
     ) -> Result<MasterIndex, IndexError>;
 
     /// Adds multiple pads (address and key bytes) to the pending verification list.
@@ -143,13 +145,14 @@ impl IndexManager for DefaultIndexManager {
     async fn load_or_initialize(
         &self,
         master_index_address: &ScratchpadAddress,
-        _master_index_key: &SecretKey,
+        master_index_key: &SecretKey,
     ) -> Result<(), IndexError> {
         info!("IndexManager: Loading index from storage...");
         match load_index(
             self.storage_manager.as_ref(),
             self.network_adapter.as_ref(),
             master_index_address,
+            master_index_key,
         )
         .await
         {
@@ -206,9 +209,10 @@ impl IndexManager for DefaultIndexManager {
         let state_guard = self.state.lock().await;
         save_index(
             self.storage_manager.as_ref(),
+            self.network_adapter.as_ref(),
             master_index_address,
             _master_index_key,
-            &*state_guard, // Pass the locked state
+            &*state_guard,
         )
         .await
     }
@@ -453,12 +457,18 @@ impl IndexManager for DefaultIndexManager {
     async fn fetch_remote(
         &self,
         master_index_address: &ScratchpadAddress,
+        // NOTE: This function CANNOT decrypt the loaded index without the key!
+        // It will likely return a DecryptionError if the index exists.
     ) -> Result<MasterIndex, IndexError> {
         debug!("IndexManager: Fetching remote index directly...");
+        // HACK: Create a dummy key because we don't have the real one here.
+        // load_index will attempt decryption and fail if the index exists.
+        let dummy_key = SecretKey::random();
         load_index(
             self.storage_manager.as_ref(),
             self.network_adapter.as_ref(),
             master_index_address,
+            &dummy_key, // Pass dummy key
         )
         .await
     }

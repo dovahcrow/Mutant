@@ -97,7 +97,6 @@ pub(crate) fn get_stats_internal(index: &MasterIndex) -> Result<StorageStats, In
     let scratchpad_size = index.scratchpad_size;
     if scratchpad_size == 0 {
         warn!("Cannot calculate stats: Scratchpad size in index is zero.");
-        // Return an error or default stats? Error seems safer.
         return Err(IndexError::InconsistentState(
             "Scratchpad size in index is zero".to_string(),
         ));
@@ -105,50 +104,72 @@ pub(crate) fn get_stats_internal(index: &MasterIndex) -> Result<StorageStats, In
 
     let free_pads_count = index.free_pads.len();
     let pending_verification_pads_count = index.pending_verification_pads.len();
-    let mut occupied_pads_count = 0;
-    let mut occupied_data_size_total: u64 = 0;
 
-    // Stats for incomplete keys
+    let mut occupied_pads_count = 0; // Pads confirmed holding data
+    let mut occupied_data_size_total: u64 = 0;
+    let mut allocated_written_pads_count = 0; // Pads used by keys but not confirmed
+
     let mut incomplete_keys_count = 0;
     let mut incomplete_keys_data_bytes = 0;
     let mut incomplete_keys_total_pads = 0;
     let mut incomplete_keys_pads_generated = 0;
+    let mut incomplete_keys_pads_allocated = 0; // Added for completeness
     let mut incomplete_keys_pads_written = 0;
     let mut incomplete_keys_pads_confirmed = 0;
 
     for key_info in index.index.values() {
-        occupied_pads_count += key_info.pads.len();
-        occupied_data_size_total += key_info.data_size as u64;
-
-        // Aggregate stats for incomplete keys
-        if !key_info.is_complete {
+        if key_info.is_complete {
+            // For complete keys, all pads contribute to occupied count and data size
+            occupied_pads_count += key_info.pads.len();
+            occupied_data_size_total += key_info.data_size as u64;
+        } else {
+            // For incomplete keys, analyze each pad status
             incomplete_keys_count += 1;
             incomplete_keys_data_bytes += key_info.data_size as u64;
             incomplete_keys_total_pads += key_info.pads.len();
+
             for pad_info in &key_info.pads {
                 match pad_info.status {
-                    PadStatus::Generated | PadStatus::Allocated | PadStatus::Written => {
-                        incomplete_keys_total_pads += 1
+                    PadStatus::Generated => incomplete_keys_pads_generated += 1,
+                    PadStatus::Allocated => {
+                        incomplete_keys_pads_allocated += 1;
+                        allocated_written_pads_count += 1; // Count as used but not confirmed
                     }
-                    PadStatus::Confirmed => incomplete_keys_pads_confirmed += 1,
+                    PadStatus::Written => {
+                        incomplete_keys_pads_written += 1;
+                        allocated_written_pads_count += 1; // Count as used but not confirmed
+                    }
+                    PadStatus::Confirmed => {
+                        incomplete_keys_pads_confirmed += 1;
+                        // Count confirmed pads for incomplete keys towards occupied total
+                        occupied_pads_count += 1;
+                    }
                 }
             }
+            // Data size for incomplete keys contributes to the total occupied data estimate
+            occupied_data_size_total += key_info.data_size as u64;
         }
     }
 
-    let total_pads_count = occupied_pads_count + free_pads_count + pending_verification_pads_count;
+    // Total pads managed by the index
+    let total_pads_count = occupied_pads_count
+        + allocated_written_pads_count
+        + free_pads_count
+        + pending_verification_pads_count;
 
     let scratchpad_size_u64 = scratchpad_size as u64;
+    // Space calculation based only on confirmed occupied pads
     let occupied_pad_space_bytes = occupied_pads_count as u64 * scratchpad_size_u64;
     let free_pad_space_bytes = free_pads_count as u64 * scratchpad_size_u64;
     let total_space_bytes = total_pads_count as u64 * scratchpad_size_u64;
 
+    // Wasted space compares confirmed pad space vs estimated data size
     let wasted_space_bytes = occupied_pad_space_bytes.saturating_sub(occupied_data_size_total);
 
     Ok(StorageStats {
         scratchpad_size,
         total_pads: total_pads_count,
-        occupied_pads: occupied_pads_count,
+        occupied_pads: occupied_pads_count, // Only Confirmed pads
         free_pads: free_pads_count,
         pending_verification_pads: pending_verification_pads_count,
         total_space_bytes,
@@ -156,13 +177,14 @@ pub(crate) fn get_stats_internal(index: &MasterIndex) -> Result<StorageStats, In
         free_pad_space_bytes,
         occupied_data_bytes: occupied_data_size_total,
         wasted_space_bytes,
-        // Populate incomplete stats
         incomplete_keys_count,
         incomplete_keys_data_bytes,
         incomplete_keys_total_pads,
         incomplete_keys_pads_generated,
-        incomplete_keys_pads_written,
+        incomplete_keys_pads_written, // Correctly calculated now
         incomplete_keys_pads_confirmed,
+        // Note: allocated_written_pads_count is calculated but not part of StorageStats struct
+        // Note: incomplete_keys_pads_allocated is calculated but not part of StorageStats struct
     })
 }
 

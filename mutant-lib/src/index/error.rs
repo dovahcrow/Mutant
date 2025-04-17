@@ -9,6 +9,9 @@ pub enum IndexError {
     #[error("Deserialization failed: {0}")]
     DeserializationError(String),
 
+    #[error("Failed to decrypt index data: {0}")]
+    DecryptionError(String),
+
     #[error("Key not found in index: {0}")]
     KeyNotFound(String),
 

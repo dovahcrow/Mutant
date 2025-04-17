@@ -27,8 +27,9 @@ pub(crate) fn deserialize_index(data: &[u8]) -> Result<MasterIndex, IndexError> 
 /// Loads the serialized index data from its dedicated scratchpad.
 pub(crate) async fn load_index(
     storage_manager: &dyn StorageManager,
-    network_adapter: &dyn NetworkAdapter, // Network adapter needed for existence check
+    network_adapter: &dyn NetworkAdapter,
     address: &ScratchpadAddress,
+    key: &SecretKey,
 ) -> Result<MasterIndex, IndexError> {
     // --- Add existence check first ---
     debug!("Checking existence of index scratchpad at {}", address);
@@ -63,24 +64,32 @@ pub(crate) async fn load_index(
     );
     // Call read_pad_scratchpad and get Scratchpad object
     match storage_manager.read_pad_scratchpad(address).await {
-        // Get raw bytes from scratchpad.encrypted_data()
         Ok(scratchpad) => {
-            let data = scratchpad.encrypted_data().to_vec();
-            if data.is_empty() {
+            // Decrypt the data using the provided key
+            let decrypted_data = match scratchpad.decrypt_data(key) {
+                Ok(data) => data.to_vec(),
+                Err(e) => {
+                    error!("Failed to decrypt index data from {}: {}", address, e);
+                    return Err(IndexError::DecryptionError(e.to_string()));
+                }
+            };
+
+            if decrypted_data.is_empty() {
                 warn!(
-                    "Loaded empty data from existing index address {}, treating as invalid.",
+                    "Loaded and decrypted empty data from index address {}, treating as invalid.",
                     address
                 );
                 return Err(IndexError::DeserializationError(
-                    "Index data read from storage was empty".to_string(),
+                    "Index data read and decrypted from storage was empty".to_string(),
                 ));
             }
             debug!(
-                "Successfully read {} bytes from index address {}",
-                data.len(),
+                "Successfully read and decrypted {} bytes from index address {}",
+                decrypted_data.len(),
                 address
             );
-            deserialize_index(&data)
+            // Deserialize the DECRYPTED data
+            deserialize_index(&decrypted_data)
         }
         Err(e) => {
             error!("Storage error during index load from {}: {}", address, e);
@@ -92,6 +101,7 @@ pub(crate) async fn load_index(
 /// Saves the serialized index data to its dedicated scratchpad using the StorageManager.
 pub(crate) async fn save_index(
     storage_manager: &dyn StorageManager,
+    network_adapter: &dyn NetworkAdapter, // Added: Needed for existence check
     address: &ScratchpadAddress,
     key: &SecretKey,
     index: &MasterIndex,
@@ -100,10 +110,34 @@ pub(crate) async fn save_index(
     // Serialize the index
     let serialized_data = serialize_index(index)?;
 
-    // Use StorageManager to write the data
-    // We expect the index pad to exist, so pass Allocated status
+    // Determine if we need to create or update based on existence
+    let status_hint = match network_adapter.check_existence(address).await {
+        Ok(true) => {
+            debug!(
+                "Index pad {} exists, using update strategy (Allocated)",
+                address
+            );
+            PadStatus::Allocated // Or Written, assuming update semantics are desired
+        }
+        Ok(false) => {
+            debug!(
+                "Index pad {} does not exist, using create strategy (Generated)",
+                address
+            );
+            PadStatus::Generated
+        }
+        Err(e) => {
+            error!(
+                "Failed to check existence for index pad {} before save: {}",
+                address, e
+            );
+            return Err(IndexError::Storage(StorageError::Network(e)));
+        }
+    };
+
+    // Use StorageManager to write the data with the determined status
     storage_manager
-        .write_pad_data(key, &serialized_data, &PadStatus::Allocated)
+        .write_pad_data(key, &serialized_data, &status_hint)
         .await
         .map_err(|e| {
             error!("Failed to write index via StorageManager: {}", e);
