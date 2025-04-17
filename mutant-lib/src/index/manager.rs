@@ -11,54 +11,234 @@ use log::{debug, error, info, trace, warn};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Trait defining the interface for managing the MutAnt index.
+///
+/// Implementations are responsible for maintaining the state of the index, including:
+/// - Key information (`KeyInfo`) mapping user keys to data locations and metadata.
+/// - Free pad list: Available storage pads ready for use.
+/// - Pending verification list: Pads that need checking before being added to the free list.
+///
+/// It handles loading/saving the index, querying its state, and modifying it based on
+/// data operations (store, remove) and pad lifecycle events.
 #[async_trait]
 pub trait IndexManager: Send + Sync {
+    /// Loads the index from persistent storage or initializes a default one if loading fails.
+    ///
+    /// # Arguments
+    ///
+    /// * `master_index_address` - The network address where the master index is stored.
+    /// * `master_index_key` - The secret key required to decrypt the master index.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` if a non-recoverable error occurs during loading (e.g., storage error).
+    /// Logs warnings for recoverable issues like deserialization errors or missing index (starts fresh).
     async fn load_or_initialize(
         &self,
         master_index_address: &ScratchpadAddress,
         master_index_key: &SecretKey,
     ) -> Result<(), IndexError>;
 
+    /// Saves the current state of the index to persistent storage.
+    ///
+    /// # Arguments
+    ///
+    /// * `master_index_address` - The network address to save the index to.
+    /// * `master_index_key` - The secret key used to encrypt the index before saving.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` if saving fails (e.g., serialization or storage error).
     async fn save(
         &self,
         master_index_address: &ScratchpadAddress,
         _master_index_key: &SecretKey,
     ) -> Result<(), IndexError>;
 
+    /// Retrieves the `KeyInfo` associated with a given user key.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The user key to look up.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Some(KeyInfo))` if the key exists, `Ok(None)` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures.
     async fn get_key_info(&self, key: &str) -> Result<Option<KeyInfo>, IndexError>;
 
+    /// Inserts or updates the `KeyInfo` for a given user key.
+    ///
+    /// If the key already exists, its `KeyInfo` is replaced.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The user key.
+    /// * `info` - The `KeyInfo` to associate with the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError::KeyAlreadyExists` if the key already exists (though the default impl overwrites).
+    /// Returns other `IndexError` variants on internal failures.
     async fn insert_key_info(&self, key: String, info: KeyInfo) -> Result<(), IndexError>;
 
+    /// Removes the `KeyInfo` associated with a given user key.
+    ///
+    /// Also handles moving the pads previously associated with the key:
+    /// - Pads with status Allocated, Written, or Confirmed are added to the free list.
+    /// - Pads with status Generated are added to the pending verification list.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The user key to remove.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Some(KeyInfo))` containing the removed info if the key existed, `Ok(None)` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures.
     async fn remove_key_info(&self, key: &str) -> Result<Option<KeyInfo>, IndexError>;
 
+    /// Lists all user keys currently present in the index.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<String>` of user keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures.
     async fn list_keys(&self) -> Result<Vec<String>, IndexError>;
 
+    /// Retrieves detailed metadata (`KeyDetails`) for a specific user key.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The user key.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Some(KeyDetails))` if the key exists, `Ok(None)` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures.
     async fn get_key_details(&self, key: &str) -> Result<Option<KeyDetails>, IndexError>;
 
+    /// Lists detailed metadata (`KeyDetails`) for all keys in the index.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<KeyDetails>`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures.
     async fn list_all_key_details(&self) -> Result<Vec<KeyDetails>, IndexError>;
 
+    /// Calculates and returns storage statistics based on the current index state.
+    ///
+    /// # Returns
+    ///
+    /// A `StorageStats` struct.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures.
     async fn get_storage_stats(&self) -> Result<StorageStats, IndexError>;
 
+    /// Adds a single pad (address and key) to the free pad list.
+    ///
+    /// This method attempts to fetch the pad's current counter from storage before adding it.
+    /// If fetching fails, the pad is not added, and a warning is logged.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - The address of the pad.
+    /// * `key_bytes` - The secret key bytes of the pad.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures related to index modification.
     async fn add_free_pad(
         &self,
         address: ScratchpadAddress,
         key_bytes: Vec<u8>,
     ) -> Result<(), IndexError>;
 
+    /// Adds multiple pads to the free pad list.
+    ///
+    /// Like `add_free_pad`, this attempts to fetch the counter for each pad before adding.
+    /// Pads that fail the counter fetch are skipped with a warning.
+    ///
+    /// # Arguments
+    ///
+    /// * `pads` - A vector of tuples, each containing a pad's address and secret key bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures related to index modification.
     async fn add_free_pads(
         &self,
         pads: Vec<(ScratchpadAddress, Vec<u8>)>,
     ) -> Result<(), IndexError>;
 
+    /// Takes (removes and returns) one pad from the free list, if available.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Some((address, key_bytes, counter)))` if a pad was available, `Ok(None)` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures.
     async fn take_free_pad(&self) -> Result<Option<(ScratchpadAddress, Vec<u8>, u64)>, IndexError>;
 
+    /// Takes (removes and returns) all pads currently in the pending verification list.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec` containing tuples of (address, key_bytes) for the removed pending pads.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures.
     async fn take_pending_pads(&self) -> Result<Vec<(ScratchpadAddress, Vec<u8>)>, IndexError>;
 
+    /// Removes a specific pad address from the pending verification list.
+    ///
+    /// Used typically after a pending pad has been successfully verified and added to the free list.
+    ///
+    /// # Arguments
+    ///
+    /// * `address_to_remove` - The address of the pad to remove from the pending list.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures.
     async fn remove_from_pending(
         &self,
         address_to_remove: &ScratchpadAddress,
     ) -> Result<(), IndexError>;
 
+    /// Updates the status (`PadStatus`) of a specific pad associated with a given key.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The user key the pad belongs to.
+    /// * `pad_address` - The address of the pad to update.
+    /// * `new_status` - The new `PadStatus` to set.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError::KeyNotFound` if the key doesn't exist.
+    /// Returns `IndexError::PadNotFound` if the pad address isn't associated with the key.
+    /// Returns other `IndexError` variants on internal failures.
     async fn update_pad_status(
         &self,
         key: &str,
@@ -66,31 +246,117 @@ pub trait IndexManager: Send + Sync {
         new_status: PadStatus,
     ) -> Result<(), IndexError>;
 
+    /// Marks a specific key as complete (`is_complete = true`) in its `KeyInfo`.
+    ///
+    /// This is typically called after all pads associated with a key reach the `Confirmed` status.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The user key to mark as complete.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError::KeyNotFound` if the key doesn't exist.
+    /// Returns other `IndexError` variants on internal failures.
     async fn mark_key_complete(&self, key: &str) -> Result<(), IndexError>;
 
+    /// Resets the index to its default state (empty keys, free pads, etc.) and saves it.
+    ///
+    /// # Arguments
+    ///
+    /// * `master_index_address` - The address to save the reset index to.
+    /// * `master_index_key` - The key to encrypt the reset index with.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` if saving the reset index fails.
     async fn reset(
         &self,
         master_index_address: &ScratchpadAddress,
         master_index_key: &SecretKey,
     ) -> Result<(), IndexError>;
 
+    /// Returns a clone of the current in-memory `MasterIndex` state.
+    ///
+    /// # Returns
+    ///
+    /// A cloned `MasterIndex`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures (e.g., mutex poisoning).
     async fn get_index_copy(&self) -> Result<MasterIndex, IndexError>;
 
+    /// Directly replaces the current in-memory index with the provided `MasterIndex`.
+    ///
+    /// **Warning:** This bypasses normal loading/saving and should be used with caution,
+    /// typically only after fetching and verifying a remote index.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_index` - The `MasterIndex` to replace the current in-memory one.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures (e.g., mutex poisoning).
     async fn update_index(&self, new_index: MasterIndex) -> Result<(), IndexError>;
 
+    /// Retrieves the configured scratchpad size from the index.
+    ///
+    /// If the loaded index has a size of 0 (e.g., from an older version or corruption),
+    /// it returns the `DEFAULT_SCRATCHPAD_SIZE`.
+    ///
+    /// # Returns
+    ///
+    /// The scratchpad size in bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures.
     async fn get_scratchpad_size(&self) -> Result<usize, IndexError>;
 
+    /// Attempts to fetch and deserialize the `MasterIndex` directly from its storage address.
+    ///
+    /// This bypasses the normal `load_or_initialize` logic and decryption, intended for
+    /// scenarios like comparing a local index with the remote authoritative version.
+    /// It uses a dummy key for the load function call, as decryption isn't the goal here.
+    ///
+    /// # Arguments
+    ///
+    /// * `master_index_address` - The address where the index is expected to be stored.
+    ///
+    /// # Returns
+    ///
+    /// The deserialized `MasterIndex` if successful.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` if fetching or deserialization fails.
     async fn fetch_remote(
         &self,
         master_index_address: &ScratchpadAddress,
     ) -> Result<MasterIndex, IndexError>;
 
+    /// Adds multiple pads to the pending verification list.
+    ///
+    /// # Arguments
+    ///
+    /// * `pads` - A vector of tuples, each containing a pad's address and secret key bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError` on internal failures.
     async fn add_pending_pads(
         &self,
         pads: Vec<(ScratchpadAddress, Vec<u8>)>,
     ) -> Result<(), IndexError>;
 }
 
+/// Default implementation of the `IndexManager` trait.
+///
+/// Manages the `MasterIndex` state within a `Mutex` and uses provided
+/// `StorageManager` and `NetworkAdapter` implementations for persistence and remote operations.
+/// Delegates most query and modification logic to functions in the `query` and `persistence` modules.
 pub struct DefaultIndexManager {
     state: Mutex<MasterIndex>,
     storage_manager: Arc<dyn StorageManager>,
@@ -98,6 +364,19 @@ pub struct DefaultIndexManager {
 }
 
 impl DefaultIndexManager {
+    /// Creates a new `DefaultIndexManager`.
+    ///
+    /// Initializes with a default, empty `MasterIndex` state.
+    /// The index should typically be loaded using `load_or_initialize` afterwards.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage_manager` - An `Arc` reference to a `StorageManager` implementation.
+    /// * `network_adapter` - An `Arc` reference to a `NetworkAdapter` implementation.
+    ///
+    /// # Returns
+    ///
+    /// A new `DefaultIndexManager` instance.
     pub fn new(
         storage_manager: Arc<dyn StorageManager>,
         network_adapter: Arc<dyn NetworkAdapter>,

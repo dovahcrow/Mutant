@@ -15,6 +15,7 @@ pub use mutant::MutAnt;
 use crate::events::PutEvent;
 /// Callback type specific to the API layer for `put` operations.
 /// Note: This might shadow the callback type defined in `crate::events`.
+#[allow(dead_code)]
 pub type PutCallback = Box<
     dyn Fn(PutEvent) -> Pin<Box<dyn Future<Output = Result<bool, LibError>> + Send>> + Send + Sync,
 >;
@@ -22,6 +23,7 @@ pub type PutCallback = Box<
 use crate::events::GetEvent;
 /// Callback type specific to the API layer for `get` operations.
 /// Note: This might shadow the callback type defined in `crate::events`.
+#[allow(dead_code)]
 pub type GetCallback = Box<
     dyn Fn(GetEvent) -> Pin<Box<dyn Future<Output = Result<bool, LibError>> + Send>> + Send + Sync,
 >;
