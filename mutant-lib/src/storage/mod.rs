@@ -5,3 +5,6 @@ pub mod pad_io;
 
 pub use error::StorageError;
 pub use manager::StorageManager; // Re-export the trait
+
+#[cfg(test)]
+pub mod integration_tests;
