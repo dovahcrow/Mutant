@@ -13,3 +13,6 @@ pub enum NetworkChoice {
     Devnet,
     Mainnet,
 }
+
+#[cfg(test)]
+pub mod integration_tests; // Include integration tests when compiling for tests
