@@ -39,28 +39,13 @@
 //! }
 //! ```
 //!
-//! ## Modules & Architecture
-//!
-//! - **api**           : Public `MutAnt` struct and methods.
-//! - **data**          : Core chunking logic and pipelines.
-//! - **index**         : Master index management and persistence.
-//! - **network**       : Autonomi scratchpad client adapter.
-//! - **pad_lifecycle** : Pad reservation, release, verification flows.
-//! - **storage**       : Storage backend abstractions.
-//! - **events**        : Progress event and callback types.
-//! - **error**         : Definitions of core error types.
-//! - **types**         : Configuration and metadata structures.
-//!
 //! ## Resources & Support
 //!
 //! - API docs   : https://docs.rs/mutant_lib
 //! - CLI help   : `mutant --help`
 //! - Repository : https://github.com/Champii/MutAnt
 //! - Issues     : https://github.com/Champii/MutAnt/issues
-//! - Contributing: `CONTRIBUTING.md`
 //!
-//! ## License
-//! Dual-licensed under MIT or Apache-2.0.
 
 /// Provides the main API entry point for interacting with MutAnt.
 mod api;

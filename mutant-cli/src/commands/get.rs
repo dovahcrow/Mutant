@@ -1,7 +1,7 @@
 use crate::callbacks::StyledProgressBar;
 use crate::callbacks::get::create_get_callback;
 use indicatif::MultiProgress;
-use log::{debug, warn};
+use log::debug;
 
 use mutant_lib::{DataError, Error as LibError, MutAnt};
 use std::io::{self, Write};
@@ -57,7 +57,7 @@ fn clear_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>) {
             }
         }
     } else {
-        warn!("clear_pb: Could not acquire lock to clear progress bar.");
+        log::warn!("clear_pb: Could not acquire lock to clear progress bar.");
     }
 }
 
@@ -69,6 +69,6 @@ fn abandon_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>, message: String) {
             }
         }
     } else {
-        warn!("abandon_pb: Could not acquire lock to abandon progress bar.");
+        log::warn!("abandon_pb: Could not acquire lock to abandon progress bar.");
     }
 }

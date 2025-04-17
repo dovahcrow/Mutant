@@ -1,23 +1,30 @@
 # MutAnt: Private Mutable Key-Value Storage for Autonomi
 
+<!-- Badges -->
 [![Build Status](https://github.com/Champii/MutAnt/actions/workflows/rust.yml/badge.svg)](https://github.com/Champii/MutAnt/actions/workflows/rust.yml)
 [![Crates.io](https://img.shields.io/crates/v/mutant_lib.svg)](https://crates.io/crates/mutant_lib)
+[![Docs.rs](https://docs.rs/mutant_lib/badge.svg)](https://docs.rs/mutant_lib)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**MutAnt** provides a robust and asynchronous private mutable key-value storage layer built upon the Autonomi network's `Scratchpad` primitives. It simplifies interaction with the underlying network storage.
+> **MutAnt** brings a polished, private mutable key-value store on the Autonomi network, featuring resumable uploads, local index caching, and a powerful async Rust API + CLI.
 
-
-> **⚠️ Disclaimer:** MutAnt is currently under active development and is **not ready for production use or mainnet deployment**. Use it at your own risk. Expect potential bugs, breaking changes, and incomplete features. Check how to spin a local testnet [here](#local-testnet-management-scriptsmanage_local_testnetsh).
+## Table of Contents
+1. [Core Concepts](#core-concepts)
+2. [Getting Started](#getting-started)
+3. [Installation](#installation)
+4. [Command-Line Interface (CLI)](#command-line-interface-cli)
+5. [Library Usage](#library-usage)
+6. [Development and Testing](#development-and-testing)
+7. [License](#license)
 
 ## Core Concepts
 
-*   **Private Mutable Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `update` `rm`) operating on byte arrays
-*   **Reuse your storage space for free:** MutAnt will reuse your free storage space for new data, so you only pay when growing your storage space.
-*   **User-Friendly Keys:** Operates on human-readable string keys.
-*   **Resumable Uploads:** MutAnt will resume an upload if it is interrupted, so you can put a file and walk away.
-*   **Asynchronous Design:** Built with `async`/`await` and `tokio` for non-blocking network operations.
-*   **Local Cache Index:** MutAnt will keep track of the keys you've stored locally on your machine, and sync it with the remote storage.
-*   **CLI tool and Rust Library:** MutAnt provides a CLI tool and a Rust library for easy integration into your projects.
-
+*   **Private Mutable Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `update`, `rm`).
+*   **Resumable Uploads:** Automatic resume of interrupted uploads; pick up right where you left off.
+*   **Efficient Space Reuse:** Frees and reuses storage pads, minimizing on-chain costs.
+*   **Local Cache Index:** Fast local lookups and seamless remote synchronization.
+*   **Async-first Design:** Built on `tokio` for high-performance non-blocking operations.
+*   **Dual Interface:** Use as a Rust library (`mutant-lib`) or via the `mutant` CLI.
 
 ## Getting Started
 
