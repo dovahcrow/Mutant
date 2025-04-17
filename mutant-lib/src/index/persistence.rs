@@ -1,7 +1,6 @@
 use crate::index::error::IndexError;
-use crate::index::structure::{KeyInfo, MasterIndex, PadStatus, DEFAULT_SCRATCHPAD_SIZE};
+use crate::index::structure::{MasterIndex, PadStatus};
 use crate::network::NetworkAdapter;
-use crate::pad_lifecycle::PadOrigin;
 use crate::storage::{StorageError, StorageManager};
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::{debug, error, info, trace, warn};

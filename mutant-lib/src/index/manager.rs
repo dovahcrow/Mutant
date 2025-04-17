@@ -3,7 +3,6 @@ use crate::index::persistence::{load_index, save_index};
 use crate::index::query;
 use crate::index::structure::{KeyInfo, MasterIndex, PadStatus, DEFAULT_SCRATCHPAD_SIZE};
 use crate::network::NetworkAdapter;
-use crate::pad_lifecycle::PadOrigin;
 use crate::storage::StorageManager;
 use crate::types::{KeyDetails, StorageStats};
 use async_trait::async_trait;
@@ -233,61 +232,68 @@ impl IndexManager for DefaultIndexManager {
         let removed_info = query::remove_key_info_internal(&mut *state_guard, key);
 
         if let Some(ref info) = removed_info {
-            // List for pads to be added to free pool (counter will be fetched by add_free_pads)
-            let mut pads_to_add_free = Vec::new();
+            // List for pads that need network verification before reuse (only Generated)
             let mut pads_to_verify = Vec::new();
+            // List for pads to be added directly to free list internally (no network check needed)
+            let mut pads_to_free_directly = Vec::new();
 
             for pad_info in &info.pads {
                 if let Some(pad_key) = info.pad_keys.get(&pad_info.address).cloned() {
                     match pad_info.status {
-                        // Allocated, Written, Confirmed -> Move to free pool
+                        // Allocated, Written, Confirmed -> Add directly to free pool with default counter
                         PadStatus::Allocated | PadStatus::Written | PadStatus::Confirmed => {
                             trace!(
-                                "Pad {} for removed key '{}' is {:?}. Releasing to free pool.",
+                                "Pad {} for removed key '{}' is {:?}. Adding directly to free pool.",
                                 pad_info.address,
                                 key,
                                 pad_info.status
                             );
-                            pads_to_add_free.push((pad_info.address, pad_key));
+                            // Add address, key, and a default counter (e.g., 0)
+                            pads_to_free_directly.push((pad_info.address, pad_key, 0u64));
                         }
-                        // Generated -> Needs verification
+                        // Generated pads need counter verification before reuse
                         PadStatus::Generated => {
                             trace!(
                                 "Pad {} for removed key '{}' is {:?}. Adding to pending verification.",
-                                pad_info.address, key, pad_info.status
+                                pad_info.address,
+                                key,
+                                pad_info.status
                             );
                             pads_to_verify.push((pad_info.address, pad_key));
-                        }
+                        } // Note: No other states are expected for pads attached to a valid key.
+                          // If the PadStatus enum changes, this match might need updating.
                     }
                 } else {
                     warn!(
-                        "Key '{}', Pad {}: Missing key bytes in KeyInfo during removal. Cannot process.",
-                        key,
-                        pad_info.address
+                        "Missing pad key for pad {} while removing key '{}'. Cannot release.",
+                        pad_info.address, key
                     );
                 }
             }
 
-            // Add pads to free list (will fetch counters)
-            if !pads_to_add_free.is_empty() {
-                drop(state_guard); // Release lock before async call
+            // Add pads directly to the free list within the locked state
+            if !pads_to_free_directly.is_empty() {
                 debug!(
-                    "Key '{}': Adding {} pads to the free list (will fetch counters).",
+                    "Key '{}': Directly adding {} pads to the free list.",
                     key,
-                    pads_to_add_free.len()
+                    pads_to_free_directly.len()
                 );
-                // Call the public method which handles fetching counters
-                self.add_free_pads(pads_to_add_free).await?;
-                state_guard = self.state.lock().await; // Reacquire lock
+                // Use the internal function that accepts counters
+                query::add_free_pads_with_counters_internal(
+                    &mut *state_guard,
+                    pads_to_free_directly,
+                )?;
+                // Note: We deliberately don't fetch counters here for performance and local operation.
             }
 
-            // Add pads to verification list
+            // Add Generated pads to the pending verification list (no change here)
             if !pads_to_verify.is_empty() {
                 debug!(
                     "Key '{}': Adding {} pads to the pending verification list.",
                     key,
                     pads_to_verify.len()
                 );
+                // Use the internal function for pending pads (checks duplicates)
                 query::add_pending_verification_pads_internal(&mut *state_guard, pads_to_verify)?;
             }
         }

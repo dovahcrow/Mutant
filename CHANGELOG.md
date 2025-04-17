@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fix:** Corrected imports and type mismatches in index integration tests (`mutant-lib/src/index/integration_tests.rs`) to allow them to compile.
 - Enhanced store confirmation logic to verify decrypted data size matches expected size, improving robustness against stale reads after pad reuse.
 - Treat `NotEnoughCopies` network error during store confirmation fetch as a retriable error instead of immediate failure, allowing the confirmation loop to continue.
+- Prevent `mutant rm` from performing unnecessary network checks for pads in `Allocated`, `Written`, or `Confirmed` states, making the operation local for non-`Generated` pads.
 
 ### Changed
 - Changed `rm` key logic: Only `Generated` pads go to pending verification; `Allocated`, `Written`, and `Confirmed` pads go directly to the free pool (counters fetched automatically).
