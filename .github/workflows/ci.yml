@@ -31,5 +31,10 @@ jobs:
     - name: Make test script executable
       run: chmod +x scripts/run_tests_with_env.sh
 
+    - name: Install procps (for pgrep)
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y procps
+
     - name: Run tests with environment script
       run: ./scripts/run_tests_with_env.sh 
