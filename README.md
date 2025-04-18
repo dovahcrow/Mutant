@@ -172,17 +172,13 @@ async fn main() -> anyhow::Result<()> {
 
     let mut ant = MutAnt::init(private_key_hex).await?;
 
-    println!("Storing data...");
     ant.store("greeting", b"hello world").await?;
-    println!("Stored.");
 
-    println!("Fetching data...");
     let fetched_value = ant.fetch("greeting").await?;
+
     println!("Fetched value: {}", String::from_utf8_lossy(&fetched_value));
 
-    println!("Removing data...");
     ant.remove("greeting").await?;
-    println!("Removed.");
 
     Ok(())
 }
