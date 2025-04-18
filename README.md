@@ -8,7 +8,7 @@
 
 > **MutAnt** is a private mutable key-value store on the Autonomi network, featuring resumable uploads, local index caching, and a powerful async Rust API + CLI.
 
-**No LLM was harmed in the making of this project.**
+**Note:** No LLM was harmed in the making of this project.
 
 ## Table of Contents
 1. [Core Concepts](#core-concepts)
@@ -161,7 +161,7 @@ Add `mutant-lib` and its dependencies to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mutant-lib = "0.2" # Or the version you need
+mutant-lib = "0.3" # Or the version you need
 tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
 ```
