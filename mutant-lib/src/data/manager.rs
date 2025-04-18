@@ -160,7 +160,7 @@ impl DefaultDataManager {
     /// Fetches publicly stored data using its index scratchpad address.
     /// Delegates the core logic to `ops::fetch_public::fetch_public_op`.
     pub async fn fetch_public(
-        network_adapter: &AutonomiNetworkAdapter, // Pass adapter for network calls
+        network_adapter: &Arc<AutonomiNetworkAdapter>,
         public_index_address: ScratchpadAddress,
         callback: Option<GetCallback>,
     ) -> Result<Bytes, DataError> {

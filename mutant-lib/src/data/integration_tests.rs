@@ -3,11 +3,17 @@
 use crate::data::chunking::{chunk_data, reassemble_data};
 use crate::data::error::DataError;
 use crate::data::manager::DefaultDataManager;
+use crate::data::ops::fetch_public::fetch_public_op;
+use crate::data::ops::store_public::store_public_op;
+use crate::index::error::IndexError;
 use crate::index::manager::DefaultIndexManager;
+use crate::network::adapter::create_public_scratchpad;
 use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::NetworkChoice;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
-use autonomi::SecretKey;
+use autonomi::client::payment::PaymentOption;
+use autonomi::{Bytes, ScratchpadAddress, SecretKey};
+use serial_test::serial;
 use std::sync::Arc;
 
 // Define constant locally
@@ -369,5 +375,221 @@ async fn test_remove_nonexistent_key() {
     match result.err().unwrap() {
         DataError::KeyNotFound(_) => {} // Expected
         e => panic!("Expected KeyNotFound, got {:?}", e),
+    }
+}
+
+// === Public Ops Tests ===
+
+#[cfg(test)]
+mod public_op_tests {
+    use super::*; // Bring outer scope items in
+    use crate::data::error::DataError; // Specific errors might be needed
+    use crate::index::error::IndexError;
+    use serial_test::serial;
+
+    // Renamed helper to avoid potential conflicts
+    async fn setup_public_test_env() -> (
+        Arc<AutonomiNetworkAdapter>,
+        DefaultDataManager,
+        Arc<DefaultIndexManager>,
+    ) {
+        // Use setup_managers from outer scope?
+        // Re-implement slightly to return needed types directly
+        let network_adapter = Arc::new(
+            AutonomiNetworkAdapter::new(
+                "0x112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00",
+                NetworkChoice::Devnet,
+            )
+            .expect("Failed to create test network adapter"),
+        );
+        let master_key = SecretKey::random();
+        let master_address = ScratchpadAddress::new(master_key.public_key());
+        let index_manager = Arc::new(DefaultIndexManager::new(
+            network_adapter.clone(),
+            master_key.clone(),
+        ));
+        index_manager
+            .load_or_initialize(&master_address, &master_key)
+            .await
+            .expect("Failed to initialize index");
+        let pad_lifecycle_manager = Arc::new(
+            crate::pad_lifecycle::manager::DefaultPadLifecycleManager::new(
+                index_manager.clone(),
+                network_adapter.clone(),
+            ),
+        );
+        let data_manager = DefaultDataManager::new(
+            network_adapter.clone(),
+            index_manager.clone(),
+            pad_lifecycle_manager,
+        );
+        (network_adapter, data_manager, index_manager)
+    }
+
+    // --- Store Tests ---
+    #[tokio::test]
+    #[serial]
+    async fn test_store_public_op_basic() {
+        let (_net_adapter, data_manager, index_manager) = setup_public_test_env().await;
+        let name = "public_store_basic".to_string();
+        let data = b"some public data here";
+        let result = store_public_op(&data_manager, name.clone(), data, None).await;
+        assert!(result.is_ok(), "store_public_op failed: {:?}", result.err());
+        let public_index_addr = result.unwrap();
+        let index_copy = index_manager.get_index_copy().await.unwrap();
+        let metadata = index_copy.public_uploads.get(&name);
+        assert!(metadata.is_some(), "Metadata not found in index");
+        assert_eq!(
+            metadata.unwrap().address,
+            public_index_addr,
+            "Stored address mismatch"
+        );
+        assert!(
+            !metadata.unwrap().key_bytes.is_empty(),
+            "Stored key bytes are empty"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_store_public_op_empty_data() {
+        let (_net_adapter, data_manager, index_manager) = setup_public_test_env().await;
+        let name = "public_store_empty".to_string();
+        let data = b"";
+        let result = store_public_op(&data_manager, name.clone(), data, None).await;
+        assert!(
+            result.is_ok(),
+            "store_public_op with empty data failed: {:?}",
+            result.err()
+        );
+        let public_index_addr = result.unwrap();
+        let index_copy = index_manager.get_index_copy().await.unwrap();
+        let metadata = index_copy.public_uploads.get(&name);
+        assert!(metadata.is_some(), "Metadata not found for empty data");
+        assert_eq!(metadata.unwrap().address, public_index_addr);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_store_public_op_name_collision() {
+        let (_net_adapter, data_manager, _index_manager) = setup_public_test_env().await;
+        let name = "public_store_collision".to_string();
+        let data1 = b"data one";
+        let data2 = b"data two";
+        let result1 = store_public_op(&data_manager, name.clone(), data1, None).await;
+        assert!(result1.is_ok(), "First store failed: {:?}", result1.err());
+        let result2 = store_public_op(&data_manager, name.clone(), data2, None).await;
+        assert!(result2.is_err(), "Second store should have failed");
+        match result2.err().unwrap() {
+            DataError::Index(IndexError::PublicUploadNameExists(collided_name)) => {
+                assert_eq!(collided_name, name, "Incorrect collision name reported");
+            }
+            e => panic!("Expected PublicUploadNameExists error, got {:?}", e),
+        }
+    }
+
+    // --- Fetch Tests ---
+    #[tokio::test]
+    #[serial]
+    async fn test_fetch_public_op_basic() {
+        let (net_adapter, data_manager, _index_manager) = setup_public_test_env().await;
+        let name = "public_fetch_basic_integrated".to_string();
+        let data = b"some fetchable public data integrated";
+        let store_result = store_public_op(&data_manager, name.clone(), data, None).await;
+        assert!(store_result.is_ok(), "Setup store failed");
+        let public_index_addr = store_result.unwrap();
+        let fetch_result = fetch_public_op(&net_adapter, public_index_addr, None).await;
+        assert!(
+            fetch_result.is_ok(),
+            "fetch_public_op failed: {:?}",
+            fetch_result.err()
+        );
+        let fetched_data = fetch_result.unwrap();
+        assert_eq!(fetched_data.as_ref(), data, "Fetched data mismatch");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_fetch_public_op_empty() {
+        let (net_adapter, data_manager, _index_manager) = setup_public_test_env().await;
+        let name = "public_fetch_empty_integrated".to_string();
+        let data = b"";
+        let store_result = store_public_op(&data_manager, name.clone(), data, None).await;
+        assert!(store_result.is_ok(), "Setup store for empty failed");
+        let public_index_addr = store_result.unwrap();
+        let fetch_result = fetch_public_op(&net_adapter, public_index_addr, None).await;
+        assert!(
+            fetch_result.is_ok(),
+            "fetch_public_op for empty failed: {:?}",
+            fetch_result.err()
+        );
+        let fetched_data = fetch_result.unwrap();
+        assert!(fetched_data.is_empty(), "Fetched data should be empty");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_fetch_public_op_not_found() {
+        let (net_adapter, _data_manager, _index_manager) = setup_public_test_env().await;
+        let random_key = SecretKey::random();
+        let non_existent_addr = ScratchpadAddress::new(random_key.public_key());
+        let fetch_result = fetch_public_op(&net_adapter, non_existent_addr, None).await;
+        assert!(
+            fetch_result.is_err(),
+            "Fetch should fail for non-existent addr"
+        );
+        match fetch_result.err().unwrap() {
+            DataError::PublicScratchpadNotFound(addr) => {
+                assert_eq!(
+                    addr, non_existent_addr,
+                    "Incorrect address in NotFound error"
+                );
+            }
+            e => panic!("Expected PublicScratchpadNotFound error, got {:?}", e),
+        }
+    }
+
+    // Helper to manually put an invalid scratchpad
+    async fn put_invalid_scratchpad(
+        net_adapter: &Arc<AutonomiNetworkAdapter>,
+        sk: &SecretKey,
+        encoding: u64,
+        data: &[u8],
+    ) -> ScratchpadAddress {
+        // Fix lifetime issue: use copy_from_slice
+        let scratchpad = create_public_scratchpad(sk, encoding, &Bytes::copy_from_slice(data), 0);
+        let addr = *scratchpad.address();
+        let payment = PaymentOption::Wallet((*net_adapter.wallet()).clone());
+        net_adapter
+            .scratchpad_put(scratchpad, payment)
+            .await
+            .expect("Manual put failed");
+        addr
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_fetch_public_op_wrong_index_encoding() {
+        let (net_adapter, _data_manager, _index_manager) = setup_public_test_env().await;
+        let sk = SecretKey::random();
+        let invalid_encoding = 99u64;
+        let addr = put_invalid_scratchpad(
+            &net_adapter,
+            &sk,
+            invalid_encoding,
+            b"wrong encoding index data",
+        )
+        .await;
+        let fetch_result = fetch_public_op(&net_adapter, addr, None).await;
+        assert!(
+            fetch_result.is_err(),
+            "Fetch should fail for wrong index encoding"
+        );
+        match fetch_result.err().unwrap() {
+            DataError::InvalidPublicIndexEncoding(enc) => {
+                assert_eq!(enc, invalid_encoding, "Incorrect encoding reported");
+            }
+            e => panic!("Expected InvalidPublicIndexEncoding error, got {:?}", e),
+        }
     }
 }

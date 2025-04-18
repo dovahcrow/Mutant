@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 ///
 /// This is the core logic function delegated to by `DataManager::fetch_public`.
 pub(crate) async fn fetch_public_op(
-    network_adapter: &AutonomiNetworkAdapter,
+    network_adapter: &Arc<AutonomiNetworkAdapter>,
     public_index_address: ScratchpadAddress,
     callback: Option<GetCallback>,
 ) -> Result<Bytes, DataError> {
