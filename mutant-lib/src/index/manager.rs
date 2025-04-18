@@ -710,30 +710,34 @@ impl DefaultIndexManager {
     }
 
     /// Processes pads from a removed KeyInfo, adding them to the appropriate
-    /// free or pending verification lists.
+    /// free or pending verification lists locally without network checks.
     pub(crate) async fn harvest_pads(&self, key_info: KeyInfo) -> Result<(), IndexError> {
-        debug!("IndexManager: Harvesting {} pads.", key_info.pads.len());
-        let mut pads_to_free = Vec::new();
-        let mut pads_to_verify = Vec::new();
+        debug!(
+            "IndexManager: Harvesting {} pads locally.",
+            key_info.pads.len()
+        );
+        // Collect pads to add locally to avoid holding lock during iteration
+        let mut pads_to_add_free_locally: Vec<(ScratchpadAddress, Vec<u8>, u64)> = Vec::new();
+        let mut pads_to_add_pending_locally: Vec<(ScratchpadAddress, Vec<u8>)> = Vec::new();
 
         for pad_info in key_info.pads {
             if let Some(key_bytes) = key_info.pad_keys.get(&pad_info.address) {
                 match pad_info.status {
                     PadStatus::Generated => {
                         trace!(
-                            "Harvesting pad {} (Generated) to pending verification list",
+                            "Harvesting pad {} (Generated) to pending verification list (local)",
                             pad_info.address
                         );
-                        pads_to_verify.push((pad_info.address, key_bytes.clone()));
+                        pads_to_add_pending_locally.push((pad_info.address, key_bytes.clone()));
                     }
                     PadStatus::Allocated | PadStatus::Written | PadStatus::Confirmed => {
-                        // Note: add_free_pads handles fetching the counter internally now.
                         trace!(
-                            "Harvesting pad {} ({:?}) to free list",
+                            "Harvesting pad {} ({:?}) to free list with counter 0 (local)",
                             pad_info.address,
                             pad_info.status
                         );
-                        pads_to_free.push((pad_info.address, key_bytes.clone()));
+                        // Add directly with counter 0, network check/fetch happens on reuse/purge
+                        pads_to_add_free_locally.push((pad_info.address, key_bytes.clone(), 0));
                     }
                 }
             } else {
@@ -744,22 +748,23 @@ impl DefaultIndexManager {
             }
         }
 
-        // Use '?' to propagate errors from add_free_pads/add_pending_pads
-        if !pads_to_free.is_empty() {
+        // Acquire lock once and update both lists
+        if !pads_to_add_free_locally.is_empty() || !pads_to_add_pending_locally.is_empty() {
             debug!(
-                "Adding {} harvested pads to free list...",
-                pads_to_free.len()
+                "Adding {} pads to free list and {} pads to pending list (locally).",
+                pads_to_add_free_locally.len(),
+                pads_to_add_pending_locally.len()
             );
-            self.add_free_pads(pads_to_free).await?;
+            let mut state_guard = self.state.lock().await;
+            state_guard.free_pads.extend(pads_to_add_free_locally);
+            state_guard
+                .pending_verification_pads
+                .extend(pads_to_add_pending_locally);
+        } else {
+            debug!("No pads harvested.");
         }
-        if !pads_to_verify.is_empty() {
-            debug!(
-                "Adding {} harvested pads to pending verification list...",
-                pads_to_verify.len()
-            );
-            self.add_pending_pads(pads_to_verify).await?;
-        }
-        debug!("Pad harvesting complete.");
+
+        debug!("Local pad harvesting complete.");
         Ok(())
     }
 }
