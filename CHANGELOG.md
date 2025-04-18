@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Store cache index file in `$XDG_DATA_HOME/mutant` instead of local `.mutant` directory.
 
 ### Fixed
+- Fixed doctests in `mutant-lib/src/lib.rs` by:
+  - Correcting `MutAnt::init` and `MutAnt::store` call arguments.
+  - Adding `anyhow` dependency and import.
+  - Replacing placeholder private key with a dummy one.
+  - Commenting out network-dependent operations (`store`, `fetch`).
 - Corrected imports and types in index integration tests.
 - Enhanced store confirmation logic to verify decrypted data size matches expected size.
 - Treat `NotEnoughCopies` network error during store confirmation fetch as a retriable error.

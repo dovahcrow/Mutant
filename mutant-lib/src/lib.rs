@@ -28,19 +28,23 @@
 //!
 //! ```rust
 //! use mutant_lib::{MutAnt, MutAntConfig};
+//! use anyhow::Result;
 //!
 //! #[tokio::main]
-//! async fn main() -> anyhow::Result<()> {
-//!     let key_hex = "0xYOUR_PRIVATE_KEY_HEX".to_string();
+//! async fn main() -> Result<()> {
+//!     // Use a dummy private key for doctest purposes.
+//!     let key_hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f".to_string();
 //!
-//!     let mut ant = MutAnt::init(key_hex, MutAntConfig::default(), None).await?;
-//!
-//!     ant.store("file1", b"hello").await?;
+//!     let mut ant = MutAnt::init(key_hex).await?;
+//!     // The following lines demonstrate usage but will fail without a real network connection.
+//!     // We use `#[ignore]` to prevent them from running during tests.
+//!     /*
+//!     ant.store("file1".to_string(), b"hello").await?;
 //!
 //!     let data = ant.fetch("file1").await?;
 //!
 //!     println!("Fetched: {}", String::from_utf8_lossy(&data));
-//!
+//!     */
 //!     Ok(())
 //! }
 //! ```
