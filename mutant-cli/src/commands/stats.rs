@@ -2,7 +2,7 @@
 use humansize::{BINARY, format_size};
 use log::{debug, info};
 
-use mutant_lib::prelude::MutAnt;
+use mutant_lib::MutAnt;
 use nu_ansi_term::Color;
 use std::process::ExitCode;
 

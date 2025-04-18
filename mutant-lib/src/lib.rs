@@ -76,26 +76,26 @@ mod internal_events;
 mod types;
 
 /// Re-export dependency types needed by CLI
-pub use autonomi::ScratchpadAddress;
+pub use crate::api::MutAnt;
 
-pub mod prelude {
-
-    pub use crate::api::MutAnt;
+pub mod config {
     pub use crate::network::NetworkChoice;
-    pub use crate::types::{KeyDetails, MutAntConfig, StorageStats};
-    pub mod error {
-        pub use crate::data::error::DataError;
-        pub use crate::index::error::IndexError;
-        pub use crate::internal_error::Error;
-        pub use crate::pad_lifecycle::error::PadLifecycleError;
-    }
-    pub mod events {
-        pub use crate::api::{ReserveCallback, ReserveEvent};
-        pub use crate::internal_events::{
-            GetCallback, GetEvent, InitCallback, InitProgressEvent, PurgeCallback, PurgeEvent,
-            PutCallback, PutEvent,
-        };
-    }
+    pub use crate::types::MutAntConfig;
 }
-
-pub use crate::prelude::*;
+pub mod storage {
+    pub use crate::types::{KeyDetails, StorageStats};
+    pub use autonomi::ScratchpadAddress;
+}
+pub mod error {
+    pub use crate::data::error::DataError;
+    pub use crate::index::error::IndexError;
+    pub use crate::internal_error::Error;
+    pub use crate::pad_lifecycle::error::PadLifecycleError;
+}
+pub mod events {
+    pub use crate::api::{ReserveCallback, ReserveEvent};
+    pub use crate::internal_events::{
+        GetCallback, GetEvent, InitCallback, InitProgressEvent, PurgeCallback, PurgeEvent,
+        PutCallback, PutEvent,
+    };
+}

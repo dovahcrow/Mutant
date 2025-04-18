@@ -3,8 +3,8 @@ use crate::callbacks::progress::StyledProgressBar;
 use dialoguer::{Confirm, theme::ColorfulTheme};
 use indicatif::{MultiProgress, ProgressDrawTarget};
 use log::{debug, error, info, trace, warn};
-use mutant_lib::ScratchpadAddress;
-use mutant_lib::prelude::{
+use mutant_lib::storage::ScratchpadAddress;
+use mutant_lib::{
     MutAnt,
     error::{Error as LibError, IndexError},
 };

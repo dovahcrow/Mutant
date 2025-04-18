@@ -1,8 +1,8 @@
 use super::progress::StyledProgressBar;
 use indicatif::MultiProgress;
 use log::{error, trace};
-use mutant_lib::prelude::error::Error as LibError;
-use mutant_lib::prelude::events::{GetCallback, GetEvent};
+use mutant_lib::error::Error as LibError;
+use mutant_lib::events::{GetCallback, GetEvent};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

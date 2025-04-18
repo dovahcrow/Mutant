@@ -1,5 +1,5 @@
 use log::{error, info};
-use mutant_lib::prelude::MutAnt;
+use mutant_lib::MutAnt;
 use std::process::ExitCode;
 
 use dialoguer::Confirm;

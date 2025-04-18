@@ -3,9 +3,9 @@ use crate::callbacks::progress::StyledProgressBar;
 use clap::Args;
 use indicatif::MultiProgress;
 use log::{error, info};
-use mutant_lib::prelude::MutAnt;
-use mutant_lib::prelude::error::Error as LibError;
-use mutant_lib::prelude::events::{ReserveCallback, ReserveEvent};
+use mutant_lib::MutAnt;
+use mutant_lib::error::Error as LibError;
+use mutant_lib::events::{ReserveCallback, ReserveEvent};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

@@ -2,9 +2,9 @@ use crate::callbacks::progress::get_default_steps_style;
 use clap::Args;
 use indicatif::{MultiProgress, ProgressBar};
 use log::{error, info};
-use mutant_lib::prelude::MutAnt;
-use mutant_lib::prelude::error::Error as LibError;
-use mutant_lib::prelude::events::{PurgeCallback, PurgeEvent};
+use mutant_lib::MutAnt;
+use mutant_lib::error::Error as LibError;
+use mutant_lib::events::{PurgeCallback, PurgeEvent};
 use std::error::Error as StdError;
 use std::sync::{Arc, Mutex as StdMutex};
 

@@ -4,9 +4,11 @@ use directories::{BaseDirs, ProjectDirs};
 use indicatif::{MultiProgress, ProgressDrawTarget};
 use log::{debug, error, info, warn};
 
-use mutant_lib::prelude::error::Error as LibError;
-use mutant_lib::prelude::events::InitCallback;
-use mutant_lib::prelude::{MutAnt, MutAntConfig, NetworkChoice};
+use mutant_lib::config::MutAntConfig;
+use mutant_lib::error::Error as LibError;
+use mutant_lib::events::InitCallback;
+use mutant_lib::{MutAnt, config::NetworkChoice};
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
