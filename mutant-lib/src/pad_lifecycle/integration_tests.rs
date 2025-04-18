@@ -2,9 +2,9 @@
 
 use crate::index::manager::{DefaultIndexManager, IndexManager};
 use crate::index::structure::PadStatus;
-use crate::network::adapter::{AutonomiNetworkAdapter, NetworkAdapter};
+use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::NetworkChoice;
-use crate::pad_lifecycle::manager::{DefaultPadLifecycleManager, PadLifecycleManager};
+use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::pad_lifecycle::PadOrigin;
 use crate::storage::manager::{DefaultStorageManager, StorageManager};
 use autonomi::{ScratchpadAddress, SecretKey};
@@ -15,14 +15,14 @@ const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 async fn setup_test_components_with_initialized_index() -> (
-    Arc<dyn NetworkAdapter>,
+    Arc<AutonomiNetworkAdapter>,
     Arc<dyn StorageManager>,
     Arc<DefaultIndexManager>,
     DefaultPadLifecycleManager,
     SecretKey,
     ScratchpadAddress,
 ) {
-    let network_adapter: Arc<dyn NetworkAdapter> = Arc::new(
+    let network_adapter: Arc<AutonomiNetworkAdapter> = Arc::new(
         AutonomiNetworkAdapter::new(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet)
             .expect("Test NetworkAdapter setup failed"),
     );

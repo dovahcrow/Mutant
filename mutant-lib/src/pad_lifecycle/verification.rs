@@ -1,5 +1,5 @@
 use crate::internal_events::{invoke_purge_callback, PurgeCallback, PurgeEvent};
-use crate::network::NetworkAdapter;
+use crate::network::AutonomiNetworkAdapter;
 use crate::pad_lifecycle::error::PadLifecycleError;
 use autonomi::ScratchpadAddress;
 use log::{debug, error, info, trace, warn};
@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
 pub(crate) async fn verify_pads_concurrently(
-    network_adapter: Arc<dyn NetworkAdapter>,
+    network_adapter: Arc<AutonomiNetworkAdapter>,
     pads_to_verify: Vec<(ScratchpadAddress, Vec<u8>)>,
     mut callback: Option<PurgeCallback>,
 ) -> Result<

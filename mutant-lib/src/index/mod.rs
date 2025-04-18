@@ -11,8 +11,6 @@ pub mod structure;
 
 /// Re-exports the primary error type for the index module.
 pub use error::IndexError;
-/// Re-exports the `IndexManager` trait.
-pub use manager::IndexManager;
 /// Re-exports the core index data structures.
 pub use structure::{KeyInfo, PadInfo};
 

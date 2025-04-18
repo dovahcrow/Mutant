@@ -69,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed `purge` logic to only discard pads on `RecordNotFound`.
 - **CLI:** Renamed "Reserving pads..." progress message to "Acquiring pads..." during `put`.
 - **CLI:** Refactored `put` progress display to use two bars (Create/Confirm).
+- **Refactor:** Removed manager traits (`NetworkAdapter`, `DataManager`, `PadLifecycleManager`, `IndexManager`, `StorageManager`) in `mutant-lib` and replaced their usage with direct calls to the corresponding struct implementations (`AutonomiNetworkAdapter`, `DefaultDataManager`, `DefaultPadLifecycleManager`, `DefaultIndexManager`, `DefaultStorageManager`). This simplifies the internal architecture by removing unnecessary abstraction layers.
 
 ### Removed
 - Removed unused file (`src/unused.rs`? - commit `32e986ff`).

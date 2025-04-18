@@ -1,11 +1,11 @@
-use crate::index::IndexManager;
+use crate::index::manager::DefaultIndexManager;
 use crate::pad_lifecycle::error::PadLifecycleError;
 use autonomi::{ScratchpadAddress, SecretKey};
 use blsttc::SK_SIZE;
 use log::{debug, trace, warn};
 
 pub(crate) async fn acquire_free_pad(
-    index_manager: &dyn IndexManager,
+    index_manager: &DefaultIndexManager,
 ) -> Result<(ScratchpadAddress, SecretKey, u64), PadLifecycleError> {
     trace!("Pool: Attempting to acquire free pad");
     match index_manager.take_free_pad().await? {

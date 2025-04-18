@@ -1,12 +1,12 @@
 use crate::api::init::initialize_layers;
 use crate::api::ReserveCallback;
-use crate::data::manager::DataManager;
-use crate::index::manager::IndexManager;
+use crate::data::manager::DefaultDataManager;
+use crate::index::manager::DefaultIndexManager;
 use crate::index::structure::MasterIndex;
 use crate::internal_error::Error;
 use crate::internal_events::{GetCallback, InitCallback, PurgeCallback, PutCallback};
-use crate::network::{NetworkAdapter, NetworkChoice};
-use crate::pad_lifecycle::PadLifecycleManager;
+use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
+use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::types::MutAntConfig;
 use crate::{KeyDetails, StorageStats};
 use autonomi::{ScratchpadAddress, SecretKey};
@@ -19,10 +19,10 @@ use std::sync::Arc;
 /// Instances are typically created using the `init` or `init_with_progress` associated functions.
 #[derive(Clone)]
 pub struct MutAnt {
-    data_manager: Arc<dyn DataManager>,
-    pad_lifecycle_manager: Arc<dyn PadLifecycleManager>,
-    index_manager: Arc<dyn IndexManager>,
-    network_adapter: Arc<dyn NetworkAdapter>,
+    data_manager: Arc<DefaultDataManager>,
+    pad_lifecycle_manager: Arc<DefaultPadLifecycleManager>,
+    index_manager: Arc<DefaultIndexManager>,
+    network_adapter: Arc<AutonomiNetworkAdapter>,
 
     master_index_address: ScratchpadAddress,
     master_index_key: SecretKey,

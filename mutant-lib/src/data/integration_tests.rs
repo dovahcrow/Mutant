@@ -2,9 +2,9 @@
 
 use crate::data::chunking::{chunk_data, reassemble_data};
 use crate::data::error::DataError;
-use crate::data::manager::{DataManager, DefaultDataManager};
+use crate::data::manager::DefaultDataManager;
 use crate::index::manager::{DefaultIndexManager, IndexManager};
-use crate::network::adapter::{AutonomiNetworkAdapter, NetworkAdapter};
+use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::NetworkChoice;
 use crate::pad_lifecycle::manager::{DefaultPadLifecycleManager, PadLifecycleManager};
 use crate::storage::manager::{DefaultStorageManager, StorageManager};
@@ -15,7 +15,7 @@ const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 async fn setup_data_test_components() -> (
-    Arc<dyn NetworkAdapter>,
+    Arc<AutonomiNetworkAdapter>,
     Arc<dyn StorageManager>,
     Arc<dyn IndexManager>,
     Arc<dyn PadLifecycleManager>,
@@ -23,7 +23,7 @@ async fn setup_data_test_components() -> (
     SecretKey,
     ScratchpadAddress,
 ) {
-    let network_adapter: Arc<dyn NetworkAdapter> = Arc::new(
+    let network_adapter: Arc<AutonomiNetworkAdapter> = Arc::new(
         AutonomiNetworkAdapter::new(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet)
             .expect("Test NetworkAdapter setup failed"),
     );

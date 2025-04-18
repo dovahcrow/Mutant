@@ -4,12 +4,11 @@ pub mod import;
 pub mod integration_tests;
 pub mod manager;
 pub mod pool;
-mod prepare;
 pub mod verification;
 
 pub use error::PadLifecycleError;
-pub use manager::PadLifecycleManager;
 
+pub(crate) mod prepare;
 pub(crate) use prepare::prepare_pads_for_store;
 
 use serde::{Deserialize, Serialize};

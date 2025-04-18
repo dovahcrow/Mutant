@@ -1,20 +1,51 @@
 use crate::data::error::DataError;
 use crate::data::ops;
 use crate::data::ops::common::DataManagerDependencies;
+use crate::index::manager::DefaultIndexManager;
 use crate::internal_events::{GetCallback, PutCallback};
-use crate::index::IndexManager;
-use crate::network::NetworkAdapter;
-use crate::pad_lifecycle::PadLifecycleManager;
-use crate::storage::StorageManager;
-use async_trait::async_trait;
+use crate::network::AutonomiNetworkAdapter;
+use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
+use crate::storage::manager::DefaultStorageManager;
 use std::sync::Arc;
 
-/// Trait defining the core data operations: store, fetch, remove, update.
+/// Default implementation of the `DataManager` trait.
 ///
-/// Implementations of this trait manage the high-level logic for interacting with data,
-/// coordinating between indexing, pad lifecycle, storage, and networking layers.
-#[async_trait]
-pub trait DataManager: Send + Sync {
+/// This struct holds references (via `Arc`) to the necessary dependencies (index manager,
+/// pad lifecycle manager, storage manager, network adapter) and delegates the core
+/// data operations (`store`, `fetch`, `remove`) to specific functions within the `ops` module.
+pub struct DefaultDataManager {
+    deps: DataManagerDependencies, // Internal field holding dependencies
+}
+
+impl DefaultDataManager {
+    /// Creates a new instance of `DefaultDataManager`.
+    ///
+    /// # Arguments
+    ///
+    /// * `index_manager` - An `Arc` reference to an `IndexManager` implementation.
+    /// * `pad_lifecycle_manager` - An `Arc` reference to a `PadLifecycleManager` implementation.
+    /// * `storage_manager` - An `Arc` reference to a `StorageManager` implementation.
+    /// * `network_adapter` - An `Arc` reference to a `AutonomiNetworkAdapter` implementation.
+    ///
+    /// # Returns
+    ///
+    /// A new `DefaultDataManager` instance.
+    pub fn new(
+        index_manager: Arc<DefaultIndexManager>,
+        pad_lifecycle_manager: Arc<DefaultPadLifecycleManager>,
+        storage_manager: Arc<DefaultStorageManager>,
+        network_adapter: Arc<AutonomiNetworkAdapter>,
+    ) -> Self {
+        Self {
+            deps: DataManagerDependencies {
+                index_manager,
+                pad_lifecycle_manager,
+                storage_manager,
+                network_adapter,
+            },
+        }
+    }
+
     /// Stores the given data bytes under the specified user key.
     ///
     /// This involves chunking the data, finding/reserving storage pads, writing chunks,
@@ -29,12 +60,14 @@ pub trait DataManager: Send + Sync {
     /// # Errors
     ///
     /// Returns a `DataError` if any step of the storage process fails.
-    async fn store(
+    pub async fn store(
         &self,
         user_key: String,
         data_bytes: &[u8],
         callback: Option<PutCallback>,
-    ) -> Result<(), DataError>;
+    ) -> Result<(), DataError> {
+        ops::store::store_op(&self.deps, user_key, data_bytes, callback).await
+    }
 
     /// Fetches the data associated with the given user key.
     ///
@@ -54,11 +87,13 @@ pub trait DataManager: Send + Sync {
     ///
     /// Returns `DataError::NotFound` if the key does not exist, or other `DataError` variants
     /// if fetching or reassembly fails.
-    async fn fetch(
+    pub async fn fetch(
         &self,
         user_key: &str,
         callback: Option<GetCallback>,
-    ) -> Result<Vec<u8>, DataError>;
+    ) -> Result<Vec<u8>, DataError> {
+        ops::fetch::fetch_op(&self.deps, user_key, callback).await
+    }
 
     /// Removes the data associated with the given user key.
     ///
@@ -73,7 +108,9 @@ pub trait DataManager: Send + Sync {
     ///
     /// Returns `DataError::NotFound` if the key does not exist, or other `DataError` variants
     /// if the removal process fails.
-    async fn remove(&self, user_key: &str) -> Result<(), DataError>;
+    pub async fn remove(&self, user_key: &str) -> Result<(), DataError> {
+        ops::remove::remove_op(&self.deps, user_key).await
+    }
 
     /// Updates the data for an existing key.
     ///
@@ -89,77 +126,7 @@ pub trait DataManager: Send + Sync {
     /// # Errors
     ///
     /// Currently panics.
-    async fn update(
-        &self,
-        _user_key: String,
-        _data_bytes: &[u8],
-        _callback: Option<PutCallback>,
-    ) -> Result<(), DataError>;
-}
-
-/// Default implementation of the `DataManager` trait.
-///
-/// This struct holds references (via `Arc`) to the necessary dependencies (index manager,
-/// pad lifecycle manager, storage manager, network adapter) and delegates the core
-/// data operations (`store`, `fetch`, `remove`) to specific functions within the `ops` module.
-pub struct DefaultDataManager {
-    deps: DataManagerDependencies, // Internal field holding dependencies
-}
-
-impl DefaultDataManager {
-    /// Creates a new instance of `DefaultDataManager`.
-    ///
-    /// # Arguments
-    ///
-    /// * `index_manager` - An `Arc` reference to an `IndexManager` implementation.
-    /// * `pad_lifecycle_manager` - An `Arc` reference to a `PadLifecycleManager` implementation.
-    /// * `storage_manager` - An `Arc` reference to a `StorageManager` implementation.
-    /// * `network_adapter` - An `Arc` reference to a `NetworkAdapter` implementation.
-    ///
-    /// # Returns
-    ///
-    /// A new `DefaultDataManager` instance.
-    pub fn new(
-        index_manager: Arc<dyn IndexManager>,
-        pad_lifecycle_manager: Arc<dyn PadLifecycleManager>,
-        storage_manager: Arc<dyn StorageManager>,
-        network_adapter: Arc<dyn NetworkAdapter>,
-    ) -> Self {
-        Self {
-            deps: DataManagerDependencies {
-                index_manager,
-                pad_lifecycle_manager,
-                storage_manager,
-                network_adapter,
-            },
-        }
-    }
-}
-
-#[async_trait]
-impl DataManager for DefaultDataManager {
-    async fn store(
-        &self,
-        user_key: String,
-        data_bytes: &[u8],
-        callback: Option<PutCallback>,
-    ) -> Result<(), DataError> {
-        ops::store::store_op(&self.deps, user_key, data_bytes, callback).await
-    }
-
-    async fn fetch(
-        &self,
-        user_key: &str,
-        callback: Option<GetCallback>,
-    ) -> Result<Vec<u8>, DataError> {
-        ops::fetch::fetch_op(&self.deps, user_key, callback).await
-    }
-
-    async fn remove(&self, user_key: &str) -> Result<(), DataError> {
-        ops::remove::remove_op(&self.deps, user_key).await
-    }
-
-    async fn update(
+    pub async fn update(
         &self,
         _user_key: String,
         _data_bytes: &[u8],

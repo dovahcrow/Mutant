@@ -3,34 +3,12 @@ use crate::network::client::create_client;
 use crate::network::error::NetworkError;
 use crate::network::wallet::create_wallet;
 use crate::network::NetworkChoice;
-use async_trait::async_trait;
+
 use autonomi::client::payment::PaymentOption;
 use autonomi::{Bytes, Client, Scratchpad, ScratchpadAddress, SecretKey, Wallet};
 use log::{debug, error, info, trace, warn};
 use std::sync::Arc;
 use tokio::sync::OnceCell;
-
-#[async_trait]
-pub trait NetworkAdapter: Send + Sync {
-    async fn get_raw_scratchpad(
-        &self,
-        address: &ScratchpadAddress,
-    ) -> Result<Scratchpad, NetworkError>;
-
-    async fn put_raw(
-        &self,
-        key: &SecretKey,
-        data: &[u8],
-        current_status: &PadStatus,
-    ) -> Result<ScratchpadAddress, NetworkError>;
-
-    async fn check_existence(&self, address: &ScratchpadAddress) -> Result<bool, NetworkError>;
-
-    fn get_network_choice(&self) -> NetworkChoice;
-
-    #[allow(dead_code)]
-    fn wallet(&self) -> &Wallet;
-}
 
 pub struct AutonomiNetworkAdapter {
     wallet: Arc<Wallet>,
@@ -70,16 +48,13 @@ impl AutonomiNetworkAdapter {
             .await
             .map(Arc::clone)
     }
-}
 
-#[async_trait]
-impl NetworkAdapter for AutonomiNetworkAdapter {
-    async fn get_raw_scratchpad(
+    pub async fn get_raw_scratchpad(
         &self,
         address: &ScratchpadAddress,
     ) -> Result<Scratchpad, NetworkError> {
         trace!(
-            "NetworkAdapter::get_raw_scratchpad called for address: {}",
+            "AutonomiNetworkAdapter::get_raw_scratchpad called for address: {}",
             address
         );
         let client = self.get_or_init_client().await?;
@@ -92,14 +67,14 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
         Ok(scratchpad)
     }
 
-    async fn put_raw(
+    pub async fn put_raw(
         &self,
         key: &SecretKey,
         data: &[u8],
         current_status: &PadStatus,
     ) -> Result<ScratchpadAddress, NetworkError> {
         trace!(
-            "NetworkAdapter::put_raw called, data_len: {}, status: {:?}",
+            "AutonomiNetworkAdapter::put_raw called, data_len: {}, status: {:?}",
             data.len(),
             current_status
         );
@@ -199,9 +174,9 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
         }
     }
 
-    async fn check_existence(&self, address: &ScratchpadAddress) -> Result<bool, NetworkError> {
+    pub async fn check_existence(&self, address: &ScratchpadAddress) -> Result<bool, NetworkError> {
         trace!(
-            "NetworkAdapter::check_existence called for address: {}",
+            "AutonomiNetworkAdapter::check_existence called for address: {}",
             address
         );
         let client = self.get_or_init_client().await?;
@@ -213,12 +188,12 @@ impl NetworkAdapter for AutonomiNetworkAdapter {
             })
     }
 
-    fn get_network_choice(&self) -> NetworkChoice {
+    pub fn get_network_choice(&self) -> NetworkChoice {
         self.network_choice
     }
 
     #[allow(dead_code)]
-    fn wallet(&self) -> &Wallet {
+    pub fn wallet(&self) -> &Wallet {
         &self.wallet
     }
 }

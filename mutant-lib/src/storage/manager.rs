@@ -1,39 +1,21 @@
 use crate::index::structure::PadStatus;
-use crate::network::NetworkAdapter;
+use crate::network::AutonomiNetworkAdapter;
 use crate::storage::error::StorageError;
-use async_trait::async_trait;
+
 use autonomi::{Scratchpad, ScratchpadAddress, SecretKey};
 use log::trace;
 use std::sync::Arc;
 
-#[async_trait]
-pub trait StorageManager: Send + Sync {
-    async fn read_pad_scratchpad(
-        &self,
-        address: &ScratchpadAddress,
-    ) -> Result<Scratchpad, StorageError>;
-
-    async fn write_pad_data(
-        &self,
-        key: &SecretKey,
-        data: &[u8],
-        current_status: &PadStatus,
-    ) -> Result<ScratchpadAddress, StorageError>;
-}
-
 pub struct DefaultStorageManager {
-    network_adapter: Arc<dyn NetworkAdapter>,
+    network_adapter: Arc<AutonomiNetworkAdapter>,
 }
 
 impl DefaultStorageManager {
-    pub fn new(network_adapter: Arc<dyn NetworkAdapter>) -> Self {
+    pub fn new(network_adapter: Arc<AutonomiNetworkAdapter>) -> Self {
         Self { network_adapter }
     }
-}
 
-#[async_trait]
-impl StorageManager for DefaultStorageManager {
-    async fn read_pad_scratchpad(
+    pub async fn read_pad_scratchpad(
         &self,
         address: &ScratchpadAddress,
     ) -> Result<Scratchpad, StorageError> {
@@ -47,7 +29,7 @@ impl StorageManager for DefaultStorageManager {
         Ok(scratchpad)
     }
 
-    async fn write_pad_data(
+    pub async fn write_pad_data(
         &self,
         key: &SecretKey,
         data: &[u8],

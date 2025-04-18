@@ -1,11 +1,11 @@
-use crate::index::IndexManager;
+use crate::index::manager::DefaultIndexManager;
 use crate::pad_lifecycle::error::PadLifecycleError;
 use autonomi::{ScratchpadAddress, SecretKey};
 use hex;
 use log::{debug, info};
 
 pub(crate) async fn import_pad(
-    index_manager: &dyn IndexManager,
+    index_manager: &DefaultIndexManager,
     private_key_hex: &str,
 ) -> Result<(), PadLifecycleError> {
     info!(

@@ -1,7 +1,8 @@
 use crate::index::error::IndexError;
 use crate::index::structure::{MasterIndex, PadStatus};
-use crate::network::NetworkAdapter;
-use crate::storage::{StorageError, StorageManager};
+use crate::network::AutonomiNetworkAdapter;
+use crate::storage::error::StorageError;
+use crate::storage::manager::DefaultStorageManager;
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::{debug, error, info, trace, warn};
 
@@ -22,8 +23,8 @@ pub(crate) fn deserialize_index(data: &[u8]) -> Result<MasterIndex, IndexError> 
 }
 
 pub(crate) async fn load_index(
-    storage_manager: &dyn StorageManager,
-    network_adapter: &dyn NetworkAdapter,
+    storage_manager: &DefaultStorageManager,
+    network_adapter: &AutonomiNetworkAdapter,
     address: &ScratchpadAddress,
     key: &SecretKey,
 ) -> Result<MasterIndex, IndexError> {
@@ -91,8 +92,8 @@ pub(crate) async fn load_index(
 }
 
 pub(crate) async fn save_index(
-    storage_manager: &dyn StorageManager,
-    network_adapter: &dyn NetworkAdapter,
+    storage_manager: &DefaultStorageManager,
+    network_adapter: &AutonomiNetworkAdapter,
     address: &ScratchpadAddress,
     key: &SecretKey,
     index: &MasterIndex,

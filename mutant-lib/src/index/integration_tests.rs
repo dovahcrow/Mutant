@@ -3,10 +3,10 @@
 use crate::index::manager::{DefaultIndexManager, IndexManager};
 use crate::index::structure::{KeyInfo, PadInfo, PadStatus};
 
-use crate::network::adapter::{AutonomiNetworkAdapter, NetworkAdapter};
+use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::NetworkChoice;
 use crate::pad_lifecycle::PadOrigin;
-use crate::storage::manager::{DefaultStorageManager, StorageManager};
+use crate::storage::manager::DefaultStorageManager;
 
 use autonomi::{ScratchpadAddress, SecretKey};
 use chrono::Utc;
@@ -17,15 +17,15 @@ const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 fn setup_test_components() -> (
-    Arc<dyn NetworkAdapter>,
-    Arc<dyn StorageManager>,
+    Arc<AutonomiNetworkAdapter>,
+    Arc<DefaultStorageManager>,
     DefaultIndexManager,
 ) {
-    let network_adapter: Arc<dyn NetworkAdapter> = Arc::new(
+    let network_adapter: Arc<AutonomiNetworkAdapter> = Arc::new(
         AutonomiNetworkAdapter::new(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet)
             .expect("Test adapter setup failed"),
     );
-    let storage_manager: Arc<dyn StorageManager> =
+    let storage_manager: Arc<DefaultStorageManager> =
         Arc::new(DefaultStorageManager::new(Arc::clone(&network_adapter)));
     let index_manager =
         DefaultIndexManager::new(Arc::clone(&storage_manager), Arc::clone(&network_adapter));

@@ -1,10 +1,10 @@
-use crate::data::manager::{DataManager, DefaultDataManager};
-use crate::index::manager::{DefaultIndexManager, IndexManager};
+use crate::data::manager::DefaultDataManager;
+use crate::index::manager::DefaultIndexManager;
 use crate::internal_error::Error;
 use crate::internal_events::{invoke_init_callback, InitCallback, InitProgressEvent};
-use crate::network::adapter::{AutonomiNetworkAdapter, NetworkAdapter};
-use crate::pad_lifecycle::manager::{DefaultPadLifecycleManager, PadLifecycleManager};
-use crate::storage::manager::{DefaultStorageManager, StorageManager};
+use crate::network::adapter::AutonomiNetworkAdapter;
+use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
+use crate::storage::manager::DefaultStorageManager;
 use crate::types::MutAntConfig;
 use autonomi::{ScratchpadAddress, SecretKey};
 use hex;
@@ -45,10 +45,10 @@ pub(crate) async fn initialize_layers(
     mut init_callback: Option<InitCallback>,
 ) -> Result<
     (
-        Arc<dyn DataManager>,
-        Arc<dyn PadLifecycleManager>,
-        Arc<dyn IndexManager>,
-        Arc<dyn NetworkAdapter>,
+        Arc<DefaultDataManager>,
+        Arc<DefaultPadLifecycleManager>,
+        Arc<DefaultIndexManager>,
+        Arc<AutonomiNetworkAdapter>,
         ScratchpadAddress,
         SecretKey,
     ),
@@ -92,7 +92,7 @@ pub(crate) async fn initialize_layers(
 
     let network_adapter_concrete = AutonomiNetworkAdapter::new(private_key_hex, config.network)?;
 
-    let network_adapter: Arc<dyn NetworkAdapter> = Arc::new(network_adapter_concrete);
+    let network_adapter: Arc<AutonomiNetworkAdapter> = Arc::new(network_adapter_concrete);
     info!("NetworkAdapter configuration initialized.");
 
     invoke_init_callback(
@@ -104,19 +104,17 @@ pub(crate) async fn initialize_layers(
     )
     .await?;
 
-    let storage_manager = Arc::new(DefaultStorageManager::new(
-        Arc::clone(&network_adapter) as Arc<dyn NetworkAdapter>
-    ));
+    let storage_manager = Arc::new(DefaultStorageManager::new(Arc::clone(&network_adapter)));
 
     let index_manager = Arc::new(DefaultIndexManager::new(
-        Arc::clone(&storage_manager) as Arc<dyn StorageManager>,
-        Arc::clone(&network_adapter) as Arc<dyn NetworkAdapter>,
+        Arc::clone(&storage_manager),
+        Arc::clone(&network_adapter),
     ));
 
     let pad_lifecycle_manager = Arc::new(DefaultPadLifecycleManager::new(
-        Arc::clone(&index_manager) as Arc<dyn IndexManager>,
-        Arc::clone(&network_adapter) as Arc<dyn NetworkAdapter>,
-        Arc::clone(&storage_manager) as Arc<dyn StorageManager>,
+        Arc::clone(&index_manager),
+        Arc::clone(&network_adapter),
+        Arc::clone(&storage_manager),
     ));
     info!("StorageManager, IndexManager, PadLifecycleManager initialized.");
 
@@ -206,10 +204,10 @@ pub(crate) async fn initialize_layers(
     )
     .await?;
     let data_manager = Arc::new(DefaultDataManager::new(
-        Arc::clone(&index_manager) as Arc<dyn IndexManager>,
-        Arc::clone(&pad_lifecycle_manager) as Arc<dyn PadLifecycleManager>,
-        Arc::clone(&storage_manager) as Arc<dyn StorageManager>,
-        Arc::clone(&network_adapter) as Arc<dyn NetworkAdapter>,
+        Arc::clone(&index_manager),
+        Arc::clone(&pad_lifecycle_manager),
+        Arc::clone(&storage_manager),
+        Arc::clone(&network_adapter),
     ));
     info!("DataManager initialized.");
 
@@ -219,8 +217,9 @@ pub(crate) async fn initialize_layers(
             message: "Initialization complete.".to_string(),
         },
     )
-    .await?;
-    info!("All layers initialized successfully.");
+    .await
+    .map_err(|e| Error::Internal(format!("Callback invocation failed: {}", e)))?;
+    info!("MutAnt layers initialization completed successfully.");
 
     Ok((
         data_manager,

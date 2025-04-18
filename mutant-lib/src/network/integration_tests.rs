@@ -2,7 +2,7 @@
 
 use crate::index::structure::PadStatus;
 use crate::network::adapter::AutonomiNetworkAdapter;
-use crate::network::{NetworkAdapter, NetworkChoice, NetworkError};
+use crate::network::{NetworkChoice, NetworkError};
 use autonomi::{ScratchpadAddress, SecretKey};
 
 const DEV_TESTNET_PRIVATE_KEY_HEX: &str =

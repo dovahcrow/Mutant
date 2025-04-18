@@ -1,11 +1,13 @@
 use crate::data::chunking::chunk_data;
 use crate::data::error::DataError;
+use crate::index::manager::DefaultIndexManager;
+use crate::index::structure::PadInfo;
 use crate::index::structure::PadStatus;
-use crate::index::{IndexManager, PadInfo};
 use crate::internal_events::{invoke_put_callback, PutCallback, PutEvent};
-use crate::pad_lifecycle::PadLifecycleManager;
+use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::pad_lifecycle::PadOrigin;
-use crate::storage::{StorageError, StorageManager};
+use crate::storage::error::StorageError;
+use crate::storage::manager::DefaultStorageManager;
 use autonomi::SecretKey;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
@@ -122,10 +124,10 @@ pub(crate) async fn store_op(
 }
 
 struct ConfirmContext {
-    index_manager: Arc<dyn IndexManager>,
-    pad_lifecycle_manager: Arc<dyn PadLifecycleManager>,
-    storage_manager: Arc<dyn StorageManager>,
-    network_adapter: Arc<dyn crate::network::NetworkAdapter>,
+    index_manager: Arc<DefaultIndexManager>,
+    pad_lifecycle_manager: Arc<DefaultPadLifecycleManager>,
+    storage_manager: Arc<DefaultStorageManager>,
+    network_adapter: Arc<crate::network::AutonomiNetworkAdapter>,
 }
 
 async fn confirm_pad_write(

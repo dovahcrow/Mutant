@@ -3,7 +3,7 @@ pub mod client;
 pub mod error;
 pub mod wallet;
 
-pub use adapter::NetworkAdapter;
+pub use adapter::AutonomiNetworkAdapter;
 pub use error::NetworkError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

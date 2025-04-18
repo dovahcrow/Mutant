@@ -2,17 +2,16 @@ use crate::api::{ReserveCallback, ReserveEvent};
 use crate::internal_events::PurgeCallback;
 use crate::internal_events::PutCallback;
 use crate::index::structure::PadStatus;
-use crate::index::IndexManager;
-use crate::network::NetworkError;
-use crate::network::{NetworkAdapter, NetworkChoice};
+use crate::index::manager::DefaultIndexManager;
+use crate::network::{AutonomiNetworkAdapter, NetworkChoice, NetworkError};
 use crate::pad_lifecycle::cache::{read_cached_index, write_cached_index};
 use crate::pad_lifecycle::error::PadLifecycleError;
 use crate::pad_lifecycle::import;
 use crate::pad_lifecycle::pool::acquire_free_pad;
 use crate::pad_lifecycle::verification::verify_pads_concurrently;
 use crate::pad_lifecycle::PadOrigin;
-use crate::storage::StorageManager;
-use async_trait::async_trait;
+use crate::storage::manager::DefaultStorageManager;
+
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::error;
 use log::{debug, info, trace, warn};
@@ -22,52 +21,17 @@ use std::sync::Arc;
 use tokio::task::JoinSet;
 use tokio::time::{interval, Duration};
 
-#[async_trait]
-pub trait PadLifecycleManager: Send + Sync {
-    async fn initialize_index(
-        &self,
-        master_index_address: &ScratchpadAddress,
-        master_index_key: &SecretKey,
-        network_choice: NetworkChoice,
-    ) -> Result<bool, PadLifecycleError>;
-
-    async fn save_index_cache(
-        &self,
-        network_choice: NetworkChoice,
-    ) -> Result<(), PadLifecycleError>;
-
-    async fn acquire_pads(
-        &self,
-        count: usize,
-        _callback: &mut Option<PutCallback>,
-    ) -> Result<Vec<(ScratchpadAddress, SecretKey, PadOrigin)>, PadLifecycleError>;
-
-    async fn purge(
-        &self,
-        callback: Option<PurgeCallback>,
-        network_choice: NetworkChoice,
-    ) -> Result<(), PadLifecycleError>;
-
-    async fn import_external_pad(&self, private_key_hex: &str) -> Result<(), PadLifecycleError>;
-
-    async fn reserve_pads(
-        &self,
-        count: usize,
-        callback: Option<ReserveCallback>,
-    ) -> Result<usize, PadLifecycleError>;
-}
-
 pub struct DefaultPadLifecycleManager {
-    index_manager: Arc<dyn IndexManager>,
-    network_adapter: Arc<dyn NetworkAdapter>,
-    storage_manager: Arc<dyn StorageManager>,
+    index_manager: Arc<DefaultIndexManager>,
+    network_adapter: Arc<AutonomiNetworkAdapter>,
+    storage_manager: Arc<DefaultStorageManager>,
 }
 
 impl DefaultPadLifecycleManager {
     pub fn new(
-        index_manager: Arc<dyn IndexManager>,
-        network_adapter: Arc<dyn NetworkAdapter>,
-        storage_manager: Arc<dyn StorageManager>,
+        index_manager: Arc<DefaultIndexManager>,
+        network_adapter: Arc<AutonomiNetworkAdapter>,
+        storage_manager: Arc<DefaultStorageManager>,
     ) -> Self {
         Self {
             index_manager,
@@ -89,11 +53,8 @@ impl DefaultPadLifecycleManager {
 
         Ok((address, secret_key))
     }
-}
 
-#[async_trait]
-impl PadLifecycleManager for DefaultPadLifecycleManager {
-    async fn initialize_index(
+    pub async fn initialize_index(
         &self,
         master_index_address: &ScratchpadAddress,
         master_index_key: &SecretKey,
@@ -181,7 +142,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         }
     }
 
-    async fn save_index_cache(
+    pub async fn save_index_cache(
         &self,
         network_choice: NetworkChoice,
     ) -> Result<(), PadLifecycleError> {
@@ -190,7 +151,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         write_cached_index(&index_copy, network_choice).await
     }
 
-    async fn acquire_pads(
+    pub async fn acquire_pads(
         &self,
         count: usize,
         _callback: &mut Option<PutCallback>,
@@ -243,7 +204,7 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         Ok(acquired_pads)
     }
 
-    async fn purge(
+    pub async fn purge(
         &self,
         callback: Option<PurgeCallback>,
         network_choice: NetworkChoice,
@@ -285,12 +246,12 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         Ok(())
     }
 
-    async fn import_external_pad(&self, private_key_hex: &str) -> Result<(), PadLifecycleError> {
+    pub async fn import_external_pad(&self, private_key_hex: &str) -> Result<(), PadLifecycleError> {
         info!("PadLifecycleManager: Importing external pad...");
         import::import_pad(self.index_manager.as_ref(), private_key_hex).await
     }
 
-    async fn reserve_pads(
+    pub async fn reserve_pads(
         &self,
         count: usize,
         callback: Option<ReserveCallback>,
@@ -451,5 +412,17 @@ impl PadLifecycleManager for DefaultPadLifecycleManager {
         .await?;
 
         Ok(successful_creations)
+    }
+
+    async fn write_initial_pad_data_internal(
+        network_adapter: &AutonomiNetworkAdapter,
+        _address: &ScratchpadAddress,
+        secret_key: &SecretKey,
+    ) -> Result<(), PadLifecycleError> {
+        network_adapter
+            .put_raw(secret_key, &[], &PadStatus::Generated)
+            .await
+            .map(|_| ())
+            .map_err(|e: NetworkError| PadLifecycleError::Network(e))
     }
 }
