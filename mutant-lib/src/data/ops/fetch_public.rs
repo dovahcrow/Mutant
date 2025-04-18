@@ -3,7 +3,7 @@ use crate::data::{
     PUBLIC_DATA_ENCODING,
     PUBLIC_INDEX_ENCODING, // Use constants from parent
 };
-use crate::internal_events::{invoke_get_callback, GetCallback, GetEvent}; // TODO: invoke_get_callback doesn't exist
+use crate::internal_events::GetCallback; // TODO: invoke_get_callback doesn't exist
 use crate::network::AutonomiNetworkAdapter;
 use autonomi::{Bytes, ScratchpadAddress};
 use log::{debug, error, info, trace, warn};

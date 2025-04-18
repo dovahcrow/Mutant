@@ -269,56 +269,49 @@ mod tests {
         let name1 = "public_file_1".to_string();
         let key1 = SecretKey::random();
         let addr1 = ScratchpadAddress::new(key1.public_key());
-        let meta1 = PublicUploadMetadata {
-            address: addr1,
-            key_bytes: key1.to_bytes().to_vec(),
-        };
+        let metadata1 = PublicUploadMetadata { address: addr1 };
 
         // Insert first metadata
         let insert_res1 = index_manager
-            .insert_public_upload_metadata(name1.clone(), meta1.clone())
+            .insert_public_upload_metadata(name1.clone(), metadata1.clone())
             .await;
         assert!(insert_res1.is_ok(), "First insert failed");
 
         // Verify insertion
         let index_copy1 = index_manager.get_index_copy().await.unwrap();
         assert_eq!(index_copy1.public_uploads.len(), 1);
-        assert_eq!(index_copy1.public_uploads.get(&name1), Some(&meta1));
+        assert_eq!(index_copy1.public_uploads.get(&name1), Some(&metadata1));
 
         // Insert second metadata with same name (overwrite)
+        let name2 = "public_file_2".to_string();
         let key2 = SecretKey::random();
         let addr2 = ScratchpadAddress::new(key2.public_key());
-        let meta2 = PublicUploadMetadata {
-            address: addr2,
-            key_bytes: key2.to_bytes().to_vec(),
-        };
+        let metadata2 = PublicUploadMetadata { address: addr2 };
         let insert_res2 = index_manager
-            .insert_public_upload_metadata(name1.clone(), meta2.clone())
+            .insert_public_upload_metadata(name2.clone(), metadata2.clone())
             .await;
         assert!(insert_res2.is_ok(), "Second insert (overwrite) failed");
 
         // Verify overwrite
         let index_copy2 = index_manager.get_index_copy().await.unwrap();
         assert_eq!(index_copy2.public_uploads.len(), 1);
-        assert_eq!(index_copy2.public_uploads.get(&name1), Some(&meta2)); // Should be meta2 now
+        assert_eq!(index_copy2.public_uploads.get(&name2), Some(&metadata2)); // Should be metadata2 now
 
         // Insert third metadata with different name
         let name3 = "public_file_3".to_string();
         let key3 = SecretKey::random();
         let addr3 = ScratchpadAddress::new(key3.public_key());
-        let meta3 = PublicUploadMetadata {
-            address: addr3,
-            key_bytes: key3.to_bytes().to_vec(),
-        };
+        let metadata3 = PublicUploadMetadata { address: addr3 };
         let insert_res3 = index_manager
-            .insert_public_upload_metadata(name3.clone(), meta3.clone())
+            .insert_public_upload_metadata(name3.clone(), metadata3.clone())
             .await;
         assert!(insert_res3.is_ok(), "Third insert failed");
 
         // Verify second entry added
         let index_copy3 = index_manager.get_index_copy().await.unwrap();
         assert_eq!(index_copy3.public_uploads.len(), 2);
-        assert_eq!(index_copy3.public_uploads.get(&name1), Some(&meta2));
-        assert_eq!(index_copy3.public_uploads.get(&name3), Some(&meta3));
+        assert_eq!(index_copy3.public_uploads.get(&name1), Some(&metadata1));
+        assert_eq!(index_copy3.public_uploads.get(&name2), Some(&metadata2));
+        assert_eq!(index_copy3.public_uploads.get(&name3), Some(&metadata3));
     }
 }

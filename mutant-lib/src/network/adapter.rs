@@ -7,13 +7,11 @@ use crate::network::NetworkChoice;
 use autonomi::client::payment::PaymentOption;
 use autonomi::AttoTokens;
 use autonomi::{
-    Bytes, Client, PublicKey, Scratchpad, ScratchpadAddress, SecretKey, Signature, Wallet,
+    Bytes, Client, Scratchpad, ScratchpadAddress, SecretKey, Wallet,
 };
 use log::{debug, error, info, trace, warn};
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::{Mutex, OnceCell};
-use tokio::time::sleep;
+use tokio::sync::OnceCell;
 
 /// Provides an interface to interact with the Autonomi network.
 ///

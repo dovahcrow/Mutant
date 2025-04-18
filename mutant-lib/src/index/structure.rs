@@ -1,5 +1,5 @@
 use crate::pad_lifecycle::PadOrigin;
-use autonomi::{ScratchpadAddress, SecretKey};
+use autonomi::ScratchpadAddress;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -62,14 +62,11 @@ pub struct KeyInfo {
     pub is_complete: bool,
 }
 
-/// Metadata for a public upload, linking a name to its index address and signing key.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+/// Metadata stored in the master index for publicly uploaded data.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PublicUploadMetadata {
-    /// The address of the public index scratchpad.
+    /// The address of the index scratchpad for this public upload.
     pub address: ScratchpadAddress,
-    /// The raw bytes of the secret key used to sign the public index and data scratchpads.
-    /// Stored here to potentially allow updating the public data in the future (not implemented yet).
-    pub key_bytes: Vec<u8>,
 }
 
 /// The central index managing all keys and scratchpads.

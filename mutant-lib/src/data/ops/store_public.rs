@@ -5,7 +5,7 @@ use crate::data::{PUBLIC_DATA_ENCODING, PUBLIC_INDEX_ENCODING};
 use crate::index::structure::PublicUploadMetadata;
 use crate::internal_events::{invoke_put_callback, PutCallback, PutEvent};
 use crate::network::adapter::create_public_scratchpad;
-use crate::network::AutonomiNetworkAdapter;
+use crate::network::error::NetworkError;
 use autonomi::client::payment::PaymentOption;
 use autonomi::{Bytes, ScratchpadAddress, SecretKey};
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -13,6 +13,11 @@ use log::{debug, error, info, trace, warn};
 use serde_cbor;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::time::sleep;
+
+// Define retry constants locally for public verification
+const PUBLIC_CONFIRMATION_RETRY_LIMIT: u32 = 3;
+const PUBLIC_CONFIRMATION_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Stores data publicly (unencrypted) under a specified name using parallel chunk uploads.
 pub(crate) async fn store_public_op(
@@ -25,11 +30,7 @@ pub(crate) async fn store_public_op(
     let callback_arc = Arc::new(Mutex::new(callback));
     let _data_size = data_bytes.len();
 
-    // 1. Generate Key
-    let public_sk = SecretKey::random();
-    debug!("Generated temporary secret key for public upload {}", name);
-
-    // 2. Check for Name Collision
+    // 1. Check for Name Collision
     {
         let index_copy = data_manager.index_manager.get_index_copy().await?;
         if index_copy.public_uploads.contains_key(&name) {
@@ -72,7 +73,7 @@ pub(crate) async fn store_public_op(
     }
 
     // Declare chunk_addresses here
-    let mut chunk_addresses: Vec<ScratchpadAddress>;
+    let chunk_addresses: Vec<ScratchpadAddress>;
 
     if total_chunks == 0 {
         debug!(
@@ -86,17 +87,16 @@ pub(crate) async fn store_public_op(
         // 4. Upload Chunks in Parallel
         let mut upload_futures = FuturesUnordered::new();
         let mut chunk_addresses_results: Vec<Option<ScratchpadAddress>> = vec![None; total_chunks];
-        let public_sk_arc = Arc::new(public_sk.clone()); // Clone SK for tasks
 
         for (i, chunk) in chunks.into_iter().enumerate() {
             let network_adapter_clone = Arc::clone(&data_manager.network_adapter);
-            let sk_clone = Arc::clone(&public_sk_arc);
+            let chunk_sk = SecretKey::random();
             let chunk_bytes = Bytes::from(chunk); // Convert Vec<u8> to Bytes
 
             upload_futures.push(async move {
                 trace!("Starting upload task for public chunk {}", i);
                 let chunk_scratchpad = create_public_scratchpad(
-                    &sk_clone,
+                    &chunk_sk,
                     PUBLIC_DATA_ENCODING,
                     &chunk_bytes,
                     0, // Use counter 0 for initial upload
@@ -201,17 +201,19 @@ pub(crate) async fn store_public_op(
     }
 
     // 5. Create and Upload Index Scratchpad (Sequentially after chunks)
+    let index_sk = SecretKey::random();
+
     let index_data_bytes = serde_cbor::to_vec(&chunk_addresses)
         .map(Bytes::from)
         .map_err(|e| DataError::Serialization(e.to_string()))?;
 
     let index_scratchpad = create_public_scratchpad(
-        &public_sk,
+        &index_sk,
         PUBLIC_INDEX_ENCODING,
         &index_data_bytes,
         0, // Use counter 0 for initial upload
     );
-    let public_index_address = *index_scratchpad.address();
+    let public_index_address = ScratchpadAddress::new(index_sk.public_key());
     trace!(
         "Uploading public index scratchpad ({}) for {}",
         public_index_address,
@@ -225,16 +227,123 @@ pub(crate) async fn store_public_op(
         .await
     {
         Ok((_cost, addr)) => {
-            debug!("Successfully uploaded public index {} for {}", addr, name);
+            debug!(
+                "Successfully initiated upload for public index {} for {}",
+                addr, name
+            );
             if addr != public_index_address {
                 error!(
                     "Returned public index address {} does not match calculated address {} for {}",
                     addr, public_index_address, name
                 );
+                // Even if addresses mismatch, the SDK might have done something unexpected.
+                // Let's try verifying the returned address 'addr' before failing hard.
+                // If verification passes on 'addr', maybe log a warning and continue?
+                // For now, stick to original strict check.
                 return Err(DataError::InternalError(
-                    "Public index address mismatch after upload".to_string(),
+                    "Public index address mismatch immediately after upload".to_string(),
                 ));
             }
+            // --- Verification Step Added ---
+            let mut last_error: Option<DataError> = None;
+            for attempt in 0..PUBLIC_CONFIRMATION_RETRY_LIMIT {
+                trace!(
+                    "Verification attempt {} for public index scratchpad {}",
+                    attempt + 1,
+                    public_index_address
+                );
+                sleep(PUBLIC_CONFIRMATION_RETRY_DELAY).await; // Wait before fetching
+
+                match data_manager
+                    .network_adapter
+                    .get_raw_scratchpad(&public_index_address)
+                    .await
+                {
+                    Ok(fetched_pad) => {
+                        // Check encoding
+                        if fetched_pad.data_encoding() == PUBLIC_INDEX_ENCODING {
+                            // Check counter (should be 0 for initial upload)
+                            if fetched_pad.counter() == 0 {
+                                info!(
+                                    "Public index scratchpad {} verified successfully (Encoding: {}, Counter: 0).",
+                                    public_index_address, PUBLIC_INDEX_ENCODING
+                                );
+                                last_error = None; // Clear previous errors, verification passed
+                                break; // Verification successful, exit retry loop
+                            } else {
+                                warn!(
+                                    "Verification attempt {}: Public index {} has unexpected counter {} (expected 0). Retrying...",
+                                    attempt + 1,
+                                    public_index_address,
+                                    fetched_pad.counter()
+                                );
+                                last_error = Some(DataError::InconsistentState(format!(
+                                    "Public index {} has unexpected counter {} after upload",
+                                    public_index_address,
+                                    fetched_pad.counter()
+                                )));
+                            }
+                        } else {
+                            warn!(
+                                "Verification attempt {}: Public index {} has incorrect encoding {} (expected {}). Retrying...",
+                                attempt + 1,
+                                public_index_address,
+                                fetched_pad.data_encoding(),
+                                PUBLIC_INDEX_ENCODING
+                            );
+                            last_error = Some(DataError::InvalidPublicIndexEncoding(
+                                fetched_pad.data_encoding(),
+                            ));
+                        }
+                    }
+                    Err(NetworkError::InternalError(e_str)) => {
+                        // Check if the internal error string indicates 'not found'
+                        if e_str.to_lowercase().contains("not found")
+                            || e_str.to_lowercase().contains("does not exist")
+                        {
+                            warn!(
+                                 "Verification attempt {}: Public index {} not found (via InternalError: {}). Retrying...",
+                                  attempt + 1,
+                                  public_index_address,
+                                  e_str
+                              );
+                            last_error =
+                                Some(DataError::PublicScratchpadNotFound(public_index_address));
+                        } else {
+                            // Treat other internal errors as generic network errors for retry
+                            warn!(
+                                "Verification attempt {}: Network/Internal error fetching public index {}: {}. Retrying...",
+                                attempt + 1,
+                                public_index_address,
+                                e_str
+                            );
+                            last_error =
+                                Some(DataError::Network(NetworkError::InternalError(e_str)));
+                            // Re-wrap error
+                        }
+                    }
+                    Err(e) => {
+                        // Catch any other NetworkError variants
+                        warn!(
+                            "Verification attempt {}: Unexpected error fetching public index {}: {}. Retrying...",
+                            attempt + 1,
+                            public_index_address,
+                            e
+                        );
+                        last_error = Some(DataError::Network(e));
+                    }
+                }
+            } // End retry loop
+
+            // If loop finished and last_error is still Some, verification failed
+            if let Some(final_error) = last_error {
+                error!(
+                    "Failed to verify public index scratchpad {} for {} after {} attempts: {}",
+                    public_index_address, name, PUBLIC_CONFIRMATION_RETRY_LIMIT, final_error
+                );
+                return Err(final_error);
+            }
+            // --- End Verification Step ---
         }
         Err(e) => {
             error!(
@@ -249,7 +358,6 @@ pub(crate) async fn store_public_op(
     debug!("Updating master index for public upload {}", name);
     let metadata = PublicUploadMetadata {
         address: public_index_address,
-        key_bytes: public_sk.to_bytes().to_vec(),
     };
 
     // Call the dedicated IndexManager method

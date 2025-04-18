@@ -1,23 +1,15 @@
-use crate::data::chunking::chunk_data;
 use crate::data::error::DataError;
 use crate::data::ops;
-use crate::data::{
-    PUBLIC_DATA_ENCODING,
-    PUBLIC_INDEX_ENCODING, // Import constants
-};
 use crate::index::manager::DefaultIndexManager;
-use crate::index::structure::PublicUploadMetadata;
-use crate::internal_events::{invoke_put_callback, GetCallback, PutCallback, PutEvent}; // Added PutEvent etc
-use crate::network::adapter::create_public_scratchpad; // Import helper
+use crate::internal_events::{GetCallback, PutCallback}; // Added PutEvent etc
+ // Import helper
 use crate::network::AutonomiNetworkAdapter;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
-use autonomi::client::payment::PaymentOption;
-use autonomi::{Bytes, PublicKey, Scratchpad, ScratchpadAddress, SecretKey, Signature};
-use log::{debug, error, info, trace, warn};
-use serde_cbor;
-use std::collections::HashMap; // For name collision check
+use autonomi::{Bytes, ScratchpadAddress};
+use log::trace;
+ // For name collision check
 use std::sync::Arc;
-use tokio::sync::Mutex; // Added Mutex
+ // Added Mutex
 
 /// Default implementation of the `DataManager` trait.
 ///

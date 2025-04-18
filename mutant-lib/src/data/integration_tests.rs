@@ -396,11 +396,8 @@ mod public_op_tests {
         // Use setup_managers from outer scope?
         // Re-implement slightly to return needed types directly
         let network_adapter = Arc::new(
-            AutonomiNetworkAdapter::new(
-                "0x112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00",
-                NetworkChoice::Devnet,
-            )
-            .expect("Failed to create test network adapter"),
+            AutonomiNetworkAdapter::new(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet)
+                .expect("Failed to create test network adapter"),
         );
         let master_key = SecretKey::random();
         let master_address = ScratchpadAddress::new(master_key.public_key());
@@ -443,10 +440,6 @@ mod public_op_tests {
             metadata.unwrap().address,
             public_index_addr,
             "Stored address mismatch"
-        );
-        assert!(
-            !metadata.unwrap().key_bytes.is_empty(),
-            "Stored key bytes are empty"
         );
     }
 
@@ -498,6 +491,7 @@ mod public_op_tests {
         let store_result = store_public_op(&data_manager, name.clone(), data, None).await;
         assert!(store_result.is_ok(), "Setup store failed");
         let public_index_addr = store_result.unwrap();
+
         let fetch_result = fetch_public_op(&net_adapter, public_index_addr, None).await;
         assert!(
             fetch_result.is_ok(),

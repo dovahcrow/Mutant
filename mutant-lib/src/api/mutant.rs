@@ -4,7 +4,7 @@ use crate::data::manager::DefaultDataManager;
 use crate::index::manager::DefaultIndexManager;
 use crate::index::structure::MasterIndex;
 use crate::internal_error::Error;
-use crate::internal_events::{GetCallback, InitCallback, PurgeCallback, PutCallback, PutEvent};
+use crate::internal_events::{GetCallback, InitCallback, PurgeCallback, PutCallback};
 use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::types::{KeyDetails, MutAntConfig, StorageStats};
