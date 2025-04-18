@@ -160,3 +160,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - "Confirming pads...": Increments on `ChunkConfirmed` (network check success).
 - Modified the `purge` command logic to only discard pending pads if the network explicitly returns a "Record Not Found" status. Pads encountering other network errors during verification are now returned to the pending list for future retries.
 - Store confirmation (`
+
+## [Unreleased]
+
+### Fixed
+- Corrected public data storage (`store_public_op`) to use unique keys for each data chunk and the index chunk, resolving address collisions and ensuring correct encoding verification. ([#IssueNumber])
