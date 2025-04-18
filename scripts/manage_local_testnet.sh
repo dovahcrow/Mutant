@@ -85,7 +85,14 @@ start_evm() {
 
     # Validate the PID found by pgrep
     if [ -z "$EVM_PID" ]; then
-        echo "ERROR: Could not find running EVM testnet process using pgrep pattern '$pgrep_pattern'. Check logs: $EVM_LOG_FILE"
+        echo "ERROR: Could not find running EVM testnet process using pgrep pattern '$pgrep_pattern'."
+        echo "--- Dumping EVM Log ($EVM_LOG_FILE) ---"
+        \cat "$EVM_LOG_FILE" || echo "Log file empty or does not exist."
+        echo "--- Checking process table with ps aux | grep --- "
+        ps aux | \grep '[e]vm-testnet' || echo "No matching process found with ps aux."
+        echo "--- Checking process table with pgrep -af --- "
+        pgrep -af "$pgrep_pattern" || echo "No matching process found with pgrep -af."
+        echo "--- End Diagnostics ---"
         return 1
     elif [ $(echo "$EVM_PID" | wc -l) -ne 1 ]; then
         echo "ERROR: Found multiple EVM testnet processes matching pattern '$pgrep_pattern'. PIDs: $EVM_PID. Please stop them manually." >&2

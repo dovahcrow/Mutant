@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Store cache index file in `$XDG_DATA_HOME/mutant` instead of local `.mutant` directory.
 - Documentation comments to various modules (`index`, `network`, `data/ops`, `data/chunking`, `pad_lifecycle`).
 - Add explicit build checks and error reporting for `evm-testnet` and `antctl` in `manage_local_testnet.sh`.
+- Add diagnostics (log dump, ps, pgrep -af) to `start_evm` when `pgrep` fails to find process.
 
 ### Fixed
 - Fixed doctests in `mutant-lib/src/lib.rs` by:
