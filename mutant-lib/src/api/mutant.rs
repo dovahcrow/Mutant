@@ -10,6 +10,7 @@ use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::types::{KeyDetails, KeySummary, MutAntConfig, StorageStats};
 use autonomi::{Bytes, ScratchpadAddress, SecretKey};
 use log::{debug, info, warn};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 /// The main entry point for interacting with the MutAnt distributed storage system.
@@ -634,5 +635,17 @@ impl MutAnt {
         )
         .await
         .map_err(Error::Data)
+    }
+
+    /// Returns the set of scratchpad addresses currently occupied by private key pads.
+    /// Internal helper primarily for sync logic.
+    pub async fn get_occupied_private_pad_addresses(
+        &self,
+    ) -> Result<HashSet<ScratchpadAddress>, Error> {
+        debug!("MutAnt::get_occupied_private_pad_addresses called");
+        self.index_manager
+            .get_occupied_private_pad_addresses()
+            .await
+            .map_err(Error::Index)
     }
 }

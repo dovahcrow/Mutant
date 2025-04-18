@@ -8,6 +8,7 @@ use crate::types::{KeyDetails, KeySummary, StorageStats};
 use autonomi::{ScratchpadAddress, SecretKey};
 use chrono::Utc;
 use log::{debug, error, info, trace, warn};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -874,5 +875,22 @@ impl DefaultIndexManager {
 
         debug!("Local pad harvesting complete.");
         Ok(())
+    }
+
+    /// Returns the set of scratchpad addresses currently occupied by private key pads.
+    pub async fn get_occupied_private_pad_addresses(
+        &self,
+    ) -> Result<HashSet<ScratchpadAddress>, IndexError> {
+        let state_guard = self.state.lock().await;
+        let occupied_pads = state_guard
+            .index
+            .values()
+            .filter_map(|entry| match entry {
+                IndexEntry::PrivateKey(key_info) => Some(key_info),
+                IndexEntry::PublicUpload(_) => None,
+            })
+            .flat_map(|key_info| key_info.pads.iter().map(|pad_info| pad_info.address))
+            .collect::<HashSet<ScratchpadAddress>>();
+        Ok(occupied_pads)
     }
 }
