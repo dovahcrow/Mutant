@@ -45,7 +45,7 @@ pub(crate) fn chunk_data(data: &[u8], chunk_size: usize) -> Result<Vec<Vec<u8>>,
 /// # Arguments
 ///
 /// * `chunks` - A vector of optional byte vectors. Each `Some(Vec<u8>)` represents a chunk.
-///              The vector must contain chunks in the correct order.
+///   The vector must contain chunks in the correct order.
 /// * `expected_size` - The total expected size of the reassembled data.
 ///
 /// # Errors
