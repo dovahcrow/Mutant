@@ -58,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed first testnet run issues.
 - Fixed various imports in `mutant-cli` after `mutant-lib` prelude refactoring.
 - Correctly handle specific `IndexError::DeserializationError` during `sync` when remote index does not exist.
+- Correctly set initial status (`Allocated` or `Generated`) for pads acquired during `store` operation, fixing errors when reusing pads from `free_pads` list after a `remove`.
+- Implemented pad harvesting during `remove` operation: `Generated` pads move to `pending_verification_pads`, others move to `free_pads`.
 
 ### Changed
 - Restricted public API surface of `mutant-lib`, re-exporting only necessary types.
@@ -77,6 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI:** Renamed "Reserving pads..." progress message to "Acquiring pads..." during `put`.
 - **CLI:** Refactored `put` progress display to use two bars (Create/Confirm).
 - **Refactor:** Removed manager traits (`NetworkAdapter`, `DataManager`, `PadLifecycleManager`, `IndexManager`, `StorageManager`) in `mutant-lib` and replaced their usage with direct calls to the corresponding struct implementations (`AutonomiNetworkAdapter`, `DefaultDataManager`, `DefaultPadLifecycleManager`, `DefaultIndexManager`, `DefaultStorageManager`). This simplifies the internal architecture by removing unnecessary abstraction layers.
+- Refactored pad harvesting logic from `data::ops::remove` into a dedicated `harvest_pads` method in `IndexManager`.
 
 ### Removed
 - Removed unused file (`src/unused.rs`? - commit `32e986ff`).

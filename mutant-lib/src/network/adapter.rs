@@ -141,7 +141,7 @@ impl AutonomiNetworkAdapter {
                     .await
                 {
                     Ok(_) => {
-                        warn!(
+                        trace!(
                              "Executed scratchpad_update for pad {}. Data integrity depends on SDK behavior.",
                              address
                          );

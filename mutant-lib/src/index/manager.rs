@@ -791,4 +791,58 @@ impl DefaultIndexManager {
         }
         Ok(())
     }
+
+    /// Processes pads from a removed KeyInfo, adding them to the appropriate
+    /// free or pending verification lists.
+    pub(crate) async fn harvest_pads(&self, key_info: KeyInfo) -> Result<(), IndexError> {
+        debug!("IndexManager: Harvesting {} pads.", key_info.pads.len());
+        let mut pads_to_free = Vec::new();
+        let mut pads_to_verify = Vec::new();
+
+        for pad_info in key_info.pads {
+            if let Some(key_bytes) = key_info.pad_keys.get(&pad_info.address) {
+                match pad_info.status {
+                    PadStatus::Generated => {
+                        trace!(
+                            "Harvesting pad {} (Generated) to pending verification list",
+                            pad_info.address
+                        );
+                        pads_to_verify.push((pad_info.address, key_bytes.clone()));
+                    }
+                    PadStatus::Allocated | PadStatus::Written | PadStatus::Confirmed => {
+                        // Note: add_free_pads handles fetching the counter internally now.
+                        trace!(
+                            "Harvesting pad {} ({:?}) to free list",
+                            pad_info.address,
+                            pad_info.status
+                        );
+                        pads_to_free.push((pad_info.address, key_bytes.clone()));
+                    }
+                }
+            } else {
+                warn!(
+                    "Could not find key for pad {} during harvesting. Skipping.",
+                    pad_info.address
+                );
+            }
+        }
+
+        // Use '?' to propagate errors from add_free_pads/add_pending_pads
+        if !pads_to_free.is_empty() {
+            debug!(
+                "Adding {} harvested pads to free list...",
+                pads_to_free.len()
+            );
+            self.add_free_pads(pads_to_free).await?;
+        }
+        if !pads_to_verify.is_empty() {
+            debug!(
+                "Adding {} harvested pads to pending verification list...",
+                pads_to_verify.len()
+            );
+            self.add_pending_pads(pads_to_verify).await?;
+        }
+        debug!("Pad harvesting complete.");
+        Ok(())
+    }
 }

@@ -1,8 +1,8 @@
 use crate::data::error::DataError;
 use crate::data::ops::common::{DataManagerDependencies, WriteTaskInput};
+use crate::index::{structure::PadStatus, KeyInfo, PadInfo};
 use crate::internal_events::PutCallback;
 use crate::internal_events::{invoke_put_callback, PutEvent};
-use crate::index::{structure::PadStatus, KeyInfo, PadInfo};
 use crate::pad_lifecycle::PadOrigin;
 use autonomi::SecretKey;
 use chrono::Utc;
@@ -381,7 +381,7 @@ pub(crate) async fn prepare_pads_for_store(
 
                 let pad_info = PadInfo {
                     chunk_index: i,
-                    status: PadStatus::Generated,
+                    status: initial_status.clone(),
                     origin: pad_origin,
                     needs_reverification: false,
                     address: pad_address,
