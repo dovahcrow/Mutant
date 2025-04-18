@@ -67,6 +67,10 @@ pub struct KeyInfo {
 pub struct PublicUploadMetadata {
     /// The address of the index scratchpad for this public upload.
     pub address: ScratchpadAddress,
+    /// The total size of the publicly uploaded data in bytes.
+    pub size: usize,
+    /// Timestamp indicating when the public upload was created or last modified.
+    pub modified: DateTime<Utc>,
 }
 
 /// The central index managing all keys and scratchpads.

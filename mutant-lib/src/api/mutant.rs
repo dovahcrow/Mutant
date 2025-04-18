@@ -7,7 +7,7 @@ use crate::internal_error::Error;
 use crate::internal_events::{GetCallback, InitCallback, PurgeCallback, PutCallback};
 use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
-use crate::types::{KeyDetails, MutAntConfig, StorageStats};
+use crate::types::{KeyDetails, KeySummary, MutAntConfig, StorageStats};
 use autonomi::{Bytes, ScratchpadAddress, SecretKey};
 use log::{debug, info, warn};
 use std::sync::Arc;
@@ -268,37 +268,43 @@ impl MutAnt {
             .map_err(Error::Data)
     }
 
-    /// Lists all user keys currently stored in the index.
+    /// Lists summarized information for all user keys and public uploads stored in the index.
     ///
     /// # Returns
     ///
-    /// A `Vec<String>` containing the keys.
+    /// A `Vec<KeySummary>` containing the name, public status, and address (if public) for each entry.
     ///
     /// # Errors
     ///
     /// Returns `Error::Index` if retrieving the key list fails.
-    pub async fn list_keys(&self) -> Result<Vec<String>, Error> {
+    pub async fn list_keys(&self) -> Result<Vec<KeySummary>, Error> {
         debug!("MutAnt::list_keys called");
         self.index_manager.list_keys().await.map_err(Error::Index)
     }
 
-    /// Retrieves detailed metadata (`KeyDetails`) for a specific user key.
+    /// Retrieves detailed metadata (`KeyDetails`) for a specific user key or public upload name.
     ///
     /// # Arguments
     ///
-    /// * `user_key` - The user key.
+    /// * `user_key_or_name` - The user key or public upload name.
     ///
     /// # Returns
     ///
-    /// `Ok(Some(KeyDetails))` if the key exists, `Ok(None)` otherwise.
+    /// `Ok(Some(KeyDetails))` if the key/name exists, `Ok(None)` otherwise.
     ///
     /// # Errors
     ///
     /// Returns `Error::Index` if retrieving the key details fails.
-    pub async fn get_key_details(&self, user_key: &str) -> Result<Option<KeyDetails>, Error> {
-        debug!("MutAnt::get_key_details called for key '{}'", user_key);
+    pub async fn get_key_details(
+        &self,
+        user_key_or_name: &str,
+    ) -> Result<Option<KeyDetails>, Error> {
+        debug!(
+            "MutAnt::get_key_details called for key/name '{}'",
+            user_key_or_name
+        );
         self.index_manager
-            .get_key_details(user_key)
+            .get_key_details(user_key_or_name)
             .await
             .map_err(Error::Index)
     }

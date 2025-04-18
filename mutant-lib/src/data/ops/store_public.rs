@@ -8,6 +8,7 @@ use crate::network::adapter::create_public_scratchpad;
 use crate::network::error::NetworkError;
 use autonomi::client::payment::PaymentOption;
 use autonomi::{Bytes, ScratchpadAddress, SecretKey};
+use chrono::Utc;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
 use serde_cbor;
@@ -28,7 +29,7 @@ pub(crate) async fn store_public_op(
 ) -> Result<ScratchpadAddress, DataError> {
     info!("DataOps: Starting store_public_op for name '{}'", name);
     let callback_arc = Arc::new(Mutex::new(callback));
-    let _data_size = data_bytes.len();
+    let data_size = data_bytes.len();
 
     // 1. Check for Name Collision
     {
@@ -356,15 +357,26 @@ pub(crate) async fn store_public_op(
 
     // 6. Update Master Index
     debug!("Updating master index for public upload {}", name);
+    let timestamp = Utc::now();
     let metadata = PublicUploadMetadata {
         address: public_index_address,
+        size: data_size,
+        modified: timestamp,
     };
 
-    // Call the dedicated IndexManager method
-    data_manager
+    if let Err(e) = data_manager
         .index_manager
         .insert_public_upload_metadata(name.clone(), metadata)
-        .await?;
+        .await
+    {
+        error!(
+            "Failed to insert public upload metadata for '{}' into index: {}",
+            name, e
+        );
+        // Should we try to clean up the uploaded index scratchpad?
+        // For now, return the index error.
+        return Err(DataError::Index(e));
+    }
 
     info!(
         "Successfully stored public data '{}' at index {}",

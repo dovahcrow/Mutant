@@ -4,7 +4,7 @@ use crate::index::structure::{
     KeyInfo, MasterIndex, PadStatus, PublicUploadMetadata, DEFAULT_SCRATCHPAD_SIZE,
 };
 use crate::network::AutonomiNetworkAdapter;
-use crate::types::{KeyDetails, StorageStats};
+use crate::types::{KeyDetails, KeySummary, StorageStats};
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::{debug, error, info, trace, warn};
 use std::sync::Arc;
@@ -171,37 +171,69 @@ impl DefaultIndexManager {
         Ok(state_guard.index.remove(key))
     }
 
-    /// Lists all user keys currently present in the index.
+    /// Lists all user keys and public upload names currently present in the index.
     ///
     /// # Returns
     ///
-    /// A `Vec<String>` of user keys.
+    /// A `Vec<KeySummary>` containing summarized info for each entry.
     ///
     /// # Errors
     ///
     /// Returns `IndexError` on internal failures.
-    pub async fn list_keys(&self) -> Result<Vec<String>, IndexError> {
+    pub async fn list_keys(&self) -> Result<Vec<KeySummary>, IndexError> {
         let state_guard = self.state.lock().await;
-        Ok(state_guard.index.keys().cloned().collect())
+        let mut summaries = Vec::new();
+
+        // Collect private keys
+        for key in state_guard.index.keys() {
+            summaries.push(KeySummary {
+                name: key.clone(),
+                is_public: false,
+                address: None,
+            });
+        }
+
+        // Collect public uploads
+        for (name, meta) in state_guard.public_uploads.iter() {
+            // Avoid duplicates if a name exists in both (though unlikely)
+            if !summaries.iter().any(|s| s.name == *name) {
+                summaries.push(KeySummary {
+                    name: name.clone(),
+                    is_public: true,
+                    address: Some(meta.address),
+                });
+            } else {
+                // If it exists as both, find the existing private entry and mark it?
+                // Or just log a warning? Let's log for now.
+                warn!("Name '{}' exists as both a private key and a public upload. Listing as private.", name);
+            }
+        }
+
+        Ok(summaries)
     }
 
-    /// Retrieves detailed metadata (`KeyDetails`) for a specific user key.
+    /// Retrieves detailed metadata (`KeyDetails`) for a specific user key or public upload name.
+    ///
+    /// If the name exists as both a private key and a public upload, the private key details are prioritized.
     ///
     /// # Arguments
     ///
-    /// * `key` - The user key.
+    /// * `key_or_name` - The user key or public upload name.
     ///
     /// # Returns
     ///
-    /// `Ok(Some(KeyDetails))` if the key exists, `Ok(None)` otherwise.
+    /// `Ok(Some(KeyDetails))` if the key/name exists, `Ok(None)` otherwise.
     ///
     /// # Errors
     ///
     /// Returns `IndexError` on internal failures.
-    #[allow(dead_code)]
-    pub async fn get_key_details(&self, key: &str) -> Result<Option<KeyDetails>, IndexError> {
+    pub async fn get_key_details(
+        &self,
+        key_or_name: &str,
+    ) -> Result<Option<KeyDetails>, IndexError> {
         let state_guard = self.state.lock().await;
-        Ok(state_guard.index.get(key).map(|info| {
+
+        let private_details = state_guard.index.get(key_or_name).map(|info| {
             let percentage = if !info.is_complete && !info.pads.is_empty() {
                 let confirmed_count = info
                     .pads
@@ -213,16 +245,39 @@ impl DefaultIndexManager {
                 None
             };
             KeyDetails {
-                key: key.to_string(),
+                key: key_or_name.to_string(),
                 size: info.data_size,
                 modified: info.modified,
                 is_finished: info.is_complete,
                 completion_percentage: percentage,
+                public_address: None, // This is a private key entry
             }
-        }))
+        });
+
+        let public_meta = state_guard.public_uploads.get(key_or_name);
+
+        match (private_details, public_meta) {
+            (Some(details), Some(_)) => {
+                warn!("Name '{}' exists as both a private key and a public upload. Returning private key details.", key_or_name);
+                Ok(Some(details))
+            }
+            (Some(details), None) => Ok(Some(details)),
+            (None, Some(meta)) => {
+                // Construct KeyDetails for the public upload
+                Ok(Some(KeyDetails {
+                    key: key_or_name.to_string(),
+                    size: meta.size,         // Assuming PublicUploadMetadata has size
+                    modified: meta.modified, // Assuming PublicUploadMetadata has modified timestamp
+                    is_finished: true,       // Public uploads are inherently finished once created
+                    completion_percentage: None,
+                    public_address: Some(meta.address),
+                }))
+            }
+            (None, None) => Ok(None),
+        }
     }
 
-    /// Lists detailed metadata (`KeyDetails`) for all keys in the index.
+    /// Lists detailed metadata (`KeyDetails`) for all keys and public uploads in the index.
     ///
     /// # Returns
     ///
@@ -233,29 +288,48 @@ impl DefaultIndexManager {
     /// Returns `IndexError` on internal failures.
     pub async fn list_all_key_details(&self) -> Result<Vec<KeyDetails>, IndexError> {
         let state_guard = self.state.lock().await;
-        Ok(state_guard
-            .index
-            .iter()
-            .map(|(key, info)| {
-                let percentage = if !info.is_complete && !info.pads.is_empty() {
-                    let confirmed_count = info
-                        .pads
-                        .iter()
-                        .filter(|p| p.status == PadStatus::Confirmed)
-                        .count();
-                    Some((confirmed_count as f32 / info.pads.len() as f32) * 100.0)
-                } else {
-                    None
-                };
-                KeyDetails {
-                    key: key.clone(),
-                    size: info.data_size,
-                    modified: info.modified,
-                    is_finished: info.is_complete,
-                    completion_percentage: percentage,
-                }
-            })
-            .collect())
+        let mut all_details = Vec::new();
+
+        // Process private keys
+        for (key, info) in state_guard.index.iter() {
+            let percentage = if !info.is_complete && !info.pads.is_empty() {
+                let confirmed_count = info
+                    .pads
+                    .iter()
+                    .filter(|p| p.status == PadStatus::Confirmed)
+                    .count();
+                Some((confirmed_count as f32 / info.pads.len() as f32) * 100.0)
+            } else {
+                None
+            };
+            all_details.push(KeyDetails {
+                key: key.clone(),
+                size: info.data_size,
+                modified: info.modified,
+                is_finished: info.is_complete,
+                completion_percentage: percentage,
+                public_address: None,
+            });
+        }
+
+        // Process public uploads
+        for (name, meta) in state_guard.public_uploads.iter() {
+            // Check if a private key with the same name already exists
+            if !all_details.iter().any(|d| d.key == *name) {
+                all_details.push(KeyDetails {
+                    key: name.clone(),
+                    size: meta.size,
+                    modified: meta.modified,
+                    is_finished: true,
+                    completion_percentage: None,
+                    public_address: Some(meta.address),
+                });
+            }
+            // If it exists, we've already added the private version and logged a warning potentially in get_key_details.
+            // For list_all, we just show the private one if names collide.
+        }
+
+        Ok(all_details)
     }
 
     /// Calculates and returns storage statistics based on the current index state.

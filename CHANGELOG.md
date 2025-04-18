@@ -163,5 +163,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- CLI `ls` command now lists both private keys and public uploads.
+- CLI `ls -l` command now displays detailed information (`KeyDetails`) for both private keys and public uploads, including the public address for the latter.
+- `mutant-lib` API (`MutAnt::list_keys`, `MutAnt::get_key_details`, `MutAnt::list_all_key_details`) now supports retrieving information about public uploads alongside private keys.
+- `KeyDetails` struct now includes an optional `public_address` field.
+- `KeySummary` struct introduced to represent basic key/upload information for listing.
+
 ### Fixed
 - Corrected public data storage (`store_public_op`) to use unique keys for each data chunk and the index chunk, resolving address collisions and ensuring correct encoding verification. ([#IssueNumber])

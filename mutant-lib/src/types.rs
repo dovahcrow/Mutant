@@ -1,4 +1,5 @@
 use crate::network::NetworkChoice;
+use autonomi::ScratchpadAddress;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -82,4 +83,17 @@ pub struct KeyDetails {
     pub is_finished: bool,
     /// If `is_finished` is false, this optionally provides the completion progress as a percentage (0.0 to 100.0).
     pub completion_percentage: Option<f32>,
+    /// If this represents a public upload, this holds its shareable address.
+    pub public_address: Option<ScratchpadAddress>,
+}
+
+/// Contains summarized information about a key for listing purposes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeySummary {
+    /// The unique identifier (key or name) for the entry.
+    pub name: String,
+    /// Flag indicating whether this entry is a public upload.
+    pub is_public: bool,
+    /// The shareable address, if this entry is a public upload.
+    pub address: Option<ScratchpadAddress>,
 }
