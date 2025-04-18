@@ -48,10 +48,45 @@ pub async fn handle_get(
             }
         }
     } else {
-        debug!("CLI: Fetching private data using key '{}'", key_or_address);
-        mutant
-            .fetch_with_progress(&key_or_address, Some(callback))
-            .await
+        // Try fetching by name (could be private key or public upload name)
+        debug!(
+            "CLI: Attempting to fetch by name '{}' (checking index first)...",
+            key_or_address
+        );
+        match mutant.get_key_details(&key_or_address).await {
+            Ok(Some(details)) => {
+                if let Some(public_address) = details.public_address {
+                    // It's a public upload known by name
+                    debug!(
+                        "CLI: Name '{}' is a public upload with address {}. Fetching publicly...",
+                        key_or_address, public_address
+                    );
+                    mutant
+                        .fetch_public(public_address, Some(callback))
+                        .await
+                        .map(|bytes| bytes.to_vec())
+                } else {
+                    // It's a private key
+                    debug!(
+                        "CLI: Name '{}' is a private key. Fetching privately...",
+                        key_or_address
+                    );
+                    mutant
+                        .fetch_with_progress(&key_or_address, Some(callback))
+                        .await
+                }
+            }
+            Ok(None) => {
+                // Name not found in index (neither private nor public)
+                Err(LibError::Data(DataError::KeyNotFound(
+                    key_or_address.clone(),
+                )))
+            }
+            Err(e) => {
+                // Error fetching details
+                Err(e)
+            }
+        }
     };
 
     match result {
