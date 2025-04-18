@@ -173,70 +173,9 @@ impl DefaultIndexManager {
     /// Returns `IndexError` on internal failures.
     pub async fn remove_key_info(&self, key: &str) -> Result<Option<KeyInfo>, IndexError> {
         let mut state_guard = self.state.lock().await;
-        if let Some(removed_info) = state_guard.index.remove(key) {
-            debug!(
-                "Removed key '{}'. Processing its {} pads...",
-                key,
-                removed_info.pads.len()
-            );
-            let mut pads_to_free = Vec::new();
-            let mut pads_to_verify = Vec::new();
-
-            for pad in &removed_info.pads {
-                if let Some(key_bytes) = removed_info.pad_keys.get(&pad.address) {
-                    match pad.status {
-                        PadStatus::Allocated | PadStatus::Written | PadStatus::Confirmed => {
-                            debug!(
-                                "Pad {} (status {:?}) from removed key '{}' marked for free list.",
-                                pad.address, pad.status, key
-                            );
-                            pads_to_free.push((pad.address, key_bytes.clone()));
-                        }
-                        PadStatus::Generated => {
-                            if pad.needs_reverification {
-                                debug!(
-                                     "Pad {} (status {:?}, needs_reverification=true) from removed key '{}' marked for verification queue.",
-                                     pad.address, pad.status, key
-                                 );
-                                pads_to_verify.push((pad.address, key_bytes.clone()));
-                            } else {
-                                debug!(
-                                    "Pad {} (status {:?}, needs_reverification=false) from removed key '{}' discarded.",
-                                    pad.address, pad.status, key
-                                );
-                            }
-                        }
-                    }
-                } else {
-                    warn!(
-                        "Secret key not found in KeyInfo for pad {} associated with removed key '{}'. Cannot process this pad.",
-                        pad.address, key
-                    );
-                }
-            }
-            drop(state_guard);
-
-            if !pads_to_free.is_empty() {
-                debug!(
-                    "Adding {} pads from removed key '{}' to the free list.",
-                    pads_to_free.len(),
-                    key
-                );
-                self.add_free_pads(pads_to_free).await?;
-            }
-            if !pads_to_verify.is_empty() {
-                debug!(
-                    "Adding {} pads from removed key '{}' to the verification queue.",
-                    pads_to_verify.len(),
-                    key
-                );
-                self.add_pending_pads(pads_to_verify).await?;
-            }
-
-            Ok(Some(removed_info))
-        } else {
-            Ok(None)
-        }
+        // Simply remove the key and return the associated KeyInfo if it existed.
+        // The harvesting logic is now handled separately by harvest_pads.
+        Ok(state_guard.index.remove(key))
     }
 
     /// Lists all user keys currently present in the index.
