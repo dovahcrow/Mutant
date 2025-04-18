@@ -170,15 +170,15 @@ async fn main() -> anyhow::Result<()> {
     // Replace with your actual private key (hex format, with or without 0x prefix)
     let private_key_hex = "0xYOUR_PRIVATE_KEY_HEX".to_string();
 
-    let mut ant = MutAnt::init(private_key_hex).await?;
+    let mut mutant = MutAnt::init(private_key_hex).await?;
 
-    ant.store("greeting", b"hello world").await?;
+    mutant.store("greeting", b"hello world").await?;
 
-    let fetched_value = ant.fetch("greeting").await?;
+    let fetched_value = mutant.fetch("greeting").await?;
 
     println!("Fetched value: {}", String::from_utf8_lossy(&fetched_value));
 
-    ant.remove("greeting").await?;
+    mutant.remove("greeting").await?;
 
     Ok(())
 }
