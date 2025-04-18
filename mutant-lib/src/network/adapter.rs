@@ -157,15 +157,14 @@ impl AutonomiNetworkAdapter {
                         info!("Successfully created new scratchpad at {}", address);
                         Ok(address)
                     }
-                    Err(e) if e.to_string().contains("already exists") => {
-                        error!(
-                            "Inconsistent state: Tried to create pad {}, but it already exists (status was Generated).",
+                    Err(e) if e.to_string().to_lowercase().contains("already exists") => {
+                        // Treat 'already exists' during a create attempt (due to Generated status) as a successful creation,
+                        // but log a warning about the state inconsistency.
+                        warn!(
+                            "State inconsistency handled: Tried to create pad {}, which already exists (status was Generated). Proceeding with write.",
                             address
                         );
-                        Err(NetworkError::InconsistentState(format!(
-                            "Create failed for Generated pad {}: already exists",
-                            address
-                        )))
+                        Ok(address) // Proceed as if creation was successful
                     }
                     Err(e) => {
                         error!("Failed to create scratchpad {}: {}", address, e);
