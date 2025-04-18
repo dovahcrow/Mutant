@@ -3,7 +3,7 @@ use crate::callbacks::put::create_put_callback;
 use indicatif::MultiProgress;
 use log::{debug, warn};
 use mutant_lib::MutAnt;
-use mutant_lib::error::{DataError, Error as LibError};
+use mutant_lib::error::Error as LibError;
 use std::io::{self, Read};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -47,14 +47,63 @@ pub async fn handle_put(
         create_put_callback(multi_progress, quiet);
 
     let result = if force {
-        debug!("Forcing update for key: {}", key);
+        debug!(
+            "CLI: Force flag is set. Proceeding with update for key: {}",
+            key
+        );
         mutant
             .update_with_progress(key.clone(), &data_vec, Some(callback))
             .await
     } else {
-        mutant
-            .store_with_progress(key.clone(), &data_vec, Some(callback))
-            .await
+        debug!("CLI: Checking status of key '{}' before storing.", key);
+        match mutant.get_key_details(&key).await {
+            Ok(Some(details)) => {
+                if details.is_finished {
+                    // Key exists and is complete
+                    eprintln!(
+                        "Error: Key '{}' already exists and is complete. Use --force to overwrite.",
+                        key
+                    );
+                    // Abandon progress bars if they were initialized (though they likely weren't)
+                    let msg = format!("Key '{}' already exists and is complete.", key);
+                    abandon_pb(&res_pb_opt, msg.clone());
+                    abandon_pb(&upload_pb_opt, msg.clone());
+                    abandon_pb(&confirm_pb_opt, msg);
+                    return ExitCode::FAILURE;
+                } else {
+                    // Key exists but is incomplete - resume
+                    if !quiet {
+                        eprintln!("Resuming incomplete upload for key '{}'...", key);
+                    }
+                    debug!(
+                        "CLI: Key '{}' exists but is incomplete. Resuming upload.",
+                        key
+                    );
+                    mutant
+                        .store_with_progress(key.clone(), &data_vec, Some(callback))
+                        .await
+                }
+            }
+            Ok(None) => {
+                // Key does not exist - normal store
+                debug!(
+                    "CLI: Key '{}' does not exist. Proceeding with new upload.",
+                    key
+                );
+                mutant
+                    .store_with_progress(key.clone(), &data_vec, Some(callback))
+                    .await
+            }
+            Err(e) => {
+                // Error checking key details
+                eprintln!("Error checking status for key '{}': {}", key, e);
+                let msg = format!("Error checking key status: {}", e);
+                abandon_pb(&res_pb_opt, msg.clone());
+                abandon_pb(&upload_pb_opt, msg.clone());
+                abandon_pb(&confirm_pb_opt, msg);
+                return ExitCode::FAILURE;
+            }
+        }
     };
 
     match result {
@@ -68,15 +117,6 @@ pub async fn handle_put(
         }
         Err(e) => {
             let error_message = match e {
-                LibError::Data(DataError::KeyNotFound(k)) if force => {
-                    format!(
-                        "Cannot force update non-existent key '{}'. Use put without --force.",
-                        k
-                    )
-                }
-                LibError::Data(DataError::KeyAlreadyExists(k)) if !force => {
-                    format!("Key '{}' already exists. Use --force to overwrite.", k)
-                }
                 LibError::OperationCancelled => "Operation cancelled.".to_string(),
                 _ => format!(
                     "Error during {}: {}",

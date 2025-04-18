@@ -282,6 +282,27 @@ impl MutAnt {
         self.index_manager.list_keys().await.map_err(Error::Index)
     }
 
+    /// Retrieves detailed metadata (`KeyDetails`) for a specific user key.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_key` - The user key.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Some(KeyDetails))` if the key exists, `Ok(None)` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Index` if retrieving the key details fails.
+    pub async fn get_key_details(&self, user_key: &str) -> Result<Option<KeyDetails>, Error> {
+        debug!("MutAnt::get_key_details called for key '{}'", user_key);
+        self.index_manager
+            .get_key_details(user_key)
+            .await
+            .map_err(Error::Index)
+    }
+
     /// Lists detailed information for all keys stored in the index.
     ///
     /// # Returns

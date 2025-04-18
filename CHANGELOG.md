@@ -63,6 +63,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implemented pad harvesting during `remove` operation: `Generated` pads move to `pending_verification_pads`, others move to `free_pads`.
 
 ### Changed
+- CLI `put` command now checks key status before storing/updating:
+  - Errors if key exists and is complete (unless `--force` is used).
+  - Resumes if key exists but is incomplete.
+  - Starts new upload if key doesn't exist.
 - Removed the intermediate `storage` module, directly using the `network` adapter for pad read/write operations.
 - Refactored `DefaultDataManager` to remove redundant `DataManagerDependencies` struct, passing `&DefaultDataManager` directly to ops functions.
 - Restricted public API surface of `mutant-lib`, re-exporting only necessary types.
