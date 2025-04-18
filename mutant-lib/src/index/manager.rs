@@ -1,11 +1,12 @@
 use crate::index::error::IndexError;
 use crate::index::persistence::{load_index, save_index};
 use crate::index::structure::{
-    KeyInfo, MasterIndex, PadStatus, PublicUploadMetadata, DEFAULT_SCRATCHPAD_SIZE,
+    IndexEntry, KeyInfo, MasterIndex, PadStatus, PublicUploadInfo, DEFAULT_SCRATCHPAD_SIZE,
 };
 use crate::network::AutonomiNetworkAdapter;
 use crate::types::{KeyDetails, KeySummary, StorageStats};
 use autonomi::{ScratchpadAddress, SecretKey};
+use chrono::Utc;
 use log::{debug, error, info, trace, warn};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -111,27 +112,17 @@ impl DefaultIndexManager {
         Ok(())
     }
 
-    /// Retrieves the `KeyInfo` associated with a given user key.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The user key to look up.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(Some(KeyInfo))` if the key exists, `Ok(None)` otherwise.
-    ///
-    /// # Errors
-    ///
-    /// Returns `IndexError` on internal failures.
+    /// Retrieves a clone of the `KeyInfo` for a specific private key.
+    /// Returns `Ok(None)` if the key doesn't exist or if it corresponds to a public upload.
     pub async fn get_key_info(&self, key: &str) -> Result<Option<KeyInfo>, IndexError> {
         let state_guard = self.state.lock().await;
-        Ok(state_guard.index.get(key).cloned())
+        Ok(state_guard.index.get(key).and_then(|entry| match entry {
+            IndexEntry::PrivateKey(info) => Some(info.clone()),
+            IndexEntry::PublicUpload(_) => None, // Key exists, but is not a private key
+        }))
     }
 
-    /// Inserts or updates the `KeyInfo` for a given user key.
-    ///
-    /// If the key already exists, its `KeyInfo` is replaced.
+    /// Inserts or updates the `KeyInfo` for a specific private key.
     ///
     /// # Arguments
     ///
@@ -140,35 +131,39 @@ impl DefaultIndexManager {
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` on internal failures.
+    /// Returns `IndexError::Lock` on internal lock failures.
+    /// Returns `IndexError::KeyExists` if the key name already exists as a Public Upload.
     pub async fn insert_key_info(&self, key: String, info: KeyInfo) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
-        state_guard.index.insert(key, info);
+        // Check if the key exists as a public upload
+        if let Some(IndexEntry::PublicUpload(_)) = state_guard.index.get(&key) {
+            return Err(IndexError::KeyExists(key)); // Cannot overwrite public upload with private key
+        }
+        // Insert/overwrite as private key
+        state_guard.index.insert(key, IndexEntry::PrivateKey(info)); // Wrap in enum variant
         Ok(())
     }
 
-    /// Removes the `KeyInfo` associated with a given user key.
-    ///
-    /// Also handles moving the pads previously associated with the key:
-    /// - Pads with status Allocated, Written, or Confirmed are added to the free list.
-    /// - Pads with status Generated are added to the pending verification list.
+    /// Removes the entry (private key or public upload) for a specific key and returns the associated `KeyInfo` if it was a private key.
     ///
     /// # Arguments
     ///
-    /// * `key` - The user key to remove.
+    /// * `key` - The user key or public upload name to remove.
     ///
     /// # Returns
     ///
-    /// `Ok(Some(KeyInfo))` containing the removed info if the key existed, `Ok(None)` otherwise.
+    /// `Ok(Some(KeyInfo))` if the key existed and was a private key.
+    /// `Ok(None)` if the key did not exist or was a public upload.
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` on internal failures.
+    /// Returns `IndexError::Lock` on internal lock failures.
     pub async fn remove_key_info(&self, key: &str) -> Result<Option<KeyInfo>, IndexError> {
         let mut state_guard = self.state.lock().await;
-        // Simply remove the key and return the associated KeyInfo if it existed.
-        // The harvesting logic is now handled separately by harvest_pads.
-        Ok(state_guard.index.remove(key))
+        Ok(state_guard.index.remove(key).and_then(|entry| match entry {
+            IndexEntry::PrivateKey(info) => Some(info),
+            IndexEntry::PublicUpload(_) => None, // Removed a public upload, return None as per doc
+        }))
     }
 
     /// Lists all user keys and public upload names currently present in the index.
@@ -184,28 +179,23 @@ impl DefaultIndexManager {
         let state_guard = self.state.lock().await;
         let mut summaries = Vec::new();
 
-        // Collect private keys
-        for key in state_guard.index.keys() {
-            summaries.push(KeySummary {
-                name: key.clone(),
-                is_public: false,
-                address: None,
-            });
-        }
-
-        // Collect public uploads
-        for (name, meta) in state_guard.public_uploads.iter() {
-            // Avoid duplicates if a name exists in both (though unlikely)
-            if !summaries.iter().any(|s| s.name == *name) {
-                summaries.push(KeySummary {
-                    name: name.clone(),
-                    is_public: true,
-                    address: Some(meta.address),
-                });
-            } else {
-                // If it exists as both, find the existing private entry and mark it?
-                // Or just log a warning? Let's log for now.
-                warn!("Name '{}' exists as both a private key and a public upload. Listing as private.", name);
+        // Collect all entries from the unified index
+        for (key, entry) in state_guard.index.iter() {
+            match entry {
+                IndexEntry::PrivateKey(_) => {
+                    summaries.push(KeySummary {
+                        name: key.clone(),
+                        is_public: false,
+                        address: None,
+                    });
+                }
+                IndexEntry::PublicUpload(info) => {
+                    summaries.push(KeySummary {
+                        name: key.clone(),
+                        is_public: true,
+                        address: Some(info.address),
+                    });
+                }
             }
         }
 
@@ -233,47 +223,39 @@ impl DefaultIndexManager {
     ) -> Result<Option<KeyDetails>, IndexError> {
         let state_guard = self.state.lock().await;
 
-        let private_details = state_guard.index.get(key_or_name).map(|info| {
-            let percentage = if !info.is_complete && !info.pads.is_empty() {
-                let confirmed_count = info
-                    .pads
-                    .iter()
-                    .filter(|p| p.status == PadStatus::Confirmed)
-                    .count();
-                Some((confirmed_count as f32 / info.pads.len() as f32) * 100.0)
-            } else {
-                None
-            };
-            KeyDetails {
-                key: key_or_name.to_string(),
-                size: info.data_size,
-                modified: info.modified,
-                is_finished: info.is_complete,
-                completion_percentage: percentage,
-                public_address: None, // This is a private key entry
+        match state_guard.index.get(key_or_name) {
+            Some(IndexEntry::PrivateKey(info)) => {
+                let percentage = if !info.is_complete && !info.pads.is_empty() {
+                    let confirmed_count = info
+                        .pads
+                        .iter()
+                        .filter(|p| p.status == PadStatus::Confirmed)
+                        .count();
+                    Some((confirmed_count as f32 / info.pads.len() as f32) * 100.0)
+                } else {
+                    None
+                };
+                Ok(Some(KeyDetails {
+                    key: key_or_name.to_string(),
+                    size: info.data_size,
+                    modified: info.modified,
+                    is_finished: info.is_complete,
+                    completion_percentage: percentage,
+                    public_address: None, // This is a private key entry
+                }))
             }
-        });
-
-        let public_meta = state_guard.public_uploads.get(key_or_name);
-
-        match (private_details, public_meta) {
-            (Some(details), Some(_)) => {
-                warn!("Name '{}' exists as both a private key and a public upload. Returning private key details.", key_or_name);
-                Ok(Some(details))
-            }
-            (Some(details), None) => Ok(Some(details)),
-            (None, Some(meta)) => {
+            Some(IndexEntry::PublicUpload(info)) => {
                 // Construct KeyDetails for the public upload
                 Ok(Some(KeyDetails {
                     key: key_or_name.to_string(),
-                    size: meta.size,         // Assuming PublicUploadMetadata has size
-                    modified: meta.modified, // Assuming PublicUploadMetadata has modified timestamp
-                    is_finished: true,       // Public uploads are inherently finished once created
+                    size: info.size,
+                    modified: info.modified,
+                    is_finished: true, // Public uploads are inherently finished once created
                     completion_percentage: None,
-                    public_address: Some(meta.address),
+                    public_address: Some(info.address),
                 }))
             }
-            (None, None) => Ok(None),
+            None => Ok(None),
         }
     }
 
@@ -290,43 +272,40 @@ impl DefaultIndexManager {
         let state_guard = self.state.lock().await;
         let mut all_details = Vec::new();
 
-        // Process private keys
-        for (key, info) in state_guard.index.iter() {
-            let percentage = if !info.is_complete && !info.pads.is_empty() {
-                let confirmed_count = info
-                    .pads
-                    .iter()
-                    .filter(|p| p.status == PadStatus::Confirmed)
-                    .count();
-                Some((confirmed_count as f32 / info.pads.len() as f32) * 100.0)
-            } else {
-                None
-            };
-            all_details.push(KeyDetails {
-                key: key.clone(),
-                size: info.data_size,
-                modified: info.modified,
-                is_finished: info.is_complete,
-                completion_percentage: percentage,
-                public_address: None,
-            });
-        }
-
-        // Process public uploads
-        for (name, meta) in state_guard.public_uploads.iter() {
-            // Check if a private key with the same name already exists
-            if !all_details.iter().any(|d| d.key == *name) {
-                all_details.push(KeyDetails {
-                    key: name.clone(),
-                    size: meta.size,
-                    modified: meta.modified,
-                    is_finished: true,
-                    completion_percentage: None,
-                    public_address: Some(meta.address),
-                });
+        // Process all entries from the unified index
+        for (key, entry) in state_guard.index.iter() {
+            match entry {
+                IndexEntry::PrivateKey(info) => {
+                    let percentage = if !info.is_complete && !info.pads.is_empty() {
+                        let confirmed_count = info
+                            .pads
+                            .iter()
+                            .filter(|p| p.status == PadStatus::Confirmed)
+                            .count();
+                        Some((confirmed_count as f32 / info.pads.len() as f32) * 100.0)
+                    } else {
+                        None
+                    };
+                    all_details.push(KeyDetails {
+                        key: key.clone(),
+                        size: info.data_size,
+                        modified: info.modified,
+                        is_finished: info.is_complete,
+                        completion_percentage: percentage,
+                        public_address: None,
+                    });
+                }
+                IndexEntry::PublicUpload(info) => {
+                    all_details.push(KeyDetails {
+                        key: key.clone(),
+                        size: info.size,
+                        modified: info.modified,
+                        is_finished: true,
+                        completion_percentage: None,
+                        public_address: Some(info.address),
+                    });
+                }
             }
-            // If it exists, we've already added the private version and logged a warning potentially in get_key_details.
-            // For list_all, we just show the private one if names collide.
         }
 
         Ok(all_details)
@@ -364,35 +343,39 @@ impl DefaultIndexManager {
         let mut incomplete_keys_pads_written = 0;
         let mut incomplete_keys_pads_confirmed = 0; // Confirmed pads belonging to incomplete keys
 
-        for key_info in state_guard.index.values() {
-            if key_info.is_complete {
-                // Fully confirmed keys contribute to occupied pads and data size
-                occupied_pads_count += key_info.pads.len();
-                occupied_data_size_total += key_info.data_size as u64;
-            } else {
-                // Incomplete keys analysis
-                incomplete_keys_count += 1;
-                incomplete_keys_data_bytes += key_info.data_size as u64;
-                incomplete_keys_total_pads += key_info.pads.len();
+        for entry in state_guard.index.values() {
+            if let IndexEntry::PrivateKey(key_info) = entry {
+                if key_info.is_complete {
+                    // Fully confirmed keys contribute to occupied pads and data size
+                    occupied_pads_count += key_info.pads.len();
+                    occupied_data_size_total += key_info.data_size as u64;
+                } else {
+                    // Incomplete keys analysis
+                    incomplete_keys_count += 1;
+                    incomplete_keys_data_bytes += key_info.data_size as u64;
+                    incomplete_keys_total_pads += key_info.pads.len();
 
-                for pad_info in &key_info.pads {
-                    match pad_info.status {
-                        PadStatus::Generated => incomplete_keys_pads_generated += 1,
-                        PadStatus::Allocated => allocated_written_pads_count += 1,
-                        PadStatus::Written => {
-                            incomplete_keys_pads_written += 1;
-                            allocated_written_pads_count += 1;
-                        }
-                        PadStatus::Confirmed => {
-                            incomplete_keys_pads_confirmed += 1;
-                            // Confirmed pads of incomplete keys *also* count towards occupied
-                            occupied_pads_count += 1;
+                    for pad_info in &key_info.pads {
+                        match pad_info.status {
+                            PadStatus::Generated => incomplete_keys_pads_generated += 1,
+                            PadStatus::Allocated => allocated_written_pads_count += 1,
+                            PadStatus::Written => {
+                                incomplete_keys_pads_written += 1;
+                                allocated_written_pads_count += 1;
+                            }
+                            PadStatus::Confirmed => {
+                                incomplete_keys_pads_confirmed += 1;
+                                // Confirmed pads of incomplete keys *also* count towards occupied
+                                occupied_pads_count += 1;
+                            }
                         }
                     }
+                    // Include data size even for incomplete keys in the total occupied data calculation
+                    occupied_data_size_total += key_info.data_size as u64;
                 }
-                // Include data size even for incomplete keys in the total occupied data calculation
-                occupied_data_size_total += key_info.data_size as u64;
             }
+            // Note: Public uploads currently do not contribute to these detailed pad stats.
+            // We could add a count of public uploads or their total size if needed.
         }
 
         let total_pads_managed = occupied_pads_count
@@ -431,27 +414,27 @@ impl DefaultIndexManager {
 
     /// Inserts metadata for a new public upload into the index.
     ///
-    /// Logs a warning if the name already exists, overwriting the previous entry.
-    pub async fn insert_public_upload_metadata(
+    /// # Arguments
+    ///
+    /// * `name` - The unique name for the public upload.
+    /// * `info` - The `PublicUploadInfo` containing metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError::KeyExists` if the name is already used (for a private key or public upload).
+    /// Returns `IndexError::Lock` on internal lock failures.
+    pub async fn insert_public_upload_info(
         &self,
         name: String,
-        metadata: PublicUploadMetadata,
+        info: PublicUploadInfo,
     ) -> Result<(), IndexError> {
-        debug!(
-            "IndexManager: Inserting public upload metadata for '{}' -> {}",
-            name, metadata.address
-        );
         let mut state_guard = self.state.lock().await;
-        if state_guard
-            .public_uploads
-            .insert(name.clone(), metadata)
-            .is_some()
-        {
-            warn!(
-                "Overwriting existing public upload metadata for name '{}'",
-                name
-            );
+        if state_guard.index.contains_key(&name) {
+            return Err(IndexError::KeyExists(name));
         }
+        state_guard
+            .index
+            .insert(name, IndexEntry::PublicUpload(info));
         Ok(())
     }
 
@@ -580,43 +563,66 @@ impl DefaultIndexManager {
         new_status: PadStatus,
     ) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
-        let key_info = state_guard
-            .index
-            .get_mut(key)
-            .ok_or(IndexError::KeyNotFound(key.to_string()))?;
-        let pad_info = key_info
-            .pads
-            .iter_mut()
-            .find(|p| p.address == *pad_address)
-            .ok_or_else(|| {
-                IndexError::InconsistentState(format!(
-                    "Pad {} not found within key '{}'",
-                    pad_address, key
-                ))
-            })?;
-        pad_info.status = new_status;
-        Ok(())
+        match state_guard.index.get_mut(key) {
+            Some(IndexEntry::PrivateKey(key_info)) => {
+                // Find the pad with the matching address
+                if let Some(pad_info) = key_info
+                    .pads // Access pads on key_info
+                    .iter_mut()
+                    .find(|p| p.address == *pad_address)
+                {
+                    debug!(
+                        "IndexManager: Updating pad {} for key '{}' to status {:?}",
+                        pad_address, key, new_status
+                    );
+                    pad_info.status = new_status;
+                    pad_info.needs_reverification = false; // Assume status update implies verification not needed
+                    key_info.modified = Utc::now();
+                    Ok(())
+                } else {
+                    warn!(
+                        "IndexManager: Pad address {} not found for key '{}' during status update.",
+                        pad_address, key
+                    );
+                    Err(IndexError::PadNotFound(*pad_address, key.to_string()))
+                }
+            }
+            Some(IndexEntry::PublicUpload(_)) => {
+                warn!(
+                    "IndexManager: Attempted to update pad status for a public upload key '{}'",
+                    key
+                );
+                Err(IndexError::KeyNotFound(key.to_string())) // Or a more specific error?
+            }
+            None => Err(IndexError::KeyNotFound(key.to_string())),
+        }
     }
 
-    /// Marks a specific key as complete (`is_complete = true`) in its `KeyInfo`.
+    /// Marks a specific private key as complete.
     ///
-    /// This is typically called after all pads associated with a key reach the `Confirmed` status.
+    /// Sets the `is_complete` flag to true for the `KeyInfo` associated with the key.
+    /// Does nothing if the key does not exist or is a public upload.
     ///
     /// # Arguments
     ///
-    /// * `key` - The user key to mark as complete.
+    /// * `key` - The user key.
     ///
     /// # Errors
     ///
-    /// Returns `IndexError::KeyNotFound` if the key doesn't exist.
-    /// Returns other `IndexError` variants on internal failures.
+    /// Returns `IndexError::Lock` on internal lock failures.
     pub async fn mark_key_complete(&self, key: &str) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
-        let key_info = state_guard
-            .index
-            .get_mut(key)
-            .ok_or(IndexError::KeyNotFound(key.to_string()))?;
-        key_info.is_complete = true;
+        if let Some(IndexEntry::PrivateKey(key_info)) = state_guard.index.get_mut(key) {
+            key_info.is_complete = true; // Access is_complete on key_info
+            key_info.modified = Utc::now();
+            debug!("IndexManager: Marked key '{}' as complete.", key);
+        } else {
+            warn!(
+                "IndexManager: Key '{}' not found or is public upload during mark_key_complete.",
+                key
+            );
+            // Don't return error if not found or public, just do nothing as per doc.
+        }
         Ok(())
     }
 

@@ -2,7 +2,7 @@ use crate::data::chunking::chunk_data;
 use crate::data::error::DataError;
 use crate::data::manager::DefaultDataManager;
 use crate::data::{PUBLIC_DATA_ENCODING, PUBLIC_INDEX_ENCODING};
-use crate::index::structure::PublicUploadMetadata;
+use crate::index::structure::PublicUploadInfo;
 use crate::internal_events::{invoke_put_callback, PutCallback, PutEvent};
 use crate::network::adapter::create_public_scratchpad;
 use crate::network::error::NetworkError;
@@ -31,13 +31,17 @@ pub(crate) async fn store_public_op(
     let callback_arc = Arc::new(Mutex::new(callback));
     let data_size = data_bytes.len();
 
-    // 1. Check for Name Collision
+    // 1. Check for Name Collision (now uses unified index)
     {
         let index_copy = data_manager.index_manager.get_index_copy().await?;
-        if index_copy.public_uploads.contains_key(&name) {
-            error!("Public upload name '{}' already exists.", name);
+        if index_copy.index.contains_key(&name) {
+            // Check the main index
+            error!(
+                "Public upload name '{}' collides with an existing entry (key or public upload).",
+                name
+            );
             return Err(DataError::Index(
-                crate::index::error::IndexError::PublicUploadNameExists(name),
+                crate::index::error::IndexError::KeyExists(name),
             ));
         }
     }
@@ -357,16 +361,15 @@ pub(crate) async fn store_public_op(
 
     // 6. Update Master Index
     debug!("Updating master index for public upload {}", name);
-    let timestamp = Utc::now();
-    let metadata = PublicUploadMetadata {
+    let metadata = PublicUploadInfo {
         address: public_index_address,
         size: data_size,
-        modified: timestamp,
+        modified: Utc::now(),
     };
 
     if let Err(e) = data_manager
         .index_manager
-        .insert_public_upload_metadata(name.clone(), metadata)
+        .insert_public_upload_info(name.clone(), metadata)
         .await
     {
         error!(

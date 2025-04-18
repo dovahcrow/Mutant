@@ -2,7 +2,7 @@ use crate::api::init::initialize_layers;
 use crate::api::ReserveCallback;
 use crate::data::manager::DefaultDataManager;
 use crate::index::manager::DefaultIndexManager;
-use crate::index::structure::MasterIndex;
+use crate::index::structure::{IndexEntry, MasterIndex};
 use crate::internal_error::Error;
 use crate::internal_events::{GetCallback, InitCallback, PurgeCallback, PutCallback};
 use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
@@ -550,47 +550,49 @@ impl MutAnt {
         data_bytes: &[u8],
         callback: Option<PutCallback>,
     ) -> Result<ScratchpadAddress, Error> {
-        debug!("MutAnt::store_public called for name '{}'", name);
-
-        let address = self
+        debug!("MutAnt::store_public started for name '{}'", name);
+        let result = self
             .data_manager
             .store_public(name.clone(), data_bytes, callback)
             .await
-            .map_err(Error::Data)?;
+            .map_err(Error::Data);
 
-        // Save index after successful public store
+        // Regardless of success/failure of the data store, try to save the index
+        // (the index manager might have been updated even if data store failed partially)
         if let Err(e) = self.save_index_cache().await {
             warn!(
                 "Failed to save index cache after store_public operation for '{}': {}",
                 name, e
             );
-            // Don't return error here? The data is stored, just cache failed.
-            // Maybe return Ok, but log prominently?
-            // For now, let's return the index error, consistent with other ops.
-            return Err(e);
+            // Don't shadow the original store_public error if there was one
+            if result.is_ok() {
+                return Err(e); // If store_public was ok, return the index save error
+            }
         }
 
-        Ok(address)
+        result // Return the original result from store_public
     }
 
-    /// Retrieves the shareable `ScratchpadAddress` for a previously created public upload.
+    /// Retrieves the public index `ScratchpadAddress` for a given public upload name.
     ///
     /// # Arguments
     ///
-    /// * `name` - The name used when calling `store_public`.
+    /// * `name` - The name of the public upload.
     ///
     /// # Returns
     ///
-    /// `Ok(Some(address))` if the name exists, `Ok(None)` otherwise.
+    /// `Ok(Some(ScratchpadAddress))` if the public upload exists, `Ok(None)` otherwise.
     ///
     /// # Errors
     ///
-    /// Returns `Error::Index` if accessing the index fails.
+    /// Returns `Error::Index` if there's an issue accessing the index.
     pub async fn get_public_address(&self, name: &str) -> Result<Option<ScratchpadAddress>, Error> {
-        debug!("MutAnt::get_public_address called for name '{}'", name);
-        // Get a copy of the index to perform the lookup
+        debug!("MutAnt::get_public_address for name '{}'", name);
         let index_copy = self.index_manager.get_index_copy().await?;
-        Ok(index_copy.public_uploads.get(name).map(|meta| meta.address))
+        Ok(index_copy.index.get(name).and_then(|entry| match entry {
+            IndexEntry::PublicUpload(info) => Some(info.address),
+            IndexEntry::PrivateKey(_) => None, // Name exists but is a private key
+        }))
     }
 
     /// Fetches publicly stored data using its index scratchpad address.

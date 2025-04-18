@@ -59,7 +59,7 @@ mod api;
 /// Handles data structures and serialization/deserialization logic.
 mod data;
 /// Manages indexing and search functionality for stored data.
-mod index;
+pub mod index;
 /// Contains network-related functionalities, including data persistence via scratchpads.
 mod network;
 /// Manages the lifecycle of pads, including creation, deletion, and updates.
@@ -80,6 +80,7 @@ pub mod config {
     pub use crate::types::MutAntConfig;
 }
 pub mod storage {
+    pub use crate::index::structure::IndexEntry;
     pub use crate::types::{KeyDetails, StorageStats};
     pub use autonomi::ScratchpadAddress;
 }

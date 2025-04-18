@@ -3,7 +3,7 @@ use crate::callbacks::progress::StyledProgressBar;
 use dialoguer::{Confirm, theme::ColorfulTheme};
 use indicatif::{MultiProgress, ProgressDrawTarget};
 use log::{debug, error, info, trace, warn};
-use mutant_lib::storage::ScratchpadAddress;
+use mutant_lib::storage::{IndexEntry, ScratchpadAddress};
 use mutant_lib::{
     MutAnt,
     error::{Error as LibError, IndexError},
@@ -125,6 +125,10 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
         let occupied_pads: HashSet<ScratchpadAddress> = merged_index
             .index
             .values()
+            .filter_map(|entry| match entry {
+                IndexEntry::PrivateKey(key_info) => Some(key_info),
+                IndexEntry::PublicUpload(_) => None, // Public uploads don't occupy pads in the same way
+            })
             .flat_map(|key_info| key_info.pads.iter().map(|pad_info| pad_info.address))
             .collect();
 

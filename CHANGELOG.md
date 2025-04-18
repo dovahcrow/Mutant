@@ -96,6 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactored pad harvesting logic from `data::ops::remove` into a dedicated `harvest_pads` method in `IndexManager`.
 - Optimized pad harvesting during `rm` operation by removing redundant network existence check.
 - Made pad harvesting during `rm` fully local, moving pads to free/pending lists without network calls.
+- **Refactor:** Consolidated public upload metadata into the main `MasterIndex.index` map using an `IndexEntry` enum (`PrivateKey(KeyInfo)` or `PublicUpload(PublicUploadInfo)`). Removed the separate `MasterIndex.public_uploads` field and `PublicUploadMetadata` struct.
 
 ### Removed
 - Removed unused file (`src/unused.rs`? - commit `32e986ff`).

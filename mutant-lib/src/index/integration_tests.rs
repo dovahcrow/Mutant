@@ -1,11 +1,12 @@
 #![cfg(test)]
 
 use crate::index::manager::DefaultIndexManager;
-use crate::index::structure::{KeyInfo, PadInfo, PadStatus, PublicUploadMetadata};
+use crate::index::structure::{IndexEntry, KeyInfo, PadInfo, PadStatus, PublicUploadInfo};
 
 use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::NetworkChoice;
 use crate::pad_lifecycle::PadOrigin;
+use crate::types::KeySummary;
 
 use autonomi::{ScratchpadAddress, SecretKey};
 use chrono::Utc;
@@ -100,9 +101,15 @@ async fn test_save_load_initialize() {
         .list_keys()
         .await
         .expect("Second list_keys failed");
+    // Create the expected KeySummary for comparison
+    let expected_summary = KeySummary {
+        name: "key_A".to_string(),
+        is_public: false,
+        address: None,
+    };
     assert_eq!(
         loaded_keys,
-        vec!["key_A".to_string()],
+        vec![expected_summary], // Compare against Vec<KeySummary>
         "Loaded keys mismatch"
     );
 
@@ -231,9 +238,10 @@ async fn test_reset() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::error::IndexError;
     use crate::index::manager::DefaultIndexManager;
     use crate::index::persistence::{load_index, save_index};
-    use crate::index::structure::{KeyInfo, MasterIndex, PadStatus, PublicUploadMetadata};
+    use crate::index::structure::{IndexEntry, KeyInfo, MasterIndex, PadStatus, PublicUploadInfo};
     use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
     use autonomi::{ScratchpadAddress, SecretKey};
     use serial_test::serial;
@@ -263,55 +271,97 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn test_insert_public_upload_metadata() {
-        let (index_manager, _master_addr, _master_key) = setup_test_index_manager().await;
+    async fn test_insert_public_upload_info() {
+        let (index_manager, master_addr, master_key) = setup_test_index_manager().await;
+        index_manager
+            .load_or_initialize(&master_addr, &master_key)
+            .await
+            .unwrap();
 
-        let name1 = "public_file_1".to_string();
-        let key1 = SecretKey::random();
-        let addr1 = ScratchpadAddress::new(key1.public_key());
-        let metadata1 = PublicUploadMetadata { address: addr1 };
+        let name1 = "public_upload_1".to_string();
+        let addr1 = ScratchpadAddress::new(SecretKey::random().public_key());
+        let metadata1 = PublicUploadInfo {
+            address: addr1,
+            size: 1024,
+            modified: Utc::now(),
+        };
 
-        // Insert first metadata
-        let insert_res1 = index_manager
-            .insert_public_upload_metadata(name1.clone(), metadata1.clone())
-            .await;
-        assert!(insert_res1.is_ok(), "First insert failed");
+        index_manager
+            .insert_public_upload_info(name1.clone(), metadata1.clone())
+            .await
+            .unwrap();
 
-        // Verify insertion
         let index_copy1 = index_manager.get_index_copy().await.unwrap();
-        assert_eq!(index_copy1.public_uploads.len(), 1);
-        assert_eq!(index_copy1.public_uploads.get(&name1), Some(&metadata1));
+        assert_eq!(index_copy1.index.len(), 1);
+        match index_copy1.index.get(&name1) {
+            Some(IndexEntry::PublicUpload(info)) => assert_eq!(info, &metadata1),
+            _ => panic!("Expected PublicUpload entry"),
+        }
 
-        // Insert second metadata with same name (overwrite)
-        let name2 = "public_file_2".to_string();
-        let key2 = SecretKey::random();
-        let addr2 = ScratchpadAddress::new(key2.public_key());
-        let metadata2 = PublicUploadMetadata { address: addr2 };
-        let insert_res2 = index_manager
-            .insert_public_upload_metadata(name2.clone(), metadata2.clone())
-            .await;
-        assert!(insert_res2.is_ok(), "Second insert (overwrite) failed");
+        let name2 = "public_upload_2".to_string();
+        let addr2 = ScratchpadAddress::new(SecretKey::random().public_key());
+        let metadata2 = PublicUploadInfo {
+            address: addr2,
+            size: 2048,
+            modified: Utc::now(),
+        };
 
-        // Verify overwrite
+        index_manager
+            .insert_public_upload_info(name2.clone(), metadata2.clone())
+            .await
+            .unwrap();
+
         let index_copy2 = index_manager.get_index_copy().await.unwrap();
-        assert_eq!(index_copy2.public_uploads.len(), 1);
-        assert_eq!(index_copy2.public_uploads.get(&name2), Some(&metadata2)); // Should be metadata2 now
+        assert_eq!(index_copy2.index.len(), 2);
+        match index_copy2.index.get(&name2) {
+            Some(IndexEntry::PublicUpload(info)) => assert_eq!(info, &metadata2),
+            _ => panic!("Expected PublicUpload entry"),
+        }
 
-        // Insert third metadata with different name
-        let name3 = "public_file_3".to_string();
-        let key3 = SecretKey::random();
-        let addr3 = ScratchpadAddress::new(key3.public_key());
-        let metadata3 = PublicUploadMetadata { address: addr3 };
-        let insert_res3 = index_manager
-            .insert_public_upload_metadata(name3.clone(), metadata3.clone())
+        // Test inserting the same name again (should fail)
+        let result = index_manager
+            .insert_public_upload_info(name1.clone(), metadata1.clone())
             .await;
-        assert!(insert_res3.is_ok(), "Third insert failed");
+        assert!(result.is_err());
+        assert!(matches!(result.err().unwrap(), IndexError::KeyExists(_)));
 
-        // Verify second entry added
+        // Insert a private key with a different name
+        let name3 = "private_key_3".to_string();
+        let metadata3 = KeyInfo {
+            pads: vec![],
+            pad_keys: HashMap::new(),
+            data_size: 500,
+            modified: Utc::now(),
+            is_complete: true,
+        };
+        index_manager
+            .insert_key_info(name3.clone(), metadata3.clone())
+            .await
+            .unwrap();
+
         let index_copy3 = index_manager.get_index_copy().await.unwrap();
-        assert_eq!(index_copy3.public_uploads.len(), 2);
-        assert_eq!(index_copy3.public_uploads.get(&name1), Some(&metadata1));
-        assert_eq!(index_copy3.public_uploads.get(&name2), Some(&metadata2));
-        assert_eq!(index_copy3.public_uploads.get(&name3), Some(&metadata3));
+        assert_eq!(index_copy3.index.len(), 3);
+        match index_copy3.index.get(&name1) {
+            Some(IndexEntry::PublicUpload(info)) => assert_eq!(info, &metadata1),
+            _ => panic!("Expected PublicUpload entry for name1"),
+        }
+        match index_copy3.index.get(&name2) {
+            Some(IndexEntry::PublicUpload(info)) => assert_eq!(info, &metadata2),
+            _ => panic!("Expected PublicUpload entry for name2"),
+        }
+        match index_copy3.index.get(&name3) {
+            Some(IndexEntry::PrivateKey(info)) => assert_eq!(info, &metadata3),
+            _ => panic!("Expected PrivateKey entry for name3"),
+        }
+
+        // Test inserting a public upload with the same name as a private key (should fail)
+        let result_collide = index_manager
+            .insert_public_upload_info(name3.clone(), metadata1.clone())
+            .await;
+        assert!(result_collide.is_err());
+        assert!(matches!(
+            result_collide.err().unwrap(),
+            IndexError::KeyExists(_)
+        ));
     }
 }

@@ -7,6 +7,7 @@ use crate::data::ops::fetch_public::fetch_public_op;
 use crate::data::ops::store_public::store_public_op;
 use crate::index::error::IndexError;
 use crate::index::manager::DefaultIndexManager;
+use crate::index::structure::IndexEntry;
 use crate::network::adapter::create_public_scratchpad;
 use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::NetworkChoice;
@@ -427,7 +428,7 @@ mod public_op_tests {
     #[tokio::test]
     #[serial]
     async fn test_store_public_op_basic() {
-        let (_net_adapter, data_manager, index_manager) = setup_public_test_env().await;
+        let (net_adapter, data_manager, index_manager) = setup_public_test_env().await;
         let name = "public_store_basic".to_string();
         let data = b"some public data here";
         let result = store_public_op(&data_manager, name.clone(), data, None).await;
@@ -441,25 +442,51 @@ mod public_op_tests {
             public_index_addr,
             "Stored address mismatch"
         );
+
+        // Check index state
+        let index_copy = index_manager.get_index_copy().await.unwrap();
+        assert!(index_copy.index.contains_key(&name));
+        let entry = index_copy.index.get(&name).unwrap();
+        let metadata = match entry {
+            IndexEntry::PublicUpload(info) => info,
+            _ => panic!("Expected PublicUpload entry, found PrivateKey"),
+        };
+        assert_eq!(metadata.size, data.len());
+
+        // Clean up (remove is not implemented for public, just clear index state)
+        // data_manager.remove(&name).await.unwrap(); // Assume remove works for public names too?
+        // For now, just manually remove from index for test isolation
+        index_manager.remove_key_info(&name).await.unwrap();
     }
 
     #[tokio::test]
     #[serial]
     async fn test_store_public_op_empty_data() {
-        let (_net_adapter, data_manager, index_manager) = setup_public_test_env().await;
-        let name = "public_store_empty".to_string();
-        let data = b"";
-        let result = store_public_op(&data_manager, name.clone(), data, None).await;
-        assert!(
-            result.is_ok(),
-            "store_public_op with empty data failed: {:?}",
-            result.err()
-        );
-        let public_index_addr = result.unwrap();
+        let (net_adapter, data_manager, index_manager) = setup_public_test_env().await;
+        let name = "public_empty_data".to_string();
+        let data: Vec<u8> = vec![];
+
+        let result = store_public_op(&data_manager, name.clone(), &data, None).await;
+        assert!(result.is_ok());
+        let public_addr = result.unwrap();
+
+        // Check index state
         let index_copy = index_manager.get_index_copy().await.unwrap();
-        let metadata = index_copy.public_uploads.get(&name);
-        assert!(metadata.is_some(), "Metadata not found for empty data");
-        assert_eq!(metadata.unwrap().address, public_index_addr);
+        let entry = index_copy.index.get(&name).unwrap();
+        let metadata = match entry {
+            IndexEntry::PublicUpload(info) => info,
+            _ => panic!("Expected PublicUpload entry, found PrivateKey"),
+        };
+        assert_eq!(metadata.size, 0);
+        assert_eq!(metadata.address, public_addr);
+
+        // Fetch the empty data via public fetch op
+        let fetched_data = fetch_public_op(&net_adapter, public_addr, None).await;
+        assert!(fetched_data.is_ok());
+        assert!(fetched_data.unwrap().is_empty());
+
+        // Clean up
+        index_manager.remove_key_info(&name).await.unwrap();
     }
 
     #[tokio::test]

@@ -62,9 +62,9 @@ pub struct KeyInfo {
     pub is_complete: bool,
 }
 
-/// Metadata stored in the master index for publicly uploaded data.
+/// Information about a publicly uploaded entry in the index.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PublicUploadMetadata {
+pub struct PublicUploadInfo {
     /// The address of the index scratchpad for this public upload.
     pub address: ScratchpadAddress,
     /// The total size of the publicly uploaded data in bytes.
@@ -73,11 +73,18 @@ pub struct PublicUploadMetadata {
     pub modified: DateTime<Utc>,
 }
 
+/// Represents an entry in the master index, which can be either private key data or public upload data.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum IndexEntry {
+    PrivateKey(KeyInfo),
+    PublicUpload(PublicUploadInfo),
+}
+
 /// The central index managing all keys and scratchpads.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct MasterIndex {
-    /// Mapping from key names (e.g., file paths) to their detailed information.
-    pub index: HashMap<String, KeyInfo>,
+    /// Mapping from key names (e.g., file paths or public upload IDs) to their detailed information.
+    pub index: HashMap<String, IndexEntry>,
 
     /// List of scratchpads that are currently free and available for allocation.
     /// Each tuple contains the address, the associated encryption key, and the generation ID.
@@ -89,10 +96,6 @@ pub struct MasterIndex {
 
     /// The size of each scratchpad in bytes.
     pub scratchpad_size: usize,
-
-    /// Mapping from user-defined names to public upload metadata.
-    #[serde(default)]
-    pub public_uploads: HashMap<String, PublicUploadMetadata>,
 }
 
 impl Default for MasterIndex {
@@ -102,7 +105,6 @@ impl Default for MasterIndex {
             free_pads: Vec::new(),
             pending_verification_pads: Vec::new(),
             scratchpad_size: DEFAULT_SCRATCHPAD_SIZE,
-            public_uploads: HashMap::new(),
         }
     }
 }

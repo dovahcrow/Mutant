@@ -23,7 +23,7 @@ pub(crate) async fn fetch_public_op(
         "DataOps: Starting fetch_public_op for index address {}",
         public_index_address
     );
-    let callback_arc = Arc::new(Mutex::new(callback));
+    let _callback_arc = Arc::new(Mutex::new(callback));
 
     // 1. Fetch Public Index Scratchpad
     let index_scratchpad = network_adapter
