@@ -14,16 +14,16 @@ tokio = { version = "1", features = ["full"] }
 log = "0.4"
 env_logger = "0.11.3"
 futures = "0.3"
-clap = { version = "4.5.9", features = ["derive"] }
+clap = { version = "4.5.4", features = ["derive"] }
 indicatif = { version = "0.17", features = ["tokio"] }
-dialoguer = "0.11"
+dialoguer = "0.11.0"
 humansize = "2.1.0"
 nu-ansi-term = "0.50.0"
 bincode = "2.0.1"
 sha256 = "1.6.0"
 hex = "0.4"
 chrono = "0.4"
-directories = "5.0"
+directories = "5.0.1"
 atty = "0.2.14"
 
 # Internal workspace dependencies

@@ -1,9 +1,10 @@
 use crate::callbacks::StyledProgressBar;
 use crate::callbacks::put::create_put_callback;
 use indicatif::MultiProgress;
-use log::{debug, warn};
+use log::{debug, info, warn};
 use mutant_lib::MutAnt;
 use mutant_lib::error::{DataError, Error as LibError};
+use mutant_lib::storage::ScratchpadAddress;
 use std::io::{self, Read};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -14,14 +15,16 @@ pub async fn handle_put(
     key: String,
     value: Option<String>,
     force: bool,
+    public: bool,
     multi_progress: &MultiProgress,
     quiet: bool,
 ) -> ExitCode {
     debug!(
-        "CLI: Handling Put command: key={}, value_is_some={}, force={}",
+        "CLI: Handling Put command: key={}, value_is_some={}, force={}, public={}",
         key,
         value.is_some(),
-        force
+        force,
+        public
     );
 
     let data_vec: Vec<u8> = match value {
@@ -46,110 +49,134 @@ pub async fn handle_put(
     let (res_pb_opt, upload_pb_opt, confirm_pb_opt, callback) =
         create_put_callback(multi_progress, quiet);
 
-    let result = if force {
+    let result: Result<Option<ScratchpadAddress>, LibError> = if public {
         debug!(
-            "CLI: Force flag is set. Removing existing key '{}' before storing.",
-            key
+            "CLI: Storing data publicly for key '{}'. Force={}",
+            key, force
         );
-        // First, attempt to remove the key. We ignore RecordNotFound errors.
-        match mutant.remove(&key).await {
-            Ok(_) => {
-                debug!(
-                    "Successfully removed existing key '{}' or it didn't exist.",
-                    key
-                );
-            }
-            Err(LibError::Data(DataError::KeyNotFound(_))) => {
-                debug!(
-                    "Key '{}' not found during remove, proceeding with store.",
-                    key
-                );
-                // This is expected if the key didn't exist, continue to store.
-            }
-            Err(e) => {
-                // Any other error during remove is fatal for the update operation
-                eprintln!("Error removing key '{}' before update: {}", key, e);
-                let msg = format!("Error removing key before update: {}", e);
-                abandon_pb(&res_pb_opt, msg.clone());
-                abandon_pb(&upload_pb_opt, msg.clone());
-                abandon_pb(&confirm_pb_opt, msg);
-                return ExitCode::FAILURE;
-            }
-        }
-        // Now, store the new data
-        debug!("Storing new data for key '{}' after removal.", key);
         mutant
-            .store_with_progress(key.clone(), &data_vec, Some(callback))
+            .store_public(key.clone(), &data_vec, Some(callback))
             .await
+            .map(Some)
     } else {
-        debug!("CLI: Checking status of key '{}' before storing.", key);
-        match mutant.get_key_details(&key).await {
-            Ok(Some(details)) => {
-                if details.is_finished {
-                    // Key exists and is complete
-                    eprintln!(
-                        "Error: Key '{}' already exists and is complete. Use --force to overwrite.",
+        if force {
+            debug!(
+                "CLI: Force flag is set for private store. Removing existing key '{}' before storing.",
+                key
+            );
+            match mutant.remove(&key).await {
+                Ok(_) => {
+                    debug!(
+                        "Successfully removed existing key '{}' or it didn't exist.",
                         key
                     );
-                    // Abandon progress bars if they were initialized (though they likely weren't)
-                    let msg = format!("Key '{}' already exists and is complete.", key);
+                }
+                Err(LibError::Data(DataError::KeyNotFound(_))) => {
+                    debug!(
+                        "Key '{}' not found during remove, proceeding with store.",
+                        key
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Error removing key '{}' before update: {}", key, e);
+                    let msg = format!("Error removing key before update: {}", e);
                     abandon_pb(&res_pb_opt, msg.clone());
                     abandon_pb(&upload_pb_opt, msg.clone());
                     abandon_pb(&confirm_pb_opt, msg);
                     return ExitCode::FAILURE;
-                } else {
-                    // Key exists but is incomplete - resume
-                    if !quiet {
-                        eprintln!("Resuming incomplete upload for key '{}'...", key);
+                }
+            }
+            debug!("Storing new private data for key '{}' after removal.", key);
+            mutant
+                .store_with_progress(key.clone(), &data_vec, Some(callback))
+                .await
+                .map(|_| None)
+        } else {
+            debug!(
+                "CLI: Checking status of private key '{}' before storing.",
+                key
+            );
+            match mutant.get_key_details(&key).await {
+                Ok(Some(details)) => {
+                    if details.is_finished {
+                        eprintln!(
+                            "Error: Private key '{}' already exists and is complete. Use --force to overwrite.",
+                            key
+                        );
+                        let msg = format!("Private key '{}' already exists and is complete.", key);
+                        abandon_pb(&res_pb_opt, msg.clone());
+                        abandon_pb(&upload_pb_opt, msg.clone());
+                        abandon_pb(&confirm_pb_opt, msg);
+                        return ExitCode::FAILURE;
+                    } else {
+                        if !quiet {
+                            eprintln!("Resuming incomplete private upload for key '{}'...", key);
+                        }
+                        debug!(
+                            "CLI: Private key '{}' exists but is incomplete. Resuming upload.",
+                            key
+                        );
+                        mutant
+                            .store_with_progress(key.clone(), &data_vec, Some(callback))
+                            .await
+                            .map(|_| None)
                     }
+                }
+                Ok(None) => {
                     debug!(
-                        "CLI: Key '{}' exists but is incomplete. Resuming upload.",
+                        "CLI: Private key '{}' does not exist. Proceeding with new upload.",
                         key
                     );
                     mutant
                         .store_with_progress(key.clone(), &data_vec, Some(callback))
                         .await
+                        .map(|_| None)
                 }
-            }
-            Ok(None) => {
-                // Key does not exist - normal store
-                debug!(
-                    "CLI: Key '{}' does not exist. Proceeding with new upload.",
-                    key
-                );
-                mutant
-                    .store_with_progress(key.clone(), &data_vec, Some(callback))
-                    .await
-            }
-            Err(e) => {
-                // Error checking key details
-                eprintln!("Error checking status for key '{}': {}", key, e);
-                let msg = format!("Error checking key status: {}", e);
-                abandon_pb(&res_pb_opt, msg.clone());
-                abandon_pb(&upload_pb_opt, msg.clone());
-                abandon_pb(&confirm_pb_opt, msg);
-                return ExitCode::FAILURE;
+                Err(e) => {
+                    eprintln!("Error checking status for private key '{}': {}", key, e);
+                    let msg = format!("Error checking private key status: {}", e);
+                    abandon_pb(&res_pb_opt, msg.clone());
+                    abandon_pb(&upload_pb_opt, msg.clone());
+                    abandon_pb(&confirm_pb_opt, msg);
+                    return ExitCode::FAILURE;
+                }
             }
         }
     };
 
     match result {
-        Ok(_) => {
-            debug!("Put operation successful for key: {}", key);
+        Ok(public_address_opt) => {
+            debug!(
+                "Put operation successful for key: {} (public={})",
+                key, public
+            );
 
             clear_pb(&res_pb_opt);
             clear_pb(&upload_pb_opt);
             clear_pb(&confirm_pb_opt);
+
+            if let Some(address) = public_address_opt {
+                if !quiet {
+                    println!("{}", address);
+                } else {
+                    info!("Public address for key '{}': {}", key, address);
+                }
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {
+            let context = if public {
+                "public store"
+            } else {
+                if force {
+                    "private update"
+                } else {
+                    "private store"
+                }
+            };
             let error_message = match e {
                 LibError::OperationCancelled => "Operation cancelled.".to_string(),
-                _ => format!(
-                    "Error during {}: {}",
-                    if force { "update" } else { "store" },
-                    e,
-                ),
+                _ => format!("Error during {}: {}", context, e,),
             };
 
             eprintln!("{}", error_message);

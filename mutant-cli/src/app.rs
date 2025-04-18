@@ -6,7 +6,6 @@ use log::{debug, error, info, warn};
 
 use mutant_lib::config::MutAntConfig;
 use mutant_lib::error::Error as LibError;
-use mutant_lib::events::InitCallback;
 use mutant_lib::{MutAnt, config::NetworkChoice};
 
 use serde::{Deserialize, Serialize};
@@ -264,20 +263,25 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
     info!("MutAnt CLI started processing.");
 
     let cli = Cli::parse();
+    debug!("Parsed CLI arguments: {:?}", cli);
 
-    let private_key = if cli.local {
+    let private_key_hex = if cli.local {
         info!("Using hardcoded local/devnet secret key for testing.");
-
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
     } else {
-        match initialize_wallet().await {
-            Ok(key) => key,
-            Err(e) => {
-                error!("Failed to initialize wallet: {}", e);
-                return Err(e);
-            }
-        }
+        initialize_wallet().await?
     };
+    debug!("Wallet initialization complete or local key used.");
+
+    let multi_progress = MultiProgress::new();
+    let draw_target = if cli.quiet {
+        ProgressDrawTarget::hidden()
+    } else {
+        ProgressDrawTarget::stderr()
+    };
+    multi_progress.set_draw_target(draw_target);
+
+    let (init_pb_opt_arc, init_cb) = create_init_callback(&multi_progress, cli.quiet);
 
     let network_choice = if cli.local {
         NetworkChoice::Devnet
@@ -285,46 +289,64 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         NetworkChoice::Mainnet
     };
 
-    let mp = MultiProgress::with_draw_target(ProgressDrawTarget::stdout());
-    let _mp_clone_for_task = mp.clone();
-    let init_callback_fn: Option<InitCallback> = if !cli.quiet {
-        let (_pb_opt, cb) = create_init_callback(&mp, cli.quiet);
-        Some(cb)
-    } else {
-        None
+    let mut config = MutAntConfig::default();
+    config.network = network_choice;
+
+    let mutant = MutAnt::init_with_progress(private_key_hex.clone(), config, None).await?;
+
+    let mut pb_to_finish = init_pb_opt_arc.lock().await;
+
+    if let Some(pb) = pb_to_finish.as_mut() {
+        if !pb.is_finished() {
+            debug!("Clearing initialization progress bar.");
+            pb.finish_and_clear();
+        }
+    }
+
+    debug!("MutAnt core initialized.");
+
+    let mp_join_handle = {
+        let mp_clone = multi_progress.clone();
+        tokio::spawn(async move {
+            let _keep_alive = mp_clone;
+            std::future::pending::<()>().await;
+        })
     };
 
-    let config = MutAntConfig {
-        network: network_choice,
-    };
-
-    let mutant = MutAnt::init_with_progress(private_key, config, init_callback_fn).await?;
-
-    let mp_join_handle = tokio::spawn(async move {
-        let _keep_alive = _mp_clone_for_task;
-        std::future::pending::<()>().await;
-    });
-
-    let command_result: Result<ExitCode, CliError> = match cli.command {
-        Commands::Put { key, value, force } => {
-            Ok(crate::commands::put::handle_put(mutant, key, value, force, &mp, cli.quiet).await)
+    let exit_code = match cli.command {
+        Commands::Put {
+            key,
+            value,
+            force,
+            public,
+        } => {
+            crate::commands::put::handle_put(
+                mutant,
+                key,
+                value,
+                force,
+                public,
+                &multi_progress,
+                cli.quiet,
+            )
+            .await
         }
-        Commands::Get { key } => {
-            Ok(crate::commands::get::handle_get(mutant, key, &mp, cli.quiet).await)
+        Commands::Get { key, public } => {
+            crate::commands::get::handle_get(mutant, key, public, &multi_progress, cli.quiet).await
         }
-        Commands::Rm { key } => Ok(crate::commands::remove::handle_rm(mutant, key).await),
-        Commands::Ls { long } => Ok(crate::commands::ls::handle_ls(mutant, long).await),
-        Commands::Stats => Ok(crate::commands::stats::handle_stats(mutant).await),
-        Commands::Reset => Ok(crate::commands::reset::handle_reset(mutant).await),
+        Commands::Rm { key } => crate::commands::remove::handle_rm(mutant, key).await,
+        Commands::Ls { long } => crate::commands::ls::handle_ls(mutant, long).await,
+        Commands::Stats => crate::commands::stats::handle_stats(mutant).await,
+        Commands::Reset => crate::commands::reset::handle_reset(mutant).await,
         Commands::Import { private_key } => {
-            Ok(crate::commands::import::handle_import(mutant, private_key).await)
+            crate::commands::import::handle_import(mutant, private_key).await
         }
         Commands::Sync { push_force } => {
             match crate::commands::sync::handle_sync(mutant, push_force).await {
-                Ok(_) => Ok(ExitCode::SUCCESS),
+                Ok(_) => ExitCode::SUCCESS,
                 Err(e) => {
                     error!("Sync command failed: {}", e);
-                    Ok(ExitCode::FAILURE)
+                    ExitCode::FAILURE
                 }
             }
         }
@@ -332,46 +354,35 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
             match crate::commands::purge::run(
                 crate::commands::purge::PurgeArgs {},
                 mutant,
-                &mp,
+                &multi_progress,
                 cli.quiet,
             )
             .await
             {
-                Ok(_) => Ok(ExitCode::SUCCESS),
+                Ok(_) => ExitCode::SUCCESS,
                 Err(e) => {
                     error!("Purge command failed: {}", e);
-                    Err(CliError::MutAntInit(e.to_string()))
+                    ExitCode::FAILURE
                 }
             }
         }
         Commands::Reserve(reserve_cmd) => {
             info!("Executing Reserve command...");
-            match reserve_cmd.run(&mutant, &mp).await {
+            match reserve_cmd.run(&mutant, &multi_progress).await {
                 Ok(_) => {
                     info!("Reserve command completed successfully.");
-                    Ok(ExitCode::SUCCESS)
+                    ExitCode::SUCCESS
                 }
                 Err(e) => {
                     error!("Reserve command failed: {}", e);
-                    Err(e)
+                    ExitCode::FAILURE
                 }
             }
         }
     };
 
-    let exit_code = match command_result {
-        Ok(code) => code,
-        Err(e) => {
-            error!("Command execution failed: {}", e);
-            return Err(e);
-        }
-    };
-
-    info!("Command handling finished, cleaning up background tasks...");
-
     cleanup_background_tasks(mp_join_handle, None).await;
 
-    info!("Cleanup complete.");
-
+    debug!("CLI exiting with code: {:?}", exit_code);
     Ok(exit_code)
 }

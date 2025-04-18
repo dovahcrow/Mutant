@@ -20,10 +20,14 @@ pub enum Commands {
         value: Option<String>,
         #[arg(short, long, default_value_t = false)]
         force: bool,
+        #[arg(short, long, default_value_t = false)]
+        public: bool,
     },
 
     Get {
         key: String,
+        #[arg(short, long, default_value_t = false)]
+        public: bool,
     },
 
     Rm {
