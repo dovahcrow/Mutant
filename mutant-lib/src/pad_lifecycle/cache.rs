@@ -7,12 +7,16 @@ use std::path::PathBuf;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-const CACHE_DIR: &str = ".mutant";
+const APP_DIR_NAME: &str = "mutant";
 const DEVNET_CACHE_FILE: &str = "index_cache.dev.cbor";
 const MAINNET_CACHE_FILE: &str = "index_cache.main.cbor";
 
 async fn get_cache_path(network_choice: NetworkChoice) -> Result<PathBuf, PadLifecycleError> {
-    let cache_dir = PathBuf::from(CACHE_DIR);
+    let base_cache_dir = dirs::data_dir().ok_or_else(|| {
+        PadLifecycleError::CacheWriteError("Could not determine user data directory".to_string())
+    })?;
+    let cache_dir = base_cache_dir.join(APP_DIR_NAME);
+
     if !cache_dir.exists() {
         debug!("Cache directory {:?} does not exist, creating.", cache_dir);
         fs::create_dir_all(&cache_dir).await.map_err(|e| {

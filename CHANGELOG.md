@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added display of incomplete upload details in `ls` and `stats` output.
 - Implemented resumable `put` operations via index cache.
 - Implemented lazy network initialization.
+- Store cache index file in `$XDG_DATA_HOME/mutant` instead of local `.mutant` directory.
 
 ### Fixed
 - Corrected imports and types in index integration tests.
