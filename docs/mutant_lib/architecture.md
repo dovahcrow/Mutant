@@ -7,25 +7,28 @@ This document provides an in-depth guide to the design, core data structures, co
 `mutant-lib` addresses the challenge of storing arbitrarily sized data blobs on the Autonomi network, which offers fixed-size scratchpads. It presents a cohesive key-value store abstraction with the following key concepts:
 
 - **User Keys**: Human-friendly string identifiers for data blobs (e.g., `"config_v1"`).
-- **Master Index**: A dedicated scratchpad storing a serialized `MasterIndexStorage`, mapping user keys to metadata and tracking free pads.
+- **Master Index**: A dedicated scratchpad storing a serialized `MasterIndex`, mapping user keys to metadata and tracking free pads.
 - **Data Scratchpads**: Regular scratchpads used to store encrypted chunks of user data.
 - **Pad Manager**: Coordinates allocation, reuse, chunking, and verification of data scratchpads.
-- **Storage Layer**: Low-level interface to the Autonomi network client (`autonomi::Client`), handling serialization, encryption, and network retries.
+- **Network Layer**: Low-level interface to the Autonomi network client (`autonomi::Client`), handling serialization, encryption, and network retries for scratchpad persistence.
 
 ## 2. Architecture Diagram
 
 ```
-Application  ──>  MutAnt API  ──>  Pad Manager  ──┐
-                                                 │
-                             ┌─────────────┐     │      ┌───────────────────┐
-                             │             │     │      │                   │
-Master Index Storage <── Mutex< MasterIndex > <──┘      │  Data Scratchpads  │
-  (persistent)                     ^            mutex  │ (Autonomi Network)  │
-                                   │                 └───────────────────┘
-                             ┌─────────────┐               ^
-                             │ Storage     │───────────────┘
-                             │ Layer       │
-                             └─────────────┘
+Application  ──>  MutAnt API  ──>  Pad Manager  ────────────> Index Manager ──┐
+                                                                               │
+                                   ┌───────────────────┐    ┌───────────────────┐
+                                   │ Mutex<MasterIndex>│<───┤      Index        │
+                                   │   (in-memory)     │    │    Manager        │
+                                   └───────────────────┘    └─────────┬─────────┘
+                                             ▲                        │
+                                             │                        ▼
+                             ┌─────────────┐         ┌───────────────────┐
+                             │ Network     │<───┬────┤  Data Scratchpads  │
+                             │ Adapter     │    │    │ (Autonomi Network)  │
+                             └─────────────┘    │    └───────────────────┘
+                                    ▲           │
+                                    └───────────┘
 ```
 
 ## 3. Public API (`MutAnt`)
@@ -63,34 +66,26 @@ All operations are async and return `Result<_, Error>`:
 
 ### 4.1 Data Layer (`DataManager`)
 
-- Defines `store`, `fetch`, `remove`, `update` via `async_trait`.
+- Defines `store`, `fetch`, `remove`, `update`.
 - Default implementation (`DefaultDataManager`) delegates to `data::ops`:
   - `store_op` handles chunking, pad lifecycle, network writes, index updates.
   - `fetch_op` handles index lookup, pad fetches, reassembly.
   - `remove_op` handles index removal and pad recycling.
 
-### 4.2 Storage Layer (`StorageManager`)
+### 4.2 Indexing Layer (`IndexManager`)
 
-- Wraps `autonomi::Client` for scratchpad operations:
-  - `create_scratchpad`, `update_scratchpad`, `get_scratchpad`.
-- Manages serialization (CBOR) and encryption/decryption.
-- Implements retry logic for transient network failures.
-- Loads and saves the `MasterIndexStorage` from/to its dedicated scratchpad.
-
-### 4.3 Indexing Layer (`IndexManager`)
-
-- Maintains `MasterIndex` in-memory and persists via storage layer.
+- Maintains `MasterIndex` in-memory and persists via the network layer.
 - Provides query and persistence interfaces.
 - Ensures index consistency and supports remote index creation prompts.
 
-### 4.4 Network Layer (`NetworkAdapter`)
+### 4.3 Network Layer (`NetworkAdapter`)
 
-- Abstract trait for network operations:
-  - Peer discovery, scratchpad reads/writes.
+- Abstract interface for network operations, including pad persistence:
+  - Scratchpad reads/writes, existence checks.
 - Default Autonomi adapter (`AutonomiNetworkAdapter`) uses `autonomi::Client`.
-- Handles address/key derivation, error translation.
+- Handles address/key derivation, serialization, encryption/decryption, and error translation.
 
-### 4.5 Pad Lifecycle Layer (`PadLifecycleManager`)
+### 4.4 Pad Lifecycle Layer (`PadLifecycleManager`)
 
 - Manages free pad pool, allocation, preparation, and verification:
   - **Pool**: Tracks reusable pads harvested via `remove`.
@@ -101,27 +96,26 @@ All operations are async and return `Result<_, Error>`:
 
 ## 5. Core Data Structures
 
-### 5.1 `MasterIndexStorage`
+### 5.1 `MasterIndex`
 
 ```rust
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
-pub struct MasterIndexStorage {
-    pub(crate) index: MasterIndex,              // key -> KeyStorageInfo
-    #[serde(default)]
+pub struct MasterIndex {
+    pub(crate) index: Vec<(String, KeyInfo)>,
     pub(crate) free_pads: Vec<(ScratchpadAddress, Vec<u8>)>,
     pub(crate) scratchpad_size: usize,
 }
 ```
 
-- `index`: Maps each user key to its `KeyStorageInfo`.
+- `index`: Maps each user key to its `KeyInfo`.
 - `free_pads`: Recycled scratchpads with private keys for reuse.
 - `scratchpad_size`: Configured usable byte size per pad.
 
-### 5.2 `KeyStorageInfo`
+### 5.2 `KeyInfo`
 
 ```rust
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct KeyStorageInfo {
+pub struct KeyInfo {
     pub(crate) pads: Vec<(ScratchpadAddress, Vec<u8>)>,
     pub(crate) data_size: usize,
     #[serde(default = "Utc::now")]
@@ -138,55 +132,54 @@ pub struct KeyStorageInfo {
 ### 6.1 Store
 
 1. Determine chunk count from `data.len()` & `scratchpad_size`.
-2. Lock `MasterIndexStorage`; extract free pads or prepare new ones.
-3. Chunk data; spawn concurrent write tasks:
-   - `update` existing pad or `create` new scratchpad.
+2. Check `IndexManager` for existing key/resume info.
+3. Ask `PadLifecycleManager` to acquire/prepare necessary pads (from free pool or generate new).
+4. Chunk data; spawn concurrent write tasks via `NetworkAdapter`:
+   - `put_raw` handles create/update logic based on pad status.
    - Report progress via `PutCallback`.
-4. Build `KeyStorageInfo` with pad addresses & public keys.
-5. Insert into `index`; persist `MasterIndexStorage` via storage layer.
+5. Update `IndexManager` with `KeyInfo` (pad addresses, keys, status).
+6. Persist `IndexManager` state via `NetworkAdapter` (save master index).
 
 ### 6.2 Fetch
 
-1. Lock `MasterIndexStorage`; lookup `KeyStorageInfo`.
-2. Derive per-pad private keys deterministically.
-3. Spawn concurrent fetch tasks to read & decrypt chunks.
-4. Reassemble chunks in order; verify total size matches.
-5. Return full `Vec<u8>`; report progress via `GetCallback`.
+1. Query `IndexManager` for `KeyInfo`.
+2. Spawn concurrent fetch tasks via `NetworkAdapter` (`get_raw_scratchpad`) to read & decrypt chunks using keys from `KeyInfo`.
+3. Reassemble chunks in order; verify total size matches.
+4. Return full `Vec<u8>`; report progress via `GetCallback`.
 
 ### 6.3 Remove
 
-1. Lock `MasterIndexStorage`; remove entry for key.
-2. For each pad in `KeyStorageInfo`, derive private key.
-3. Append `(address, private_key)` to `free_pads` list.
-4. Persist updated `MasterIndexStorage`.
+1. Remove key entry from `IndexManager`.
+2. Harvest pads associated with the removed key using `IndexManager::harvest_pads`.
+3. Persist updated `IndexManager` state via `NetworkAdapter`.
 
 ## 7. Error Model
 
 Central `Error` enum unifies:
 
 - Configuration errors
-- Network, Storage, Index, PadLifecycle, Data errors (via `#[from]`)
+- Network, Index, PadLifecycle, Data errors (via `#[from]`)
 - Callback cancellations & failures
 - `NotImplemented`, `Internal` cases
 
 ## 8. Concurrency & Thread Safety
 
-- The `MasterIndexStorage` is wrapped in `Arc<Mutex<>>`, ensuring atomic updates.
-- Data scratchpad operations run in parallel via `tokio::spawn` + `join_all`.
-- Storage layer uses `spawn_blocking` for CPU-bound decryption.
+- The `MasterIndex` is wrapped in `Arc<Mutex<>>` within `IndexManager`, ensuring atomic updates.
+- Data scratchpad operations run in parallel via `tokio::spawn` + `FuturesUnordered`.
+- CPU-bound decryption handled within Autonomi SDK or potentially via `spawn_blocking` if needed elsewhere.
 
 ## 9. Encryption & Key Derivation
 
 - Master index private key is derived from user key hex via SHA-256 → `SecretKey`.
 - Pad private keys for new pads are randomly generated; for recycled pads loaded from `free_pads`.
-- Data pad keys are not stored in index; they are re-derived or reused for updates.
+- Data pad keys *are* stored encrypted within the `KeyInfo` in the `MasterIndex`.
 
 ## 10. Extensibility & Customization
 
-- Trait-based abstractions for each layer:
-  - `NetworkAdapter`, `StorageManager`, `IndexManager`, `PadLifecycleManager`, `DataManager`.
-- Users can implement custom backends by satisfying these traits.
-- `MutAntConfig` allows selecting alternate network or tuning scratchpad size.
+- Trait-based abstractions primarily for `NetworkAdapter`.
+- `DataManager`, `IndexManager`, `PadLifecycleManager` use concrete types (`Default...`).
+- Users can implement custom network backends.
+- `MutAntConfig` allows selecting network or tuning scratchpad size.
 
 ## 11. Further Reading
 

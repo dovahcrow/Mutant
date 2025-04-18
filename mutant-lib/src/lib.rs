@@ -17,7 +17,7 @@
 //! - **Cost Efficiency**: Reuses freed pads to minimize redundant on-chain writes.
 //! - **Flexible Interfaces**: Rust SDK (`mutant-lib`) and CLI tool (`mutant`).
 //! - **Async-First**: Built on `tokio` and `async/await`.
-//! - **Extensible Architecture**: Modular design allows custom network/storage layers.
+//! - **Extensible Architecture**: Modular design allows custom network layers.
 //!
 //! ## Quickstart
 //!
@@ -63,7 +63,7 @@ mod api;
 mod data;
 /// Manages indexing and search functionality for stored data.
 mod index;
-/// Contains network-related functionalities, including peer discovery and data synchronization.
+/// Contains network-related functionalities, including data persistence via scratchpads.
 mod network;
 /// Manages the lifecycle of pads, including creation, deletion, and updates.
 mod pad_lifecycle;
