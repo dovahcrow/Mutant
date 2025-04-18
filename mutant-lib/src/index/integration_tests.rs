@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::index::manager::{DefaultIndexManager, IndexManager};
+use crate::index::manager::DefaultIndexManager;
 use crate::index::structure::{KeyInfo, PadInfo, PadStatus};
 
 use crate::network::adapter::AutonomiNetworkAdapter;

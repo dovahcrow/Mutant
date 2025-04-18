@@ -413,16 +413,4 @@ impl DefaultPadLifecycleManager {
 
         Ok(successful_creations)
     }
-
-    async fn write_initial_pad_data_internal(
-        network_adapter: &AutonomiNetworkAdapter,
-        _address: &ScratchpadAddress,
-        secret_key: &SecretKey,
-    ) -> Result<(), PadLifecycleError> {
-        network_adapter
-            .put_raw(secret_key, &[], &PadStatus::Generated)
-            .await
-            .map(|_| ())
-            .map_err(|e: NetworkError| PadLifecycleError::Network(e))
-    }
 }

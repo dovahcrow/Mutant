@@ -129,3 +129,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - "Confirming pads...": Increments on `ChunkConfirmed` (network check success).
 - Modified the `purge` command logic to only discard pending pads if the network explicitly returns a "Record Not Found" status. Pads encountering other network errors during verification are now returned to the pending list for future retries.
 - Store confirmation (`
+
+### Refactor
+- **Internal Architecture Simplification**: Removed manager traits (`NetworkAdapter`, `DataManager`, `PadLifecycleManager`, `IndexManager`, `StorageManager`) in `mutant-lib`. Replaced trait usage with direct calls to corresponding struct implementations. This change simplifies the internal API and reduces indirection. ([`32e986ff`](https://github.com/orf/mutant/commit/32e986ff))
+- Removed unused file `src/unused.rs`

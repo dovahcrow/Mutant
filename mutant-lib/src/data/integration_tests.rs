@@ -3,52 +3,59 @@
 use crate::data::chunking::{chunk_data, reassemble_data};
 use crate::data::error::DataError;
 use crate::data::manager::DefaultDataManager;
-use crate::index::manager::{DefaultIndexManager, IndexManager};
+use crate::index::manager::DefaultIndexManager;
 use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::NetworkChoice;
-use crate::pad_lifecycle::manager::{DefaultPadLifecycleManager, PadLifecycleManager};
-use crate::storage::manager::{DefaultStorageManager, StorageManager};
-use autonomi::{ScratchpadAddress, SecretKey};
+use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
+use crate::storage::manager::DefaultStorageManager;
 use std::sync::Arc;
 
+// Define constant locally
 const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-async fn setup_data_test_components() -> (
+async fn setup_managers() -> (
     Arc<AutonomiNetworkAdapter>,
-    Arc<dyn StorageManager>,
-    Arc<dyn IndexManager>,
-    Arc<dyn PadLifecycleManager>,
+    Arc<DefaultStorageManager>,
+    Arc<DefaultIndexManager>,
+    Arc<DefaultPadLifecycleManager>,
     DefaultDataManager,
-    SecretKey,
-    ScratchpadAddress,
 ) {
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await; // Prevent rate limiting
+
     let network_adapter: Arc<AutonomiNetworkAdapter> = Arc::new(
         AutonomiNetworkAdapter::new(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet)
             .expect("Test NetworkAdapter setup failed"),
     );
-    let storage_manager: Arc<dyn StorageManager> =
+
+    let storage_manager: Arc<DefaultStorageManager> =
         Arc::new(DefaultStorageManager::new(network_adapter.clone()));
     let index_manager_impl = Arc::new(DefaultIndexManager::new(
         storage_manager.clone(),
         network_adapter.clone(),
     ));
-    let index_manager: Arc<dyn IndexManager> = index_manager_impl.clone();
-
-    let master_key = SecretKey::random();
-    let master_addr = ScratchpadAddress::new(master_key.public_key());
-
+    // Use load_or_initialize, assuming a dummy key/address is fine for data tests
+    // If these tests require specific index state, this setup needs adjustment.
+    let dummy_key = autonomi::SecretKey::random();
+    let dummy_addr = autonomi::ScratchpadAddress::new(dummy_key.public_key());
     index_manager_impl
-        .load_or_initialize(&master_addr, &master_key)
+        .load_or_initialize(&dummy_addr, &dummy_key)
         .await
-        .expect("Index manager initialization failed");
+        .expect("Index initialization failed in data test setup");
+    // Save might not be strictly needed here, but keeping for consistency
+    index_manager_impl
+        .save(&dummy_addr, &dummy_key)
+        .await
+        .expect("Initial index save failed in data test setup");
+
+    let index_manager: Arc<DefaultIndexManager> = index_manager_impl.clone(); // Keep Arc for dependencies
 
     let pad_lifecycle_manager_impl = Arc::new(DefaultPadLifecycleManager::new(
         index_manager.clone(),
         network_adapter.clone(),
         storage_manager.clone(),
     ));
-    let pad_lifecycle_manager: Arc<dyn PadLifecycleManager> = pad_lifecycle_manager_impl;
+    let pad_lifecycle_manager: Arc<DefaultPadLifecycleManager> = pad_lifecycle_manager_impl; // Keep Arc
 
     let data_manager = DefaultDataManager::new(
         index_manager.clone(),
@@ -57,14 +64,14 @@ async fn setup_data_test_components() -> (
         network_adapter.clone(),
     );
 
+    // Need to pass TEST_SCRATCHPAD_SIZE to store/fetch calls now, not constructor
+
     (
         network_adapter,
         storage_manager,
         index_manager,
         pad_lifecycle_manager,
         data_manager,
-        master_key,
-        master_addr,
     )
 }
 
@@ -182,15 +189,8 @@ fn test_reassemble_missing_chunk() {
 
 #[tokio::test]
 async fn test_store_very_large_data_multi_pad() {
-    let (
-        _network_adapter,
-        _storage_manager,
-        index_manager,
-        _pad_lifecycle_manager,
-        data_manager,
-        _master_key,
-        _master_addr,
-    ) = setup_data_test_components().await;
+    let (_network_adapter, _storage_manager, index_manager, _pad_lifecycle_manager, data_manager) =
+        setup_managers().await;
 
     let key = "very_large_data_key".to_string();
 
@@ -256,4 +256,44 @@ async fn test_store_very_large_data_multi_pad() {
         key_info_after_remove_opt.is_none(),
         "Key info still present after remove (very large)"
     );
+}
+
+#[tokio::test]
+async fn test_store_basic() {
+    let (_network, _storage, index_manager, _pad_lifecycle, data_manager) = setup_managers().await;
+    let key = "store_basic_key".to_string();
+    let data = b"some simple data".to_vec();
+
+    let store_result = data_manager.store(key.clone(), &data, None).await;
+    assert!(
+        store_result.is_ok(),
+        "Store failed: {:?}",
+        store_result.err()
+    );
+
+    // Verification: Check index
+    let key_info_res = index_manager.get_key_info(&key).await;
+    assert!(key_info_res.is_ok());
+    let key_info = key_info_res.unwrap();
+    assert!(key_info.is_some());
+    let info = key_info.unwrap();
+    assert_eq!(info.data_size as usize, data.len());
+    assert!(!info.pads.is_empty());
+}
+
+#[tokio::test]
+async fn test_fetch_basic() {
+    let (_network, _storage, _index_manager, _pad_lifecycle, data_manager) = setup_managers().await;
+    let key = "fetch_basic_key".to_string();
+    let data = b"some data to fetch".to_vec();
+
+    data_manager.store(key.clone(), &data, None).await.unwrap();
+
+    let fetch_result = data_manager.fetch(&key, None).await;
+    assert!(
+        fetch_result.is_ok(),
+        "Fetch failed: {:?}",
+        fetch_result.err()
+    );
+    assert_eq!(fetch_result.unwrap(), data);
 }

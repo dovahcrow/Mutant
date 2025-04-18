@@ -442,16 +442,19 @@ impl DefaultIndexManager {
         self.add_free_pads(vec![(address, key_bytes)]).await
     }
 
-    /// Adds multiple pads that have been verified back to the free pad list.
-    /// This assumes the counter check happened during verification and directly uses counter 0.
+    /// Adds multiple verified pads (with keys) directly to the free list.
+    ///
+    /// This bypasses any network verification and assumes the caller guarantees the pads exist and are usable.
+    /// Primarily used internally, e.g., after a successful `purge` operation.
     ///
     /// # Arguments
     ///
-    /// * `pads` - A vector of tuples, each containing a pad's address and secret key bytes.
+    /// * `pads` - A vector of tuples, each containing a `ScratchpadAddress` and its corresponding `SecretKey` bytes.
     ///
     /// # Errors
     ///
-    /// Returns `IndexError` on internal failures related to index modification.
+    /// Returns `IndexError` on internal failures (e.g., lock contention).
+    #[allow(dead_code)] // Suppress warning as this might be used externally or later
     pub async fn add_verified_free_pads(
         &self,
         pads: Vec<(ScratchpadAddress, Vec<u8>)>, // Pads here are assumed verified

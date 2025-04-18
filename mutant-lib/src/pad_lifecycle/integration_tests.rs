@@ -1,22 +1,23 @@
 #![cfg(test)]
 
-use crate::index::manager::{DefaultIndexManager, IndexManager};
+use crate::index::manager::DefaultIndexManager;
 use crate::index::structure::PadStatus;
 use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::NetworkChoice;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::pad_lifecycle::PadOrigin;
-use crate::storage::manager::{DefaultStorageManager, StorageManager};
+use crate::storage::manager::DefaultStorageManager;
 use autonomi::{ScratchpadAddress, SecretKey};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
+// Re-define constant locally as test_utils module doesn't seem to exist at crate root
 const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 async fn setup_test_components_with_initialized_index() -> (
     Arc<AutonomiNetworkAdapter>,
-    Arc<dyn StorageManager>,
+    Arc<DefaultStorageManager>,
     Arc<DefaultIndexManager>,
     DefaultPadLifecycleManager,
     SecretKey,
@@ -26,7 +27,7 @@ async fn setup_test_components_with_initialized_index() -> (
         AutonomiNetworkAdapter::new(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet)
             .expect("Test NetworkAdapter setup failed"),
     );
-    let storage_manager: Arc<dyn StorageManager> =
+    let storage_manager: Arc<DefaultStorageManager> =
         Arc::new(DefaultStorageManager::new(network_adapter.clone()));
     let index_manager = Arc::new(DefaultIndexManager::new(
         storage_manager.clone(),

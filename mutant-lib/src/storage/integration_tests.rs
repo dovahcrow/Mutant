@@ -4,7 +4,7 @@ use crate::index::structure::PadStatus;
 use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::{NetworkChoice, NetworkError};
 use crate::storage::error::StorageError;
-use crate::storage::manager::{DefaultStorageManager, StorageManager};
+use crate::storage::manager::DefaultStorageManager;
 use autonomi::{ScratchpadAddress, SecretKey};
 use std::sync::Arc;
 

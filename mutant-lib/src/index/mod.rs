@@ -4,8 +4,6 @@ pub mod error;
 pub mod manager;
 /// Handles the persistence (loading and saving) of the index data.
 pub mod persistence;
-/// Provides functions for querying and calculating statistics from the index.
-pub mod query;
 /// Defines the core data structures representing the index (`MasterIndex`, `KeyInfo`, `PadInfo`).
 pub mod structure;
 
