@@ -86,6 +86,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated README.md to reflect workspace structure, latest CLI commands/options, and library API changes.
 - Adjusted introductory joke in README.md for subtlety (removed italics).
 
+## [0.2.1] - 2025-04-18
+
+### Added
+- Prompt user for confirmation before creating remote index during sync if it doesn't exist.
+
 ## [0.2.0] - 2025-04-15
 
 ### Added

@@ -1,5 +1,6 @@
 use crate::app::CliError;
 use crate::callbacks::progress::StyledProgressBar;
+use dialoguer::{Confirm, theme::ColorfulTheme};
 use indicatif::{MultiProgress, ProgressDrawTarget};
 use log::{debug, error, info, trace, warn};
 use mutant_lib::ScratchpadAddress;
@@ -59,16 +60,41 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
                 index
             }
             Err(LibError::Index(IndexError::KeyNotFound(_))) => {
-                warn!("Remote master index not found. Saving current in-memory state as remote.");
-                pb.set_message("Remote index not found, creating...".to_string());
-                if let Err(e) = mutant.save_master_index().await {
-                    let msg = format!("Failed to create remote index: {}", e);
-                    error!("{}", msg);
-                    pb.abandon_with_message(msg.clone());
-                    return Err(CliError::from(e));
+                warn!("Remote master index not found.");
+                pb.set_message("Remote index not found. Checking with user...".to_string());
+
+                // Ask user for confirmation
+                let confirmation = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Remote master index not found. Do you want to create it based on your current local state?")
+                    .interact()
+                    .map_err(|e| {
+                        let msg = format!("Failed to get user confirmation: {}", e);
+                        error!("{}", msg);
+                        pb.abandon_with_message(msg.clone());
+                        CliError::UserInputAborted(format!("Confirmation prompt failed: {}", e))
+                    })?;
+
+                if confirmation {
+                    info!("User confirmed creation of remote index.");
+                    pb.set_message("Creating remote index from local state...".to_string());
+                    if let Err(e) = mutant.save_master_index().await {
+                        let msg = format!("Failed to create remote index: {}", e);
+                        error!("{}", msg);
+                        pb.abandon_with_message(msg.clone());
+                        return Err(CliError::from(e));
+                    }
+                    info!("Successfully created remote index from in-memory state.");
+                    // Since we just created the remote index, it's identical to local.
+                    // We can consider the sync "done" for the purpose of merging indexes.
+                    // Alternatively, fetch it again, but using local is simpler here.
+                    local_index.clone()
+                } else {
+                    info!("User declined creation of remote index. Aborting sync.");
+                    let abort_msg =
+                        "Sync aborted by user because remote index was not found.".to_string();
+                    pb.abandon_with_message(abort_msg.clone());
+                    return Err(CliError::UserInputAborted(abort_msg));
                 }
-                info!("Successfully created remote index from in-memory state.");
-                local_index.clone()
             }
             Err(e) => {
                 let msg = format!("Failed to fetch remote index: {}", e);

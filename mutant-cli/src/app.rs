@@ -35,6 +35,7 @@ pub enum CliError {
     NoWalletsFound(PathBuf),
     UserSelectionFailed(dialoguer::Error),
     WalletNotSet,
+    UserInputAborted(String),
 }
 
 impl std::fmt::Display for CliError {
@@ -63,6 +64,7 @@ impl std::fmt::Display for CliError {
                 write!(f, "Failed to get user wallet selection: {}", e)
             }
             CliError::WalletNotSet => write!(f, "No wallet configured or selected."),
+            CliError::UserInputAborted(msg) => write!(f, "Operation aborted by user: {}", msg),
         }
     }
 }
