@@ -51,8 +51,20 @@ start_evm() {
 
     local evm_binary="$AUTONOMI_DIR/target/debug/evm-testnet"
     if [ ! -x "$evm_binary" ]; then
-       echo "Building evm-testnet..."
-       (cd "$AUTONOMI_DIR" && cargo build --bin evm-testnet)
+       echo "Building evm-testnet in $AUTONOMI_DIR..."
+       if ! (cd "$AUTONOMI_DIR" && cargo build --bin evm-testnet); then
+           echo "ERROR: Failed to build evm-testnet in $AUTONOMI_DIR" >&2
+           # Optionally dump logs or target dir contents here
+           ls -l "$AUTONOMI_DIR/target/debug"
+           return 1 # Indicate failure
+       fi
+       echo "evm-testnet build completed."
+       # Verify it exists now
+       if [ ! -x "$evm_binary" ]; then
+            echo "ERROR: evm-testnet binary not found at $evm_binary even after successful build command!" >&2
+            ls -l "$AUTONOMI_DIR/target/debug"
+            return 1
+       fi
     fi
 
     local pgrep_pattern="$evm_binary" # Use full path for pgrep pattern
@@ -165,9 +177,22 @@ is_evm_running() {
 # --- Antctl Management ---
 start_antctl() {
     echo "--- Starting Antctl Local Network ---"
+    local antctl_binary="$AUTONOMI_DIR/target/debug/antctl"
+
     # Ensure antctl is built
-    echo "Building antctl..."
-    (cd "$AUTONOMI_DIR" && cargo build --features=open-metrics --bin antctl)
+    echo "Building antctl in $AUTONOMI_DIR..."
+    if ! (cd "$AUTONOMI_DIR" && cargo build --features=open-metrics --bin antctl); then
+        echo "ERROR: Failed to build antctl in $AUTONOMI_DIR" >&2
+        ls -l "$AUTONOMI_DIR/target/debug"
+        return 1 # Indicate failure
+    fi
+    echo "antctl build completed."
+    # Verify it exists now
+    if [ ! -x "$antctl_binary" ]; then
+        echo "ERROR: antctl binary not found at $antctl_binary even after successful build command!" >&2
+        ls -l "$AUTONOMI_DIR/target/debug"
+        return 1
+    fi
 
     echo "Stopping any previous antctl local network..."
     # Allow kill to fail if network isn't running. Should respect XDG_DATA_HOME.
