@@ -676,36 +676,24 @@ impl DefaultIndexManager {
 
         for (address, key_bytes) in pads {
             trace!("Processing pad {} for free list addition.", address);
-            match self.network_adapter.check_existence(&address).await {
-                Ok(true) => {
+            trace!("Fetching scratchpad for pad {} to get counter.", address);
+            match self.network_adapter.get_raw_scratchpad(&address).await {
+                Ok(scratchpad) => {
+                    let counter = scratchpad.counter();
                     trace!(
-                        "Pad {} exists. Fetching scratchpad to get counter.",
-                        address
+                        "Pad {} fetched, counter is {}. Adding to final list.",
+                        address,
+                        counter
                     );
-                    match self.network_adapter.get_raw_scratchpad(&address).await {
-                        Ok(scratchpad) => {
-                            let counter = scratchpad.counter();
-                            trace!(
-                                "Pad {} fetched, counter is {}. Adding to final list.",
-                                address,
-                                counter
-                            );
-                            pads_to_add_final.push((address, key_bytes, counter));
-                        }
-                        Err(e) => {
-                            warn!("Failed to fetch scratchpad for existing pad {}: {}. Adding to free list with counter 0.", address, e);
-                            pads_to_add_final.push((address, key_bytes, 0));
-                        }
-                    }
-                }
-                Ok(false) => {
-                    warn!(
-                        "Pad {} reported as non-existent during free pad add check. Skipping.",
-                        address
-                    );
+                    pads_to_add_final.push((address, key_bytes, counter));
                 }
                 Err(e) => {
-                    warn!("Network error checking existence for pad {}: {}. Adding to free list with counter 0 as fallback.", address, e);
+                    // If fetching fails, it implies non-existence or network issue.
+                    // Log appropriately and add with counter 0 as a fallback.
+                    warn!(
+                        "Failed to fetch scratchpad for pad {} (may not exist or network error): {}. Adding to free list with counter 0.",
+                        address, e
+                    );
                     pads_to_add_final.push((address, key_bytes, 0));
                 }
             }
