@@ -6,7 +6,6 @@ use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::NetworkChoice;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::pad_lifecycle::PadOrigin;
-use crate::storage::manager::DefaultStorageManager;
 use autonomi::{ScratchpadAddress, SecretKey};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -17,7 +16,6 @@ const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
 
 async fn setup_test_components_with_initialized_index() -> (
     Arc<AutonomiNetworkAdapter>,
-    Arc<DefaultStorageManager>,
     Arc<DefaultIndexManager>,
     DefaultPadLifecycleManager,
     SecretKey,
@@ -27,12 +25,10 @@ async fn setup_test_components_with_initialized_index() -> (
         AutonomiNetworkAdapter::new(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet)
             .expect("Test NetworkAdapter setup failed"),
     );
-    let storage_manager: Arc<DefaultStorageManager> =
-        Arc::new(DefaultStorageManager::new(network_adapter.clone()));
+    let master_key_for_index = SecretKey::random();
     let index_manager = Arc::new(DefaultIndexManager::new(
-        Arc::clone(&storage_manager),
         Arc::clone(&network_adapter),
-        SecretKey::random(),
+        master_key_for_index.clone(),
     ));
 
     let master_key = SecretKey::random();
@@ -43,15 +39,11 @@ async fn setup_test_components_with_initialized_index() -> (
         .await
         .expect("Index manager initialization failed");
 
-    let pad_lifecycle_manager = DefaultPadLifecycleManager::new(
-        index_manager.clone(),
-        network_adapter.clone(),
-        storage_manager.clone(),
-    );
+    let pad_lifecycle_manager =
+        DefaultPadLifecycleManager::new(index_manager.clone(), network_adapter.clone());
 
     (
         network_adapter,
-        storage_manager,
         index_manager,
         pad_lifecycle_manager,
         master_key,
@@ -63,14 +55,8 @@ async fn setup_test_components_with_initialized_index() -> (
 fn test_acquire_new_pads() {
     let rt = Runtime::new().unwrap();
     rt.block_on(async {
-        let (
-            _network_adapter,
-            _storage_manager,
-            index_manager,
-            pad_lifecycle_manager,
-            _master_key,
-            _master_addr,
-        ) = setup_test_components_with_initialized_index().await;
+        let (_network_adapter, index_manager, pad_lifecycle_manager, _master_key, _master_addr) =
+            setup_test_components_with_initialized_index().await;
 
         let mut callback = None;
         let count = 1;
@@ -108,14 +94,8 @@ fn test_acquire_new_pads() {
 
 #[tokio::test]
 async fn test_acquire_pads_from_free_pool() {
-    let (
-        _network_adapter,
-        storage_manager,
-        index_manager,
-        pad_lifecycle_manager,
-        _master_key,
-        _master_addr,
-    ) = setup_test_components_with_initialized_index().await;
+    let (network_adapter, index_manager, pad_lifecycle_manager, _master_key, _master_addr) =
+        setup_test_components_with_initialized_index().await;
 
     let num_pads_to_add = 3;
     let mut free_pads_info = Vec::new();
@@ -124,8 +104,8 @@ async fn test_acquire_pads_from_free_pool() {
         let address = ScratchpadAddress::new(key.public_key());
         let key_bytes = key.to_bytes().to_vec();
 
-        storage_manager
-            .write_pad_data(&key, &[0u8; 10], &PadStatus::Generated)
+        network_adapter
+            .put_raw(&key, &[0u8; 10], &PadStatus::Generated)
             .await
             .unwrap_or_else(|e| panic!("Failed to write dummy data for pad {}: {}", i, e));
 
@@ -180,14 +160,8 @@ async fn test_acquire_pads_from_free_pool() {
 
 #[tokio::test]
 async fn test_acquire_mixed_pads() {
-    let (
-        _network_adapter,
-        storage_manager,
-        index_manager,
-        pad_lifecycle_manager,
-        _master_key,
-        _master_addr,
-    ) = setup_test_components_with_initialized_index().await;
+    let (network_adapter, index_manager, pad_lifecycle_manager, _master_key, _master_addr) =
+        setup_test_components_with_initialized_index().await;
 
     let num_free_pads_to_add = 2;
     let mut free_pads_info = Vec::new();
@@ -195,8 +169,8 @@ async fn test_acquire_mixed_pads() {
         let key = SecretKey::random();
         let address = ScratchpadAddress::new(key.public_key());
         let key_bytes = key.to_bytes().to_vec();
-        storage_manager
-            .write_pad_data(&key, &[0u8; 10], &PadStatus::Generated)
+        network_adapter
+            .put_raw(&key, &[0u8; 10], &PadStatus::Generated)
             .await
             .unwrap_or_else(|e| panic!("Failed to write dummy data for pad {}: {}", i, e));
         free_pads_info.push((address, key_bytes));
@@ -256,14 +230,8 @@ async fn test_acquire_mixed_pads() {
 
 #[tokio::test]
 async fn test_purge_existing_pads() {
-    let (
-        _network_adapter,
-        storage_manager,
-        index_manager,
-        pad_lifecycle_manager,
-        _master_key,
-        _master_addr,
-    ) = setup_test_components_with_initialized_index().await;
+    let (network_adapter, index_manager, pad_lifecycle_manager, _master_key, _master_addr) =
+        setup_test_components_with_initialized_index().await;
 
     let num_pads_to_add = 2;
     let mut pending_pads_info = Vec::new();
@@ -274,10 +242,10 @@ async fn test_purge_existing_pads() {
         let address = ScratchpadAddress::new(key.public_key());
         let key_bytes = key.to_bytes().to_vec();
 
-        storage_manager
-            .write_pad_data(&key, &[0u8; 10], &PadStatus::Generated)
+        network_adapter
+            .put_raw(&key, &[0u8; 10], &PadStatus::Generated)
             .await
-            .unwrap_or_else(|e| panic!("Failed to write data for pending pad {}: {}", i, e));
+            .expect("Failed to write test pad data for purge");
 
         pending_pads_info.push((address, key_bytes));
         expected_free_addresses.insert(address);
@@ -333,14 +301,8 @@ async fn test_purge_existing_pads() {
 
 #[tokio::test]
 async fn test_purge_non_existent_pads() {
-    let (
-        _network_adapter,
-        _storage_manager,
-        index_manager,
-        pad_lifecycle_manager,
-        _master_key,
-        _master_addr,
-    ) = setup_test_components_with_initialized_index().await;
+    let (_network_adapter, index_manager, pad_lifecycle_manager, _master_key, _master_addr) =
+        setup_test_components_with_initialized_index().await;
 
     let num_pads_to_add = 2;
     let mut pending_pads_info = Vec::new();
@@ -388,14 +350,8 @@ async fn test_purge_non_existent_pads() {
 
 #[tokio::test]
 async fn test_purge_mixed_pads() {
-    let (
-        _network_adapter,
-        storage_manager,
-        index_manager,
-        pad_lifecycle_manager,
-        _master_key,
-        _master_addr,
-    ) = setup_test_components_with_initialized_index().await;
+    let (network_adapter, index_manager, pad_lifecycle_manager, _master_key, _master_addr) =
+        setup_test_components_with_initialized_index().await;
 
     let num_existing = 2;
     let num_non_existent = 3;
@@ -406,10 +362,10 @@ async fn test_purge_mixed_pads() {
         let key = SecretKey::random();
         let address = ScratchpadAddress::new(key.public_key());
         let key_bytes = key.to_bytes().to_vec();
-        storage_manager
-            .write_pad_data(&key, &[0u8; 10], &PadStatus::Generated)
+        network_adapter
+            .put_raw(&key, &[0u8; 10], &PadStatus::Generated)
             .await
-            .unwrap_or_else(|e| panic!("Failed to write data for existing pad {}: {}", i, e));
+            .expect("Failed to write test pad data for purge");
         pending_pads_info.push((address, key_bytes));
         expected_free_addresses.insert(address);
     }
@@ -471,14 +427,8 @@ async fn test_purge_mixed_pads() {
 
 #[tokio::test]
 async fn test_purge_empty_list() {
-    let (
-        _network_adapter,
-        _storage_manager,
-        index_manager,
-        pad_lifecycle_manager,
-        _master_key,
-        _master_addr,
-    ) = setup_test_components_with_initialized_index().await;
+    let (_network_adapter, index_manager, pad_lifecycle_manager, _master_key, _master_addr) =
+        setup_test_components_with_initialized_index().await;
 
     let index_state_before = index_manager.get_index_copy().await.unwrap();
     assert!(

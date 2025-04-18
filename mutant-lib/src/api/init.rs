@@ -4,7 +4,6 @@ use crate::internal_error::Error;
 use crate::internal_events::{invoke_init_callback, InitCallback, InitProgressEvent};
 use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
-use crate::storage::manager::DefaultStorageManager;
 use crate::types::MutAntConfig;
 use autonomi::{ScratchpadAddress, SecretKey};
 use hex;
@@ -104,10 +103,7 @@ pub(crate) async fn initialize_layers(
     )
     .await?;
 
-    let storage_manager = Arc::new(DefaultStorageManager::new(Arc::clone(&network_adapter)));
-
     let index_manager = Arc::new(DefaultIndexManager::new(
-        Arc::clone(&storage_manager),
         Arc::clone(&network_adapter),
         master_index_key.clone(),
     ));
@@ -115,9 +111,8 @@ pub(crate) async fn initialize_layers(
     let pad_lifecycle_manager = Arc::new(DefaultPadLifecycleManager::new(
         Arc::clone(&index_manager),
         Arc::clone(&network_adapter),
-        Arc::clone(&storage_manager),
     ));
-    info!("StorageManager, IndexManager, PadLifecycleManager initialized.");
+    info!("IndexManager, PadLifecycleManager initialized.");
 
     invoke_init_callback(
         &mut init_callback,
@@ -205,10 +200,9 @@ pub(crate) async fn initialize_layers(
     )
     .await?;
     let data_manager = Arc::new(DefaultDataManager::new(
+        Arc::clone(&network_adapter),
         Arc::clone(&index_manager),
         Arc::clone(&pad_lifecycle_manager),
-        Arc::clone(&storage_manager),
-        Arc::clone(&network_adapter),
     ));
     info!("DataManager initialized.");
 

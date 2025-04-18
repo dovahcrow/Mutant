@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implemented pad harvesting during `remove` operation: `Generated` pads move to `pending_verification_pads`, others move to `free_pads`.
 
 ### Changed
+- Removed the intermediate `storage` module, directly using the `network` adapter for pad read/write operations.
 - Restricted public API surface of `mutant-lib`, re-exporting only necessary types.
 - Refactored `rm` key logic: Only `Generated` pads go to pending verification; others go directly to free pool.
 - Reduced default usable scratchpad size margin to 4KB.

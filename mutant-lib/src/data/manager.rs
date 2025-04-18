@@ -5,7 +5,7 @@ use crate::index::manager::DefaultIndexManager;
 use crate::internal_events::{GetCallback, PutCallback};
 use crate::network::AutonomiNetworkAdapter;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
-use crate::storage::manager::DefaultStorageManager;
+use log::trace;
 use std::sync::Arc;
 
 /// Default implementation of the `DataManager` trait.
@@ -14,7 +14,10 @@ use std::sync::Arc;
 /// pad lifecycle manager, storage manager, network adapter) and delegates the core
 /// data operations (`store`, `fetch`, `remove`) to specific functions within the `ops` module.
 pub struct DefaultDataManager {
-    deps: DataManagerDependencies, // Internal field holding dependencies
+    deps: DataManagerDependencies,
+    network_adapter: Arc<AutonomiNetworkAdapter>,
+    index_manager: Arc<DefaultIndexManager>,
+    pad_lifecycle_manager: Arc<DefaultPadLifecycleManager>,
 }
 
 impl DefaultDataManager {
@@ -22,27 +25,28 @@ impl DefaultDataManager {
     ///
     /// # Arguments
     ///
+    /// * `network_adapter` - An `Arc` reference to a `AutonomiNetworkAdapter` implementation.
     /// * `index_manager` - An `Arc` reference to an `IndexManager` implementation.
     /// * `pad_lifecycle_manager` - An `Arc` reference to a `PadLifecycleManager` implementation.
-    /// * `storage_manager` - An `Arc` reference to a `StorageManager` implementation.
-    /// * `network_adapter` - An `Arc` reference to a `AutonomiNetworkAdapter` implementation.
     ///
     /// # Returns
     ///
     /// A new `DefaultDataManager` instance.
     pub fn new(
+        network_adapter: Arc<AutonomiNetworkAdapter>,
         index_manager: Arc<DefaultIndexManager>,
         pad_lifecycle_manager: Arc<DefaultPadLifecycleManager>,
-        storage_manager: Arc<DefaultStorageManager>,
-        network_adapter: Arc<AutonomiNetworkAdapter>,
     ) -> Self {
+        trace!("Initializing DefaultDataManager");
         Self {
             deps: DataManagerDependencies {
-                index_manager,
-                pad_lifecycle_manager,
-                storage_manager,
-                network_adapter,
+                index_manager: index_manager.clone(),
+                pad_lifecycle_manager: pad_lifecycle_manager.clone(),
+                network_adapter: network_adapter.clone(),
             },
+            network_adapter,
+            index_manager,
+            pad_lifecycle_manager,
         }
     }
 

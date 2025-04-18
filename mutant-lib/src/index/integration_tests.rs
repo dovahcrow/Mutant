@@ -6,7 +6,6 @@ use crate::index::structure::{KeyInfo, PadInfo, PadStatus};
 use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::NetworkChoice;
 use crate::pad_lifecycle::PadOrigin;
-use crate::storage::manager::DefaultStorageManager;
 
 use autonomi::{ScratchpadAddress, SecretKey};
 use chrono::Utc;
@@ -16,23 +15,13 @@ use std::sync::Arc;
 const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-fn setup_test_components() -> (
-    Arc<AutonomiNetworkAdapter>,
-    Arc<DefaultStorageManager>,
-    DefaultIndexManager,
-) {
+fn setup_test_components() -> (Arc<AutonomiNetworkAdapter>, DefaultIndexManager) {
     let network_adapter: Arc<AutonomiNetworkAdapter> = Arc::new(
         AutonomiNetworkAdapter::new(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet)
             .expect("Test adapter setup failed"),
     );
-    let storage_manager: Arc<DefaultStorageManager> =
-        Arc::new(DefaultStorageManager::new(Arc::clone(&network_adapter)));
-    let index_manager = DefaultIndexManager::new(
-        Arc::clone(&storage_manager),
-        Arc::clone(&network_adapter),
-        SecretKey::random(),
-    );
-    (network_adapter, storage_manager, index_manager)
+    let index_manager = DefaultIndexManager::new(Arc::clone(&network_adapter), SecretKey::random());
+    (network_adapter, index_manager)
 }
 
 fn get_test_master_keys(test_id: &str) -> (SecretKey, ScratchpadAddress) {
@@ -52,7 +41,7 @@ fn generate_random_pad(_id: &str) -> (ScratchpadAddress, SecretKey, Vec<u8>) {
 
 #[tokio::test]
 async fn test_save_load_initialize() {
-    let (_net_adapter, storage_manager, index_manager) = setup_test_components();
+    let (network_adapter, index_manager) = setup_test_components();
     let (master_key, master_addr) = get_test_master_keys("save_load");
 
     index_manager
@@ -68,8 +57,8 @@ async fn test_save_load_initialize() {
     let (pad1_addr, pad1_key, pad1_key_bytes) = generate_random_pad("pad1");
 
     let dummy_data = vec![0u8; 10];
-    storage_manager
-        .write_pad_data(&pad1_key, &dummy_data, &PadStatus::Generated)
+    network_adapter
+        .put_raw(&pad1_key, &dummy_data, &PadStatus::Generated)
         .await
         .expect("Failed to write dummy data to pad1 for test setup");
 
@@ -101,7 +90,7 @@ async fn test_save_load_initialize() {
         .await
         .expect("Save failed");
 
-    let (_net_adapter2, _storage_manager2, index_manager2) = setup_test_components();
+    let (_net_adapter2, index_manager2) = setup_test_components();
     index_manager2
         .load_or_initialize(&master_addr, &master_key)
         .await
@@ -147,7 +136,7 @@ async fn test_save_load_initialize() {
 
 #[tokio::test]
 async fn test_load_non_existent_initializes_default() {
-    let (_net_adapter, _storage_manager, index_manager) = setup_test_components();
+    let (_net_adapter, index_manager) = setup_test_components();
 
     let master_key = SecretKey::random();
     let master_addr = ScratchpadAddress::new(master_key.public_key());
@@ -172,7 +161,7 @@ async fn test_load_non_existent_initializes_default() {
 
 #[tokio::test]
 async fn test_reset() {
-    let (_net_adapter, _storage_manager, index_manager) = setup_test_components();
+    let (_net_adapter, index_manager) = setup_test_components();
     let (master_key, master_addr) = get_test_master_keys("reset");
 
     let (pad1_addr, _, pad1_key_bytes) = generate_random_pad("pad_reset");
@@ -217,7 +206,7 @@ async fn test_reset() {
     assert_eq!(stats.occupied_pads, 0);
     assert_eq!(stats.free_pads, 0);
 
-    let (_net_adapter2, _storage_manager2, index_manager2) = setup_test_components();
+    let (_net_adapter2, index_manager2) = setup_test_components();
     index_manager2
         .load_or_initialize(&master_addr, &master_key)
         .await

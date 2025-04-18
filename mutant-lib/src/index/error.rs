@@ -1,4 +1,4 @@
-use crate::storage::StorageError;
+use crate::network::NetworkError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -18,8 +18,8 @@ pub enum IndexError {
     #[error("Index persistence operation failed: {0}")]
     IndexPersistenceError(String),
 
-    #[error("Storage layer error during index operation: {0}")]
-    Storage(#[from] StorageError),
+    #[error("Network layer error during index operation: {0}")]
+    Network(#[from] NetworkError),
 
     #[error("Inconsistent index state: {0}")]
     InconsistentState(String),

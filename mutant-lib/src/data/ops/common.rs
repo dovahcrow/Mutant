@@ -2,7 +2,6 @@ use crate::index::manager::DefaultIndexManager;
 use crate::index::PadInfo;
 use crate::network::AutonomiNetworkAdapter;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
-use crate::storage::manager::DefaultStorageManager;
 use autonomi::SecretKey;
 use std::sync::Arc;
 use tokio::time::Duration;
@@ -14,7 +13,6 @@ pub(crate) const CONFIRMATION_RETRY_LIMIT: u32 = 360;
 pub(crate) struct DataManagerDependencies {
     pub index_manager: Arc<DefaultIndexManager>,
     pub pad_lifecycle_manager: Arc<DefaultPadLifecycleManager>,
-    pub storage_manager: Arc<DefaultStorageManager>,
     pub network_adapter: Arc<AutonomiNetworkAdapter>,
 }
 

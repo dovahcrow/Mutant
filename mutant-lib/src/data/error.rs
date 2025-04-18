@@ -1,6 +1,6 @@
 use crate::index::IndexError;
+use crate::network::NetworkError;
 use crate::pad_lifecycle::PadLifecycleError;
-use crate::storage::StorageError;
 use thiserror::Error;
 
 /// Represents errors that can occur during data management operations (store, fetch, remove, update).
@@ -38,9 +38,9 @@ pub enum DataError {
     #[error("Pad lifecycle layer error during data operation: {0}")]
     PadLifecycle(#[from] PadLifecycleError),
 
-    /// An error propagated from the storage layer.
-    #[error("Storage layer error during data operation: {0}")]
-    Storage(#[from] StorageError),
+    /// An error propagated from the network layer.
+    #[error("Network layer error during data operation: {0}")]
+    Network(#[from] NetworkError),
 
     /// The operation was cancelled by a user-provided callback returning `false`.
     #[error("Operation cancelled by callback")]

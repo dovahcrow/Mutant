@@ -2,6 +2,8 @@ use crate::data::chunking::reassemble_data;
 use crate::data::error::DataError;
 use crate::internal_events::{invoke_get_callback, GetCallback, GetEvent};
 
+use crate::network::AutonomiNetworkAdapter;
+
 use autonomi::SecretKey;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
@@ -69,13 +71,13 @@ pub(crate) async fn fetch_op(
     let mut sorted_pads = key_info.pads.clone();
     sorted_pads.sort_by_key(|p| p.chunk_index);
 
-    let storage_manager = Arc::clone(&deps.storage_manager);
+    let network_adapter = Arc::clone(&deps.network_adapter);
     for pad_info in sorted_pads.iter() {
-        let sm_clone = Arc::clone(&storage_manager);
+        let adapter_clone = Arc::clone(&network_adapter);
         let address = pad_info.address;
         let index = pad_info.chunk_index;
         fetch_futures.push(async move {
-            let result = sm_clone.read_pad_scratchpad(&address).await;
+            let result = adapter_clone.get_raw_scratchpad(&address).await;
             (index, address, result)
         });
     }
@@ -161,7 +163,7 @@ pub(crate) async fn fetch_op(
             }
             Err(e) => {
                 debug!("Failed to fetch chunk {}: {}", chunk_index, e);
-                return Err(DataError::Storage(e));
+                return Err(DataError::Network(e));
             }
         }
     }

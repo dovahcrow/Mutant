@@ -4,10 +4,9 @@ use crate::index::manager::DefaultIndexManager;
 use crate::index::structure::PadInfo;
 use crate::index::structure::PadStatus;
 use crate::internal_events::{invoke_put_callback, PutCallback, PutEvent};
+use crate::network::{AutonomiNetworkAdapter, NetworkError};
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::pad_lifecycle::PadOrigin;
-use crate::storage::error::StorageError;
-use crate::storage::manager::DefaultStorageManager;
 use autonomi::SecretKey;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
@@ -126,8 +125,7 @@ pub(crate) async fn store_op(
 struct ConfirmContext {
     index_manager: Arc<DefaultIndexManager>,
     pad_lifecycle_manager: Arc<DefaultPadLifecycleManager>,
-    storage_manager: Arc<DefaultStorageManager>,
-    network_adapter: Arc<crate::network::AutonomiNetworkAdapter>,
+    network_adapter: Arc<AutonomiNetworkAdapter>,
 }
 
 async fn confirm_pad_write(
@@ -147,8 +145,8 @@ async fn confirm_pad_write(
         );
 
         let fetch_result = ctx
-            .storage_manager
-            .read_pad_scratchpad(&pad_info.address)
+            .network_adapter
+            .get_raw_scratchpad(&pad_info.address)
             .await;
 
         match fetch_result {
@@ -293,10 +291,7 @@ async fn confirm_pad_write(
                 }
             }
             Err(fetch_err) => {
-                let is_not_enough_copies = if let StorageError::Network(
-                    crate::network::error::NetworkError::InternalError(msg),
-                ) = &fetch_err
-                {
+                let is_not_enough_copies = if let NetworkError::InternalError(msg) = &fetch_err {
                     msg.contains("NotEnoughCopies")
                 } else {
                     false
@@ -310,14 +305,14 @@ async fn confirm_pad_write(
                         fetch_err
                     );
 
-                    last_error = Some(DataError::Storage(fetch_err));
+                    last_error = Some(DataError::Network(fetch_err));
                 } else {
                     error!(
-                        "Confirmation failed for pad {}: Non-retriable storage error during fetch: {}",
+                        "Confirmation failed for pad {}: Non-retriable network error during fetch: {}",
                         pad_info.address, fetch_err
                     );
 
-                    return Err(DataError::Storage(fetch_err));
+                    return Err(DataError::Network(fetch_err));
                 }
             }
         }
@@ -359,11 +354,10 @@ async fn execute_write_confirm_tasks(
 
     let index_manager = Arc::clone(&deps.index_manager);
     let network_adapter = Arc::clone(&deps.network_adapter);
-    let storage_manager = Arc::clone(&deps.storage_manager);
     let pad_lifecycle_manager = Arc::clone(&deps.pad_lifecycle_manager);
 
     for task_input in tasks_to_run_input {
-        let storage_manager_clone = Arc::clone(&storage_manager);
+        let network_adapter_clone = Arc::clone(&network_adapter);
         let secret_key_write = task_input.secret_key.clone();
         let pad_info_write = task_input.pad_info.clone();
         let current_status = pad_info_write.status.clone();
@@ -380,11 +374,11 @@ async fn execute_write_confirm_tasks(
                     pad_info_write.chunk_index,
                     pad_info_write.address
                 );
-                let write_attempt_result = storage_manager_clone
-                    .write_pad_data(&secret_key_write, &chunk_data, &current_status)
+                let write_attempt_result = network_adapter_clone
+                    .put_raw(&secret_key_write, &chunk_data, &current_status)
                     .await
                     .map(|_| ())
-                    .map_err(DataError::Storage);
+                    .map_err(DataError::Network);
 
                 match write_attempt_result {
                     Ok(()) => {
@@ -392,13 +386,12 @@ async fn execute_write_confirm_tasks(
                         break;
                     }
                     Err(e) => {
-                        let is_retriable_network_error =
-                            if let DataError::Storage(StorageError::Network(net_err)) = &e {
-                                let msg = net_err.to_string();
-                                msg.contains("NotEnoughCopies") || msg.contains("Timeout")
-                            } else {
-                                false
-                            };
+                        let is_retriable_network_error = if let DataError::Network(net_err) = &e {
+                            let msg = net_err.to_string();
+                            msg.contains("NotEnoughCopies") || msg.contains("Timeout")
+                        } else {
+                            false
+                        };
 
                         if is_retriable_network_error {
                             warn!(
@@ -513,7 +506,6 @@ async fn execute_write_confirm_tasks(
 
                                 let index_manager_confirm = Arc::clone(&index_manager);
                                 let pad_lifecycle_confirm = Arc::clone(&pad_lifecycle_manager);
-                                let storage_manager_confirm = Arc::clone(&storage_manager);
                                 let network_adapter_confirm = Arc::clone(&network_adapter);
                                 let user_key_clone_confirm = user_key.clone();
                                 let callback_arc_clone_confirm = callback_arc.clone();
@@ -523,7 +515,6 @@ async fn execute_write_confirm_tasks(
                                 let confirm_ctx = ConfirmContext {
                                     index_manager: Arc::clone(&index_manager_confirm),
                                     pad_lifecycle_manager: Arc::clone(&pad_lifecycle_confirm),
-                                    storage_manager: Arc::clone(&storage_manager_confirm),
                                     network_adapter: Arc::clone(&network_adapter_confirm),
                                 };
 

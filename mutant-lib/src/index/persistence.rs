@@ -1,8 +1,6 @@
 use crate::index::error::IndexError;
 use crate::index::structure::{MasterIndex, PadStatus};
 use crate::network::AutonomiNetworkAdapter;
-use crate::storage::error::StorageError;
-use crate::storage::manager::DefaultStorageManager;
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::{debug, error, info, trace, warn};
 
@@ -23,7 +21,6 @@ pub(crate) fn deserialize_index(data: &[u8]) -> Result<MasterIndex, IndexError> 
 }
 
 pub(crate) async fn load_index(
-    storage_manager: &DefaultStorageManager,
     network_adapter: &AutonomiNetworkAdapter,
     address: &ScratchpadAddress,
     key: &SecretKey,
@@ -48,7 +45,7 @@ pub(crate) async fn load_index(
                 "Error checking existence for index scratchpad {}: {}",
                 address, e
             );
-            return Err(IndexError::Storage(StorageError::Network(e)));
+            return Err(IndexError::Network(e));
         }
     }
 
@@ -57,7 +54,7 @@ pub(crate) async fn load_index(
         address
     );
 
-    match storage_manager.read_pad_scratchpad(address).await {
+    match network_adapter.get_raw_scratchpad(address).await {
         Ok(scratchpad) => {
             let decrypted_data = match scratchpad.decrypt_data(key) {
                 Ok(data_bytes) => data_bytes.to_vec(),
@@ -85,14 +82,13 @@ pub(crate) async fn load_index(
             deserialize_index(&decrypted_data)
         }
         Err(e) => {
-            error!("Storage error during index load from {}: {}", address, e);
-            Err(IndexError::Storage(e))
+            error!("Network error during index load from {}: {}", address, e);
+            Err(IndexError::Network(e))
         }
     }
 }
 
 pub(crate) async fn save_index(
-    storage_manager: &DefaultStorageManager,
     network_adapter: &AutonomiNetworkAdapter,
     address: &ScratchpadAddress,
     key: &SecretKey,
@@ -122,16 +118,16 @@ pub(crate) async fn save_index(
                 "Failed to check existence for index pad {} before save: {}",
                 address, e
             );
-            return Err(IndexError::Storage(StorageError::Network(e)));
+            return Err(IndexError::Network(e));
         }
     };
 
-    storage_manager
-        .write_pad_data(key, &serialized_data, &status_hint)
+    network_adapter
+        .put_raw(key, &serialized_data, &status_hint)
         .await
         .map_err(|e| {
-            error!("Failed to write index via StorageManager: {}", e);
-            IndexError::IndexPersistenceError(format!("Failed to write index to storage: {}", e))
+            error!("Failed to write index via NetworkAdapter: {}", e);
+            IndexError::IndexPersistenceError(format!("Failed to write index to network: {}", e))
         })?;
     debug!("Persistence: MasterIndex saved successfully.");
     Ok(())

@@ -2,7 +2,6 @@ use crate::index::error::IndexError;
 use crate::index::persistence::{load_index, save_index};
 use crate::index::structure::{KeyInfo, MasterIndex, PadStatus, DEFAULT_SCRATCHPAD_SIZE};
 use crate::network::AutonomiNetworkAdapter;
-use crate::storage::manager::DefaultStorageManager;
 use crate::types::{KeyDetails, StorageStats};
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::{debug, error, info, trace, warn};
@@ -13,7 +12,6 @@ use tokio::sync::Mutex;
 /// Manages the state of the index, including key info, free pads, and pending verification pads.
 pub struct DefaultIndexManager {
     state: Mutex<MasterIndex>,
-    storage_manager: Arc<DefaultStorageManager>,
     network_adapter: Arc<AutonomiNetworkAdapter>,
     master_index_key: SecretKey,
 }
@@ -23,20 +21,15 @@ impl DefaultIndexManager {
     ///
     /// # Arguments
     ///
-    /// * `storage_manager` - An `Arc` reference to a `DefaultStorageManager` implementation.
     /// * `network_adapter` - An `Arc` reference to a `AutonomiNetworkAdapter` implementation.
+    /// * `master_index_key` - The secret key required to decrypt the master index.
     ///
     /// # Returns
     ///
     /// A new `DefaultIndexManager` instance initialized with a default `MasterIndex`.
-    pub fn new(
-        storage_manager: Arc<DefaultStorageManager>,
-        network_adapter: Arc<AutonomiNetworkAdapter>,
-        master_index_key: SecretKey,
-    ) -> Self {
+    pub fn new(network_adapter: Arc<AutonomiNetworkAdapter>, master_index_key: SecretKey) -> Self {
         Self {
             state: Mutex::new(MasterIndex::default()),
-            storage_manager,
             network_adapter,
             master_index_key,
         }
@@ -60,7 +53,6 @@ impl DefaultIndexManager {
     ) -> Result<(), IndexError> {
         info!("IndexManager: Loading index from storage...");
         match load_index(
-            self.storage_manager.as_ref(),
             self.network_adapter.as_ref(),
             master_index_address,
             master_index_key,
@@ -73,7 +65,7 @@ impl DefaultIndexManager {
                 info!("Index loaded successfully.");
                 Ok(())
             }
-            Err(e @ IndexError::DeserializationError(_)) | Err(e @ IndexError::Storage(_)) => {
+            Err(e @ IndexError::DeserializationError(_)) => {
                 warn!(
                     "Index scratchpad not found or could not be loaded at {}: {}. Initializing default index.",
                     master_index_address, e
@@ -107,7 +99,6 @@ impl DefaultIndexManager {
         debug!("IndexManager: Saving index to storage...");
         let state_guard = self.state.lock().await;
         save_index(
-            self.storage_manager.as_ref(),
             self.network_adapter.as_ref(),
             master_index_address,
             master_index_key,
@@ -629,7 +620,6 @@ impl DefaultIndexManager {
     ) -> Result<MasterIndex, IndexError> {
         debug!("IndexManager: Fetching remote index directly...");
         load_index(
-            self.storage_manager.as_ref(),
             self.network_adapter.as_ref(),
             master_index_address,
             &self.master_index_key,

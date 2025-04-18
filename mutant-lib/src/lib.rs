@@ -67,8 +67,6 @@ mod index;
 mod network;
 /// Manages the lifecycle of pads, including creation, deletion, and updates.
 mod pad_lifecycle;
-/// Defines storage backends and interfaces for persisting data.
-mod storage;
 
 /// Defines custom error types used throughout the `mutant-lib`.
 mod internal_error;

@@ -2,7 +2,6 @@ use crate::data::DataError;
 use crate::index::IndexError;
 use crate::network::NetworkError;
 use crate::pad_lifecycle::PadLifecycleError;
-use crate::storage::StorageError;
 use thiserror::Error;
 
 /// Represents the primary error type returned by `mutant-lib` functions.
@@ -18,10 +17,6 @@ pub enum Error {
     /// Errors originating from the network layer (e.g., connection issues, peer discovery failures).
     #[error("Network Layer Error: {0}")]
     Network(#[from] NetworkError),
-
-    /// Errors originating from the storage backend (e.g., I/O errors, data corruption).
-    #[error("Storage Layer Error: {0}")]
-    Storage(#[from] StorageError),
 
     /// Errors originating from the indexing layer (e.g., search failures, index inconsistency).
     #[error("Index Layer Error: {0}")]

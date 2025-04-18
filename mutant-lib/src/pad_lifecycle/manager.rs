@@ -10,7 +10,6 @@ use crate::pad_lifecycle::import;
 use crate::pad_lifecycle::pool::acquire_free_pad;
 use crate::pad_lifecycle::verification::verify_pads_concurrently;
 use crate::pad_lifecycle::PadOrigin;
-use crate::storage::manager::DefaultStorageManager;
 
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::error;
@@ -24,19 +23,16 @@ use tokio::time::{interval, Duration};
 pub struct DefaultPadLifecycleManager {
     index_manager: Arc<DefaultIndexManager>,
     network_adapter: Arc<AutonomiNetworkAdapter>,
-    storage_manager: Arc<DefaultStorageManager>,
 }
 
 impl DefaultPadLifecycleManager {
     pub fn new(
         index_manager: Arc<DefaultIndexManager>,
         network_adapter: Arc<AutonomiNetworkAdapter>,
-        storage_manager: Arc<DefaultStorageManager>,
     ) -> Self {
         Self {
             index_manager,
             network_adapter,
-            storage_manager,
         }
     }
 
@@ -309,22 +305,22 @@ impl DefaultPadLifecycleManager {
 
         for i in 0..count {
             let index_manager = Arc::clone(&self.index_manager);
-            let storage_manager = Arc::clone(&self.storage_manager);
+            let network_adapter = Arc::clone(&self.network_adapter);
 
             join_set.spawn(async move {
                 trace!("Reserve task {}: Generating key and address", i);
                 let secret_key = SecretKey::random(); 
                 let address = ScratchpadAddress::new(secret_key.public_key());
-                trace!("Reserve task {}: Reserving {} on network via write_pad_data", i, address);
+                trace!("Reserve task {}: Reserving {} on network via put_raw", i, address);
 
                 
-                match storage_manager
-                    .write_pad_data(&secret_key, &[0u8], &PadStatus::Generated)
+                match network_adapter
+                    .put_raw(&secret_key, &[0u8], &PadStatus::Generated)
                     .await
                 {
                     Ok(created_address) => {
                          if created_address != address {
-                             warn!("write_pad_data returned address {} but expected {}", created_address, address);
+                             warn!("put_raw returned address {} but expected {}", created_address, address);
                          }
                          trace!("Reserve task {}: Network reservation successful for {}", i, address);
                         
@@ -347,15 +343,12 @@ impl DefaultPadLifecycleManager {
                             }
                     },
                     Err(e) => {
-                        error!("Reserve task {}: Failed network reservation (write_pad_data) for {}: {}", i, address, e);
+                        error!("Reserve task {}: Failed network reservation (put_raw) for {}: {}", i, address, e);
                          
                          
                          
                          
-                         Err(PadLifecycleError::Network(NetworkError::InternalError(format!(
-                             "write_pad_data failed for {}: {}",
-                             address, e
-                         ))))
+                         Err(PadLifecycleError::Network(e))
                     }
                 }
             });
@@ -396,6 +389,7 @@ impl DefaultPadLifecycleManager {
                 }
                  _ = ticker.tick(), if maybe_callback.is_some() => {}
             }
+
         }
 
         info!(
