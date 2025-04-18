@@ -8,11 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - YYYY-MM-DD
 
 ### Added
-- Placeholder for 0.3.0 changes.
-
-## [Unreleased]
-
-### Added
 - Added comprehensive architecture & implementation documentation (`docs/mutant_lib/architecture.md`).
 - Added crate-level documentation to `mutant-lib/src/lib.rs`.
 - Added retry logic for transient errors (`NotEnoughCopies`, `Timeout`) during the initial write phase of `put`.
