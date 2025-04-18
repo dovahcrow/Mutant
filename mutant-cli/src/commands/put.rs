@@ -3,7 +3,7 @@ use crate::callbacks::put::create_put_callback;
 use indicatif::MultiProgress;
 use log::{debug, warn};
 use mutant_lib::MutAnt;
-use mutant_lib::error::Error as LibError;
+use mutant_lib::error::{DataError, Error as LibError};
 use std::io::{self, Read};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -48,11 +48,38 @@ pub async fn handle_put(
 
     let result = if force {
         debug!(
-            "CLI: Force flag is set. Proceeding with update for key: {}",
+            "CLI: Force flag is set. Removing existing key '{}' before storing.",
             key
         );
+        // First, attempt to remove the key. We ignore RecordNotFound errors.
+        match mutant.remove(&key).await {
+            Ok(_) => {
+                debug!(
+                    "Successfully removed existing key '{}' or it didn't exist.",
+                    key
+                );
+            }
+            Err(LibError::Data(DataError::KeyNotFound(_))) => {
+                debug!(
+                    "Key '{}' not found during remove, proceeding with store.",
+                    key
+                );
+                // This is expected if the key didn't exist, continue to store.
+            }
+            Err(e) => {
+                // Any other error during remove is fatal for the update operation
+                eprintln!("Error removing key '{}' before update: {}", key, e);
+                let msg = format!("Error removing key before update: {}", e);
+                abandon_pb(&res_pb_opt, msg.clone());
+                abandon_pb(&upload_pb_opt, msg.clone());
+                abandon_pb(&confirm_pb_opt, msg);
+                return ExitCode::FAILURE;
+            }
+        }
+        // Now, store the new data
+        debug!("Storing new data for key '{}' after removal.", key);
         mutant
-            .update_with_progress(key.clone(), &data_vec, Some(callback))
+            .store_with_progress(key.clone(), &data_vec, Some(callback))
             .await
     } else {
         debug!("CLI: Checking status of key '{}' before storing.", key);

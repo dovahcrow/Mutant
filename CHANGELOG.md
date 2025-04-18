@@ -67,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Handle inconsistency during `put` resume where `check_existence` fails but pad actually exists on network, preventing `put_raw` from erroring on create.
 - Modified resume logic (`prepare_pads_for_store`) to attempt writing `Generated` pads even if `check_existence` fails, relying on `put_raw`'s inconsistency handling.
 - Increase sleep time in `manage_local_testnet.sh` to allow EVM testnet more time to start in CI.
+- **CLI:** Changed `put --force` behavior to perform `remove` then `store` instead of calling the unimplemented `update` library function.
 
 ### Changed
 - CLI `put` command now checks key status before storing/updating:
