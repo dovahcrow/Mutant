@@ -1,7 +1,7 @@
 use crate::data::error::DataError;
 use crate::data::ops;
 use crate::data::ops::common::DataManagerDependencies;
-use crate::events::{GetCallback, PutCallback};
+use crate::internal_events::{GetCallback, PutCallback};
 use crate::index::IndexManager;
 use crate::network::NetworkAdapter;
 use crate::pad_lifecycle::PadLifecycleManager;

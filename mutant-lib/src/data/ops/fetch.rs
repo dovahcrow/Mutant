@@ -1,6 +1,6 @@
 use crate::data::chunking::reassemble_data;
 use crate::data::error::DataError;
-use crate::events::{invoke_get_callback, GetCallback, GetEvent};
+use crate::internal_events::{invoke_get_callback, GetCallback, GetEvent};
 
 use autonomi::SecretKey;
 use futures::stream::{FuturesUnordered, StreamExt};

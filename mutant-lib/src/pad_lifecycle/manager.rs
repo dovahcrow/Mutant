@@ -1,6 +1,6 @@
 use crate::api::{ReserveCallback, ReserveEvent};
-use crate::events::PurgeCallback;
-use crate::events::PutCallback;
+use crate::internal_events::PurgeCallback;
+use crate::internal_events::PutCallback;
 use crate::index::structure::PadStatus;
 use crate::index::IndexManager;
 use crate::network::NetworkError;

@@ -1,4 +1,4 @@
-use crate::events::{invoke_purge_callback, PurgeCallback, PurgeEvent};
+use crate::internal_events::{invoke_purge_callback, PurgeCallback, PurgeEvent};
 use crate::network::NetworkAdapter;
 use crate::pad_lifecycle::error::PadLifecycleError;
 use autonomi::ScratchpadAddress;

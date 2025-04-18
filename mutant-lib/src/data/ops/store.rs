@@ -1,8 +1,8 @@
 use crate::data::chunking::chunk_data;
 use crate::data::error::DataError;
-use crate::events::{invoke_put_callback, PutCallback, PutEvent};
 use crate::index::structure::PadStatus;
 use crate::index::{IndexManager, PadInfo};
+use crate::internal_events::{invoke_put_callback, PutCallback, PutEvent};
 use crate::pad_lifecycle::PadLifecycleManager;
 use crate::pad_lifecycle::PadOrigin;
 use crate::storage::{StorageError, StorageManager};

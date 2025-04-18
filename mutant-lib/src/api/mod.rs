@@ -1,4 +1,4 @@
-use crate::error::Error as LibError;
+use crate::internal_error::Error as LibError;
 
 use autonomi::ScratchpadAddress;
 use std::future::Future;
@@ -12,7 +12,7 @@ pub mod mutant;
 /// Re-exports the main `MutAnt` structure for easy access.
 pub use mutant::MutAnt;
 
-use crate::events::PutEvent;
+use crate::internal_events::PutEvent;
 /// Callback type specific to the API layer for `put` operations.
 /// Note: This might shadow the callback type defined in `crate::events`.
 #[allow(dead_code)]
@@ -20,7 +20,7 @@ pub type PutCallback = Box<
     dyn Fn(PutEvent) -> Pin<Box<dyn Future<Output = Result<bool, LibError>> + Send>> + Send + Sync,
 >;
 
-use crate::events::GetEvent;
+use crate::internal_events::GetEvent;
 /// Callback type specific to the API layer for `get` operations.
 /// Note: This might shadow the callback type defined in `crate::events`.
 #[allow(dead_code)]

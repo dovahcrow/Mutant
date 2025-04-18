@@ -1,8 +1,8 @@
+use crate::callbacks::progress::StyledProgressBar;
 use dialoguer::Confirm;
 use indicatif::MultiProgress;
-
-use crate::callbacks::progress::StyledProgressBar;
-use mutant_lib::{Error as LibError, InitCallback, InitProgressEvent};
+use mutant_lib::prelude::error::Error as LibError;
+use mutant_lib::prelude::events::{InitCallback, InitProgressEvent};
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 

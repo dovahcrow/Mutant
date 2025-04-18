@@ -2,7 +2,11 @@ use crate::app::CliError;
 use crate::callbacks::progress::StyledProgressBar;
 use indicatif::{MultiProgress, ProgressDrawTarget};
 use log::{debug, error, info, trace, warn};
-use mutant_lib::{Error as LibError, IndexError, MutAnt, ScratchpadAddress};
+use mutant_lib::ScratchpadAddress;
+use mutant_lib::prelude::{
+    MutAnt,
+    error::{Error as LibError, IndexError},
+};
 use std::collections::{HashMap, HashSet};
 
 pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliError> {

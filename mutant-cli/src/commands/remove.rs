@@ -1,6 +1,6 @@
 use log::debug;
 
-use mutant_lib::MutAnt;
+use mutant_lib::prelude::MutAnt;
 use std::process::ExitCode;
 
 pub async fn handle_rm(mutant: MutAnt, key: String) -> ExitCode {

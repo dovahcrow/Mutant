@@ -1,8 +1,8 @@
 use log::{error, info};
+use mutant_lib::prelude::MutAnt;
+use std::process::ExitCode;
 
 use dialoguer::Confirm;
-use mutant_lib::MutAnt;
-use std::process::ExitCode;
 
 pub async fn handle_reset(mutant: MutAnt) -> ExitCode {
     if !Confirm::new()

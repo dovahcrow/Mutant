@@ -1,9 +1,8 @@
 use super::progress::StyledProgressBar;
-
 use indicatif::MultiProgress;
-use log::{debug, warn};
-use mutant_lib::Error as LibError;
-use mutant_lib::{GetCallback, GetEvent};
+use log::{error, trace};
+use mutant_lib::prelude::error::Error as LibError;
+use mutant_lib::prelude::events::{GetCallback, GetEvent};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -38,7 +37,7 @@ pub fn create_get_callback(
                     });
                     pb.set_length(total_chunks as u64);
                     pb.set_position(0);
-                    debug!(
+                    trace!(
                         "Get Callback: Starting - Set length to {} chunks",
                         total_chunks
                     );
@@ -51,7 +50,7 @@ pub fn create_get_callback(
                             pb.set_position((chunk_index + 1) as u64);
                         }
                     } else {
-                        warn!(
+                        error!(
                             "Get Callback: ChunkFetched event received but progress bar does not exist."
                         );
                     }
@@ -71,10 +70,10 @@ pub fn create_get_callback(
                     if let Some(pb) = pb_guard.take() {
                         if !pb.is_finished() {
                             pb.finish_and_clear();
-                            debug!("Get Callback: Complete - Progress bar finished and cleared.");
+                            trace!("Get Callback: Complete - Progress bar finished and cleared.");
                         }
                     } else {
-                        debug!(
+                        trace!(
                             "Get Callback: Complete event received but progress bar was already finished or never existed."
                         );
                     }

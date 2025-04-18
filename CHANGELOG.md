@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed hardcoded devnet key format in CLI.
 - Fixed CLI to adapt to `mutant-lib` v0.2.0 API changes.
 - Fixed first testnet run issues.
+- Fixed various imports in `mutant-cli` after `mutant-lib` prelude refactoring.
 
 ### Changed
 - Restricted public API surface of `mutant-lib`, re-exporting only necessary types.

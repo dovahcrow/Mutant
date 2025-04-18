@@ -1,7 +1,7 @@
 use crate::data::error::DataError;
 use crate::data::ops::common::{DataManagerDependencies, WriteTaskInput};
-use crate::events::PutCallback;
-use crate::events::{invoke_put_callback, PutEvent};
+use crate::internal_events::PutCallback;
+use crate::internal_events::{invoke_put_callback, PutEvent};
 use crate::index::{structure::PadStatus, KeyInfo, PadInfo};
 use crate::pad_lifecycle::PadOrigin;
 use autonomi::SecretKey;

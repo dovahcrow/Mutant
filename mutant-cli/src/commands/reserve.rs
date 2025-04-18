@@ -2,8 +2,9 @@ use crate::app::CliError;
 use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{error, info};
-use mutant_lib::Error as LibError;
-use mutant_lib::{MutAnt, ReserveCallback, ReserveEvent};
+use mutant_lib::prelude::MutAnt;
+use mutant_lib::prelude::error::Error as LibError;
+use mutant_lib::prelude::events::{ReserveCallback, ReserveEvent};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

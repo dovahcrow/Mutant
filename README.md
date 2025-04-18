@@ -72,17 +72,6 @@ Add `mutant-lib` to your `Cargo.toml`:
 mutant-lib = "0.2" # Check crates.io for the latest version
 ```
 
-### Local installation for development
-
-```bash
-git clone https://github.com/Champii/MutAnt.git
-cd MutAnt
-# Install the CLI
-cargo install --path mutant-cli
-# Build the library (or use it directly in another workspace project)
-cargo build -p mutant-lib
-```
-
 ## Command-Line Interface (CLI)
 
 MutAnt includes the `mutant` command for convenient command-line access.
@@ -189,9 +178,7 @@ async fn main() -> anyhow::Result<()> {
     // Replace with your actual private key (hex format, with or without 0x prefix)
     let private_key_hex = "0xYOUR_PRIVATE_KEY_HEX".to_string();
 
-    // Initialize with default configuration
-    // The second argument is an optional callback for initialization progress
-    let mut ant = MutAnt::init(private_key_hex, MutAntConfig::default(), None).await?;
+    let mut ant = MutAnt::init(private_key_hex).await?;
 
     println!("Storing data...");
     ant.store("greeting", b"hello world").await?;

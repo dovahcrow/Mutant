@@ -1,7 +1,7 @@
 use crate::data::manager::{DataManager, DefaultDataManager};
-use crate::error::Error;
-use crate::events::{invoke_init_callback, InitCallback, InitProgressEvent};
 use crate::index::manager::{DefaultIndexManager, IndexManager};
+use crate::internal_error::Error;
+use crate::internal_events::{invoke_init_callback, InitCallback, InitProgressEvent};
 use crate::network::adapter::{AutonomiNetworkAdapter, NetworkAdapter};
 use crate::pad_lifecycle::manager::{DefaultPadLifecycleManager, PadLifecycleManager};
 use crate::storage::manager::{DefaultStorageManager, StorageManager};

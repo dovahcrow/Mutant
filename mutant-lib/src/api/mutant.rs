@@ -1,13 +1,14 @@
 use crate::api::init::initialize_layers;
 use crate::api::ReserveCallback;
 use crate::data::manager::DataManager;
-use crate::error::Error;
 use crate::index::manager::IndexManager;
 use crate::index::structure::MasterIndex;
+use crate::internal_error::Error;
+use crate::internal_events::{GetCallback, InitCallback, PurgeCallback, PutCallback};
 use crate::network::{NetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::PadLifecycleManager;
 use crate::types::MutAntConfig;
-use crate::{GetCallback, InitCallback, KeyDetails, PurgeCallback, PutCallback, StorageStats};
+use crate::{KeyDetails, StorageStats};
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::{debug, info, warn};
 use std::sync::Arc;
