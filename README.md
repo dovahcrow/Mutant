@@ -60,16 +60,8 @@ MutAnt will look for your ant wallets and ask you which one you want to use if y
 
 ## Installation
 
-### Install CLI from crates.io (Recommended)
 ```bash
 cargo install mutant
-```
-
-### Install Library from crates.io
-Add `mutant-lib` to your `Cargo.toml`:
-```toml
-[dependencies]
-mutant-lib = "0.2" # Check crates.io for the latest version
 ```
 
 ## Command-Line Interface (CLI)
