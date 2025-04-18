@@ -64,7 +64,9 @@ start_evm() {
     echo "Launched background command (Launcher PID: $bg_launcher_pid) to start evm-testnet."
 
     # Give it time to start
-    sleep 1
+    sleep 5
+    # Give it more time to start
+    echo "Waited 5 seconds for EVM testnet to initialize..."
 
     # Find the actual EVM_PID using pgrep with the full path
     EVM_PID=$(pgrep -f "$pgrep_pattern")
