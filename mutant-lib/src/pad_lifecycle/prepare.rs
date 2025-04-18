@@ -299,15 +299,32 @@ pub(crate) async fn prepare_pads_for_store(
                             ))
                         })?;
 
-                        let pad_exists_known = match pad_info.origin {
+                        // Determine if the pad is known to exist based on origin or checks.
+                        let should_attempt_write = match pad_info.origin {
+                            // Pads from the free pool *should* exist.
                             PadOrigin::FreePool { .. } => true,
-                            PadOrigin::Generated => existence_results
-                                .get(&pad_info.address)
-                                .copied()
-                                .unwrap_or(false),
+                            // For generated pads, trust existence check result, BUT...
+                            PadOrigin::Generated => {
+                                let exists = existence_results
+                                    .get(&pad_info.address)
+                                    .copied()
+                                    .unwrap_or(false);
+                                if !exists {
+                                    // ... if check says it *doesn't* exist, log it, but still attempt write.
+                                    // This handles potential check_existence inconsistencies seen in devnet.
+                                    // The put_raw function has a workaround for "already exists" errors on create.
+                                    warn!(
+                                        "Prepare: Network check indicated pad {} (Generated) does not exist, but attempting write anyway due to potential inconsistency.",
+                                        pad_info.address
+                                    );
+                                    true // Attempt write despite negative existence check
+                                } else {
+                                    true // Exists, so definitely attempt write
+                                }
+                            }
                         };
 
-                        if pad_exists_known {
+                        if should_attempt_write {
                             debug!(
                                 "Prepare: Task: Write chunk {} to pad {} (Origin: {:?}, Status: {:?})",
                                 pad_info.chunk_index, pad_info.address, pad_info.origin, pad_info.status
@@ -318,7 +335,9 @@ pub(crate) async fn prepare_pads_for_store(
                                 chunk_data: chunk.clone(),
                             });
                         } else {
-                            warn!("Prepare: Skipping write task for pad {} which was found not to exist and wasn't replaced.", pad_info.address);
+                            // This branch should ideally not be reached with the new logic above for Generated pads,
+                            // but kept for safety / potential future scenarios.
+                            warn!("Prepare: Skipping write task for pad {} (Origin: {:?}, Status: {:?}) based on existence check.", pad_info.address, pad_info.origin, pad_info.status);
                         }
                     } else {
                         warn!(
