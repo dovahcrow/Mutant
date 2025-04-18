@@ -57,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed CLI to adapt to `mutant-lib` v0.2.0 API changes.
 - Fixed first testnet run issues.
 - Fixed various imports in `mutant-cli` after `mutant-lib` prelude refactoring.
+- Correctly handle specific `IndexError::DeserializationError` during `sync` when remote index does not exist.
 
 ### Changed
 - Restricted public API surface of `mutant-lib`, re-exporting only necessary types.

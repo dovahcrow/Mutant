@@ -59,18 +59,19 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
                 info!("Successfully fetched remote index.");
                 index
             }
-            Err(LibError::Index(IndexError::KeyNotFound(_))) => {
+            Err(LibError::Index(IndexError::DeserializationError(msg)))
+                if msg == "Master index scratchpad not found on network" =>
+            {
                 warn!("Remote master index not found.");
                 pb.set_message("Remote index not found. Checking with user...".to_string());
 
-                // Ask user for confirmation
                 let confirmation = Confirm::with_theme(&ColorfulTheme::default())
                     .with_prompt("Remote master index not found. Do you want to create it based on your current local state?")
                     .interact()
                     .map_err(|e| {
-                        let msg = format!("Failed to get user confirmation: {}", e);
-                        error!("{}", msg);
-                        pb.abandon_with_message(msg.clone());
+                        let err_msg = format!("Failed to get user confirmation: {}", e);
+                        error!("{}", err_msg);
+                        pb.abandon_with_message(err_msg.clone());
                         CliError::UserInputAborted(format!("Confirmation prompt failed: {}", e))
                     })?;
 
@@ -78,15 +79,12 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
                     info!("User confirmed creation of remote index.");
                     pb.set_message("Creating remote index from local state...".to_string());
                     if let Err(e) = mutant.save_master_index().await {
-                        let msg = format!("Failed to create remote index: {}", e);
-                        error!("{}", msg);
-                        pb.abandon_with_message(msg.clone());
+                        let err_msg = format!("Failed to create remote index: {}", e);
+                        error!("{}", err_msg);
+                        pb.abandon_with_message(err_msg.clone());
                         return Err(CliError::from(e));
                     }
                     info!("Successfully created remote index from in-memory state.");
-                    // Since we just created the remote index, it's identical to local.
-                    // We can consider the sync "done" for the purpose of merging indexes.
-                    // Alternatively, fetch it again, but using local is simpler here.
                     local_index.clone()
                 } else {
                     info!("User declined creation of remote index. Aborting sync.");
