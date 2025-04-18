@@ -17,6 +17,34 @@ use tokio::time::sleep;
 
 use super::common::{WriteTaskInput, CONFIRMATION_RETRY_DELAY, CONFIRMATION_RETRY_LIMIT};
 
+/// Stores data associated with a user key onto the Autonomi network.
+///
+/// This operation involves:
+/// 1. Chunking the input data based on the configured scratchpad size.
+/// 2. Preparing pad information (allocating new pads or identifying existing ones to overwrite).
+/// 3. Executing write tasks to upload chunk data to the network.
+/// 4. Executing confirmation tasks to verify successful writes.
+/// 5. Updating the index with pad statuses and marking the key as complete if all pads are confirmed.
+///
+/// Progress can be monitored via an optional callback function.
+///
+/// # Arguments
+///
+/// * `data_manager` - A reference to the `DefaultDataManager` instance.
+/// * `user_key` - The key to associate with the data.
+/// * `data_bytes` - The raw byte data to store.
+/// * `callback` - An optional callback function to report progress events.
+///
+/// # Errors
+///
+/// Returns `DataError` if:
+/// - The configured scratchpad size is invalid (`DataError::ChunkingError`).
+/// - Chunking the data fails (`DataError::ChunkingError`).
+/// - Preparing pad information fails (e.g., index errors) (`DataError::Index`).
+/// - Executing write/confirm tasks fails (e.g., network errors, confirmation failures) (`DataError::Network`, `DataError::InconsistentState`).
+/// - An internal error occurs (e.g., key disappearing) (`DataError::InternalError`).
+/// - The operation is cancelled via the callback (`DataError::OperationCancelled`).
+/// - Callback invocation fails (`DataError::InternalError`).
 pub(crate) async fn store_op(
     data_manager: &crate::data::manager::DefaultDataManager,
     user_key: String,

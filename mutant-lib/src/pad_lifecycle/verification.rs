@@ -7,6 +7,31 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
+/// Verifies the existence of a list of pads on the network concurrently.
+///
+/// This is typically used for pads in the `pending_verification_pads` list.
+/// It spawns a task for each pad to check its existence using the `NetworkAdapter`.
+///
+/// # Arguments
+///
+/// * `network_adapter` - The network adapter for checking existence.
+/// * `pads_to_verify` - A vector of tuples, each containing a `ScratchpadAddress` and its associated key bytes.
+/// * `callback` - An optional callback (`PurgeCallback`) for reporting progress (Starting, PadProcessed, Complete).
+///
+/// # Errors
+///
+/// Returns `PadLifecycleError` if:
+/// - A network error occurs during existence check (`PadLifecycleError::Network`).
+/// - A task join error occurs (`PadLifecycleError::InternalError`).
+/// - A callback invocation fails or cancels the operation (`PadLifecycleError::InternalError`, `PadLifecycleError::OperationCancelled`).
+///   If errors occur, it still attempts to return partial results along with the first error encountered.
+///
+/// # Returns
+///
+/// A tuple containing three vectors:
+/// 1. `verified_pads`: Pads confirmed to exist on the network (address, key_bytes).
+/// 2. `not_found_addresses`: Addresses of pads confirmed *not* to exist on the network.
+/// 3. `retry_pads`: Pads that encountered a network error during the check (address, key_bytes), to be potentially retried later.
 pub(crate) async fn verify_pads_concurrently(
     network_adapter: Arc<AutonomiNetworkAdapter>,
     pads_to_verify: Vec<(ScratchpadAddress, Vec<u8>)>,
@@ -207,9 +232,13 @@ pub(crate) async fn verify_pads_concurrently(
     }
 }
 
+/// Internal status used by concurrent verification tasks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VerificationStatus {
+    /// Pad existence was confirmed.
     Verified,
+    /// Pad was confirmed to not exist.
     NotFound,
+    /// An error occurred during verification.
     Error,
 }

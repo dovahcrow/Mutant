@@ -12,6 +12,46 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Prepares the necessary pad information and write tasks for a store operation.
+///
+/// Handles both initial uploads and resuming incomplete uploads.
+/// - For new uploads: Acquires the required number of pads (from free pool or newly generated),
+///   creates the initial `KeyInfo`, and generates `WriteTaskInput` for all chunks.
+/// - For resume: Loads existing `KeyInfo`, checks for consistency (data size, chunk count),
+///   performs network existence checks for pads that were originally generated, potentially
+///   replaces pads that don't exist or failed checks, and generates `WriteTaskInput` only
+///   for pads that are not yet `Confirmed` or `Written`.
+///
+/// Updates the `KeyInfo` in the `IndexManager` and saves the index cache.
+///
+/// # Arguments
+///
+/// * `data_manager` - A reference to the `DefaultDataManager`.
+/// * `user_key` - The key associated with the data being stored.
+/// * `data_size` - The total size of the data being stored.
+/// * `chunks` - A slice of byte vectors, each representing a chunk of the data.
+/// * `callback_arc` - An `Arc<Mutex<Option<PutCallback>>>` for reporting progress events.
+///
+/// # Errors
+///
+/// Returns `DataError` if:
+/// - Getting scratchpad size fails (`DataError::Index`).
+/// - Getting existing key info fails (`DataError::Index`).
+/// - Resuming and data size/chunk count mismatch (`DataError::InconsistentState`).
+/// - Callback cancels operation (`DataError::OperationCancelled`).
+/// - Network existence check fails (`DataError::InternalError`, wrapped network error).
+/// - Acquiring replacement pads fails (`DataError::PadLifecycle`).
+/// - Updating index fails (`DataError::Index`).
+/// - Saving cache fails (warning logged, but returns Ok).
+/// - Internal logic errors (missing keys, index out of bounds) (`DataError::InternalError`).
+/// - Callback invocation fails (`DataError::InternalError`).
+///
+/// # Returns
+///
+/// A tuple containing:
+/// * The prepared `KeyInfo` (either newly created or the updated existing one).
+/// * A `Vec<WriteTaskInput>` containing the tasks needed to write/confirm data chunks.
+///   This might be empty if the key was already complete or if storing empty data.
 pub(crate) async fn prepare_pads_for_store(
     data_manager: &crate::data::manager::DefaultDataManager,
     user_key: &str,

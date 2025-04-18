@@ -8,6 +8,30 @@ use log::{debug, error, info, trace, warn};
 
 use std::sync::Arc;
 
+/// Fetches data associated with a user key from the Autonomi network.
+///
+/// This operation retrieves all chunks belonging to the key, decrypts them,
+/// and reassembles them into the original data. It requires the key's
+/// metadata to be complete (`is_complete` flag in `KeyInfo`).
+///
+/// Progress can be monitored via an optional callback function.
+///
+/// # Arguments
+///
+/// * `data_manager` - A reference to the `DefaultDataManager` instance.
+/// * `user_key` - The key identifying the data to fetch.
+/// * `callback` - An optional callback function to report progress events.
+///
+/// # Errors
+///
+/// Returns `DataError` if:
+/// - The key is not found (`DataError::KeyNotFound`).
+/// - The key's metadata is marked as incomplete (`DataError::InternalError`).
+/// - The operation is cancelled via the callback (`DataError::OperationCancelled`).
+/// - A network error occurs during fetching (`DataError::Network`).
+/// - An internal error occurs (e.g., missing pad keys, decryption failure, index inconsistency) (`DataError::InternalError`).
+/// - Chunk reassembly fails (`DataError::ChunkingError`).
+/// - Callback invocation fails (`DataError::InternalError`).
 pub(crate) async fn fetch_op(
     data_manager: &crate::data::manager::DefaultDataManager,
     user_key: &str,

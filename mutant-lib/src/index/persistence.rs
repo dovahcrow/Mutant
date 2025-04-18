@@ -4,6 +4,15 @@ use crate::network::AutonomiNetworkAdapter;
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::{debug, error, info, trace, warn};
 
+/// Serializes the `MasterIndex` into CBOR format.
+///
+/// # Arguments
+///
+/// * `index` - A reference to the `MasterIndex` to serialize.
+///
+/// # Errors
+///
+/// Returns `IndexError::SerializationError` if CBOR serialization fails.
 pub(crate) fn serialize_index(index: &MasterIndex) -> Result<Vec<u8>, IndexError> {
     trace!("Serializing MasterIndex");
     serde_cbor::to_vec(index).map_err(|e| {
@@ -12,6 +21,15 @@ pub(crate) fn serialize_index(index: &MasterIndex) -> Result<Vec<u8>, IndexError
     })
 }
 
+/// Deserializes a `MasterIndex` from CBOR-encoded bytes.
+///
+/// # Arguments
+///
+/// * `data` - The byte slice containing the CBOR-encoded index data.
+///
+/// # Errors
+///
+/// Returns `IndexError::DeserializationError` if CBOR deserialization fails.
 pub(crate) fn deserialize_index(data: &[u8]) -> Result<MasterIndex, IndexError> {
     trace!("Deserializing MasterIndex from {} bytes", data.len());
     serde_cbor::from_slice(data).map_err(|e| {
@@ -20,6 +38,26 @@ pub(crate) fn deserialize_index(data: &[u8]) -> Result<MasterIndex, IndexError> 
     })
 }
 
+/// Loads the `MasterIndex` from a specific scratchpad address on the network.
+///
+/// Checks for the existence of the scratchpad first. If found, it fetches,
+/// decrypts, and deserializes the index data.
+///
+/// # Arguments
+///
+/// * `network_adapter` - The network adapter to use for fetching data.
+/// * `address` - The address of the scratchpad containing the index.
+/// * `key` - The secret key required to decrypt the index data.
+///
+/// # Errors
+///
+/// Returns `IndexError` if:
+/// - Checking scratchpad existence fails (`IndexError::Network`).
+/// - The scratchpad does not exist (`IndexError::DeserializationError`).
+/// - Fetching the scratchpad fails (`IndexError::Network`).
+/// - Decrypting the index data fails (`IndexError::DecryptionError`).
+/// - The decrypted data is empty (`IndexError::DeserializationError`).
+/// - Deserializing the index data fails (`IndexError::DeserializationError`).
 pub(crate) async fn load_index(
     network_adapter: &AutonomiNetworkAdapter,
     address: &ScratchpadAddress,
@@ -88,6 +126,24 @@ pub(crate) async fn load_index(
     }
 }
 
+/// Saves the `MasterIndex` to a specific scratchpad address on the network.
+///
+/// Serializes the index, checks if the target scratchpad exists to determine
+/// whether to create or update, and then uses the network adapter to write the data.
+///
+/// # Arguments
+///
+/// * `network_adapter` - The network adapter to use for writing data.
+/// * `address` - The address of the scratchpad where the index should be saved.
+/// * `key` - The secret key used to encrypt the index data.
+/// * `index` - A reference to the `MasterIndex` to save.
+///
+/// # Errors
+///
+/// Returns `IndexError` if:
+/// - Serialization fails (`IndexError::SerializationError`).
+/// - Checking scratchpad existence fails (`IndexError::Network`).
+/// - Writing the data via the network adapter fails (`IndexError::IndexPersistenceError`).
 pub(crate) async fn save_index(
     network_adapter: &AutonomiNetworkAdapter,
     address: &ScratchpadAddress,

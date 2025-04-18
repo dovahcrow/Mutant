@@ -23,7 +23,6 @@ pub struct MutAnt {
     pad_lifecycle_manager: Arc<DefaultPadLifecycleManager>,
     index_manager: Arc<DefaultIndexManager>,
     network_adapter: Arc<AutonomiNetworkAdapter>,
-
     master_index_address: ScratchpadAddress,
     master_index_key: SecretKey,
 }

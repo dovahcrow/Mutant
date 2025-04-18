@@ -7,10 +7,24 @@ use std::path::PathBuf;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+/// Directory name within the user's data directory where cache files are stored.
 const APP_DIR_NAME: &str = "mutant";
+/// Filename for the index cache when using the Devnet.
 const DEVNET_CACHE_FILE: &str = "index_cache.dev.cbor";
+/// Filename for the index cache when using the Mainnet.
 const MAINNET_CACHE_FILE: &str = "index_cache.main.cbor";
 
+/// Determines the full path to the index cache file based on the network choice.
+/// Ensures the necessary cache directory exists.
+///
+/// # Arguments
+///
+/// * `network_choice` - The network (Devnet or Mainnet) the cache is for.
+///
+/// # Errors
+///
+/// Returns `PadLifecycleError::CacheWriteError` if the user data directory
+/// cannot be determined or if the cache directory cannot be created.
 async fn get_cache_path(network_choice: NetworkChoice) -> Result<PathBuf, PadLifecycleError> {
     let base_cache_dir = dirs::data_dir().ok_or_else(|| {
         PadLifecycleError::CacheWriteError("Could not determine user data directory".to_string())
@@ -34,6 +48,22 @@ async fn get_cache_path(network_choice: NetworkChoice) -> Result<PathBuf, PadLif
     Ok(cache_dir.join(filename))
 }
 
+/// Attempts to read and deserialize the `MasterIndex` from the local cache file.
+///
+/// # Arguments
+///
+/// * `network_choice` - The network choice to determine which cache file to read.
+///
+/// # Errors
+///
+/// Returns `PadLifecycleError::CacheReadError` if the cache path cannot be determined,
+/// the file cannot be opened (other than NotFound), or reading fails.
+///
+/// # Returns
+///
+/// * `Ok(Some(MasterIndex))` if the cache exists and is successfully deserialized.
+/// * `Ok(None)` if the cache file does not exist or fails to deserialize (treated as a cache miss).
+/// * `Err(PadLifecycleError)` for other file I/O errors.
 pub(crate) async fn read_cached_index(
     network_choice: NetworkChoice,
 ) -> Result<Option<MasterIndex>, PadLifecycleError> {
@@ -82,6 +112,23 @@ pub(crate) async fn read_cached_index(
     }
 }
 
+/// Serializes and writes the `MasterIndex` to the local cache file.
+///
+/// This overwrites the existing cache file if it exists.
+///
+/// # Arguments
+///
+/// * `index` - A reference to the `MasterIndex` to cache.
+/// * `network_choice` - The network choice to determine which cache file to write.
+///
+/// # Errors
+///
+/// Returns `PadLifecycleError::CacheWriteError` if:
+/// - The cache path cannot be determined.
+/// - The index cannot be serialized.
+/// - The cache file cannot be created/opened for writing.
+/// - Writing to the file fails.
+/// - Syncing the file to disk fails.
 pub(crate) async fn write_cached_index(
     index: &MasterIndex,
     network_choice: NetworkChoice,

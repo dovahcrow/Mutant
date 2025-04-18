@@ -4,6 +4,21 @@ use autonomi::{ScratchpadAddress, SecretKey};
 use hex;
 use log::{debug, info};
 
+/// Imports a pad into the index manager's free list using its private key.
+///
+/// This derives the pad address from the private key and adds it to the free list.
+/// It assumes the pad exists on the network and is usable.
+///
+/// # Arguments
+///
+/// * `index_manager` - A reference to the `DefaultIndexManager`.
+/// * `private_key_hex` - The private key of the pad to import, encoded as a hexadecimal string.
+///
+/// # Errors
+///
+/// Returns `PadLifecycleError::InvalidInput` if the hex string is invalid or the key
+/// has the wrong length.
+/// Returns `PadLifecycleError::Index` if adding the pad to the index manager fails.
 pub(crate) async fn import_pad(
     index_manager: &DefaultIndexManager,
     private_key_hex: &str,

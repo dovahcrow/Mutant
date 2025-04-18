@@ -2,6 +2,21 @@ use crate::data::error::DataError;
 
 use log::{debug, error, info, warn};
 
+/// Removes data associated with a user key from the index.
+///
+/// This operation removes the key's metadata from the index and attempts
+/// to mark the associated pads as free (harvesting) for potential reuse.
+/// It does *not* actively delete data from the network storage itself.
+///
+/// # Arguments
+///
+/// * `data_manager` - A reference to the `DefaultDataManager` instance.
+/// * `user_key` - The key identifying the data to remove.
+///
+/// # Errors
+///
+/// Returns `DataError` if:
+/// - An index manager error occurs during key removal or pad harvesting (`DataError::Index`).
 pub(crate) async fn remove_op(
     data_manager: &crate::data::manager::DefaultDataManager,
     user_key: &str,

@@ -20,12 +20,21 @@ use std::sync::Arc;
 use tokio::task::JoinSet;
 use tokio::time::{interval, Duration};
 
+/// Manages the lifecycle of scratchpads, including acquisition, verification, and caching.
+///
+/// Coordinates interactions between the `IndexManager`, `NetworkAdapter`, and local cache.
 pub struct DefaultPadLifecycleManager {
     index_manager: Arc<DefaultIndexManager>,
     network_adapter: Arc<AutonomiNetworkAdapter>,
 }
 
 impl DefaultPadLifecycleManager {
+    /// Creates a new `DefaultPadLifecycleManager`.
+    ///
+    /// # Arguments
+    ///
+    /// * `index_manager` - An `Arc` wrapped `DefaultIndexManager`.
+    /// * `network_adapter` - An `Arc` wrapped `AutonomiNetworkAdapter`.
     pub fn new(
         index_manager: Arc<DefaultIndexManager>,
         network_adapter: Arc<AutonomiNetworkAdapter>,
@@ -36,6 +45,13 @@ impl DefaultPadLifecycleManager {
         }
     }
 
+    /// Generates a new random secret key and corresponding scratchpad address.
+    /// Does not interact with the index or network.
+    ///
+    /// # Errors
+    ///
+    /// Theoretically, random key generation could fail, but this is highly unlikely.
+    /// (Currently does not return an error, but signature allows for it).
     async fn generate_and_add_new_pad(
         &self,
     ) -> Result<(ScratchpadAddress, SecretKey), PadLifecycleError> {
@@ -50,6 +66,28 @@ impl DefaultPadLifecycleManager {
         Ok((address, secret_key))
     }
 
+    /// Initializes the index state, attempting to load from cache first, then network.
+    ///
+    /// If neither cache nor network index is found, it initializes a default empty index
+    /// via the `IndexManager`.
+    ///
+    /// # Arguments
+    ///
+    /// * `master_index_address` - The address of the master index scratchpad on the network.
+    /// * `master_index_key` - The secret key for the master index scratchpad.
+    /// * `network_choice` - The network (Devnet or Mainnet) being used.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PadLifecycleError` if:
+    /// - Reading from cache fails (other than NotFound).
+    /// - Loading or initializing via `IndexManager` fails (`PadLifecycleError::Index`).
+    /// - Saving the loaded/initialized index to cache fails (`PadLifecycleError::CacheWriteError`).
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` if an index was successfully loaded from cache or network.
+    /// * `Ok(false)` if a default index was initialized (no existing index found).
     pub async fn initialize_index(
         &self,
         master_index_address: &ScratchpadAddress,
@@ -138,6 +176,16 @@ impl DefaultPadLifecycleManager {
         }
     }
 
+    /// Saves the current state of the `MasterIndex` (obtained from `IndexManager`) to the local cache.
+    ///
+    /// # Arguments
+    ///
+    /// * `network_choice` - The network (Devnet or Mainnet) to determine the cache file path.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PadLifecycleError::CacheWriteError` if saving to the cache fails.
+    /// Returns `PadLifecycleError::Index` if getting the index copy from the manager fails.
     pub async fn save_index_cache(
         &self,
         network_choice: NetworkChoice,
@@ -147,6 +195,27 @@ impl DefaultPadLifecycleManager {
         write_cached_index(&index_copy, network_choice).await
     }
 
+    /// Acquires a specified number of pads for use.
+    ///
+    /// It prioritizes taking pads from the `IndexManager`'s free list.
+    /// If the free list is exhausted, it generates new pads.
+    ///
+    /// # Arguments
+    ///
+    /// * `count` - The number of pads to acquire.
+    /// * `_callback` - (Currently unused) An optional callback for progress reporting.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PadLifecycleError::PadAcquisitionFailed` if acquiring from the free pool
+    /// or generating a new pad fails.
+    /// Returns `PadLifecycleError::InternalError` if the final acquired count doesn't match
+    /// the requested count.
+    ///
+    /// # Returns
+    ///
+    /// A vector of tuples, each containing the `ScratchpadAddress`, `SecretKey`,
+    /// and `PadOrigin` for an acquired pad.
     pub async fn acquire_pads(
         &self,
         count: usize,
@@ -200,6 +269,25 @@ impl DefaultPadLifecycleManager {
         Ok(acquired_pads)
     }
 
+    /// Initiates the purge process: verifying pads marked as pending verification.
+    ///
+    /// Takes all pads from the `IndexManager`'s pending list, verifies their existence
+    /// on the network concurrently, and updates the `IndexManager` lists (free or back to pending)
+    /// based on the results. Finally, saves the updated index to the cache.
+    ///
+    /// # Arguments
+    ///
+    /// * `callback` - An optional callback function to report progress events during verification.
+    /// * `network_choice` - The network (Devnet or Mainnet) to save the cache for.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PadLifecycleError` if:
+    /// - Taking pending pads from `IndexManager` fails (`PadLifecycleError::Index`).
+    /// - Concurrent verification encounters errors (`PadLifecycleError::Network`, `PadLifecycleError::InternalError`).
+    /// - Updating `IndexManager` lists fails (`PadLifecycleError::Index`).
+    /// - Saving the index cache fails (`PadLifecycleError::CacheWriteError`).
+    /// - A callback invocation fails or cancels the operation (`PadLifecycleError::InternalError`, `PadLifecycleError::OperationCancelled`).
     pub async fn purge(
         &self,
         callback: Option<PurgeCallback>,
@@ -242,11 +330,46 @@ impl DefaultPadLifecycleManager {
         Ok(())
     }
 
+    /// Imports an external pad using its private key hex string.
+    ///
+    /// Delegates to the `import::import_pad` function.
+    ///
+    /// # Arguments
+    ///
+    /// * `private_key_hex` - The hex-encoded private key of the pad to import.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PadLifecycleError` if the import fails (e.g., invalid key, index error).
     pub async fn import_external_pad(&self, private_key_hex: &str) -> Result<(), PadLifecycleError> {
         info!("PadLifecycleManager: Importing external pad...");
         import::import_pad(self.index_manager.as_ref(), private_key_hex).await
     }
 
+    /// Reserves a specified number of new pads on the network and adds them to the free list.
+    ///
+    /// This involves generating new keys, performing a minimal write (`put_raw` with `[0u8]`) 
+    /// to reserve the address on the network, and then adding the pad to the `IndexManager`'s free list.
+    /// The index cache is saved after each successful reservation.
+    /// Operations are performed concurrently.
+    ///
+    /// # Arguments
+    ///
+    /// * `count` - The number of pads to reserve.
+    /// * `callback` - An optional callback to report progress (Starting, PadReserved, SavingIndex, Complete).
+    ///
+    /// # Errors
+    ///
+    /// Returns `PadLifecycleError` if:
+    /// - A network `put_raw` operation fails (`PadLifecycleError::Network`).
+    /// - Adding the pad to the `IndexManager` fails (`PadLifecycleError::Index`).
+    /// - Saving the index cache fails (`PadLifecycleError::CacheWriteError`).
+    /// - A task join error occurs (`PadLifecycleError::InternalError`).
+    /// - A callback invocation fails or cancels the operation (`PadLifecycleError::InternalError`, `PadLifecycleError::OperationCancelled`).
+    ///
+    /// # Returns
+    ///
+    /// The number of pads successfully reserved and added to the index.
     pub async fn reserve_pads(
         &self,
         count: usize,

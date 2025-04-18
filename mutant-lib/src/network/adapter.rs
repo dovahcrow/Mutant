@@ -10,6 +10,10 @@ use log::{debug, error, info, trace, warn};
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
+/// Provides an interface to interact with the Autonomi network.
+///
+/// This adapter handles client initialization, wallet management, and interactions
+/// like reading and writing scratchpads.
 pub struct AutonomiNetworkAdapter {
     wallet: Arc<Wallet>,
     network_choice: NetworkChoice,
@@ -17,6 +21,19 @@ pub struct AutonomiNetworkAdapter {
 }
 
 impl AutonomiNetworkAdapter {
+    /// Creates a new `AutonomiNetworkAdapter` instance.
+    ///
+    /// Initializes the wallet based on the provided private key and network choice.
+    /// The network client is initialized lazily on first use.
+    ///
+    /// # Arguments
+    ///
+    /// * `private_key_hex` - The private key in hexadecimal format.
+    /// * `network_choice` - The specific Autonomi network to connect to (e.g., Mainnet, Testnet).
+    ///
+    /// # Errors
+    ///
+    /// Returns `NetworkError` if wallet creation fails.
     pub fn new(private_key_hex: &str, network_choice: NetworkChoice) -> Result<Self, NetworkError> {
         debug!(
             "Creating AutonomiNetworkAdapter configuration for network: {:?}",
@@ -32,6 +49,13 @@ impl AutonomiNetworkAdapter {
         })
     }
 
+    /// Retrieves the underlying Autonomi network client, initializing it if necessary.
+    ///
+    /// This method ensures the client is created only once and reused for subsequent calls.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NetworkError` if client initialization fails.
     async fn get_or_init_client(&self) -> Result<Arc<Client>, NetworkError> {
         self.client
             .get_or_try_init(|| async {
@@ -49,6 +73,15 @@ impl AutonomiNetworkAdapter {
             .map(Arc::clone)
     }
 
+    /// Retrieves the raw content of a scratchpad from the network.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - The address of the scratchpad to retrieve.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NetworkError` if the client cannot be initialized or if fetching the scratchpad fails.
     pub async fn get_raw_scratchpad(
         &self,
         address: &ScratchpadAddress,
@@ -67,6 +100,24 @@ impl AutonomiNetworkAdapter {
         Ok(scratchpad)
     }
 
+    /// Puts raw data onto the Autonomi network, either creating a new scratchpad or updating an existing one.
+    ///
+    /// The behavior depends on the `current_status` of the pad:
+    /// - `Generated`: Attempts to create a new scratchpad.
+    /// - `Allocated`, `Written`, `Confirmed`: Attempts to update the existing scratchpad.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The secret key associated with the scratchpad.
+    /// * `data` - The raw byte data to be stored.
+    /// * `current_status` - The last known status of the pad, used to determine whether to create or update.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NetworkError` if:
+    /// - The client cannot be initialized.
+    /// - The network operation (create or update) fails.
+    /// - An inconsistent state is detected (e.g., trying to create an existing pad or update a non-existent one).
     pub async fn put_raw(
         &self,
         key: &SecretKey,
@@ -174,6 +225,15 @@ impl AutonomiNetworkAdapter {
         }
     }
 
+    /// Checks if a scratchpad exists on the network at the given address.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - The address of the scratchpad to check.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NetworkError` if the client cannot be initialized or if the check operation fails.
     pub async fn check_existence(&self, address: &ScratchpadAddress) -> Result<bool, NetworkError> {
         trace!(
             "AutonomiNetworkAdapter::check_existence called for address: {}",
@@ -188,10 +248,15 @@ impl AutonomiNetworkAdapter {
             })
     }
 
+    /// Returns the network choice this adapter is configured for.
     pub fn get_network_choice(&self) -> NetworkChoice {
         self.network_choice
     }
 
+    /// Returns a reference to the underlying wallet.
+    ///
+    /// Note: This method is marked `#[allow(dead_code)]` as it might not be used externally
+    /// but can be useful for debugging or specific internal use cases.
     #[allow(dead_code)]
     pub fn wallet(&self) -> &Wallet {
         &self.wallet
