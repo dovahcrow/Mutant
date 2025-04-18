@@ -1,6 +1,7 @@
 use crate::app::CliError;
+use crate::callbacks::progress::StyledProgressBar;
 use clap::Args;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::MultiProgress;
 use log::{error, info};
 use mutant_lib::prelude::MutAnt;
 use mutant_lib::prelude::error::Error as LibError;
@@ -16,11 +17,16 @@ pub struct Reserve {
 
 #[derive(Clone)]
 struct ReserveCallbackContext {
-    pb: Arc<Mutex<ProgressBar>>,
+    pb_opt: Arc<Mutex<Option<StyledProgressBar>>>,
+    multi_progress: MultiProgress,
 }
 
 impl Reserve {
-    pub async fn run(&self, mutant: &MutAnt) -> Result<(), CliError> {
+    pub async fn run(
+        &self,
+        mutant: &MutAnt,
+        multi_progress: &MultiProgress,
+    ) -> Result<(), CliError> {
         let count = self.count.unwrap_or(1);
         if count == 0 {
             info!("Reserve count is 0, nothing to do.");
@@ -29,48 +35,54 @@ impl Reserve {
 
         info!("Attempting to reserve {} new scratchpads...", count);
 
-        let pb = ProgressBar::new(count as u64);
-        pb.set_style(
-            ProgressStyle::with_template(
-                "{spinner:.green} [{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} ({eta}) {msg}",
-            )
-            .unwrap()
-            .progress_chars("##-"),
-        );
-        pb.set_message("Initializing...");
-        let pb_arc = Arc::new(Mutex::new(pb));
+        let pb_opt_arc = Arc::new(Mutex::new(None::<StyledProgressBar>));
 
-        let context = ReserveCallbackContext { pb: pb_arc.clone() };
+        let context = ReserveCallbackContext {
+            pb_opt: pb_opt_arc.clone(),
+            multi_progress: multi_progress.clone(),
+        };
 
         let callback: ReserveCallback = Box::new(move |event: ReserveEvent| {
             let ctx = context.clone();
             Box::pin(async move {
-                let pb_guard = ctx.pb.lock().await;
+                let mut pb_guard = ctx.pb_opt.lock().await;
+
                 match event {
                     ReserveEvent::Starting { total_requested } => {
-                        pb_guard.set_length(total_requested as u64);
-                        pb_guard.set_position(0);
-                        pb_guard.set_message("Reserving pads...");
+                        let pb = pb_guard.get_or_insert_with(|| {
+                            let spb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
+                            spb.set_message("Initializing...".to_string());
+                            spb
+                        });
+                        pb.set_length(total_requested as u64);
+                        pb.set_position(0);
+                        pb.set_message("Reserving pads...".to_string());
                     }
                     ReserveEvent::PadReserved { address } => {
-                        pb_guard.inc(1);
-                        pb_guard.set_message(format!("Reserved {}", address));
+                        if let Some(pb) = pb_guard.as_mut() {
+                            if !pb.is_finished() {
+                                pb.inc(1);
+                                pb.set_message(format!("Reserved {}", address));
+                            }
+                        }
                     }
                     ReserveEvent::SavingIndex { reserved_count: _ } => {
-                        pb_guard.set_message("Saving index...");
-                        pb_guard.tick();
+                        if let Some(pb) = pb_guard.as_mut() {
+                            if !pb.is_finished() {
+                                pb.set_message("Saving index...".to_string());
+                            }
+                        }
                     }
                     ReserveEvent::Complete { succeeded, failed } => {
-                        pb_guard.finish_with_message(format!(
-                            "Reservation complete: {} succeeded, {} failed",
-                            succeeded, failed
-                        ));
+                        if let Some(pb) = pb_guard.take() {
+                            pb.finish_with_message(format!(
+                                "Reservation complete: {} succeeded, {} failed",
+                                succeeded, failed
+                            ));
+                        }
                     }
                 }
-
-                if !pb_guard.is_finished() {
-                    pb_guard.tick();
-                }
+                drop(pb_guard);
                 Ok::<bool, LibError>(true)
             })
         });
@@ -85,24 +97,21 @@ impl Reserve {
                     error!(
                         "No scratchpads were successfully reserved despite library call succeeding."
                     );
-
-                    let pb_guard = pb_arc.lock().await;
-                    if !pb_guard.is_finished() {
-                        pb_guard.finish_with_message("Reservation complete: 0 succeeded");
+                    let mut pb_guard = pb_opt_arc.lock().await;
+                    if let Some(pb) = pb_guard.take() {
+                        pb.finish_with_message("Reservation complete: 0 succeeded");
                     }
                     return Err(CliError::MutAntInit(
                         "Failed to reserve any scratchpads".to_string(),
                     ));
                 }
-
                 Ok(())
             }
             Err(e) => {
                 error!("Pad reservation failed: {}", e);
-
-                let pb_guard = pb_arc.lock().await;
-                if !pb_guard.is_finished() {
-                    pb_guard.finish_with_message(format!("Reservation failed: {}", e));
+                let mut pb_guard = pb_opt_arc.lock().await;
+                if let Some(pb) = pb_guard.take() {
+                    pb.finish_with_message(format!("Reservation failed: {}", e));
                 }
                 Err(CliError::MutAntInit(format!(
                     "Pad reservation failed: {}",
