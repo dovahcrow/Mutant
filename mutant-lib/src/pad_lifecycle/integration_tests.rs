@@ -30,8 +30,9 @@ async fn setup_test_components_with_initialized_index() -> (
     let storage_manager: Arc<DefaultStorageManager> =
         Arc::new(DefaultStorageManager::new(network_adapter.clone()));
     let index_manager = Arc::new(DefaultIndexManager::new(
-        storage_manager.clone(),
-        network_adapter.clone(),
+        Arc::clone(&storage_manager),
+        Arc::clone(&network_adapter),
+        SecretKey::random(),
     ));
 
     let master_key = SecretKey::random();

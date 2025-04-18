@@ -8,6 +8,7 @@ use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::NetworkChoice;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::storage::manager::DefaultStorageManager;
+use autonomi::SecretKey;
 use std::sync::Arc;
 
 // Define constant locally
@@ -30,32 +31,30 @@ async fn setup_managers() -> (
 
     let storage_manager: Arc<DefaultStorageManager> =
         Arc::new(DefaultStorageManager::new(network_adapter.clone()));
-    let index_manager_impl = Arc::new(DefaultIndexManager::new(
+    let index_manager = Arc::new(DefaultIndexManager::new(
         storage_manager.clone(),
         network_adapter.clone(),
+        SecretKey::random(),
     ));
     // Use load_or_initialize, assuming a dummy key/address is fine for data tests
     // If these tests require specific index state, this setup needs adjustment.
     let dummy_key = autonomi::SecretKey::random();
     let dummy_addr = autonomi::ScratchpadAddress::new(dummy_key.public_key());
-    index_manager_impl
+    index_manager
         .load_or_initialize(&dummy_addr, &dummy_key)
         .await
         .expect("Index initialization failed in data test setup");
     // Save might not be strictly needed here, but keeping for consistency
-    index_manager_impl
+    index_manager
         .save(&dummy_addr, &dummy_key)
         .await
         .expect("Initial index save failed in data test setup");
 
-    let index_manager: Arc<DefaultIndexManager> = index_manager_impl.clone(); // Keep Arc for dependencies
-
-    let pad_lifecycle_manager_impl = Arc::new(DefaultPadLifecycleManager::new(
+    let pad_lifecycle_manager = Arc::new(DefaultPadLifecycleManager::new(
         index_manager.clone(),
         network_adapter.clone(),
         storage_manager.clone(),
     ));
-    let pad_lifecycle_manager: Arc<DefaultPadLifecycleManager> = pad_lifecycle_manager_impl; // Keep Arc
 
     let data_manager = DefaultDataManager::new(
         index_manager.clone(),

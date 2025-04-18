@@ -27,8 +27,11 @@ fn setup_test_components() -> (
     );
     let storage_manager: Arc<DefaultStorageManager> =
         Arc::new(DefaultStorageManager::new(Arc::clone(&network_adapter)));
-    let index_manager =
-        DefaultIndexManager::new(Arc::clone(&storage_manager), Arc::clone(&network_adapter));
+    let index_manager = DefaultIndexManager::new(
+        Arc::clone(&storage_manager),
+        Arc::clone(&network_adapter),
+        SecretKey::random(),
+    );
     (network_adapter, storage_manager, index_manager)
 }
 

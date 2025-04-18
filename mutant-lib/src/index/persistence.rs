@@ -60,7 +60,7 @@ pub(crate) async fn load_index(
     match storage_manager.read_pad_scratchpad(address).await {
         Ok(scratchpad) => {
             let decrypted_data = match scratchpad.decrypt_data(key) {
-                Ok(data) => data.to_vec(),
+                Ok(data_bytes) => data_bytes.to_vec(),
                 Err(e) => {
                     error!("Failed to decrypt index data from {}: {}", address, e);
                     return Err(IndexError::DecryptionError(e.to_string()));

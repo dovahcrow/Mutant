@@ -15,6 +15,7 @@ pub struct DefaultIndexManager {
     state: Mutex<MasterIndex>,
     storage_manager: Arc<DefaultStorageManager>,
     network_adapter: Arc<AutonomiNetworkAdapter>,
+    master_index_key: SecretKey,
 }
 
 impl DefaultIndexManager {
@@ -31,11 +32,13 @@ impl DefaultIndexManager {
     pub fn new(
         storage_manager: Arc<DefaultStorageManager>,
         network_adapter: Arc<AutonomiNetworkAdapter>,
+        master_index_key: SecretKey,
     ) -> Self {
         Self {
             state: Mutex::new(MasterIndex::default()),
             storage_manager,
             network_adapter,
+            master_index_key,
         }
     }
 
@@ -668,7 +671,7 @@ impl DefaultIndexManager {
     ///
     /// This bypasses the normal `load_or_initialize` logic and decryption, intended for
     /// scenarios like comparing a local index with the remote authoritative version.
-    /// It uses a dummy key for the load function call, as decryption isn't the goal here.
+    /// It uses the actual master index key stored in the manager instead of a dummy key.
     ///
     /// # Arguments
     ///
@@ -686,12 +689,11 @@ impl DefaultIndexManager {
         master_index_address: &ScratchpadAddress,
     ) -> Result<MasterIndex, IndexError> {
         debug!("IndexManager: Fetching remote index directly...");
-        let dummy_key = SecretKey::random();
         load_index(
             self.storage_manager.as_ref(),
             self.network_adapter.as_ref(),
             master_index_address,
-            &dummy_key,
+            &self.master_index_key,
         )
         .await
     }
