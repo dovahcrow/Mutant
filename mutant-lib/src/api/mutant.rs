@@ -4,11 +4,11 @@ use crate::data::manager::DefaultDataManager;
 use crate::index::manager::DefaultIndexManager;
 use crate::index::structure::MasterIndex;
 use crate::internal_error::Error;
-use crate::internal_events::{GetCallback, InitCallback, PurgeCallback, PutCallback};
+use crate::internal_events::{GetCallback, InitCallback, PurgeCallback, PutCallback, PutEvent};
 use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::types::{KeyDetails, MutAntConfig, StorageStats};
-use autonomi::{ScratchpadAddress, SecretKey};
+use autonomi::{Bytes, ScratchpadAddress, SecretKey};
 use log::{debug, info, warn};
 use std::sync::Arc;
 
@@ -513,5 +513,118 @@ impl MutAnt {
     /// Gets the currently configured network choice (e.g., Mainnet, Testnet).
     pub fn get_network_choice(&self) -> NetworkChoice {
         self.network_adapter.get_network_choice()
+    }
+
+    /// Stores data publicly under a specified name.
+    ///
+    /// The data is NOT encrypted. A unique secret key is generated for this upload
+    /// to sign the data and index scratchpads, but this key is stored (in byte form)
+    /// in the master index.
+    ///
+    /// This method chunks the data, uploads the chunks and a public index, and updates
+    /// the master index.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - A unique name to identify this public upload.
+    /// * `data_bytes` - The raw data to store.
+    /// * `callback` - An optional callback for progress reporting (`PutEvent`).
+    ///
+    /// # Returns
+    ///
+    /// The `ScratchpadAddress` of the public index scratchpad.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Data` if the underlying storage operation fails (e.g., name collision, network error).
+    /// Returns `Error::Index` if saving the index cache fails afterwards.
+    pub async fn store_public(
+        &self,
+        name: String,
+        data_bytes: &[u8],
+        callback: Option<PutCallback>,
+    ) -> Result<ScratchpadAddress, Error> {
+        debug!("MutAnt::store_public called for name '{}'", name);
+
+        let address = self
+            .data_manager
+            .store_public(name.clone(), data_bytes, callback)
+            .await
+            .map_err(Error::Data)?;
+
+        // Save index after successful public store
+        if let Err(e) = self.save_index_cache().await {
+            warn!(
+                "Failed to save index cache after store_public operation for '{}': {}",
+                name, e
+            );
+            // Don't return error here? The data is stored, just cache failed.
+            // Maybe return Ok, but log prominently?
+            // For now, let's return the index error, consistent with other ops.
+            return Err(e);
+        }
+
+        Ok(address)
+    }
+
+    /// Retrieves the shareable `ScratchpadAddress` for a previously created public upload.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name used when calling `store_public`.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(Some(address))` if the name exists, `Ok(None)` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Index` if accessing the index fails.
+    pub async fn get_public_address(&self, name: &str) -> Result<Option<ScratchpadAddress>, Error> {
+        debug!("MutAnt::get_public_address called for name '{}'", name);
+        // Get a copy of the index to perform the lookup
+        let index_copy = self.index_manager.get_index_copy().await?;
+        Ok(index_copy.public_uploads.get(name).map(|meta| meta.address))
+    }
+
+    /// Fetches publicly stored data using its index scratchpad address.
+    ///
+    /// This function is static relative to MutAnt instance data (doesn't use `&self` directly
+    /// for master index/key) but requires a network client.
+    /// It delegates to the underlying `DataManager::fetch_public`.
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - An `autonomi::Client` instance to interact with the network.
+    ///            *(Note: This API might change; ideally, we'd use the internal adapter)*
+    /// * `public_index_address` - The address returned by `store_public` or `get_public_address`.
+    /// * `callback` - An optional callback for progress reporting (`GetEvent`).
+    ///
+    /// # Returns
+    ///
+    /// A `Bytes` object containing the reassembled public data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Data` if fetching fails (e.g., invalid address, network error, signature mismatch).
+    pub async fn fetch_public(
+        // TODO: This signature is awkward. How can a user easily get the *internal* adapter?
+        // Maybe this should take `&self` after all and just pass `&self.network_adapter`?
+        // Let's change it to take `&self` for consistency and ease of use.
+        &self,
+        public_index_address: ScratchpadAddress,
+        callback: Option<GetCallback>,
+    ) -> Result<Bytes, Error> {
+        debug!(
+            "MutAnt::fetch_public called for address {}",
+            public_index_address
+        );
+        crate::data::manager::DefaultDataManager::fetch_public(
+            &self.network_adapter, // Pass the instance's adapter
+            public_index_address,
+            callback,
+        )
+        .await
+        .map_err(Error::Data)
     }
 }

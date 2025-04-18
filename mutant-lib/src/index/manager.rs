@@ -1,6 +1,8 @@
 use crate::index::error::IndexError;
 use crate::index::persistence::{load_index, save_index};
-use crate::index::structure::{KeyInfo, MasterIndex, PadStatus, DEFAULT_SCRATCHPAD_SIZE};
+use crate::index::structure::{
+    KeyInfo, MasterIndex, PadStatus, PublicUploadMetadata, DEFAULT_SCRATCHPAD_SIZE,
+};
 use crate::network::AutonomiNetworkAdapter;
 use crate::types::{KeyDetails, StorageStats};
 use autonomi::{ScratchpadAddress, SecretKey};
@@ -351,6 +353,32 @@ impl DefaultIndexManager {
             incomplete_keys_pads_written,
             incomplete_keys_pads_confirmed,
         })
+    }
+
+    /// Inserts metadata for a new public upload into the index.
+    ///
+    /// Logs a warning if the name already exists, overwriting the previous entry.
+    pub async fn insert_public_upload_metadata(
+        &self,
+        name: String,
+        metadata: PublicUploadMetadata,
+    ) -> Result<(), IndexError> {
+        debug!(
+            "IndexManager: Inserting public upload metadata for '{}' -> {}",
+            name, metadata.address
+        );
+        let mut state_guard = self.state.lock().await;
+        if state_guard
+            .public_uploads
+            .insert(name.clone(), metadata)
+            .is_some()
+        {
+            warn!(
+                "Overwriting existing public upload metadata for name '{}'",
+                name
+            );
+        }
+        Ok(())
     }
 
     /// Adds a single pad (address and key) to the free pad list.

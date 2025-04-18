@@ -1,8 +1,11 @@
 /// Contains common structures and dependencies used by data operations.
-pub mod common;
+pub(crate) mod common;
 /// Implements the logic for the `fetch` data operation.
-pub mod fetch;
+pub(crate) mod fetch;
 /// Implements the logic for the `remove` data operation.
-pub mod remove;
+pub(crate) mod remove;
 /// Implements the logic for the `store` data operation.
-pub mod store;
+pub(crate) mod store;
+
+pub(crate) mod fetch_public;
+pub(crate) mod store_public;

@@ -1,11 +1,23 @@
+use crate::data::chunking::chunk_data;
 use crate::data::error::DataError;
 use crate::data::ops;
+use crate::data::{
+    PUBLIC_DATA_ENCODING,
+    PUBLIC_INDEX_ENCODING, // Import constants
+};
 use crate::index::manager::DefaultIndexManager;
-use crate::internal_events::{GetCallback, PutCallback};
+use crate::index::structure::PublicUploadMetadata;
+use crate::internal_events::{invoke_put_callback, GetCallback, PutCallback, PutEvent}; // Added PutEvent etc
+use crate::network::adapter::create_public_scratchpad; // Import helper
 use crate::network::AutonomiNetworkAdapter;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
-use log::trace;
+use autonomi::client::payment::PaymentOption;
+use autonomi::{Bytes, PublicKey, Scratchpad, ScratchpadAddress, SecretKey, Signature};
+use log::{debug, error, info, trace, warn};
+use serde_cbor;
+use std::collections::HashMap; // For name collision check
 use std::sync::Arc;
+use tokio::sync::Mutex; // Added Mutex
 
 /// Default implementation of the `DataManager` trait.
 ///
@@ -132,5 +144,26 @@ impl DefaultDataManager {
         unimplemented!(
             "Update operation is temporarily removed due to complexity. Use remove then store."
         );
+    }
+
+    /// Stores data publicly (unencrypted) under a specified name.
+    /// Delegates the core logic to `ops::store_public::store_public_op`.
+    pub async fn store_public(
+        &self,
+        name: String,
+        data_bytes: &[u8],
+        callback: Option<PutCallback>,
+    ) -> Result<ScratchpadAddress, DataError> {
+        ops::store_public::store_public_op(self, name, data_bytes, callback).await
+    }
+
+    /// Fetches publicly stored data using its index scratchpad address.
+    /// Delegates the core logic to `ops::fetch_public::fetch_public_op`.
+    pub async fn fetch_public(
+        network_adapter: &AutonomiNetworkAdapter, // Pass adapter for network calls
+        public_index_address: ScratchpadAddress,
+        callback: Option<GetCallback>,
+    ) -> Result<Bytes, DataError> {
+        ops::fetch_public::fetch_public_op(network_adapter, public_index_address, callback).await
     }
 }

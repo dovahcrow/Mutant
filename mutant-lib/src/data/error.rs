@@ -1,6 +1,7 @@
 use crate::index::IndexError;
 use crate::network::NetworkError;
 use crate::pad_lifecycle::PadLifecycleError;
+use autonomi::ScratchpadAddress;
 use thiserror::Error;
 
 /// Represents errors that can occur during data management operations (store, fetch, remove, update).
@@ -57,10 +58,44 @@ pub enum DataError {
     /// An error occurred during cryptographic operations (e.g., encryption, decryption, signing).
     #[error("Cryptography error: {0}")]
     CryptoError(String),
+
+    /// Failed to serialize data (e.g., list of chunk addresses for public index).
+    #[error("Serialization error: {0}")]
+    Serialization(String),
+
+    /// Failed to deserialize data (e.g., list of chunk addresses from public index).
+    #[error("Deserialization error: {0}")]
+    Deserialization(String),
+
+    /// A fetched public index or data scratchpad had an invalid signature.
+    #[error("Invalid signature for scratchpad {0}")]
+    InvalidSignature(ScratchpadAddress),
+
+    /// A fetched public index scratchpad had an incorrect data encoding type.
+    #[error("Invalid public index encoding (expected 4, got {0})")]
+    InvalidPublicIndexEncoding(u64),
+
+    /// A fetched public data scratchpad had an incorrect data encoding type.
+    #[error("Invalid public data encoding (expected 3, got {0})")]
+    InvalidPublicDataEncoding(u64),
+
+    /// Failed to find a public scratchpad (index or data) at the specified address.
+    #[error("Public scratchpad not found at address {0}")]
+    PublicScratchpadNotFound(ScratchpadAddress),
+
+    /// An error occurred within a user-provided callback.
+    #[error("Callback error: {0}")]
+    CallbackError(String),
 }
 
 impl From<blsttc::Error> for DataError {
     fn from(err: blsttc::Error) -> Self {
         DataError::CryptoError(format!("BLSTTC error: {}", err))
+    }
+}
+
+impl From<serde_cbor::Error> for DataError {
+    fn from(err: serde_cbor::Error) -> Self {
+        DataError::Deserialization(err.to_string())
     }
 }

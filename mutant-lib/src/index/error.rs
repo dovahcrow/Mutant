@@ -35,6 +35,18 @@ pub enum IndexError {
     /// An unexpected internal error occurred within the index module.
     #[error("Internal index error: {0}")]
     InternalError(String),
+
+    /// Key '{0}' already exists in the index
+    #[error("Key '{0}' already exists in the index")]
+    KeyExists(String),
+
+    /// Public upload name '{0}' already exists
+    #[error("Public upload name '{0}' already exists")]
+    PublicUploadNameExists(String),
+
+    /// Pad with address '{0}' not found for key '{1}'
+    #[error("Pad with address '{0}' not found for key '{1}'")]
+    PadNotFound(autonomi::ScratchpadAddress, String),
 }
 
 impl From<serde_cbor::Error> for IndexError {

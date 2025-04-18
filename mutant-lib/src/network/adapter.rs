@@ -5,10 +5,15 @@ use crate::network::wallet::create_wallet;
 use crate::network::NetworkChoice;
 
 use autonomi::client::payment::PaymentOption;
-use autonomi::{Bytes, Client, Scratchpad, ScratchpadAddress, SecretKey, Wallet};
+use autonomi::AttoTokens;
+use autonomi::{
+    Bytes, Client, PublicKey, Scratchpad, ScratchpadAddress, SecretKey, Signature, Wallet,
+};
 use log::{debug, error, info, trace, warn};
 use std::sync::Arc;
-use tokio::sync::OnceCell;
+use std::time::Duration;
+use tokio::sync::{Mutex, OnceCell};
+use tokio::time::sleep;
 
 /// Provides an interface to interact with the Autonomi network.
 ///
@@ -260,4 +265,62 @@ impl AutonomiNetworkAdapter {
     pub fn wallet(&self) -> &Wallet {
         &self.wallet
     }
+
+    /// Puts a pre-constructed scratchpad onto the network.
+    ///
+    /// This is used for public uploads where the scratchpad is created
+    /// with specific encoding and without encryption by the caller.
+    ///
+    /// # Arguments
+    ///
+    /// * `scratchpad` - The `Scratchpad` instance to upload.
+    /// * `payment` - The payment option to use.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NetworkError` if the client cannot be initialized or if the upload fails.
+    pub async fn scratchpad_put(
+        &self,
+        scratchpad: Scratchpad,
+        payment: PaymentOption,
+    ) -> Result<(AttoTokens, ScratchpadAddress), NetworkError> {
+        let addr = *scratchpad.address(); // Get address before moving scratchpad
+        trace!(
+            "AutonomiNetworkAdapter::scratchpad_put called for address: {}",
+            addr
+        );
+        let client = self.get_or_init_client().await?;
+
+        client
+            .scratchpad_put(scratchpad, payment)
+            .await
+            .map_err(|e| {
+                error!("Failed to put scratchpad {}: {}", addr, e);
+                NetworkError::InternalError(format!("Failed to put scratchpad {}: {}", addr, e))
+            })
+    }
+}
+
+/// Creates a new public (unencrypted) Scratchpad instance with a valid signature.
+///
+/// This is used for creating both public data chunks and public index scratchpads.
+/// Moved here from DataManager for better separation of concerns.
+pub(crate) fn create_public_scratchpad(
+    owner_sk: &SecretKey,
+    data_encoding: u64,
+    raw_data: &Bytes,
+    counter: u64,
+) -> Scratchpad {
+    trace!("Creating public scratchpad with encoding {}", data_encoding);
+    let owner_pk = owner_sk.public_key();
+    let address = ScratchpadAddress::new(owner_pk);
+
+    // Data is passed directly as "encrypted_data" but is not actually encrypted.
+    let encrypted_data = raw_data.clone();
+
+    let bytes_to_sign =
+        Scratchpad::bytes_for_signature(address, data_encoding, &encrypted_data, counter);
+    let signature = owner_sk.sign(&bytes_to_sign);
+
+    Scratchpad::new_with_signature(owner_pk, data_encoding, encrypted_data, counter, signature)
 }
