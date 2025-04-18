@@ -9,3 +9,4 @@ pub(crate) mod store;
 
 pub(crate) mod fetch_public;
 pub(crate) mod store_public;
+pub(crate) mod update_public;

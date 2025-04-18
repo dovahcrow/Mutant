@@ -2,14 +2,14 @@ use crate::data::error::DataError;
 use crate::data::ops;
 use crate::index::manager::DefaultIndexManager;
 use crate::internal_events::{GetCallback, PutCallback}; // Added PutEvent etc
- // Import helper
+                                                        // Import helper
 use crate::network::AutonomiNetworkAdapter;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use autonomi::{Bytes, ScratchpadAddress};
 use log::trace;
- // For name collision check
+// For name collision check
 use std::sync::Arc;
- // Added Mutex
+// Added Mutex
 
 /// Default implementation of the `DataManager` trait.
 ///
@@ -157,5 +157,16 @@ impl DefaultDataManager {
         callback: Option<GetCallback>,
     ) -> Result<Bytes, DataError> {
         ops::fetch_public::fetch_public_op(network_adapter, public_index_address, callback).await
+    }
+
+    /// Updates publicly stored data under a specified name by overwriting the existing public index pad.
+    /// Delegates the core logic to `ops::update_public::update_public_op`.
+    pub async fn update_public(
+        &self,
+        name: &str,
+        data_bytes: &[u8],
+        callback: Option<PutCallback>,
+    ) -> Result<(), DataError> {
+        ops::update_public::update_public_op(self, name, data_bytes, callback).await
     }
 }

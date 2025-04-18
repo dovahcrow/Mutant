@@ -31,6 +31,10 @@ pub enum DataError {
     #[error("Key already exists: {0}. Use --force to overwrite.")]
     KeyAlreadyExists(String),
 
+    /// An operation was attempted that is invalid in the current context (e.g., updating a private key as public).
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
+
     /// An error propagated from the index layer.
     #[error("Index layer error during data operation: {0}")]
     Index(#[from] IndexError),

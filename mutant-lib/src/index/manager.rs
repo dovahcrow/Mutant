@@ -893,4 +893,48 @@ impl DefaultIndexManager {
             .collect::<HashSet<ScratchpadAddress>>();
         Ok(occupied_pads)
     }
+
+    /// Retrieves the full `PublicUploadInfo` for a specific public upload name.
+    /// Returns `Ok(None)` if the name doesn't exist or if it corresponds to a private key.
+    pub async fn get_public_upload_info(
+        &self,
+        name: &str,
+    ) -> Result<Option<PublicUploadInfo>, IndexError> {
+        let state_guard = self.state.lock().await;
+        Ok(state_guard.index.get(name).and_then(|entry| match entry {
+            IndexEntry::PublicUpload(info) => Some(info.clone()),
+            IndexEntry::PrivateKey(_) => None, // Key exists, but is not a public upload
+        }))
+    }
+
+    /// Updates the metadata (size and modified timestamp) for an existing public upload entry.
+    /// Does nothing if the key does not exist or is a private key.
+    pub async fn update_public_upload_metadata(
+        &self,
+        name: &str,
+        new_size: u64,
+    ) -> Result<(), IndexError> {
+        let mut state_guard = self.state.lock().await;
+        if let Some(entry) = state_guard.index.get_mut(name) {
+            if let IndexEntry::PublicUpload(info) = entry {
+                info.size = new_size as usize;
+                info.modified = Utc::now();
+                debug!(
+                    "Updated metadata for public upload '{}': size={}, modified={}",
+                    name, info.size, info.modified
+                );
+            } else {
+                warn!(
+                    "Attempted to update metadata for '{}', but it is a private key.",
+                    name
+                );
+            }
+        } else {
+            warn!(
+                "Attempted to update metadata for non-existent public upload '{}'",
+                name
+            );
+        }
+        Ok(())
+    }
 }

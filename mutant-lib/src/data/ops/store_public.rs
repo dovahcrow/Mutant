@@ -2,10 +2,12 @@ use crate::data::chunking::chunk_data;
 use crate::data::error::DataError;
 use crate::data::manager::DefaultDataManager;
 use crate::data::{PUBLIC_DATA_ENCODING, PUBLIC_INDEX_ENCODING};
+use crate::index::manager::DefaultIndexManager;
 use crate::index::structure::PublicUploadInfo;
 use crate::internal_events::{invoke_put_callback, PutCallback, PutEvent};
 use crate::network::adapter::create_public_scratchpad;
 use crate::network::error::NetworkError;
+use crate::network::AutonomiNetworkAdapter;
 use autonomi::client::payment::PaymentOption;
 use autonomi::{Bytes, ScratchpadAddress, SecretKey};
 use chrono::Utc;
@@ -13,6 +15,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
 use serde_cbor;
 use std::sync::Arc;
+use std::time::SystemTime;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 
@@ -29,15 +32,13 @@ pub(crate) async fn store_public_op(
 ) -> Result<ScratchpadAddress, DataError> {
     info!("DataOps: Starting store_public_op for name '{}'", name);
     let callback_arc = Arc::new(Mutex::new(callback));
-    let data_size = data_bytes.len();
 
-    // 1. Check for Name Collision (now uses unified index)
+    // 1. Check for Name Collision
     {
         let index_copy = data_manager.index_manager.get_index_copy().await?;
         if index_copy.index.contains_key(&name) {
-            // Check the main index
             error!(
-                "Public upload name '{}' collides with an existing entry (key or public upload).",
+                "Public upload name '{}' collides with an existing entry.",
                 name
             );
             return Err(DataError::Index(
@@ -46,8 +47,29 @@ pub(crate) async fn store_public_op(
         }
     }
 
-    // 3. Chunk Data
-    let chunk_size = data_manager.index_manager.get_scratchpad_size().await?;
+    // 2. Call the helper function to perform the actual work
+    upload_public_data_and_create_index(
+        data_manager.network_adapter.clone(),
+        data_manager.index_manager.clone(),
+        name,
+        data_bytes,
+        callback_arc,
+    )
+    .await
+}
+
+// Helper function to handle chunking, uploading, index creation, and index manager update
+pub(crate) async fn upload_public_data_and_create_index(
+    network_adapter: Arc<AutonomiNetworkAdapter>,
+    index_manager: Arc<DefaultIndexManager>,
+    name: String,
+    data_bytes: &[u8],
+    callback_arc: Arc<Mutex<Option<PutCallback>>>,
+) -> Result<ScratchpadAddress, DataError> {
+    let data_size = data_bytes.len();
+
+    // Chunk Data
+    let chunk_size = index_manager.get_scratchpad_size().await?;
     if chunk_size == 0 {
         error!("Configured scratchpad size is 0. Cannot proceed with chunking.");
         return Err(DataError::ChunkingError(
@@ -77,7 +99,6 @@ pub(crate) async fn store_public_op(
         return Err(DataError::OperationCancelled);
     }
 
-    // Declare chunk_addresses here
     let chunk_addresses: Vec<ScratchpadAddress>;
 
     if total_chunks == 0 {
@@ -89,14 +110,14 @@ pub(crate) async fn store_public_op(
         // Let's upload an empty index for consistency.
         chunk_addresses = Vec::new();
     } else {
-        // 4. Upload Chunks in Parallel
+        // Upload Chunks in Parallel
         let mut upload_futures = FuturesUnordered::new();
         let mut chunk_addresses_results: Vec<Option<ScratchpadAddress>> = vec![None; total_chunks];
 
         for (i, chunk) in chunks.into_iter().enumerate() {
-            let network_adapter_clone = Arc::clone(&data_manager.network_adapter);
+            let adapter_clone = Arc::clone(&network_adapter);
             let chunk_sk = SecretKey::random();
-            let chunk_bytes = Bytes::from(chunk); // Convert Vec<u8> to Bytes
+            let chunk_bytes = Bytes::from(chunk);
 
             upload_futures.push(async move {
                 trace!("Starting upload task for public chunk {}", i);
@@ -107,9 +128,9 @@ pub(crate) async fn store_public_op(
                     0, // Use counter 0 for initial upload
                 );
                 let chunk_addr = *chunk_scratchpad.address();
-                let payment = PaymentOption::Wallet((*network_adapter_clone.wallet()).clone());
+                let payment = PaymentOption::Wallet((*adapter_clone.wallet()).clone());
 
-                match network_adapter_clone
+                match adapter_clone
                     .scratchpad_put(chunk_scratchpad, payment)
                     .await
                 {
@@ -225,9 +246,8 @@ pub(crate) async fn store_public_op(
         name
     );
 
-    let payment = PaymentOption::Wallet((*data_manager.network_adapter.wallet()).clone());
-    match data_manager
-        .network_adapter
+    let payment = PaymentOption::Wallet((*network_adapter.wallet()).clone());
+    match network_adapter
         .scratchpad_put(index_scratchpad, payment)
         .await
     {
@@ -259,8 +279,7 @@ pub(crate) async fn store_public_op(
                 );
                 sleep(PUBLIC_CONFIRMATION_RETRY_DELAY).await; // Wait before fetching
 
-                match data_manager
-                    .network_adapter
+                match network_adapter
                     .get_raw_scratchpad(&public_index_address)
                     .await
                 {
@@ -361,15 +380,15 @@ pub(crate) async fn store_public_op(
 
     // 6. Update Master Index
     debug!("Updating master index for public upload {}", name);
-    let metadata = PublicUploadInfo {
+    let public_upload_info = PublicUploadInfo {
         address: public_index_address,
         size: data_size,
         modified: Utc::now(),
+        index_secret_key_bytes: index_sk.to_bytes().to_vec(),
     };
 
-    if let Err(e) = data_manager
-        .index_manager
-        .insert_public_upload_info(name.clone(), metadata)
+    if let Err(e) = index_manager
+        .insert_public_upload_info(name.clone(), public_upload_info)
         .await
     {
         error!(
@@ -396,4 +415,16 @@ pub(crate) async fn store_public_op(
     }
 
     Ok(public_index_address)
+}
+
+// Helper to verify public scratchpad existence (simplified from purge logic)
+async fn verify_scratchpad_exists(
+    network_adapter: &Arc<AutonomiNetworkAdapter>,
+    address: &ScratchpadAddress,
+) -> Result<bool, NetworkError> {
+    match network_adapter.get_raw_scratchpad(address).await {
+        Ok(_) => Ok(true), // Found it
+        Err(NetworkError::InternalError(msg)) if msg.contains("not found") => Ok(false), // Confirmed not found
+        Err(e) => Err(e), // Other network error
+    }
 }

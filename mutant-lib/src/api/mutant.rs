@@ -269,6 +269,58 @@ impl MutAnt {
             .map_err(Error::Data)
     }
 
+    /// Updates the data associated with an existing public upload name.
+    ///
+    /// This operation overwrites the content of the existing public index scratchpad
+    /// to point to newly uploaded data chunks. The original data chunks become orphaned.
+    /// The public index address remains the same.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the public upload to update.
+    /// * `data_bytes` - The new data to store.
+    /// * `callback` - An optional callback (`PutCallback`) for progress reporting.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Data` if the key is not found, if it's a private key, or if the update fails.
+    /// Returns `Error::PadLifecycle` if saving the index cache fails afterwards (logged as warning).
+    pub async fn update_public(
+        &self,
+        name: &str,
+        data_bytes: &[u8],
+        callback: Option<PutCallback>,
+    ) -> Result<(), Error> {
+        debug!("MutAnt::update_public started for name '{}'", name);
+
+        // Delegate the core logic to the data manager
+        let result = self
+            .data_manager
+            .update_public(name, data_bytes, callback)
+            .await
+            .map_err(Error::Data);
+
+        // Attempt to save the index cache regardless of the update result
+        let network_choice = self.network_adapter.get_network_choice();
+        if let Err(e) = self
+            .pad_lifecycle_manager
+            .save_index_cache(network_choice)
+            .await
+        {
+            warn!(
+                "Failed to save index cache after update_public operation for '{}': {}",
+                name, e
+            );
+            // If the update itself was successful, return the index save error.
+            if result.is_ok() {
+                // Map PadLifecycleError to crate::Error::PadLifecycle
+                return Err(Error::PadLifecycle(e));
+            }
+        }
+
+        result // Return the original result from data_manager.update_public
+    }
+
     /// Lists summarized information for all user keys and public uploads stored in the index.
     ///
     /// # Returns

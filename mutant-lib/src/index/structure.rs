@@ -71,6 +71,9 @@ pub struct PublicUploadInfo {
     pub size: usize,
     /// Timestamp indicating when the public upload was created or last modified.
     pub modified: DateTime<Utc>,
+    /// The secret key bytes used to create/update the index scratchpad at `address`.
+    /// Stored encrypted within the MasterIndex.
+    pub index_secret_key_bytes: Vec<u8>,
 }
 
 /// Represents an entry in the master index, which can be either private key data or public upload data.

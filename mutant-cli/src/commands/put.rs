@@ -50,14 +50,85 @@ pub async fn handle_put(
         create_put_callback(multi_progress, quiet);
 
     let result: Result<Option<ScratchpadAddress>, LibError> = if public {
-        debug!(
-            "CLI: Storing data publicly for key '{}'. Force={}",
-            key, force
-        );
-        mutant
-            .store_public(key.clone(), &data_vec, Some(callback))
-            .await
-            .map(Some)
+        if force {
+            debug!(
+                "CLI: Force flag is set for public store. Updating existing public key '{}'.",
+                key
+            );
+            match mutant.update_public(&key, &data_vec, Some(callback)).await {
+                Ok(()) => {
+                    debug!("Successfully updated existing public key '{}'.", key);
+                    Ok(None)
+                }
+                Err(LibError::Data(DataError::KeyNotFound(_))) => {
+                    eprintln!(
+                        "Error: Cannot force update public key '{}': Key not found.",
+                        key
+                    );
+                    let msg = format!("Cannot force update non-existent public key '{}'.", key);
+                    abandon_pb(&res_pb_opt, msg.clone());
+                    abandon_pb(&upload_pb_opt, msg.clone());
+                    abandon_pb(&confirm_pb_opt, msg);
+                    Err(LibError::Data(DataError::KeyNotFound(key.clone())))
+                }
+                Err(e) => {
+                    eprintln!("Error updating public key '{}': {}", key, e);
+                    let msg = format!("Error updating public key: {}", e);
+                    abandon_pb(&res_pb_opt, msg.clone());
+                    abandon_pb(&upload_pb_opt, msg.clone());
+                    abandon_pb(&confirm_pb_opt, msg);
+                    Err(e)
+                }
+            }
+        } else {
+            debug!(
+                "CLI: Checking status of public key '{}' before storing.",
+                key
+            );
+            match mutant.get_key_details(&key).await {
+                Ok(Some(details)) => {
+                    if details.public_address.is_some() {
+                        eprintln!(
+                            "Error: Public key '{}' already exists. Use --force to overwrite.",
+                            key
+                        );
+                        let msg = format!("Public key '{}' already exists.", key);
+                        abandon_pb(&res_pb_opt, msg.clone());
+                        abandon_pb(&upload_pb_opt, msg.clone());
+                        abandon_pb(&confirm_pb_opt, msg);
+                        Err(LibError::Data(DataError::KeyAlreadyExists(key.clone())))
+                    } else {
+                        eprintln!(
+                            "Error: Key '{}' exists but is a private key. Cannot overwrite with public using -p.",
+                            key
+                        );
+                        let msg = format!("Key '{}' exists but is private.", key);
+                        abandon_pb(&res_pb_opt, msg.clone());
+                        abandon_pb(&upload_pb_opt, msg.clone());
+                        abandon_pb(&confirm_pb_opt, msg);
+                        Err(LibError::Data(DataError::KeyAlreadyExists(key.clone())))
+                    }
+                }
+                Ok(None) => {
+                    debug!(
+                        "CLI: Public key '{}' does not exist. Proceeding with new upload.",
+                        key
+                    );
+                    mutant
+                        .store_public(key.clone(), &data_vec, Some(callback))
+                        .await
+                        .map(Some)
+                }
+                Err(e) => {
+                    eprintln!("Error checking status for public key '{}': {}", key, e);
+                    let msg = format!("Error checking public key status: {}", e);
+                    abandon_pb(&res_pb_opt, msg.clone());
+                    abandon_pb(&upload_pb_opt, msg.clone());
+                    abandon_pb(&confirm_pb_opt, msg);
+                    Err(e)
+                }
+            }
+        }
     } else {
         if force {
             debug!(
