@@ -237,7 +237,7 @@ async fn test_purge_existing_pads() {
     let mut pending_pads_info = Vec::new();
     let mut expected_free_addresses = std::collections::HashSet::new();
 
-    for i in 0..num_pads_to_add {
+    for _ in 0..num_pads_to_add {
         let key = SecretKey::random();
         let address = ScratchpadAddress::new(key.public_key());
         let key_bytes = key.to_bytes().to_vec();
@@ -358,7 +358,7 @@ async fn test_purge_mixed_pads() {
     let mut pending_pads_info = Vec::new();
     let mut expected_free_addresses = std::collections::HashSet::new();
 
-    for i in 0..num_existing {
+    for _ in 0..num_existing {
         let key = SecretKey::random();
         let address = ScratchpadAddress::new(key.public_key());
         let key_bytes = key.to_bytes().to_vec();
