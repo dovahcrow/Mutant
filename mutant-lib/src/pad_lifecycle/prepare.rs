@@ -1,5 +1,5 @@
 use crate::data::error::DataError;
-use crate::data::ops::common::{DataManagerDependencies, WriteTaskInput};
+use crate::data::ops::common::WriteTaskInput;
 use crate::index::{structure::PadStatus, KeyInfo, PadInfo};
 use crate::internal_events::PutCallback;
 use crate::internal_events::{invoke_put_callback, PutEvent};
@@ -13,17 +13,17 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 pub(crate) async fn prepare_pads_for_store(
-    deps: &DataManagerDependencies,
+    data_manager: &crate::data::manager::DefaultDataManager,
     user_key: &str,
     data_size: usize,
     chunks: &[Vec<u8>],
     callback_arc: Arc<Mutex<Option<PutCallback>>>,
 ) -> Result<(KeyInfo, Vec<WriteTaskInput>), DataError> {
-    let _chunk_size = deps.index_manager.get_scratchpad_size().await?;
+    let _chunk_size = data_manager.index_manager.get_scratchpad_size().await?;
     let num_chunks = chunks.len();
     let mut tasks_to_run: Vec<WriteTaskInput> = Vec::new();
 
-    let existing_key_info_opt = deps.index_manager.get_key_info(user_key).await?;
+    let existing_key_info_opt = data_manager.index_manager.get_key_info(user_key).await?;
 
     match existing_key_info_opt {
         Some(key_info) => {
@@ -110,7 +110,7 @@ pub(crate) async fn prepare_pads_for_store(
                     checks_needed.len()
                 );
                 let mut check_futures = FuturesUnordered::new();
-                let network_adapter = Arc::clone(&deps.network_adapter);
+                let network_adapter = Arc::clone(&data_manager.network_adapter);
                 for address in checks_needed {
                     let net_clone = Arc::clone(&network_adapter);
                     check_futures.push(async move {
@@ -159,7 +159,7 @@ pub(crate) async fn prepare_pads_for_store(
 
                 for old_address in pads_needing_replacement {
                     debug!("Prepare: Acquiring replacement for pad {}", old_address);
-                    let acquired = deps
+                    let acquired = data_manager
                         .pad_lifecycle_manager
                         .acquire_pads(1, &mut *callback_arc.lock().await)
                         .await?;
@@ -184,7 +184,7 @@ pub(crate) async fn prepare_pads_for_store(
                                     "Prepare: Adding abandoned pad {} to pending verification list",
                                     old_address
                                 );
-                                if let Err(e) = deps
+                                if let Err(e) = data_manager
                                     .index_manager
                                     .add_pending_pads(vec![(old_address, old_key_bytes)])
                                     .await
@@ -224,8 +224,8 @@ pub(crate) async fn prepare_pads_for_store(
                         ));
                     }
                 }
-                let network_choice = deps.network_adapter.get_network_choice();
-                if let Err(cache_err) = deps
+                let network_choice = data_manager.network_adapter.get_network_choice();
+                if let Err(cache_err) = data_manager
                     .pad_lifecycle_manager
                     .save_index_cache(network_choice)
                     .await
@@ -295,7 +295,8 @@ pub(crate) async fn prepare_pads_for_store(
             info!("Prepare: Prepared {} tasks for resume.", tasks_to_run.len());
 
             final_prepared_key_info.modified = Utc::now();
-            deps.index_manager
+            data_manager
+                .index_manager
                 .insert_key_info(user_key.to_string(), final_prepared_key_info.clone())
                 .await?;
 
@@ -317,7 +318,8 @@ pub(crate) async fn prepare_pads_for_store(
                     is_complete: true,
                 };
 
-                deps.index_manager
+                data_manager
+                    .index_manager
                     .insert_key_info(user_key.to_string(), key_info.clone())
                     .await?;
                 info!("Prepare: Empty key '{}' created and persisted.", user_key);
@@ -348,31 +350,42 @@ pub(crate) async fn prepare_pads_for_store(
             }
 
             debug!("Prepare: Acquiring {} pads...", num_chunks);
-            let acquired_pads_with_origin = deps
+            let acquired_pads_result = data_manager
                 .pad_lifecycle_manager
                 .acquire_pads(num_chunks, &mut *callback_arc.lock().await)
-                .await?;
+                .await;
+
+            let acquired_pads = match acquired_pads_result {
+                Ok(pads) => {
+                    if pads.len() == num_chunks {
+                        pads
+                    } else {
+                        error!(
+                            "Prepare: Acquired {} pads, but expected {}. Mismatch!",
+                            pads.len(),
+                            num_chunks
+                        );
+                        return Err(DataError::InternalError(
+                            "Pad acquisition count mismatch".to_string(),
+                        ));
+                    }
+                }
+                Err(e) => {
+                    error!("Prepare: Failed to acquire pads: {}", e);
+                    return Err(DataError::PadLifecycle(e));
+                }
+            };
 
             debug!(
                 "Prepare: Successfully acquired {} pads.",
-                acquired_pads_with_origin.len()
+                acquired_pads.len()
             );
 
             let mut initial_pads = Vec::with_capacity(num_chunks);
             let mut initial_pad_keys = HashMap::with_capacity(num_chunks);
 
             for (i, chunk) in chunks.iter().enumerate() {
-                if i >= acquired_pads_with_origin.len() {
-                    error!(
-                        "Prepare: Logic error: Acquired pads count ({}) less than chunk index ({})",
-                        acquired_pads_with_origin.len(),
-                        i
-                    );
-                    return Err(DataError::InternalError(
-                        "Pad acquisition count mismatch".to_string(),
-                    ));
-                }
-                let (pad_address, secret_key, pad_origin) = acquired_pads_with_origin[i].clone();
+                let (pad_address, secret_key, pad_origin) = acquired_pads[i].clone();
 
                 let initial_status = match pad_origin {
                     PadOrigin::Generated => PadStatus::Generated,
@@ -409,7 +422,8 @@ pub(crate) async fn prepare_pads_for_store(
                 is_complete: false,
             };
 
-            deps.index_manager
+            data_manager
+                .index_manager
                 .insert_key_info(user_key.to_string(), key_info.clone())
                 .await?;
             info!(
@@ -418,8 +432,8 @@ pub(crate) async fn prepare_pads_for_store(
                 key_info.pads.len()
             );
 
-            let network_choice = deps.network_adapter.get_network_choice();
-            if let Err(e) = deps
+            let network_choice = data_manager.network_adapter.get_network_choice();
+            if let Err(e) = data_manager
                 .pad_lifecycle_manager
                 .save_index_cache(network_choice)
                 .await

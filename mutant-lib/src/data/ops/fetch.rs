@@ -2,30 +2,26 @@ use crate::data::chunking::reassemble_data;
 use crate::data::error::DataError;
 use crate::internal_events::{invoke_get_callback, GetCallback, GetEvent};
 
-use crate::network::AutonomiNetworkAdapter;
-
 use autonomi::SecretKey;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
 
 use std::sync::Arc;
 
-use super::common::DataManagerDependencies;
-
 pub(crate) async fn fetch_op(
-    deps: &DataManagerDependencies,
+    data_manager: &crate::data::manager::DefaultDataManager,
     user_key: &str,
     mut callback: Option<GetCallback>,
 ) -> Result<Vec<u8>, DataError> {
     info!("DataOps: Starting fetch operation for key '{}'", user_key);
 
-    let key_info = deps
+    let key_info = data_manager
         .index_manager
         .get_key_info(user_key)
         .await?
         .ok_or_else(|| DataError::KeyNotFound(user_key.to_string()))?;
 
-    let _index_copy = deps.index_manager.get_index_copy().await?;
+    let _index_copy = data_manager.index_manager.get_index_copy().await?;
 
     if !key_info.is_complete {
         warn!("Attempting to fetch incomplete data for key '{}'", user_key);
@@ -71,7 +67,7 @@ pub(crate) async fn fetch_op(
     let mut sorted_pads = key_info.pads.clone();
     sorted_pads.sort_by_key(|p| p.chunk_index);
 
-    let network_adapter = Arc::clone(&deps.network_adapter);
+    let network_adapter = Arc::clone(&data_manager.network_adapter);
     for pad_info in sorted_pads.iter() {
         let adapter_clone = Arc::clone(&network_adapter);
         let address = pad_info.address;

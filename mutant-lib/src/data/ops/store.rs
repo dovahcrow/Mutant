@@ -15,12 +15,10 @@ use tokio;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 
-use super::common::{
-    DataManagerDependencies, WriteTaskInput, CONFIRMATION_RETRY_DELAY, CONFIRMATION_RETRY_LIMIT,
-};
+use super::common::{WriteTaskInput, CONFIRMATION_RETRY_DELAY, CONFIRMATION_RETRY_LIMIT};
 
 pub(crate) async fn store_op(
-    deps: &DataManagerDependencies,
+    data_manager: &crate::data::manager::DefaultDataManager,
     user_key: String,
     data_bytes: &[u8],
     callback: Option<PutCallback>,
@@ -29,7 +27,7 @@ pub(crate) async fn store_op(
     let callback_arc = Arc::new(Mutex::new(callback));
     let data_size = data_bytes.len();
 
-    let chunk_size = deps.index_manager.get_scratchpad_size().await?;
+    let chunk_size = data_manager.index_manager.get_scratchpad_size().await?;
     if chunk_size == 0 {
         error!("Configured scratchpad size is 0. Cannot proceed with chunking.");
         return Err(DataError::ChunkingError(
@@ -44,7 +42,7 @@ pub(crate) async fn store_op(
     );
 
     let (_prepared_key_info, write_tasks_input) = crate::pad_lifecycle::prepare_pads_for_store(
-        deps,
+        data_manager,
         &user_key,
         data_size,
         &chunks,
@@ -59,7 +57,9 @@ pub(crate) async fn store_op(
     }
 
     let execution_result = execute_write_confirm_tasks(
-        deps.clone(),
+        data_manager.index_manager.clone(),
+        data_manager.pad_lifecycle_manager.clone(),
+        data_manager.network_adapter.clone(),
         user_key.clone(),
         write_tasks_input,
         callback_arc.clone(),
@@ -75,7 +75,7 @@ pub(crate) async fn store_op(
         return Err(err);
     }
 
-    let final_key_info = deps
+    let final_key_info = data_manager
         .index_manager
         .get_key_info(&user_key)
         .await?
@@ -97,7 +97,10 @@ pub(crate) async fn store_op(
             user_key
         );
 
-        deps.index_manager.mark_key_complete(&user_key).await?;
+        data_manager
+            .index_manager
+            .mark_key_complete(&user_key)
+            .await?;
     } else if !all_pads_confirmed {
         warn!("Store operation for key '{}' finished processing tasks, but not all pads reached Confirmed state. Key remains incomplete.", user_key);
     }
@@ -335,7 +338,9 @@ async fn confirm_pad_write(
 }
 
 async fn execute_write_confirm_tasks(
-    deps: DataManagerDependencies,
+    index_manager: Arc<DefaultIndexManager>,
+    pad_lifecycle_manager: Arc<DefaultPadLifecycleManager>,
+    network_adapter: Arc<AutonomiNetworkAdapter>,
     user_key: String,
     tasks_to_run_input: Vec<WriteTaskInput>,
     callback_arc: Arc<Mutex<Option<PutCallback>>>,
@@ -352,16 +357,24 @@ async fn execute_write_confirm_tasks(
     let mut pending_writes = 0;
     let mut pending_confirms = 0;
 
-    let index_manager = Arc::clone(&deps.index_manager);
-    let network_adapter = Arc::clone(&deps.network_adapter);
-    let pad_lifecycle_manager = Arc::clone(&deps.pad_lifecycle_manager);
+    let ctx = ConfirmContext {
+        index_manager: index_manager.clone(),
+        pad_lifecycle_manager: pad_lifecycle_manager.clone(),
+        network_adapter: network_adapter.clone(),
+    };
 
-    for task_input in tasks_to_run_input {
-        let network_adapter_clone = Arc::clone(&network_adapter);
+    for task_input in tasks_to_run_input.into_iter() {
+        let task_input = Arc::new(task_input);
+        let ctx_clone = ConfirmContext {
+            index_manager: Arc::clone(&ctx.index_manager),
+            pad_lifecycle_manager: Arc::clone(&ctx.pad_lifecycle_manager),
+            network_adapter: Arc::clone(&ctx.network_adapter),
+        };
+        let network_adapter_clone = Arc::clone(&ctx_clone.network_adapter);
         let secret_key_write = task_input.secret_key.clone();
         let pad_info_write = task_input.pad_info.clone();
         let current_status = pad_info_write.status.clone();
-        let chunk_data = task_input.chunk_data;
+        let chunk_data = task_input.chunk_data.clone();
         let expected_chunk_size = chunk_data.len();
 
         pending_writes += 1;

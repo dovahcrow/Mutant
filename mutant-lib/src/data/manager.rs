@@ -1,6 +1,5 @@
 use crate::data::error::DataError;
 use crate::data::ops;
-use crate::data::ops::common::DataManagerDependencies;
 use crate::index::manager::DefaultIndexManager;
 use crate::internal_events::{GetCallback, PutCallback};
 use crate::network::AutonomiNetworkAdapter;
@@ -14,10 +13,9 @@ use std::sync::Arc;
 /// pad lifecycle manager, storage manager, network adapter) and delegates the core
 /// data operations (`store`, `fetch`, `remove`) to specific functions within the `ops` module.
 pub struct DefaultDataManager {
-    deps: DataManagerDependencies,
-    network_adapter: Arc<AutonomiNetworkAdapter>,
-    index_manager: Arc<DefaultIndexManager>,
-    pad_lifecycle_manager: Arc<DefaultPadLifecycleManager>,
+    pub(crate) network_adapter: Arc<AutonomiNetworkAdapter>,
+    pub(crate) index_manager: Arc<DefaultIndexManager>,
+    pub(crate) pad_lifecycle_manager: Arc<DefaultPadLifecycleManager>,
 }
 
 impl DefaultDataManager {
@@ -39,11 +37,6 @@ impl DefaultDataManager {
     ) -> Self {
         trace!("Initializing DefaultDataManager");
         Self {
-            deps: DataManagerDependencies {
-                index_manager: index_manager.clone(),
-                pad_lifecycle_manager: pad_lifecycle_manager.clone(),
-                network_adapter: network_adapter.clone(),
-            },
             network_adapter,
             index_manager,
             pad_lifecycle_manager,
@@ -70,7 +63,7 @@ impl DefaultDataManager {
         data_bytes: &[u8],
         callback: Option<PutCallback>,
     ) -> Result<(), DataError> {
-        ops::store::store_op(&self.deps, user_key, data_bytes, callback).await
+        ops::store::store_op(self, user_key, data_bytes, callback).await
     }
 
     /// Fetches the data associated with the given user key.
@@ -96,7 +89,7 @@ impl DefaultDataManager {
         user_key: &str,
         callback: Option<GetCallback>,
     ) -> Result<Vec<u8>, DataError> {
-        ops::fetch::fetch_op(&self.deps, user_key, callback).await
+        ops::fetch::fetch_op(self, user_key, callback).await
     }
 
     /// Removes the data associated with the given user key.
@@ -113,7 +106,7 @@ impl DefaultDataManager {
     /// Returns `DataError::NotFound` if the key does not exist, or other `DataError` variants
     /// if the removal process fails.
     pub async fn remove(&self, user_key: &str) -> Result<(), DataError> {
-        ops::remove::remove_op(&self.deps, user_key).await
+        ops::remove::remove_op(self, user_key).await
     }
 
     /// Updates the data for an existing key.

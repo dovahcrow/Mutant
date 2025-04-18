@@ -63,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Removed the intermediate `storage` module, directly using the `network` adapter for pad read/write operations.
+- Refactored `DefaultDataManager` to remove redundant `DataManagerDependencies` struct, passing `&DefaultDataManager` directly to ops functions.
 - Restricted public API surface of `mutant-lib`, re-exporting only necessary types.
 - Refactored `rm` key logic: Only `Generated` pads go to pending verification; others go directly to free pool.
 - Reduced default usable scratchpad size margin to 4KB.

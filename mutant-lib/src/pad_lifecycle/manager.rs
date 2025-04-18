@@ -3,7 +3,7 @@ use crate::internal_events::PurgeCallback;
 use crate::internal_events::PutCallback;
 use crate::index::structure::PadStatus;
 use crate::index::manager::DefaultIndexManager;
-use crate::network::{AutonomiNetworkAdapter, NetworkChoice, NetworkError};
+use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::cache::{read_cached_index, write_cached_index};
 use crate::pad_lifecycle::error::PadLifecycleError;
 use crate::pad_lifecycle::import;

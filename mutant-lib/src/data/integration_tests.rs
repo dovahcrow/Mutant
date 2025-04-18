@@ -7,7 +7,6 @@ use crate::index::manager::DefaultIndexManager;
 use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::NetworkChoice;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
-use crate::storage::manager::DefaultStorageManager;
 use autonomi::SecretKey;
 use std::sync::Arc;
 
@@ -17,7 +16,6 @@ const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
 
 async fn setup_managers() -> (
     Arc<AutonomiNetworkAdapter>,
-    Arc<DefaultStorageManager>,
     Arc<DefaultIndexManager>,
     Arc<DefaultPadLifecycleManager>,
     DefaultDataManager,
@@ -29,12 +27,10 @@ async fn setup_managers() -> (
             .expect("Test NetworkAdapter setup failed"),
     );
 
-    let storage_manager: Arc<DefaultStorageManager> =
-        Arc::new(DefaultStorageManager::new(network_adapter.clone()));
+    let master_key_for_index = SecretKey::random();
     let index_manager = Arc::new(DefaultIndexManager::new(
-        storage_manager.clone(),
         network_adapter.clone(),
-        SecretKey::random(),
+        master_key_for_index,
     ));
     // Use load_or_initialize, assuming a dummy key/address is fine for data tests
     // If these tests require specific index state, this setup needs adjustment.
@@ -53,21 +49,18 @@ async fn setup_managers() -> (
     let pad_lifecycle_manager = Arc::new(DefaultPadLifecycleManager::new(
         index_manager.clone(),
         network_adapter.clone(),
-        storage_manager.clone(),
     ));
 
     let data_manager = DefaultDataManager::new(
+        network_adapter.clone(),
         index_manager.clone(),
         pad_lifecycle_manager.clone(),
-        storage_manager.clone(),
-        network_adapter.clone(),
     );
 
     // Need to pass TEST_SCRATCHPAD_SIZE to store/fetch calls now, not constructor
 
     (
         network_adapter,
-        storage_manager,
         index_manager,
         pad_lifecycle_manager,
         data_manager,
@@ -188,7 +181,7 @@ fn test_reassemble_missing_chunk() {
 
 #[tokio::test]
 async fn test_store_very_large_data_multi_pad() {
-    let (_network_adapter, _storage_manager, index_manager, _pad_lifecycle_manager, data_manager) =
+    let (_network_adapter, index_manager, _pad_lifecycle_manager, data_manager) =
         setup_managers().await;
 
     let key = "very_large_data_key".to_string();
@@ -259,7 +252,7 @@ async fn test_store_very_large_data_multi_pad() {
 
 #[tokio::test]
 async fn test_store_basic() {
-    let (_network, _storage, index_manager, _pad_lifecycle, data_manager) = setup_managers().await;
+    let (_network, index_manager, _pad_lifecycle, data_manager) = setup_managers().await;
     let key = "store_basic_key".to_string();
     let data = b"some simple data".to_vec();
 
@@ -282,7 +275,7 @@ async fn test_store_basic() {
 
 #[tokio::test]
 async fn test_fetch_basic() {
-    let (_network, _storage, _index_manager, _pad_lifecycle, data_manager) = setup_managers().await;
+    let (_network, _index_manager, _pad_lifecycle, data_manager) = setup_managers().await;
     let key = "fetch_basic_key".to_string();
     let data = b"some data to fetch".to_vec();
 
@@ -295,4 +288,86 @@ async fn test_fetch_basic() {
         fetch_result.err()
     );
     assert_eq!(fetch_result.unwrap(), data);
+}
+
+#[tokio::test]
+async fn test_store_fetch_remove_cycle() {
+    let (_network_adapter, index_manager, _pad_lifecycle_manager, data_manager) =
+        setup_managers().await;
+    let key = "store_fetch_remove_cycle_key".to_string();
+    let data = b"data for full cycle test".to_vec();
+
+    // Store
+    assert!(data_manager.store(key.clone(), &data, None).await.is_ok());
+
+    // Fetch
+    let fetched_data = data_manager.fetch(&key, None).await;
+    assert!(fetched_data.is_ok());
+    assert_eq!(fetched_data.unwrap(), data);
+
+    // Remove
+    assert!(data_manager.remove(&key).await.is_ok());
+
+    // Fetch again (should fail)
+    let fetch_after_remove = data_manager.fetch(&key, None).await;
+    assert!(fetch_after_remove.is_err());
+    match fetch_after_remove.err().unwrap() {
+        DataError::KeyNotFound(_) => {} // Expected
+        e => panic!("Expected KeyNotFound after remove, got {:?}", e),
+    }
+
+    // Check index manager state (key should be gone)
+    let key_info_after_remove = index_manager.get_key_info(&key).await;
+    assert!(key_info_after_remove.is_ok());
+    assert!(key_info_after_remove.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn test_store_existing_key() {
+    let (_network_adapter, _index_manager, _pad_lifecycle_manager, data_manager) =
+        setup_managers().await;
+    let key = "existing_key_test".to_string();
+    let data1 = b"initial data".to_vec();
+    let data2 = b"new data".to_vec();
+
+    // Store initial data
+    assert!(data_manager.store(key.clone(), &data1, None).await.is_ok());
+
+    // Try to store again (should fail by default)
+    let store_again = data_manager.store(key.clone(), &data2, None).await;
+    assert!(store_again.is_err());
+    match store_again.err().unwrap() {
+        DataError::KeyAlreadyExists(_) => {} // Expected
+        e => panic!("Expected KeyAlreadyExists, got {:?}", e),
+    }
+
+    // TODO: Add test for --force overwrite once implemented
+}
+
+#[tokio::test]
+async fn test_fetch_nonexistent_key() {
+    let (_network_adapter, _index_manager, _pad_lifecycle_manager, data_manager) =
+        setup_managers().await;
+    let key = "nonexistent_key_fetch".to_string();
+
+    let result = data_manager.fetch(&key, None).await;
+    assert!(result.is_err());
+    match result.err().unwrap() {
+        DataError::KeyNotFound(_) => {} // Expected
+        e => panic!("Expected KeyNotFound, got {:?}", e),
+    }
+}
+
+#[tokio::test]
+async fn test_remove_nonexistent_key() {
+    let (_network_adapter, _index_manager, _pad_lifecycle_manager, data_manager) =
+        setup_managers().await;
+    let key = "nonexistent_key_remove".to_string();
+
+    let result = data_manager.remove(&key).await;
+    assert!(result.is_err());
+    match result.err().unwrap() {
+        DataError::KeyNotFound(_) => {} // Expected
+        e => panic!("Expected KeyNotFound, got {:?}", e),
+    }
 }
