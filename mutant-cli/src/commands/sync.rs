@@ -65,15 +65,17 @@ pub async fn handle_sync(mutant: MutAnt, push_force: bool) -> Result<(), CliErro
                 warn!("Remote master index not found.");
                 pb.set_message("Remote index not found. Checking with user...".to_string());
 
-                let confirmation = Confirm::with_theme(&ColorfulTheme::default())
-                    .with_prompt("Remote master index not found. Do you want to create it based on your current local state?")
-                    .interact()
-                    .map_err(|e| {
-                        let err_msg = format!("Failed to get user confirmation: {}", e);
-                        error!("{}", err_msg);
-                        pb.abandon_with_message(err_msg.clone());
-                        CliError::UserInputAborted(format!("Confirmation prompt failed: {}", e))
-                    })?;
+                let confirmation = mp.suspend(|| {
+                    Confirm::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Remote master index not found. Do you want to create it based on your current local state?")
+                        .interact()
+                })
+                .map_err(|e| {
+                    let err_msg = format!("Failed to get user confirmation: {}", e);
+                    error!("{}", err_msg);
+                    pb.abandon_with_message(err_msg.clone());
+                    CliError::UserInputAborted(format!("Confirmation prompt failed: {}", e))
+                })?;
 
                 if confirmation {
                     info!("User confirmed creation of remote index.");
