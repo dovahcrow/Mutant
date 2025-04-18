@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e # Exit immediately if a command exits with a non-zero status.
 
+# --- Sanity Checks ---
+if ! command -v pgrep &> /dev/null; then
+    echo "ERROR: pgrep command not found in PATH. Please install procps (or equivalent)." >&2
+    exit 1
+fi
+# Add other essential commands if needed (e.g., git, cargo, ps)
+
 # Determine PROJECT_ROOT based on the script's location
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 # Project root is one level above the script directory
