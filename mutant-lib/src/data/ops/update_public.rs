@@ -2,7 +2,6 @@ use crate::data::chunking::chunk_data;
 use crate::data::error::DataError;
 use crate::data::manager::DefaultDataManager;
 use crate::data::{PUBLIC_DATA_ENCODING, PUBLIC_INDEX_ENCODING};
-use crate::index::structure::{PadStatus /*IndexEntry, PublicUploadInfo*/};
 use crate::internal_events::{invoke_put_callback, PutCallback, PutEvent};
 use crate::network::adapter::create_public_scratchpad;
 use autonomi::client::payment::PaymentOption;
@@ -207,24 +206,81 @@ pub(crate) async fn update_public_op(
             public_index_address, PUBLIC_INDEX_ENCODING
         );
         // Use put_raw instead
-        manager
+        /* manager
+        .network_adapter
+        .put_raw(
+            &index_sk,
+            &new_index_data_bytes,
+            &PadStatus::Written, // Assuming Written status for update
+            PUBLIC_INDEX_ENCODING,
+        )
+        .await
+        .map_err(|e| {
+            // Log the specific error from put_raw
+            error!(
+                "Failed to update public index scratchpad {} using put_raw: {}",
+                public_index_address, e
+            );
+            // Map to DataError::Network or a more specific error if appropriate
+            DataError::Network(e)
+        })?; */
+
+        // Avoid scratchpad_update (via put_raw) due to suspected SDK bug.
+        // Instead, fetch current counter and use scratchpad_put to overwrite.
+        debug!(
+            "Fetching current index scratchpad {} to get counter for update...",
+            public_index_address
+        );
+        let current_scratchpad = manager
             .network_adapter
-            .put_raw(
-                &index_sk,
-                &new_index_data_bytes,
-                &PadStatus::Written, // Assuming Written status for update
-                PUBLIC_INDEX_ENCODING,
-            )
+            .get_raw_scratchpad(&public_index_address)
             .await
             .map_err(|e| {
-                // Log the specific error from put_raw
                 error!(
-                    "Failed to update public index scratchpad {} using put_raw: {}",
+                    "Failed to fetch current public index scratchpad {} for update: {}",
                     public_index_address, e
                 );
-                // Map to DataError::Network or a more specific error if appropriate
+                DataError::Network(e) // Or more specific error
+            })?;
+        let current_counter = current_scratchpad.counter();
+        let new_counter = current_counter + 1;
+        debug!(
+            "Current counter is {}, updating with counter {}",
+            current_counter, new_counter
+        );
+
+        let updated_index_scratchpad = create_public_scratchpad(
+            &index_sk,
+            PUBLIC_INDEX_ENCODING,
+            &new_index_data_bytes, // Serialized Vec<ScratchpadAddress>
+            new_counter,
+        );
+
+        debug!(
+            "Uploading updated index scratchpad {} via scratchpad_put",
+            public_index_address
+        );
+        let payment = PaymentOption::Wallet((*manager.network_adapter.wallet()).clone());
+        let (_cost, returned_addr) = manager
+            .network_adapter
+            .scratchpad_put(updated_index_scratchpad, payment)
+            .await
+            .map_err(|e| {
+                error!(
+                    "Failed to update public index scratchpad {} using scratchpad_put: {}",
+                    public_index_address, e
+                );
                 DataError::Network(e)
             })?;
+
+        // Sanity check the returned address
+        if returned_addr != public_index_address {
+            warn!(
+                "scratchpad_put during update returned address {} but expected {}",
+                returned_addr, public_index_address
+            );
+            // Continue anyway, but log warning
+        }
 
         info!(
             "Successfully updated public index for '{}' at address {}",
