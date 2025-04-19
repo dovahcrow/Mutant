@@ -465,7 +465,7 @@ mod public_op_tests {
     #[tokio::test]
     #[serial]
     async fn test_store_public_op_empty_data() {
-        let (net_adapter, data_manager, index_manager) = setup_public_test_env().await;
+        let (_net_adapter, data_manager, index_manager) = setup_public_test_env().await;
         let name = "public_empty_data".to_string();
         let data: Vec<u8> = vec![];
 
@@ -484,7 +484,7 @@ mod public_op_tests {
         assert_eq!(metadata.address, public_addr);
 
         // Fetch the empty data via public fetch op
-        let fetched_data = fetch_public_op(&net_adapter, public_addr, None).await;
+        let fetched_data = fetch_public_op(&data_manager, public_addr, None).await;
         assert!(fetched_data.is_ok());
         assert!(fetched_data.unwrap().is_empty());
 
@@ -515,14 +515,14 @@ mod public_op_tests {
     #[tokio::test]
     #[serial]
     async fn test_fetch_public_op_basic() {
-        let (net_adapter, data_manager, _index_manager) = setup_public_test_env().await;
+        let (_net_adapter, data_manager, _index_manager) = setup_public_test_env().await;
         let name = "public_fetch_basic_integrated".to_string();
         let data = b"some fetchable public data integrated";
         let store_result = store_public_op(&data_manager, name.clone(), data, None).await;
         assert!(store_result.is_ok(), "Setup store failed");
         let public_index_addr = store_result.unwrap();
 
-        let fetch_result = fetch_public_op(&net_adapter, public_index_addr, None).await;
+        let fetch_result = fetch_public_op(&data_manager, public_index_addr, None).await;
         assert!(
             fetch_result.is_ok(),
             "fetch_public_op failed: {:?}",
@@ -535,13 +535,13 @@ mod public_op_tests {
     #[tokio::test]
     #[serial]
     async fn test_fetch_public_op_empty() {
-        let (net_adapter, data_manager, _index_manager) = setup_public_test_env().await;
+        let (_net_adapter, data_manager, _index_manager) = setup_public_test_env().await;
         let name = "public_fetch_empty_integrated".to_string();
         let data = b"";
         let store_result = store_public_op(&data_manager, name.clone(), data, None).await;
         assert!(store_result.is_ok(), "Setup store for empty failed");
         let public_index_addr = store_result.unwrap();
-        let fetch_result = fetch_public_op(&net_adapter, public_index_addr, None).await;
+        let fetch_result = fetch_public_op(&data_manager, public_index_addr, None).await;
         assert!(
             fetch_result.is_ok(),
             "fetch_public_op for empty failed: {:?}",
@@ -554,10 +554,10 @@ mod public_op_tests {
     #[tokio::test]
     #[serial]
     async fn test_fetch_public_op_not_found() {
-        let (net_adapter, _data_manager, _index_manager) = setup_public_test_env().await;
+        let (_net_adapter, data_manager, _index_manager) = setup_public_test_env().await;
         let random_key = SecretKey::random();
         let non_existent_addr = ScratchpadAddress::new(random_key.public_key());
-        let fetch_result = fetch_public_op(&net_adapter, non_existent_addr, None).await;
+        let fetch_result = fetch_public_op(&data_manager, non_existent_addr, None).await;
         assert!(
             fetch_result.is_err(),
             "Fetch should fail for non-existent addr"
@@ -594,7 +594,7 @@ mod public_op_tests {
     #[tokio::test]
     #[serial]
     async fn test_fetch_public_op_wrong_index_encoding() {
-        let (net_adapter, _data_manager, _index_manager) = setup_public_test_env().await;
+        let (net_adapter, data_manager, _index_manager) = setup_public_test_env().await;
         let sk = SecretKey::random();
         let invalid_encoding = 99u64;
         let addr = put_invalid_scratchpad(
@@ -604,7 +604,7 @@ mod public_op_tests {
             b"wrong encoding index data",
         )
         .await;
-        let fetch_result = fetch_public_op(&net_adapter, addr, None).await;
+        let fetch_result = fetch_public_op(&data_manager, addr, None).await;
         assert!(
             fetch_result.is_err(),
             "Fetch should fail for wrong index encoding"

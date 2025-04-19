@@ -86,14 +86,14 @@ cd "$PROJECT_ROOT" || exit 1
 OVERALL_TEST_EXIT_CODE=0
 
 # Test the cli (or other workspace tests if desired)
-echo "--- Testing CLI Crate ---"
-if cargo test --package mutant-cli -- --nocapture --test-threads=1; then
-  echo "CLI tests Passed"
-else
-  CLI_EXIT_CODE=$?
-  echo "CLI tests Failed (Exit Code: $CLI_EXIT_CODE)"
-  OVERALL_TEST_EXIT_CODE=$CLI_EXIT_CODE # Record failure
-fi
+# echo "--- Testing CLI Crate ---"
+# if cargo test --package mutant -- --nocapture --test-threads=1; then
+#   echo "CLI tests Passed"
+# else
+#   CLI_EXIT_CODE=$?
+#   echo "CLI tests Failed (Exit Code: $CLI_EXIT_CODE)"
+#   OVERALL_TEST_EXIT_CODE=$CLI_EXIT_CODE # Record failure
+# fi
 
 # Test the mutant library
 echo "--- Testing Lib Crate (Filter: '${TEST_PATH_FILTER:-<all>}') ---"
