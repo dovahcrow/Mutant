@@ -50,7 +50,7 @@ pub fn create_get_callback(
                     if let Some(pb) = pb_guard.as_mut() {
                         // Switch to determinate style now that we have the total
                         pb.set_style(get_default_steps_style());
-                        pb.set_length(total_chunks as u64);
+                        pb.set_length(total_chunks as u64 + 1);
                         pb.set_position(0); // Start at 0 before the first ChunkFetched increments it
                         pb.set_message("Fetching chunks...".to_string());
                         trace!(
@@ -63,11 +63,11 @@ pub fn create_get_callback(
                             "Get Callback: Starting event received but progress bar does not exist."
                         );
                         // Attempt to create it now (though it missed the IndexLookup state)
-                        let pb = pb_guard.get_or_insert_with(|| {
+                        let _ = pb_guard.get_or_insert_with(|| {
                             let pb = StyledProgressBar::new(&multi_progress);
                             pb.set_style(get_default_steps_style());
                             pb.set_message("Fetching chunks...".to_string());
-                            pb.set_length(total_chunks as u64);
+                            pb.set_length(total_chunks as u64 + 1);
                             pb.set_position(0);
                             pb
                         });

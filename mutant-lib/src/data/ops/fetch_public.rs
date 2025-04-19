@@ -3,10 +3,7 @@ use crate::data::{
     PUBLIC_DATA_ENCODING,
     PUBLIC_INDEX_ENCODING, // Use constants from parent
 };
-use crate::internal_events::{
-    invoke_get_callback, GetCallback,
-    GetEvent::{self, ChunkFetched, Complete, IndexLookup, Starting},
-}; // Import GetEvent variants explicitly
+use crate::internal_events::{invoke_get_callback, GetCallback, GetEvent}; // Import GetEvent variants explicitly
 use crate::network::AutonomiNetworkAdapter;
 use autonomi::{Bytes, ScratchpadAddress};
 use log::{debug, error, info, trace, warn};
@@ -78,17 +75,17 @@ pub(crate) async fn fetch_public_op(
         serde_cbor::from_slice(index_scratchpad.encrypted_data())?; // Use `?` with From trait for serde_cbor::Error
 
     let num_data_chunks = chunk_addresses.len();
-    let total_steps = num_data_chunks + 1; // +1 for the index chunk
+    // total_steps is now just the data chunks for the progress bar
     debug!(
         "Deserialized {} data chunk addresses from public index {}. Total steps: {}.",
-        num_data_chunks, public_index_address, total_steps
+        num_data_chunks, public_index_address, num_data_chunks
     );
 
-    // Report starting event for GetCallback, including the index fetch
+    // Report starting event for GetCallback AFTER index fetch, with only data chunk count
     if !invoke_get_callback(
         &mut *callback_arc.lock().await, // Pass mutable reference to Option<GetCallback>
         GetEvent::Starting {
-            total_chunks: total_steps,
+            total_chunks: num_data_chunks, // Only data chunks
         },
     )
     .await
@@ -96,23 +93,7 @@ pub(crate) async fn fetch_public_op(
     // Map callback error
     {
         warn!(
-            "Public fetch for index {} cancelled at start.",
-            public_index_address
-        );
-        return Err(DataError::OperationCancelled);
-    }
-
-    // Report fetch of index chunk (chunk 0)
-    if !invoke_get_callback(
-        &mut *callback_arc.lock().await,
-        GetEvent::ChunkFetched { chunk_index: 0 },
-    )
-    .await
-    .map_err(|e| DataError::CallbackError(e.to_string()))?
-    // Map callback error
-    {
-        warn!(
-            "Public fetch for index {} cancelled after fetching index.",
+            "Public fetch for index {} cancelled after index fetch, before data chunks.",
             public_index_address
         );
         return Err(DataError::OperationCancelled);
@@ -137,11 +118,11 @@ pub(crate) async fn fetch_public_op(
     // 4. Fetch and Concatenate Data Chunks
     let mut assembled_data = Vec::new();
     for (i, chunk_addr) in chunk_addresses.into_iter().enumerate() {
-        // Report progress for data chunks (index i + 1)
+        // Report progress for data chunks (index i: 0 to num_data_chunks-1)
         if !invoke_get_callback(
             &mut *callback_arc.lock().await, // Pass mutable reference
             GetEvent::ChunkFetched {
-                chunk_index: i + 1, // +1 because index was chunk 0
+                chunk_index: i, // Use 0-based index for data chunks
             },
         )
         .await
