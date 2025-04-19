@@ -426,7 +426,7 @@ mod public_op_tests {
     #[tokio::test]
     #[serial]
     async fn test_store_public_op_basic() {
-        let (net_adapter, data_manager, index_manager) = setup_public_test_env().await;
+        let (_net_adapter, data_manager, index_manager) = setup_public_test_env().await;
         let name = "public_store_basic".to_string();
         let data = b"some public data here";
         let result = store_public_op(&data_manager, name.clone(), data, None).await;

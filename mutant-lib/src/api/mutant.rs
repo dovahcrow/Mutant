@@ -86,6 +86,71 @@ impl MutAnt {
         })
     }
 
+    /// Initializes a new MutAnt instance configured only for fetching public data from Mainnet.
+    ///
+    /// This instance does **not** require a private key and cannot perform operations
+    /// that require user identity or access to the private master index (e.g., store,
+    /// fetch private, remove, update, list keys, purge).
+    ///
+    /// Its sole purpose is to allow calling `fetch_public` on the Mainnet network.
+    /// Calling other methods on this instance will likely result in errors or panics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `Error` if network initialization fails.
+    pub async fn init_public() -> Result<Self, Error> {
+        info!("Initializing MutAnt public fetcher for Mainnet.");
+
+        // Use the default config which defaults to Mainnet.
+        let config = MutAntConfig::default();
+
+        // Initialize network adapter without a real private key.
+        // We pass a dummy hex string. This assumes the underlying client
+        // doesn't strictly require a valid key for read-only public operations.
+        // If this fails, AutonomiNetworkAdapter::new might need adjustment.
+        let network_adapter_concrete = AutonomiNetworkAdapter::new("00", config.network)
+            .map_err(|e| Error::Config(format!("Failed network init for public fetcher: {}", e)))?;
+        let network_adapter: Arc<AutonomiNetworkAdapter> = Arc::new(network_adapter_concrete);
+        info!("Public Fetcher: NetworkAdapter initialized.");
+
+        // Use placeholder keys and address for the master index.
+        // These are required by manager constructors but won't be used
+        // for fetch_public operations.
+        let placeholder_master_key = SecretKey::from_bytes([0u8; 32])
+            .map_err(|e| Error::Internal(format!("Failed create placeholder key: {:?}", e)))?;
+        let placeholder_master_address =
+            ScratchpadAddress::new(placeholder_master_key.public_key());
+
+        // Initialize managers with the network adapter and placeholder keys.
+        // The actual state/data within these managers will be default/empty
+        // and unsuitable for operations other than fetch_public.
+        let index_manager = Arc::new(DefaultIndexManager::new(
+            Arc::clone(&network_adapter),
+            placeholder_master_key.clone(),
+        ));
+
+        let pad_lifecycle_manager = Arc::new(DefaultPadLifecycleManager::new(
+            Arc::clone(&index_manager),
+            Arc::clone(&network_adapter),
+        ));
+
+        let data_manager = Arc::new(DefaultDataManager::new(
+            Arc::clone(&network_adapter),
+            Arc::clone(&index_manager),
+            Arc::clone(&pad_lifecycle_manager),
+        ));
+        info!("Public Fetcher: Managers initialized with placeholders.");
+
+        Ok(Self {
+            data_manager,
+            pad_lifecycle_manager,
+            index_manager,
+            network_adapter,
+            master_index_address: placeholder_master_address,
+            master_index_key: placeholder_master_key,
+        })
+    }
+
     /// Stores data under a specific key.
     ///
     /// This is a convenience function that calls `store_with_progress` with no progress callback.

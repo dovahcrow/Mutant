@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Allow updating public uploads using `mutant put -p <name> <value> --force`. This overwrites the data associated with the name while keeping the public index address stable.
+- Added `MutAnt::init_public()` constructor to create an instance without a private key, solely for fetching public data from Mainnet using `MutAnt::fetch_public`.
 
 ### Changed
 
