@@ -1,7 +1,7 @@
 # MutAnt: Decentralized P2P Mutable Key-Value Storage for Autonomi
 
 <!-- Badges -->
-[![Build Status](https://github.com/Champii/MutAnt/actions/workflows/rust.yml/badge.svg)](https://github.com/Champii/MutAnt/actions/workflows/rust.yml)
+[![Build Status](https://github.com/Champii/MutAnt/actions/workflows/ci.yml/badge.svg)](https://github.com/Champii/MutAnt/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/mutant-lib.svg)](https://crates.io/crates/mutant-lib)
 [![Docs.rs](https://docs.rs/mutant_lib/badge.svg)](https://docs.rs/mutant_lib)
 [![License: LGPLv3](https://img.shields.io/badge/license-LGPLv3-blue.svg)](LICENSE)
