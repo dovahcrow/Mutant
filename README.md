@@ -182,6 +182,35 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+### Fetching Public Data (Keyless Initialization)
+
+If your application only needs to retrieve publicly stored data (using `store_public`) and doesn't need to manage private data, you can initialize a lightweight `MutAnt` instance without a private key using `MutAnt::init_public()`:
+
+```rust
+use mutant_lib::{MutAnt, Error};
+use mutant_lib::storage::ScratchpadAddress;
+use anyhow::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Initialize a public fetcher instance (defaults to Mainnet)
+    let public_fetcher = MutAnt::init_public().await?;
+
+    // Assume you have the public address from elsewhere
+    let address_hex = "..."; // Replace with actual public address hex
+    let public_address = ScratchpadAddress::from_hex(address_hex)?;
+
+    // Fetch the public data
+    match public_fetcher.fetch_public(public_address, None).await {
+        Ok(data) => println!("Fetched public data: {} bytes", data.len()),
+        Err(e) => eprintln!("Failed to fetch public data: {}", e),
+    }
+
+    Ok(())
+}
+
+This keyless instance is optimized for fetching public data and cannot perform operations requiring a private key (like `store`, `fetch` private, `remove`).
 ```
 
 ## Development and Testing

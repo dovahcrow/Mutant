@@ -46,6 +46,36 @@
 //! }
 //! ```
 //!
+//! ### Fetching Public Data (without a private key)
+//!
+//! If you only need to fetch data that was stored publicly (using `store_public`), you can
+//! initialize a lightweight `MutAnt` instance without providing a private key:
+//!
+//! ```rust,no_run
+//! use mutant_lib::MutAnt;
+//! use autonomi::ScratchpadAddress;
+//! use anyhow::Result;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<()> {
+//!     // Initialize for public fetching (defaults to Mainnet)
+//!     let public_fetcher = MutAnt::init_public().await?;
+//!
+//!     // You need the public address of the data (obtained elsewhere)
+//!     let public_address = ScratchpadAddress::from_hex("...")?;
+//!
+//!     // Fetch the public data
+//!     let data = public_fetcher.fetch_public(public_address, None).await?;
+//!
+//!     println!("Fetched public data: {} bytes", data.len());
+//!     Ok(())
+//! }
+//! ```
+//!
+//! **Note:** An instance created with `init_public` can *only* be used for `fetch_public`.
+//! Other operations requiring a private key (like `store`, `fetch` private data, `remove`, etc.)
+//! will fail.
+//!
 //! ## Resources & Support
 //!
 //! - API docs   : https://docs.rs/mutant_lib
