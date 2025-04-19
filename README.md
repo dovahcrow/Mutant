@@ -214,7 +214,6 @@ Add `mutant-lib` and its dependencies to your `Cargo.toml`:
 [dependencies]
 mutant-lib = "0.4.1" # Or the version you need
 tokio = { version = "1", features = ["full"] }
-anyhow = "1.0"
 ```
 
 **Library Example:**
