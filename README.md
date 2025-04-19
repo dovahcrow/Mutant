@@ -15,7 +15,6 @@
 
 ![demo.gif](docs/screenshots/demo.gif)
 
-
 ## Table of Contents
 1. [Core Concepts](#core-concepts)
 2. [Getting Started](#getting-started)
