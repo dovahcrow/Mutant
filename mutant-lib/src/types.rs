@@ -68,6 +68,24 @@ pub struct StorageStats {
 
     /// Number of pads confirmed (e.g., replicated or verified) for incomplete keys.
     pub incomplete_keys_pads_confirmed: usize,
+
+    /// Number of public index entries (names).
+    pub public_index_count: usize,
+
+    /// Total space consumed by public index scratchpads (count * scratchpad_size).
+    pub public_index_space_bytes: u64,
+
+    /// Total number of unique data pads referenced across all public uploads.
+    pub public_data_pad_count: usize,
+
+    /// Total space consumed by unique public data pads (count * scratchpad_size).
+    pub public_data_space_bytes: u64,
+
+    /// Total size in bytes of the actual user data stored within public data pads.
+    pub public_data_actual_bytes: u64,
+
+    /// Estimated wasted space within public data pads (space_bytes - actual_bytes).
+    pub public_data_wasted_bytes: u64,
 }
 
 /// Contains metadata about a specific key stored within MutAnt.

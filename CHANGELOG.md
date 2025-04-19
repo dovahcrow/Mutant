@@ -8,16 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - UNRELEASED
 
 ### Added
-
 - Allow updating public uploads using `mutant put -p <name> <value> --force`. This overwrites the data associated with the name while keeping the public index address stable.
 - Added `MutAnt::init_public()` constructor to create an instance without a private key, solely for fetching public data from Mainnet using `MutAnt::fetch_public`.
+- Statistics for public uploads (index count, index space, actual data size) added to `mutant stat` output.
 
 ### Changed
-
 - Refactored `update_public_op` and network adapter's `put_raw` to correctly handle content type encoding when updating public index scratchpads, replacing direct SDK calls.
 
 ### Fixed
-
 - Workaround suspected SDK bug in `scratchpad_update` causing data corruption (map instead of sequence) during public index updates. Reverted `update_public_op` to use `scratchpad_put` with fetched counter instead.
 
 ## [0.3.0] - 2024-06-02
@@ -44,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add explicit build checks and error reporting for `evm-testnet` and `antctl` in `manage_local_testnet.sh`.
 - Add diagnostics (log dump, ps, pgrep -af) to `start_evm` when `pgrep` fails to find process.
 - Add check for `pgrep` command existence in `manage_local_testnet.sh`.
+- Public upload functionality (`mutant put --public <name>`)
+- Public fetch functionality (`mutant cat --public <name>`)
+- Ability to initialize `mutant-lib` without a private key for public fetch.
+- `--public` flag for `ls` and `stat` commands to show public upload details.
 
 ### Fixed
 - Fixed doctests in `mutant-lib/src/lib.rs` by:
@@ -85,6 +87,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI:** Changed `put --force` behavior to perform `remove` then `store` instead of calling the unimplemented `update` library function.
 
 ### Changed
+- `mutant stat` now shows more detailed breakdown for incomplete keys.
+- Refactored internal data operations (`store`, `fetch`, etc.) into separate modules.
+- `KeyDetails` now includes optional `public_address`.
+- `KeySummary` now indicates if an entry is public and includes its address.
 - CLI `put` command now checks key status before storing/updating:
   - Errors if key exists and is complete (unless `--force` is used).
   - Resumes if key exists but is incomplete.

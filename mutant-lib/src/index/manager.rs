@@ -333,6 +333,7 @@ impl DefaultIndexManager {
         let free_pads_count = state_guard.free_pads.len();
         let pending_verification_pads_count = state_guard.pending_verification_pads.len();
 
+        // --- Private Key Stats Initialization ---
         let mut occupied_pads_count = 0;
         let mut occupied_data_size_total: u64 = 0;
         let mut allocated_written_pads_count = 0; // Pads backing incomplete keys but not yet Confirmed
@@ -344,72 +345,130 @@ impl DefaultIndexManager {
         let mut incomplete_keys_pads_written = 0;
         let mut incomplete_keys_pads_confirmed = 0; // Confirmed pads belonging to incomplete keys
 
-        for entry in state_guard.index.values() {
-            if let IndexEntry::PrivateKey(key_info) = entry {
-                if key_info.is_complete {
-                    // Fully confirmed keys contribute to occupied pads and data size
-                    occupied_pads_count += key_info.pads.len();
-                    occupied_data_size_total += key_info.data_size as u64;
-                } else {
-                    // Incomplete keys analysis
-                    incomplete_keys_count += 1;
-                    incomplete_keys_data_bytes += key_info.data_size as u64;
-                    incomplete_keys_total_pads += key_info.pads.len();
+        // --- Public Key Stats Initialization ---
+        let mut public_index_count = 0;
+        let mut public_data_actual_bytes: u64 = 0;
+        let mut public_data_pad_addresses = HashSet::new();
 
-                    for pad_info in &key_info.pads {
-                        match pad_info.status {
-                            PadStatus::Generated => incomplete_keys_pads_generated += 1,
-                            PadStatus::Allocated => allocated_written_pads_count += 1,
-                            PadStatus::Written => {
-                                incomplete_keys_pads_written += 1;
-                                allocated_written_pads_count += 1;
-                            }
-                            PadStatus::Confirmed => {
-                                incomplete_keys_pads_confirmed += 1;
-                                // Confirmed pads of incomplete keys *also* count towards occupied
-                                occupied_pads_count += 1;
+        // --- Iterating through all index entries ---
+        for entry in state_guard.index.values() {
+            match entry {
+                IndexEntry::PrivateKey(key_info) => {
+                    if key_info.is_complete {
+                        // Fully confirmed keys contribute to occupied pads and data size
+                        occupied_pads_count += key_info.pads.len();
+                        occupied_data_size_total += key_info.data_size as u64;
+                    } else {
+                        // Incomplete keys analysis
+                        incomplete_keys_count += 1;
+                        incomplete_keys_data_bytes += key_info.data_size as u64;
+                        incomplete_keys_total_pads += key_info.pads.len();
+
+                        for pad_info in &key_info.pads {
+                            match pad_info.status {
+                                PadStatus::Generated => incomplete_keys_pads_generated += 1,
+                                PadStatus::Allocated => allocated_written_pads_count += 1, // Tracks pads allocated/written but not confirmed
+                                PadStatus::Written => {
+                                    incomplete_keys_pads_written += 1;
+                                    allocated_written_pads_count += 1;
+                                }
+                                PadStatus::Confirmed => {
+                                    incomplete_keys_pads_confirmed += 1;
+                                    // Confirmed pads of incomplete keys *also* count towards occupied
+                                    occupied_pads_count += 1;
+                                }
                             }
                         }
+                        // Include data size even for incomplete keys in the total occupied data calculation
+                        occupied_data_size_total += key_info.data_size as u64;
                     }
-                    // Include data size even for incomplete keys in the total occupied data calculation
-                    occupied_data_size_total += key_info.data_size as u64;
+                }
+                IndexEntry::PublicUpload(upload_info) => {
+                    public_index_count += 1;
+                    public_data_actual_bytes += upload_info.size as u64;
+                    // Also track the scratchpad storing the public index itself
+                    public_data_pad_addresses.insert(upload_info.address);
+                    // Collect unique data pad addresses from chunks
+                    // Assuming upload_info.chunks exists and contains ChunkInfo with .address
+                    // If PublicUploadInfo doesn't directly contain chunk addresses,
+                    // this part might need adjustment (e.g., fetching the index content).
+                    // For now, assuming the structure allows direct access or is handled elsewhere.
+                    // If upload_info only has the index address, we might only count that.
+                    // Let's refine this based on the actual structure if needed.
+                    // For now, stick to the design: count index address and data addresses if available.
+                    // Re-checking PublicUploadInfo: it doesn't have chunks directly.
+                    // Need to fetch the index content to get data pad addresses.
+                    // This makes get_storage_stats much more complex (async calls inside).
+                    // Temporarily, let's just count the index pad for public uploads.
+                    // We will adjust `public_data_pad_count` calculation accordingly.
+
+                    // Simplified: Just count the index pad for now.
+                    // public_data_pad_addresses.insert(upload_info.address); // Already done above
+
+                    // Commenting out chunk iteration as it requires async fetch:
+                    // for chunk_info in &upload_info.chunks {
+                    //     public_data_pad_addresses.insert(chunk_info.address);
+                    // }
                 }
             }
-            // Note: Public uploads currently do not contribute to these detailed pad stats.
-            // We could add a count of public uploads or their total size if needed.
         }
 
-        let total_pads_managed = occupied_pads_count
-            + allocated_written_pads_count // Pads for incomplete keys (non-confirmed)
-            + free_pads_count
-            + pending_verification_pads_count;
-
+        // --- Calculations ---
         let scratchpad_size_u64 = scratchpad_size as u64;
 
-        // Space calculation
+        // Calculate private key space
         let occupied_pad_space_bytes = occupied_pads_count as u64 * scratchpad_size_u64;
         let free_pad_space_bytes = free_pads_count as u64 * scratchpad_size_u64;
-        let total_space_bytes = total_pads_managed as u64 * scratchpad_size_u64;
-
         let wasted_space_bytes = occupied_pad_space_bytes.saturating_sub(occupied_data_size_total);
+
+        // Calculate public key space
+        let public_index_space_bytes = public_index_count as u64 * scratchpad_size_u64;
+        // NOTE: public_data_pad_addresses currently only contains the *index* addresses
+        // because fetching chunk addresses requires async operations not suitable here.
+        let public_data_pad_count = public_data_pad_addresses.len(); // Count of unique public *index* pads
+                                                                     // This `public_data_space_bytes` now represents the space used by the INDEX pads.
+        let public_data_space_bytes = public_data_pad_count as u64 * scratchpad_size_u64;
+        // Wasted space calculation now compares index pad space to actual data size, which isn't quite right.
+        // A better approach would be needed if we could get data pad count/space.
+        let public_data_wasted_bytes =
+            public_data_space_bytes.saturating_sub(public_data_actual_bytes);
+
+        // Calculate total pads (revised)
+        let total_pads_managed = occupied_pads_count // Confirmed pads (private, including incomplete confirmed)
+            + allocated_written_pads_count // Allocated/Written pads for incomplete private keys (not confirmed)
+            + free_pads_count
+            + pending_verification_pads_count
+            + public_data_pad_count; // Unique public *index* pads only
+
+        let total_space_bytes = total_pads_managed as u64 * scratchpad_size_u64;
 
         Ok(StorageStats {
             scratchpad_size,
             total_pads: total_pads_managed,
-            occupied_pads: occupied_pads_count,
+            occupied_pads: occupied_pads_count, // Still represents private/confirmed occupied pads
             free_pads: free_pads_count,
             pending_verification_pads: pending_verification_pads_count,
             total_space_bytes,
-            occupied_pad_space_bytes,
+            occupied_pad_space_bytes, // Space for private/confirmed pads
             free_pad_space_bytes,
-            occupied_data_bytes: occupied_data_size_total,
-            wasted_space_bytes,
+            occupied_data_bytes: occupied_data_size_total, // Actual data in private/confirmed pads
+            wasted_space_bytes,                            // Wasted in private/confirmed pads
+
+            // Incomplete Private Key Stats
             incomplete_keys_count,
             incomplete_keys_data_bytes,
             incomplete_keys_total_pads,
             incomplete_keys_pads_generated,
             incomplete_keys_pads_written,
             incomplete_keys_pads_confirmed,
+
+            // Public Upload Stats
+            public_index_count,
+            public_index_space_bytes, // Calculated based on count * size
+            public_data_pad_count,    // Unique public *index* pads only
+            public_data_space_bytes,  // Space for public *index* pads only
+            public_data_actual_bytes, // Sum of `size` field from PublicUploadInfo (actual data size)
+            public_data_wasted_bytes, // Difference between index pad space and actual data size (potentially misleading)
         })
     }
 

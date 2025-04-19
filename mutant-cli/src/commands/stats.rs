@@ -151,6 +151,34 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
                 );
             }
 
+            // --- New Section for Public Upload Stats ---
+            if stats.public_index_count > 0 {
+                println!("\nPublic Upload Statistics:");
+                println!("-------------------------");
+                println!("  Public Names (Indices):  {}", stats.public_index_count);
+                println!(
+                    "    Index Pad Space:       {}",
+                    format_bytes(stats.public_index_space_bytes)
+                );
+                println!(
+                    "  Total Public Data Size:  {}",
+                    format_bytes(stats.public_data_actual_bytes)
+                );
+                // Clarify that the following stats are based on index pads only
+                println!("  Unique Index Pads:       {}", stats.public_data_pad_count);
+                println!(
+                    "    Index Pad Space Used:  {}", // Renamed from public_data_space_bytes for clarity
+                    format_bytes(stats.public_data_space_bytes)
+                );
+                println!(
+                    "    Wasted (Index vs Data):{}", // Clarify the potentially misleading calculation
+                    format_bytes(stats.public_data_wasted_bytes)
+                );
+                println!(
+                    "    (Note: Pad stats currently only count public index pads, not data pads)"
+                );
+            }
+
             ExitCode::SUCCESS
         }
         Err(e) => {

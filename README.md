@@ -98,21 +98,50 @@ Options:
   -V, --version  Print version
 ```
 
+**Basic Usage:**
+
+Store/fetch private data:
+
 ```bash
 # Store a value directly
 mutant put mykey "my value"
-
-# Store data publicly (no encryption) under a name
-mutant put -p public_data "some public content"
 
 # Get a value and print to stdout
 mutant get mykey
 # Output: my value
 
-# Get public data
-mutant get public_data
+# Update a value (you can use the shorter -f)
+mutant put mykey "my new value" --force
+
+# Remove a value
+mutant rm mykey
+```
+
+Store/fetch public data:
+
+```bash
+# Store data publicly (no encryption) under a name
+mutant put -p my_key "some public content"
+# Output: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+
+# Get your own public data by name
+mutant get my_key
 # Output: some public content
 
+# Get public data by address
+mutant get -p 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+# Output: some public content
+
+# You can update it all the same as the private data
+mutant put -p my_key "some updated public content" --force
+
+# Remove a public key
+mutant rm -p my_key
+```
+
+Pipes and updates:
+
+```bash
 # Store a value from stdin (e.g., piping a file)
 cat data.txt | mutant put mykey2
 
