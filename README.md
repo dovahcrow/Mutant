@@ -157,6 +157,10 @@ mutant ls
 
 # List keys with details (size, last modified)
 mutant ls -l
+# SIZE TYPE    MODIFIED     KEY/NAME
+# 3 B  Private Apr 19 00:51 mykey
+# 5 B  Private Apr 19 00:51 mykey2
+# 11 B Public  Apr 19 00:51 public_data @ 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
 # Sync local index with remote storage
 mutant sync

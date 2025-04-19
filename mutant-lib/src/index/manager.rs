@@ -393,9 +393,19 @@ impl DefaultIndexManager {
                     unique_public_pads.insert(upload_info.address);
 
                     // Add data pads to both sets
-                    for data_pad_addr in &upload_info.data_pad_addresses {
-                        unique_public_pads.insert(*data_pad_addr);
-                        unique_public_data_only_pads.insert(*data_pad_addr);
+                    if upload_info.data_pad_addresses.is_empty() && upload_info.size > 0 {
+                        // Log a warning if data pads are missing for a non-empty upload
+                        warn!(
+                            "Public upload info for index {} (size {}) is missing data pad addresses. \\
+                             Stats for this entry may be incomplete. Recreate the upload with a newer version for accurate stats.",
+                            upload_info.address,
+                            upload_info.size
+                        );
+                    } else {
+                        for data_pad_addr in &upload_info.data_pad_addresses {
+                            unique_public_pads.insert(*data_pad_addr);
+                            unique_public_data_only_pads.insert(*data_pad_addr);
+                        }
                     }
                 }
             }
