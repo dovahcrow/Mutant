@@ -4719,10 +4719,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pointer_test"
-version = "0.1.0"
-
-[[package]]
 name = "polling"
 version = "3.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

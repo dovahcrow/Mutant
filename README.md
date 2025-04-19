@@ -135,21 +135,21 @@ Distributed mutable key value storage over the Autonomi network
 Usage: mutant [OPTIONS] <COMMAND>
 
 Commands:
-  put      Stores private or public data. Use `-p <name>` for public uploads (no encryption). Use `--force` to overwrite. Reads value from stdin if omitted
-  get      Gets the value for a given key from the network and prints it to stdout
-  rm       Deletes a key-value pair from the network
-  ls       Lists all stored private keys and public uploads. Use -l for detailed view including public addresses
-  stats    Get storage summary (allocator perspective)
-  reset    Resets the master index to its initial empty state. Requires confirmation
-  import   Imports a free scratchpad using its private key
-  sync     Synchronize local index cache with remote storage. Use --push-force to overwrite remote index
-  purge    Deletes all data associated with the current wallet. Requires confirmation
-  reserve  Pre-allocates a number of empty scratchpads for future use
+  put      Store a value associated with a key
+  get      Retrieve a value associated with a key
+  rm       Remove a key-value pair
+  ls       List stored keys
+  stats    Show storage statistics
+  reset    Reset local cache and index
+  import   Import a scratchpad private key
+  sync     Synchronize local index cache with remote storage
+  purge    Perform a check on scratchpads that should have been created but maybe not and clean them up
+  reserve  Reserve a key without storing a value
   help     Print this message or the help of the given subcommand(s)
 
 Options:
-  -l, --local    Use local network (Devnet) instead of Mainnet
-  -q, --quiet    Suppress informational output (logs, progress bars)
+  -l, --local    Use local network (Devnet)
+  -q, --quiet    Suppress progress bar output
   -h, --help     Print help
   -V, --version  Print version
 ```
