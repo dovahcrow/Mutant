@@ -1,4 +1,4 @@
-# MutAnt: Decentralized Mutable Key-Value Storage for Autonomi
+# MutAnt: Decentralized P2P Mutable Key-Value Storage for Autonomi
 
 <!-- Badges -->
 [![Build Status](https://github.com/Champii/MutAnt/actions/workflows/rust.yml/badge.svg)](https://github.com/Champii/MutAnt/actions/workflows/rust.yml)
@@ -10,7 +10,7 @@
 
 **Note:** No LLM was harmed in the making of this project.
 
-[Autonomi](https://autonomi.com) is a decentralized storage network, IT IS NOT A BLOCKCHAIN.
+[Autonomi](https://autonomi.com) is a P2P decentralized storage network, IT IS NOT A BLOCKCHAIN.
 
 ## Table of Contents
 1. [Core Concepts](#core-concepts)
