@@ -68,19 +68,15 @@ MutAnt will look for your ant wallets and ask you which one you want to use if y
 $> cargo install mutant
 ```
 
-## Migration
+## Quick start demo
 
-The master index structure (local and remote) has changed and will change again in the future. If you had an older version of `mutant` installed, you will need to delete your existing index file (and lose all your scratchpad and data) and re-run `mutant` to start fresh.
-
-As long as MutAnt is being actively developed, you can expect this to happen often. Once the implementation is more stable, migration will be made easier or disappear altogether.
+You can fetch a public data that I update in a loop at this address to try mutant yourself:
 
 ```bash
-# /!\ This will erase all your data on the local index
-$> rm ~/.local/share/mutant/index_cache.main.cbor 
-
-# /!\ This will erase all your data on the remote index
-$> mutant sync --push-force
+$> mutant get -p 9429076971abe17b485fd30dd3065d27fc36362ba164529e530722bdd693f6cb8904fc177bf657d29774eb42403ac980
+# Output: Hello Autonomi ! Sat, 19 Apr 2025 18:06:41 +0000
 ```
+
 
 ## Command-Line Interface (CLI)
 
@@ -209,14 +205,6 @@ $> mutant stats
 
 ![Stats Screenshot](docs/screenshots/stats_screenshot1.png)
 
-### Demo
-
-You can fetch a public data that I update in a loop at this address to try mutant yourself:
-
-```bash
-$> mutant get -p 9429076971abe17b485fd30dd3065d27fc36362ba164529e530722bdd693f6cb8904fc177bf657d29774eb42403ac980
-# Output: Hello Autonomi ! Sat, 19 Apr 2025 18:06:41 +0000
-```
 
 ## Library Usage
 
@@ -328,6 +316,20 @@ $> export XDG_DATA_HOME="$(pwd)/test_network_data"
 
 # Now run your cargo command or the mutant binary
 $> cargo run --package mutant -- --local ls
+```
+
+## Migration
+
+The master index structure (local and remote) has changed and will change again in the future. If you had an older version of `mutant` installed, you will need to delete your existing index file (and lose all your scratchpad and data) and re-run `mutant` to start fresh.
+
+As long as MutAnt is being actively developed, you can expect this to happen often. Once the implementation is more stable, migration will be made easier or disappear altogether.
+
+```bash
+# /!\ This will erase all your data on the local index
+$> rm ~/.local/share/mutant/index_cache.main.cbor 
+
+# /!\ This will erase all your data on the remote index
+$> mutant sync --push-force
 ```
 
 ### Running Integration Tests (`scripts/run_tests_with_env.sh`)
