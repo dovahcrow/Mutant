@@ -246,13 +246,12 @@ mod tests {
     use super::*;
     use crate::index::error::IndexError;
     use crate::index::manager::DefaultIndexManager;
-    
+
     use crate::index::structure::{IndexEntry, KeyInfo, PublicUploadInfo};
     use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
     use autonomi::{ScratchpadAddress, SecretKey};
     use serial_test::serial;
     use std::collections::HashMap;
-    
 
     // Helper to set up adapter and index manager for tests
     async fn setup_test_index_manager() -> (DefaultIndexManager, ScratchpadAddress, SecretKey) {
@@ -291,6 +290,7 @@ mod tests {
             size: 1024,
             modified: Utc::now(),
             index_secret_key_bytes: SecretKey::random().to_bytes().to_vec(),
+            data_pad_addresses: Vec::new(),
         };
 
         index_manager
@@ -312,6 +312,7 @@ mod tests {
             size: 2048,
             modified: Utc::now(),
             index_secret_key_bytes: SecretKey::random().to_bytes().to_vec(),
+            data_pad_addresses: Vec::new(),
         };
 
         index_manager

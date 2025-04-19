@@ -74,6 +74,9 @@ pub struct PublicUploadInfo {
     /// The secret key bytes used to create/update the index scratchpad at `address`.
     /// Stored encrypted within the MasterIndex.
     pub index_secret_key_bytes: Vec<u8>,
+    /// The list of addresses of the data pads storing the actual chunks.
+    #[serde(default)] // Ensure compatibility with older index formats
+    pub data_pad_addresses: Vec<ScratchpadAddress>,
 }
 
 /// Represents an entry in the master index, which can be either private key data or public upload data.

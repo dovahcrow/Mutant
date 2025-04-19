@@ -2,10 +2,12 @@ use crate::data::chunking::chunk_data;
 use crate::data::error::DataError;
 use crate::data::manager::DefaultDataManager;
 use crate::data::{PUBLIC_DATA_ENCODING, PUBLIC_INDEX_ENCODING};
+use crate::index::structure::PublicUploadInfo;
 use crate::internal_events::{invoke_put_callback, PutCallback, PutEvent};
 use crate::network::adapter::create_public_scratchpad;
 use autonomi::client::payment::PaymentOption;
 use autonomi::{Bytes, ScratchpadAddress, SecretKey};
+use chrono::Utc;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
 use serde_cbor;
@@ -27,7 +29,6 @@ pub(crate) async fn update_public_op(
     );
     let callback_arc = Arc::new(Mutex::new(callback));
     let data_size = data_bytes.len();
-    let total_size = data_size as u64;
 
     // 1. Check existence and type
     debug!("Checking existence and type for '{}'...", name);
@@ -289,20 +290,31 @@ pub(crate) async fn update_public_op(
         );
 
         // 7. Update metadata (size, modified time) in the MasterIndex via IndexManager
-        debug!("Updating metadata in master index for '{}'", name);
+        debug!(
+            "Replacing public upload info in master index for '{}'",
+            name
+        );
+        let updated_public_info = PublicUploadInfo {
+            address: public_index_address, // The index address remains the same
+            size: data_size,               // Update size
+            modified: Utc::now(),          // Update modified time
+            index_secret_key_bytes: index_sk.to_bytes().to_vec(), // Keep the original index key
+            data_pad_addresses: chunk_addresses, // Store the NEW data pad addresses
+        };
+
         manager
             .index_manager
-            .update_public_upload_metadata(name, total_size)
+            .replace_public_upload_info(name, updated_public_info) // Use the new replace method
             .await
             .map_err(|e| {
-                // Log failure but don't fail the whole operation
-                warn!(
-                    "Failed to update metadata in master index for '{}': {}. Update operation succeeded otherwise.",
+                // Log failure but don't fail the whole operation if index update fails?
+                // For now, let's return the error.
+                error!(
+                    "Failed to replace public upload info in master index for '{}': {}",
                     name, e
                 );
-                DataError::Index(e) // Return the error type, but we won't propagate it
-            })
-            .ok(); // Discard the result, effectively ignoring the error
+                DataError::Index(e)
+            })?;
 
         // 8. Call Complete Event for Update Path
         if !invoke_put_callback(&mut *callback_arc.lock().await, PutEvent::Complete)

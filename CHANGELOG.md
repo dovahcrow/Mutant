@@ -11,13 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Allow updating public uploads using `mutant put -p <name> <value> --force`. This overwrites the data associated with the name while keeping the public index address stable.
 - Added `MutAnt::init_public()` constructor to create an instance without a private key, solely for fetching public data from Mainnet using `MutAnt::fetch_public`.
 - Statistics for public uploads (index count, index space, actual data size) added to `mutant stat` output.
+- Store public data pad addresses within `PublicUploadInfo` in the MasterIndex.
 
 ### Changed
 - Refactored `update_public_op` and network adapter's `put_raw` to correctly handle content type encoding when updating public index scratchpads, replacing direct SDK calls.
 - Revised `mutant stat` output for clarity:
   - Updated text labels to distinguish private/public stats.
-  - Changed Pad Usage gauge to show Occupied (Confirmed Private + Public Index) vs. Unavailable (Free + Pending + Incomplete).
-  - Changed Space Usage gauge to show Used Data (Private + Public) vs. Wasted/Overhead vs. Free.
+  - Changed Pad Usage gauge to show Occupied (Confirmed Private + Public Index+Data) vs. Unavailable (Free + Pending + Incomplete).
+  - Changed Space Usage gauge to show Used Data (Private + Public) vs. Wasted/Frag (Private + Public Data) vs. Free.
+  - Public stats section now accurately reflects space used by unique public index and data pads.
+- Updated `update_public_op` to replace the full `PublicUploadInfo` in the index instead of just updating metadata.
 
 ### Fixed
 - Workaround suspected SDK bug in `scratchpad_update` causing data corruption (map instead of sequence) during public index updates. Reverted `update_public_op` to use `scratchpad_put` with fetched counter instead.
@@ -127,6 +130,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed unused file (`src/unused.rs`? - commit `32e986ff`).
 - Removed redundant pad release functions (`pad_lifecycle::pool::release_pads_to_free`, `pad_lifecycle::manager::release_pads`).
 - Removed `Mutant::reserve_new_pad` function (centralized in manager).
+- Removed unused `IndexManager::update_public_upload_metadata` function.
 
 ### Documentation
 - Updated README.md to reflect workspace structure, latest CLI commands/options, and library API changes.

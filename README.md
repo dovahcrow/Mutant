@@ -134,34 +134,29 @@ mutant get -p 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
 # You can update it all the same as the private data
 mutant put -p my_key "some updated public content" --force
-
-# Remove a public key
-mutant rm -p my_key
 ```
 
-Pipes and updates:
+Pipes and redirects:
 
 ```bash
 # Store a value from stdin (e.g., piping a file)
 cat data.txt | mutant put mykey2
 
-# Force overwrite an existing private key
-echo "new content" | mutant put mykey2 --force
+mutant get mykey2 > fetched_data.txt
+```
 
-# Force overwrite an existing public upload
-echo "updated public stuff" | mutant put -p public_data --force
+Stats and debug:
 
+
+```bash
 # List stored keys
 mutant ls
 # mykey
 # mykey2
-# public_data
+# public_data @ 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
 # List keys with details (size, last modified)
 mutant ls -l
-
-# Remove a key
-mutant rm mykey
 
 # Sync local index with remote storage
 mutant sync

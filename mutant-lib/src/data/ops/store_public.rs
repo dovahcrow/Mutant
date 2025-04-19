@@ -397,6 +397,7 @@ pub(crate) async fn upload_public_data_and_create_index(
         size: data_size,
         modified: Utc::now(),
         index_secret_key_bytes: index_sk.to_bytes().to_vec(),
+        data_pad_addresses: chunk_addresses,
     };
 
     if let Err(e) = index_manager

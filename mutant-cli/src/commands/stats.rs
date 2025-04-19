@@ -25,7 +25,10 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
                 "  Incomplete Alloc/Wrtn: {}",
                 stats.incomplete_keys_pads_allocated_written
             );
-            println!("  Occupied (Public Idx): {}", stats.public_data_pad_count); // Note: public_data_pad_count is index pads only
+            println!(
+                "  Occupied (Public Idx+Data): {}",
+                stats.public_data_pad_count // Now includes index AND data pads
+            );
 
             println!("-------------------");
             println!(
@@ -41,8 +44,8 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
                 format_bytes(stats.free_pad_space_bytes)
             );
             println!(
-                "  Occupied Pad Space (Public Idx): {}",
-                format_bytes(stats.public_data_space_bytes) // Note: public_data_space_bytes is index pads only
+                "  Occupied Pad Space (Public Idx+Data): {}",
+                format_bytes(stats.public_data_space_bytes) // Now includes index AND data pads
             );
             println!("-------------------");
             println!(
@@ -58,14 +61,14 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
                 format_bytes(stats.wasted_space_bytes)
             );
             println!(
-                "Wasted Space (Public Idx): {}", // Clarify meaning
+                "Wasted Space (Public Data Frag.): {}", // Updated label
                 format_bytes(stats.public_data_wasted_bytes)
             );
             println!("-------------------");
 
             // --- Pad Usage Gauge ---
             let total_pads_f64 = stats.total_pads as f64;
-            let occupied_confirmed_pads = stats.occupied_pads + stats.public_data_pad_count; // Confirmed Private + Public Index
+            let occupied_confirmed_pads = stats.occupied_pads + stats.public_data_pad_count;
             let unavailable_pads = stats.free_pads
                 + stats.pending_verification_pads
                 + stats.incomplete_keys_pads_allocated_written;
@@ -103,7 +106,7 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
                 create_text_gauge(unavailable_pct, gauge_width, Color::DarkGray);
 
             println!(
-                "  Occupied (Conf P + Pub I): [{}] {} ({} pads)",
+                "  Occupied (Conf P + Pub I+D): [{}] {} ({} pads)", // Added D for Data
                 occ_color.paint(occ_gauge),
                 occ_text,
                 occupied_confirmed_pads
@@ -171,7 +174,7 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
                 format_bytes(total_used_data_bytes)
             );
             println!(
-                "  Wasted/Ovhd(P+PI):[{}] {} ({})", // P = Private Frag, PI = Public Index Overhead
+                "  Wasted/Frag(P+PD):[{}] {} ({})", // PD = Public Data Frag
                 wasted_color.paint(wasted_gauge),
                 wasted_text,
                 format_bytes(total_wasted_overhead_bytes)
@@ -218,24 +221,24 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
                 println!("-------------------------");
                 println!("  Public Names (Indices):  {}", stats.public_index_count);
                 println!(
-                    "    Index Pad Space:       {}", // Total potential space for indices
+                    "    Index Pad Space:       {}", // Total potential space for index pads
                     format_bytes(stats.public_index_space_bytes)
                 );
                 println!(
                     "  Total Public Data Size:  {}", // Actual data size
                     format_bytes(stats.public_data_actual_bytes)
                 );
-                println!("  Unique Index Pads Used:  {}", stats.public_data_pad_count);
                 println!(
-                    "    Index Pad Space Used:  {}", // Space consumed by the unique index pads
+                    "  Unique Public Pads (Idx+Data): {}", // Updated label
+                    stats.public_data_pad_count
+                );
+                println!(
+                    "    Public Pad Space Used: {}", // Updated label
                     format_bytes(stats.public_data_space_bytes)
                 );
                 println!(
-                    "    Wasted (Index Pad Space vs Data Size): {}", // Difference between index space and actual data
+                    "    Wasted (Public Data Pad Space vs Data Size): {}", // Updated label
                     format_bytes(stats.public_data_wasted_bytes)
-                );
-                println!(
-                    "    (Note: Public Pad stats count index pads only, not underlying data pads)"
                 );
             }
 
