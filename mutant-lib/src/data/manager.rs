@@ -151,12 +151,13 @@ impl DefaultDataManager {
 
     /// Fetches publicly stored data using its index scratchpad address.
     /// Delegates the core logic to `ops::fetch_public::fetch_public_op`.
+    /// This also now records the fetch in the index manager's history.
     pub async fn fetch_public(
-        network_adapter: &Arc<AutonomiNetworkAdapter>,
+        &self,
         public_index_address: ScratchpadAddress,
         callback: Option<GetCallback>,
     ) -> Result<Bytes, DataError> {
-        ops::fetch_public::fetch_public_op(network_adapter, public_index_address, callback).await
+        ops::fetch_public::fetch_public_op(self, public_index_address, callback).await
     }
 
     /// Updates publicly stored data under a specified name by overwriting the existing public index pad.

@@ -1,10 +1,11 @@
 use crate::data::error::DataError;
 use crate::data::{
+    manager::DefaultDataManager,
     PUBLIC_DATA_ENCODING,
     PUBLIC_INDEX_ENCODING, // Use constants from parent
 };
 use crate::internal_events::{invoke_get_callback, GetCallback, GetEvent}; // Import GetEvent variants explicitly
-use crate::network::AutonomiNetworkAdapter;
+
 use autonomi::{Bytes, ScratchpadAddress};
 use log::{debug, error, info, trace, warn};
 use serde_cbor;
@@ -15,7 +16,7 @@ use tokio::sync::Mutex;
 ///
 /// This is the core logic function delegated to by `DataManager::fetch_public`.
 pub(crate) async fn fetch_public_op(
-    network_adapter: &Arc<AutonomiNetworkAdapter>,
+    data_manager: &DefaultDataManager,
     public_index_address: ScratchpadAddress,
     callback: Option<GetCallback>,
 ) -> Result<Bytes, DataError> {
@@ -39,7 +40,8 @@ pub(crate) async fn fetch_public_op(
     }
 
     // 1. Fetch Public Index Scratchpad
-    let index_scratchpad = network_adapter
+    let index_scratchpad = data_manager
+        .network_adapter
         .get_raw_scratchpad(&public_index_address)
         .await
         .map_err(|e| {
@@ -142,7 +144,11 @@ pub(crate) async fn fetch_public_op(
             num_data_chunks, // Log based on data chunks only
             chunk_addr
         );
-        let chunk_scratchpad = match network_adapter.get_raw_scratchpad(&chunk_addr).await {
+        let chunk_scratchpad = match data_manager
+            .network_adapter
+            .get_raw_scratchpad(&chunk_addr)
+            .await
+        {
             Ok(sp) => sp,
             Err(e) => {
                 warn!("Failed to fetch public chunk {}: {}", chunk_addr, e);
@@ -174,10 +180,13 @@ pub(crate) async fn fetch_public_op(
         );
     }
 
+    let final_size = assembled_data.len();
+
     info!(
-        "Successfully fetched index and {} public data chunks for index {}",
-        num_data_chunks, public_index_address
+        "Successfully fetched index and {} public data chunks ({} bytes) for index {}",
+        num_data_chunks, final_size, public_index_address
     );
+
     // Report complete event
     if !invoke_get_callback(&mut *callback_arc.lock().await, GetEvent::Complete)
         .await

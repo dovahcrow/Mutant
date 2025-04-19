@@ -821,9 +821,6 @@ impl MutAnt {
     ///
     /// Returns `Error::Data` if fetching fails (e.g., invalid address, network error, signature mismatch).
     pub async fn fetch_public(
-        // TODO: This signature is awkward. How can a user easily get the *internal* adapter?
-        // Maybe this should take `&self` after all and just pass `&self.network_adapter`?
-        // Let's change it to take `&self` for consistency and ease of use.
         &self,
         public_index_address: ScratchpadAddress,
         callback: Option<GetCallback>,
@@ -832,17 +829,16 @@ impl MutAnt {
             "MutAnt::fetch_public called for address {}",
             public_index_address
         );
-        crate::data::manager::DefaultDataManager::fetch_public(
-            &self.network_adapter, // Pass the instance's adapter
-            public_index_address,
-            callback,
-        )
-        .await
-        .map_err(Error::Data)
+        self.data_manager
+            .fetch_public(public_index_address, callback)
+            .await
+            .map_err(Error::Data)
     }
 
-    /// Returns the set of scratchpad addresses currently occupied by private key pads.
-    /// Internal helper primarily for sync logic.
+    /// Returns a set of all currently occupied scratchpad addresses used for private data.
+    ///
+    /// This is useful for external tools or analysis to understand which pads are in active use.
+    ///
     pub async fn get_occupied_private_pad_addresses(
         &self,
     ) -> Result<HashSet<ScratchpadAddress>, Error> {

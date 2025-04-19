@@ -2,6 +2,7 @@ mod app;
 mod callbacks;
 mod cli;
 mod commands;
+mod history;
 
 use env_logger::{Builder, Env};
 use log::{error, info};

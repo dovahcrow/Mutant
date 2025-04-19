@@ -4250,6 +4250,7 @@ dependencies = [
  "mutant-lib",
  "nu-ansi-term 0.50.1",
  "serde",
+ "serde_cbor",
  "serde_json",
  "sha256",
  "tokio",

@@ -1,7 +1,9 @@
 use crate::callbacks::StyledProgressBar;
 use crate::callbacks::get::create_get_callback;
+use crate::history::{FetchHistoryEntry, append_history_entry};
+use chrono::Utc;
 use indicatif::MultiProgress;
-use log::debug;
+use log::{debug, info};
 use mutant_lib::MutAnt;
 use mutant_lib::error::{DataError, Error as LibError};
 use mutant_lib::storage::ScratchpadAddress;
@@ -30,10 +32,21 @@ pub async fn handle_get(
             key_or_address
         );
         match ScratchpadAddress::from_hex(&key_or_address) {
-            Ok(address) => mutant
-                .fetch_public(address, Some(callback))
-                .await
-                .map(|bytes| bytes.to_vec()),
+            Ok(address) => {
+                let fetch_result = mutant.fetch_public(address, Some(callback)).await;
+
+                if let Ok(data) = &fetch_result {
+                    info!("Recording fetch history for {}", address);
+                    let history_entry = FetchHistoryEntry {
+                        address,
+                        size: data.len(),
+                        fetched_at: Utc::now(),
+                    };
+                    append_history_entry(history_entry);
+                }
+
+                fetch_result.map(|bytes| bytes.to_vec())
+            }
             Err(e) => {
                 eprintln!(
                     "Error: Invalid public address format '{}': {}",

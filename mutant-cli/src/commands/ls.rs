@@ -1,3 +1,4 @@
+use crate::history::load_history;
 use humansize::{BINARY, format_size};
 use log::{debug, info};
 use mutant_lib::MutAnt;
@@ -12,6 +13,7 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
             Ok(details) => {
                 if details.is_empty() {
                     println!("No keys or public uploads stored.");
+                    ExitCode::SUCCESS
                 } else {
                     let mut details = details;
                     details.sort_by(|a, b| a.key.cmp(&b.key));
@@ -59,8 +61,44 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
                             type_width = max_type_width
                         );
                     }
+
+                    // Fetch and display fetch history from local file
+                    info!("Loading fetch history from file...");
+                    let mut history = load_history();
+                    if !history.is_empty() {
+                        println!("\n--- Fetch History ---");
+                        history.sort_by(|a, b| b.fetched_at.cmp(&a.fetched_at));
+                        let max_hist_size_width = history
+                            .iter()
+                            .map(|h| format_size(h.size, BINARY).len())
+                            .max()
+                            .unwrap_or(max_size_width);
+                        let max_hist_type_width = 8;
+                        println!(
+                            "{:<width$} {:<type_width$} {:<12} ADDRESS",
+                            "SIZE",
+                            "TYPE",
+                            "FETCHED",
+                            width = max_hist_size_width,
+                            type_width = max_hist_type_width
+                        );
+                        for entry in history {
+                            let size_str = format_size(entry.size, BINARY);
+                            let date_str = entry.fetched_at.format("%b %d %H:%M").to_string();
+                            println!(
+                                "{:<width$} {:<type_width$} {:<12} {}",
+                                size_str,
+                                "Fetched",
+                                date_str,
+                                entry.address,
+                                width = max_hist_size_width,
+                                type_width = max_hist_type_width
+                            );
+                        }
+                    }
+
+                    ExitCode::SUCCESS
                 }
-                ExitCode::SUCCESS
             }
             Err(e) => {
                 eprintln!("Error fetching details: {}", e);
