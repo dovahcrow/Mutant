@@ -1,4 +1,4 @@
-# MutAnt: Mutable Key-Value Storage for Autonomi
+# MutAnt: Decentralized Mutable Key-Value Storage for Autonomi
 
 <!-- Badges -->
 [![Build Status](https://github.com/Champii/MutAnt/actions/workflows/rust.yml/badge.svg)](https://github.com/Champii/MutAnt/actions/workflows/rust.yml)
@@ -6,9 +6,11 @@
 [![Docs.rs](https://docs.rs/mutant_lib/badge.svg)](https://docs.rs/mutant_lib)
 [![License: LGPLv3](https://img.shields.io/badge/license-LGPLv3-blue.svg)](LICENSE)
 
-> **MutAnt** is a public/private mutable key-value store on the Autonomi network, featuring resumable uploads, local index caching, and a powerful async Rust API + CLI.
+> **MutAnt** is a public/private mutable key-value store on the Autonomi decentralized storage network, featuring resumable uploads, local index caching, and a powerful async Rust API + CLI.
 
 **Note:** No LLM was harmed in the making of this project.
+
+[Autonomi](https://autonomi.com) is a decentralized storage network, IT IS NOT A BLOCKCHAIN.
 
 ## Table of Contents
 1. [Core Concepts](#core-concepts)
@@ -24,7 +26,9 @@
 
 ## Core Concepts
 
-*   **Mutable Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `rm`).
+*   **Decentralized:** Data is stored on the Autonomi decentralized storage network, not a centralized server. This means that no one can censor you, and you are in control of your own data, and it is accessible for anyone from anywhere.
+*   **Mutable:** Data can be updated and deleted, and the changes are propagated to all the nodes on the network.
+*   **Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `rm`).
 *   **Public/Private Uploads:** Store data publicly to share with others (no encryption) or store privately (encrypted with your private key).
 *   **Resumable Uploads:** Automatic resume of interrupted uploads; pick up right where you left off.
 *   **Fetch History:** Keep track of the public data you've fetched to re-fetch it later.
