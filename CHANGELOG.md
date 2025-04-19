@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2024-07-26
+
+### Added
+- **Fetch History:** Keep track of fetched public data addresses for easy re-fetching. This history is displayed with `mutant ls -l`.
+
 ## [0.4.0] - 2024-05-14
 
 ### Added
@@ -197,20 +202,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - "Confirming pads...": Increments on `ChunkConfirmed` (network check success).
 - Modified the `purge` command logic to only discard pending pads if the network explicitly returns a "Record Not Found" status. Pads encountering other network errors during verification are now returned to the pending list for future retries.
 - Store confirmation (`
-
-## [Unreleased]
-
-### Added
-- CLI `ls` command now lists both private keys and public uploads.
-- CLI `ls -l` command now displays detailed information (`KeyDetails`) for both private keys and public uploads, including the public address for the latter.
-- `mutant-lib` API (`MutAnt::list_keys`, `MutAnt::get_key_details`, `MutAnt::list_all_key_details`) now supports retrieving information about public uploads alongside private keys.
-- `KeyDetails` struct now includes an optional `public_address` field.
-- `KeySummary` struct introduced to represent basic key/upload information for listing.
-- CLI `get <name>` command now fetches data automatically whether `<name>` refers to a private key or a known public upload name stored in the index.
-
-### Fixed
-- Corrected public data storage (`store_public_op`) to use unique keys for each data chunk and the index chunk, resolving address collisions and ensuring correct encoding verification. ([#IssueNumber])
-- Resolved several linter errors and compilation failures in integration tests related to public uploads and `put_raw` API changes.
-- Corrected `remove` operation to return `DataError::KeyNotFound` when attempting to remove a non-existent key.
-- Prevented `store` operation from overwriting an existing, completed key unless forced (returns `DataError::KeyAlreadyExists`).
-- Ensured `put_raw` returns `NetworkError::InconsistentState` if called with `PadStatus::Generated` for a pad that already exists.
