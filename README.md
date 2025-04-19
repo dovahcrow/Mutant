@@ -44,11 +44,31 @@
 *   Rust Toolchain (latest stable recommended)
 *   `ant` CLI configured with a wallet (see below)
 
+### Setup Rust Toolchain
+
+This will install rustup
+
+```bash
+$> curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+This will install the latest stable version of the Rust toolchain and cargo
+
+```bash
+$> rustup install nightly
+```
+
 ### Setup `ant` Wallet
 
 #### If you just want to fetch public data, you can skip this section.
 
 Before using `mutant` to actually store data, you need to have an `ant` wallet configured for the target network (Mainnet by default, or Devnet if using the `--local` flag). If you don't have `ant` installed, you can get it using [antup](https://github.com/maidsafe/antup):
+
+```bash
+$> curl -sSf https://raw.githubusercontent.com/maidsafe/antup/main/install.sh | sh
+```
+
+This will install the `ant` CLI and configure it for the Mainnet.
 
 ```bash
 $> antup client
