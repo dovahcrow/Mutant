@@ -32,10 +32,11 @@ pub(crate) async fn remove_op(
                 error!("Failed to harvest pads for key '{}': {}", user_key, e);
             }
             info!("DataOps: Remove operation complete for key '{}'.", user_key);
+            Ok(())
         }
         None => {
             warn!("Attempted to remove non-existent key '{}'", user_key);
+            Err(DataError::KeyNotFound(user_key.to_string()))
         }
     }
-    Ok(())
 }
