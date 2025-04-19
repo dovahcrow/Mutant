@@ -209,13 +209,22 @@ $> mutant stats
 
 ![Stats Screenshot](docs/screenshots/stats_screenshot1.png)
 
+### Demo
+
+You can fetch a public data that I update in a loop at this address to try mutant yourself:
+
+```bash
+$> mutant get -p 9429076971abe17b485fd30dd3065d27fc36362ba164529e530722bdd693f6cb8904fc177bf657d29774eb42403ac980
+# Output: Hello Autonomi ! Sat, 19 Apr 2025 18:06:41 +0000
+```
+
 ## Library Usage
 
 Add `mutant-lib` and its dependencies to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mutant-lib = "0.3" # Or the version you need
+mutant-lib = "0.4.1" # Or the version you need
 tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
 ```
