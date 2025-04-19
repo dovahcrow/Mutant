@@ -12,6 +12,10 @@
 
 [Autonomi](https://autonomi.com) is a P2P decentralized storage network, IT IS NOT A BLOCKCHAIN.
 
+
+![demo.gif](docs/screenshots/demo.gif)
+
+
 ## Table of Contents
 1. [Core Concepts](#core-concepts)
 2. [Getting Started](#getting-started)
