@@ -21,7 +21,13 @@
 3. [Installation](#installation)
 4. [Quick start demo](#quick-start-demo)
 5. [Command-Line Interface (CLI)](#command-line-interface-cli)
-    1. [Screenshots](#screenshots)
+    1. [CLI Usage Examples](#cli-usage-examples)
+    2. [Basic Usage](#basic-usage)
+        1. [Store/fetch private data](#storefetch-private-data)
+        2. [Store/fetch public data](#storefetch-public-data)
+        3. [Pipes and redirects](#pipes-and-redirects)
+        4. [Stats and debug](#stats-and-debug)
+    3. [Screenshots](#screenshots)
 6. [Library Usage](#library-usage)
     1. [Fetching Public Data (Keyless Initialization)](#fetching-public-data-keyless-initialization)
 7. [Development and Testing](#development-and-testing)
@@ -147,7 +153,7 @@ Options:
 
 **Basic Usage:**
 
-Store/fetch private data:
+#### Store/fetch private data
 
 ```bash
 # Store a value directly
@@ -164,7 +170,7 @@ $> mutant put mykey "my new value" --force
 $> mutant rm mykey
 ```
 
-Store/fetch public data:
+#### Store/fetch public data
 
 ```bash
 # Store data publicly (no encryption) under a name
@@ -183,7 +189,7 @@ $> mutant get -p 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde
 $> mutant put -p my_key "some updated public content" --force
 ```
 
-Pipes and redirects:
+#### Pipes and redirects
 
 ```bash
 # Store a value from stdin (e.g., piping a file)
@@ -192,7 +198,7 @@ $> cat data.txt | mutant put mykey2
 $> mutant get mykey2 > fetched_data.txt
 ```
 
-Stats and debug:
+#### Stats and debug
 
 
 ```bash
@@ -301,110 +307,4 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-This keyless instance is optimized for fetching public data and cannot perform operations requiring a private key (like `store`, `fetch` private, `remove`).
-```
-
-## Development and Testing
-
-MutAnt relies on a running Autonomi network. For local development and running integration tests, scripts are provided to manage a self-contained test network.
-
-### Local Testnet Management (`scripts/manage_local_testnet.sh`)
-
-This script handles the setup, startup, and shutdown of a local Autonomi EVM testnet and the required `antnode` processes.
-
-**Prerequisites:**
-
-*   Ensure you have the necessary build tools for Rust (`cargo`) and Git.
-
-**Setup:**
-
-Before starting the testnet for the first time, run the setup command to clone the required Autonomi dependency:
-
-```bash
-$> ./scripts/manage_local_testnet.sh setup
-```
-
-**Commands:**
-
-*   `./scripts/manage_local_testnet.sh start`: Starts the local EVM and `antnode` network. Builds dependencies if needed.
-*   `./scripts/manage_local_testnet.sh stop`: Stops the local EVM and `antnode` network processes.
-*   `./scripts/manage_local_testnet.sh restart`: Stops and then starts the network.
-*   `./scripts/manage_local_testnet.sh status`: Checks the running status of the EVM and `antnode` processes.
-*   `./scripts/manage_local_testnet.sh logs`: Tails the log file for the local EVM testnet.
-*   `./scripts/manage_local_testnet.sh clean`: Stops the network and removes all associated network data stored in `test_network_data`.
-
-**Important Environment Variable (`XDG_DATA_HOME`)**
-
-The management script configures the testnet to store its data within the `./test_network_data` directory in your project root by setting the `XDG_DATA_HOME` environment variable *within the script's context*.
-
-When interacting with this script-managed testnet using commands *outside* the script (e.g., running `cargo run --package mutant -- ...` or the `mutant` binary directly), you **MUST** set the `XDG_DATA_HOME` environment variable manually in your shell to match the script's location, otherwise the client will not find the network configuration:
-
-```bash
-# Make sure the testnet is running via the script first
-$> ./scripts/manage_local_testnet.sh start
-
-# Set the variable for your current shell session
-$> export XDG_DATA_HOME="$(pwd)/test_network_data"
-
-# Now run your cargo command or the mutant binary
-$> cargo run --package mutant -- --local ls
-```
-
-## Migration
-
-The master index structure (local and remote) has changed and will change again in the future. If you had an older version of `mutant` installed, you will need to delete your existing index file (and lose all your scratchpad and data) and re-run `mutant` to start fresh.
-
-As long as MutAnt is being actively developed, you can expect this to happen often. Once the implementation is more stable, migration will be made easier or disappear altogether.
-
-```bash
-# /!\ This will erase all your data on the local index
-$> rm ~/.local/share/mutant/index_cache.main.cbor 
-
-# /!\ This will erase all your data on the remote index
-$> mutant sync --push-force
-```
-
-### Running Integration Tests (`scripts/run_tests_with_env.sh`)
-
-This script automates the process of running the integration tests (located in the `tests` directory, e.g., `tests/mutant_test.rs`):
-
-1.  Ensures dependencies are set up using `manage_local_testnet.sh setup`.
-2.  Starts the local testnet using `manage_local_testnet.sh start`.
-3.  Sets the necessary `XDG_DATA_HOME` environment variable for the tests.
-4.  Runs `cargo test` targeting the integration tests.
-5.  Automatically cleans up and stops the testnet afterwards using `manage_local_testnet.sh clean` (even if tests fail).
-
-**Usage:**
-
-```bash
-$> ./scripts/run_tests_with_env.sh
-```
-
-## Architecture Overview
-
-MutAnt is structured as a Rust workspace with two main crates:
-
-1.  **`mutant-lib`**: The core library containing all the logic for interacting with the Autonomi network, managing storage, handling data chunking, indexing, and providing the asynchronous API.
-2.  **`mutant-cli`**: A command-line interface built on top of `mutant-lib`, providing user-friendly access to the storage features.
-
-The library (`mutant-lib`) leverages several components:
-
-1.  **`api::MutAnt`**: The high-level abstraction layer providing the primary key-value API (`store`, `fetch`, `remove`, etc.) exposed by the library. It coordinates operations using the underlying layers.
-2.  **`network`**: Handles connection and interaction with the Autonomi network, managing the underlying `autonomi::Client` and wallet interactions.
-3.  **`index`**: Manages the local index cache and synchronization with the remote master index stored on the network.
-4.  **`pad_lifecycle`**: Responsible for managing the lifecycle of Autonomi scratchpads, including allocation, tracking usage, freeing, and potentially reusing pads for efficiency.
-5.  **`data`**: Handles the processing of user data, including chunking data to fit into scratchpads, serialization, and potentially encryption/decryption for private uploads.
-
-Data is stored and retrieved as raw byte vectors (`Vec<u8>`), allowing the user flexibility in serialization/deserialization.
-
-## Configuration
-
-MutAnt primarily derives its configuration from your locally configured `ant` wallet. It detects available wallets and prompts for selection on the first run, storing the choice in `~/.config/mutant/config.json`. Network selection (Mainnet vs. Devnet/Local) is typically handled via the `--local` flag in the CLI or potentially through `MutAntConfig` in the library.
-
-## License
-
-This project is licensed under the LGPLv3 license. See the [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-*(Add guidelines for contributing to this project here)*
+This keyless instance is optimized for fetching public data and cannot perform operations requiring a private key (like `
