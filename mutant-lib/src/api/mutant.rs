@@ -9,7 +9,6 @@ use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::types::{KeyDetails, KeySummary, MutAntConfig, StorageStats};
 use autonomi::{Bytes, ScratchpadAddress, SecretKey};
-use hex;
 use log::{debug, info, warn};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -106,12 +105,11 @@ impl MutAnt {
         let mut config = MutAntConfig::default();
         config.network = NetworkChoice::Mainnet;
 
-        // Generate a random, ephemeral private key just to satisfy the wallet constructor.
-        let random_key = SecretKey::random();
-        let random_key_hex = hex::encode(random_key.to_bytes());
+        // Use a dummy, well-formatted private key hex just to satisfy the network adapter constructor.
+        let dummy_key_hex = SecretKey::random().to_hex();
 
-        // Initialize network adapter with the random key and Mainnet.
-        let network_adapter_concrete = AutonomiNetworkAdapter::new(&random_key_hex, config.network)
+        // Initialize network adapter with the dummy key and Mainnet.
+        let network_adapter_concrete = AutonomiNetworkAdapter::new(&dummy_key_hex, config.network)
             .map_err(|e| {
                 Error::Config(format!(
                     "Failed network init for public fetcher (Mainnet): {}",
@@ -121,8 +119,7 @@ impl MutAnt {
         let network_adapter: Arc<AutonomiNetworkAdapter> = Arc::new(network_adapter_concrete);
         info!("Public Fetcher: NetworkAdapter initialized for Mainnet.");
 
-        // Use placeholder keys and address for the master index.
-        let placeholder_master_key = SecretKey::from_bytes([0u8; 32])
+        let placeholder_master_key = SecretKey::from_hex(&dummy_key_hex)
             .map_err(|e| Error::Internal(format!("Failed create placeholder key: {:?}", e)))?;
         let placeholder_master_address =
             ScratchpadAddress::new(placeholder_master_key.public_key());
@@ -405,6 +402,28 @@ impl MutAnt {
     /// This operation overwrites the content of the existing public index scratchpad
     /// to point to newly uploaded data chunks. The original data chunks become orphaned.
     /// The public index address remains the same.
+    /// This is a convenience function calling `update_public_with_progress` with no callback.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the public upload to update.
+    /// * `data_bytes` - The new data to store.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Data` if the key is not found, if it's a private key, or if the update fails.
+    /// Returns `Error::PadLifecycle` if saving the index cache fails afterwards.
+    pub async fn update_public(&self, name: &str, data_bytes: &[u8]) -> Result<(), Error> {
+        debug!("MutAnt::update_public called for name '{}'", name);
+        self.update_public_with_progress(name, data_bytes, None)
+            .await
+    }
+
+    /// Updates the data associated with an existing public upload name, with progress reporting.
+    ///
+    /// This operation overwrites the content of the existing public index scratchpad
+    /// to point to newly uploaded data chunks. The original data chunks become orphaned.
+    /// The public index address remains the same.
     ///
     /// # Arguments
     ///
@@ -416,13 +435,16 @@ impl MutAnt {
     ///
     /// Returns `Error::Data` if the key is not found, if it's a private key, or if the update fails.
     /// Returns `Error::PadLifecycle` if saving the index cache fails afterwards (logged as warning).
-    pub async fn update_public(
+    pub async fn update_public_with_progress(
         &self,
         name: &str,
         data_bytes: &[u8],
         callback: Option<PutCallback>,
     ) -> Result<(), Error> {
-        debug!("MutAnt::update_public started for name '{}'", name);
+        debug!(
+            "MutAnt::update_public_with_progress started for name '{}'",
+            name
+        );
 
         // Delegate the core logic to the data manager
         let result = self
@@ -439,7 +461,7 @@ impl MutAnt {
             .await
         {
             warn!(
-                "Failed to save index cache after update_public operation for '{}': {}",
+                "Failed to save index cache after update_public_with_progress operation for '{}': {}",
                 name, e
             );
             // If the update itself was successful, return the index save error.

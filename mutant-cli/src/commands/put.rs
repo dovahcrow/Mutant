@@ -55,7 +55,10 @@ pub async fn handle_put(
                 "CLI: Force flag is set for public store. Updating existing public key '{}'.",
                 key
             );
-            match mutant.update_public(&key, &data_vec, Some(callback)).await {
+            match mutant
+                .update_public_with_progress(&key, &data_vec, Some(callback))
+                .await
+            {
                 Ok(()) => {
                     debug!("Successfully updated existing public key '{}'.", key);
                     Ok(None)

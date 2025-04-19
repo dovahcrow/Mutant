@@ -285,7 +285,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
     // Determine if this is a 'get -p' command BEFORE initializing wallet
     let is_public_get = matches!(cli.command, Commands::Get { public: true, .. });
 
-    let (mutant, _private_key_hex) = if is_public_get {
+    let mutant = if is_public_get {
         // Determine which public init function to call based on --local flag
         let mutant_instance = if cli.local {
             info!("Public local get command detected, using public_local initializer.");
@@ -294,9 +294,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
             info!("Public get command detected, using public initializer (Mainnet).");
             MutAnt::init_public().await?
         };
-        // Need a placeholder key for the match arms, but it won't be used
-        let dummy_private_key = "public_mode".to_string();
-        (mutant_instance, dummy_private_key)
+        mutant_instance
     } else {
         // Proceed with wallet initialization for all other commands
         let private_key_hex = initialize_wallet().await?;
@@ -363,7 +361,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         drop(pb_main_guard);
 
         mutant_init_handle = Some(init_handle);
-        (mutant_instance, private_key_hex)
+        mutant_instance
     };
 
     let result = match cli.command {

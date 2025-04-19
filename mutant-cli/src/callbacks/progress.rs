@@ -40,9 +40,7 @@ impl StyledProgressBar {
     }
 
     fn enable_steady_tick_if_needed(&self) {
-        if self.pb.length().is_some() && self.pb.length() != Some(0) {
-            self.pb.enable_steady_tick(StdDuration::from_millis(100));
-        }
+        self.pb.enable_steady_tick(StdDuration::from_millis(100));
     }
 
     pub fn set_length(&self, len: u64) {
