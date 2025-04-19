@@ -46,13 +46,13 @@
 Before using `mutant`, you need to have an `ant` wallet configured for the target network (Mainnet by default, or Devnet if using the `--local` flag). If you don't have `ant` installed, you can get it using [antup](https://github.com/maidsafe/antup):
 
 ```bash
-antup client
+$> antup client
 ```
 
 Once `ant` is installed, if you haven't already, you can import your existing Ethereum/ANT wallet's private key using the `ant` CLI:
 
 ```bash
-ant wallet import YOUR_PRIVATE_KEY_HERE
+$> ant wallet import YOUR_PRIVATE_KEY_HERE
 ```
 
 Replace `YOUR_PRIVATE_KEY_HERE` with your actual private key. `mutant` will automatically detect and use this wallet.
@@ -64,7 +64,7 @@ MutAnt will look for your ant wallets and ask you which one you want to use if y
 ## Installation
 
 ```bash
-cargo install mutant
+$> cargo install mutant
 ```
 
 ## Command-Line Interface (CLI)
@@ -74,7 +74,7 @@ MutAnt includes the `mutant` command for convenient command-line access.
 **CLI Usage Examples:**
 
 ```bash
-mutant --help
+$> mutant --help
 ```
 ```text
 Distributed mutable key value storage over the Autonomi network
@@ -107,45 +107,45 @@ Store/fetch private data:
 
 ```bash
 # Store a value directly
-mutant put mykey "my value"
+$> mutant put mykey "my value"
 
 # Get a value and print to stdout
-mutant get mykey
+$> mutant get mykey
 # Output: my value
 
 # Update a value (you can use the shorter -f)
-mutant put mykey "my new value" --force
+$> mutant put mykey "my new value" --force
 
 # Remove a value
-mutant rm mykey
+$> mutant rm mykey
 ```
 
 Store/fetch public data:
 
 ```bash
 # Store data publicly (no encryption) under a name
-mutant put -p my_key "some public content"
+$> mutant put -p my_key "some public content"
 # Output: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
 # Get your own public data by name
-mutant get my_key
+$> mutant get my_key
 # Output: some public content
 
 # Get public data by address
-mutant get -p 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+$> mutant get -p 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 # Output: some public content
 
 # You can update it all the same as the private data
-mutant put -p my_key "some updated public content" --force
+$> mutant put -p my_key "some updated public content" --force
 ```
 
 Pipes and redirects:
 
 ```bash
 # Store a value from stdin (e.g., piping a file)
-cat data.txt | mutant put mykey2
+$> cat data.txt | mutant put mykey2
 
-mutant get mykey2 > fetched_data.txt
+$> mutant get mykey2 > fetched_data.txt
 ```
 
 Stats and debug:
@@ -153,26 +153,26 @@ Stats and debug:
 
 ```bash
 # List stored keys
-mutant ls
+$> mutant ls
 # mykey
 # mykey2
 # public_data @ 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
 # List keys with details (size, last modified)
-mutant ls -l
+$> mutant ls -l
 # SIZE TYPE    MODIFIED     KEY/NAME
 # 3 B  Private Apr 19 00:51 mykey
 # 5 B  Private Apr 19 00:51 mykey2
 # 11 B Public  Apr 19 00:51 public_data @ 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
 # Sync local index with remote storage
-mutant sync
+$> mutant sync
 
 # Pre-allocate 5 scratchpads
-mutant reserve 5
+$> mutant reserve 5
 
 # View storage statistics
-mutant stats
+$> mutant stats
 ```
 
 ### Screenshots
@@ -292,13 +292,13 @@ When interacting with this script-managed testnet using commands *outside* the s
 
 ```bash
 # Make sure the testnet is running via the script first
-./scripts/manage_local_testnet.sh start
+$> ./scripts/manage_local_testnet.sh start
 
 # Set the variable for your current shell session
-export XDG_DATA_HOME="$(pwd)/test_network_data"
+$> export XDG_DATA_HOME="$(pwd)/test_network_data"
 
 # Now run your cargo command or the mutant binary
-cargo run --package mutant -- --local ls
+$> cargo run --package mutant -- --local ls
 ```
 
 ### Running Integration Tests (`scripts/run_tests_with_env.sh`)
@@ -314,7 +314,7 @@ This script automates the process of running the integration tests (located in t
 **Usage:**
 
 ```bash
-./scripts/run_tests_with_env.sh
+$> ./scripts/run_tests_with_env.sh
 ```
 
 ## Architecture Overview
