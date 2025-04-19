@@ -389,10 +389,11 @@ MutAnt is structured as a Rust workspace with two main crates:
 
 The library (`mutant-lib`) leverages several components:
 
-1.  **`autonomi::Network`**: Handles connection and interaction with the Autonomi network based on `client.config`.
-2.  **`autonomi::Wallet`**: Manages user identity and signing capabilities derived from a private key.
-3.  **`mutant_lib::storage::Storage`**: The foundational layer interacting directly with the Autonomi network via `autonomi::Client` (obtained from `Network` and `Wallet`). It handles low-level scratchpad operations and maintains internal state like `MapInfo` for tracking allocations.
-4.  **`mutant_lib::api::MutAnt`**: The high-level abstraction layer providing the primary key-value API (`store`, `fetch`, `remove`, etc.) exposed by the library. It coordinates operations using the underlying layers and manages user-facing logic and callbacks.
+1.  **`api::MutAnt`**: The high-level abstraction layer providing the primary key-value API (`store`, `fetch`, `remove`, etc.) exposed by the library. It coordinates operations using the underlying layers.
+2.  **`network`**: Handles connection and interaction with the Autonomi network, managing the underlying `autonomi::Client` and wallet interactions.
+3.  **`index`**: Manages the local index cache and synchronization with the remote master index stored on the network.
+4.  **`pad_lifecycle`**: Responsible for managing the lifecycle of Autonomi scratchpads, including allocation, tracking usage, freeing, and potentially reusing pads for efficiency.
+5.  **`data`**: Handles the processing of user data, including chunking data to fit into scratchpads, serialization, and potentially encryption/decryption for private uploads.
 
 Data is stored and retrieved as raw byte vectors (`Vec<u8>`), allowing the user flexibility in serialization/deserialization.
 
