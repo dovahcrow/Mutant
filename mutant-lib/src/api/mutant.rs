@@ -168,11 +168,10 @@ impl MutAnt {
         config.network = NetworkChoice::Devnet;
 
         // Generate a random, ephemeral private key just to satisfy the wallet constructor.
-        let random_key = SecretKey::random();
-        let random_key_hex = hex::encode(random_key.to_bytes());
+        let dummy_key_hex = "4ef3b2bbdbc0727ad260f5449fe46972df63b1e03a6316cfbe0e2958eb8a91a6";
 
         // Initialize network adapter with the random key and Devnet.
-        let network_adapter_concrete = AutonomiNetworkAdapter::new(&random_key_hex, config.network)
+        let network_adapter_concrete = AutonomiNetworkAdapter::new(&dummy_key_hex, config.network)
             .map_err(|e| {
                 Error::Config(format!(
                     "Failed network init for public fetcher (Devnet): {}",
@@ -183,7 +182,7 @@ impl MutAnt {
         info!("Public Fetcher: NetworkAdapter initialized for Devnet.");
 
         // Use placeholder keys and address for the master index.
-        let placeholder_master_key = SecretKey::from_bytes([0u8; 32])
+        let placeholder_master_key = SecretKey::from_hex(&dummy_key_hex)
             .map_err(|e| Error::Internal(format!("Failed create placeholder key: {:?}", e)))?;
         let placeholder_master_address =
             ScratchpadAddress::new(placeholder_master_key.public_key());

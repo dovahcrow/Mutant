@@ -37,18 +37,21 @@ impl StyledProgressBar {
     pub fn new(multi_progress: &MultiProgress) -> Self {
         let pb = Arc::new(multi_progress.add(ProgressBar::new(0)));
         pb.set_style(get_default_bytes_style());
+        pb.enable_steady_tick(StdDuration::from_millis(50));
         StyledProgressBar { pb }
     }
 
     pub fn new_for_steps(multi_progress: &MultiProgress) -> Self {
         let pb = Arc::new(multi_progress.add(ProgressBar::new(0)));
         pb.set_style(get_default_steps_style());
+        pb.enable_steady_tick(StdDuration::from_millis(50));
         StyledProgressBar { pb }
     }
 
     pub fn new_with_style(multi_progress: &MultiProgress, style: ProgressStyle) -> Self {
         let pb = Arc::new(multi_progress.add(ProgressBar::new(0)));
         pb.set_style(style);
+        pb.enable_steady_tick(StdDuration::from_millis(50));
         StyledProgressBar { pb }
     }
 
@@ -58,7 +61,7 @@ impl StyledProgressBar {
 
     pub fn set_length(&self, len: u64) {
         self.pb.set_length(len);
-        self.enable_steady_tick(StdDuration::from_millis(100));
+        self.enable_steady_tick(StdDuration::from_millis(50));
     }
 
     pub fn set_position(&self, pos: u64) {

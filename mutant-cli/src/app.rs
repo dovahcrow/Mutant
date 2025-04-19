@@ -297,7 +297,13 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         mutant_instance
     } else {
         // Proceed with wallet initialization for all other commands
-        let private_key_hex = initialize_wallet().await?;
+        let private_key_hex = if cli.local {
+            info!("Using hardcoded local/devnet secret key for testing.");
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
+        } else {
+            initialize_wallet().await?
+        };
+
         let network_choice = if cli.local {
             NetworkChoice::Devnet
         } else {
@@ -331,7 +337,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
                 };
 
                 // Wait for the progress bar to finish with a timeout
-                if tokio::time::timeout(Duration::from_secs(300), pb_future)
+                if tokio::time::timeout(Duration::from_secs(100), pb_future)
                     .await
                     .is_err()
                 {

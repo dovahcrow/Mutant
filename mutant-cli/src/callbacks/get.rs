@@ -38,7 +38,7 @@ pub fn create_get_callback(
                             get_default_spinner_style(), // Use spinner style initially
                         );
                         pb.set_message("Fetching index...".to_string());
-                        pb.enable_steady_tick(std::time::Duration::from_millis(100));
+                        pb.enable_steady_tick(std::time::Duration::from_millis(50));
                         pb
                     });
                     // Don't set length/position for indeterminate state
