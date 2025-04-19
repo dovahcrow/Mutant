@@ -106,7 +106,7 @@ impl MutAnt {
         config.network = NetworkChoice::Mainnet;
 
         // Use a dummy, well-formatted private key hex just to satisfy the network adapter constructor.
-        let dummy_key_hex = SecretKey::random().to_hex();
+        let dummy_key_hex = "4ef3b2bbdbc0727ad260f5449fe46972df63b1e03a6316cfbe0e2958eb8a91a6";
 
         // Initialize network adapter with the dummy key and Mainnet.
         let network_adapter_concrete = AutonomiNetworkAdapter::new(&dummy_key_hex, config.network)
