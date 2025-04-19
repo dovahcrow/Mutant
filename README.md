@@ -27,6 +27,7 @@
 *   **Mutable Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `rm`).
 *   **Public/Private Uploads:** Store data publicly to share with others (no encryption) or store privately (encrypted with your private key).
 *   **Resumable Uploads:** Automatic resume of interrupted uploads; pick up right where you left off.
+*   **Fetch History:** Keep track of the public data you've fetched to re-fetch it later.
 *   **Efficient Space Reuse:** Frees and reuses storage pads, minimizing on-chain costs.
 *   **Local Cache Index:** Fast local lookups and seamless remote synchronization.
 *   **Async-first Design:** Built on `tokio` for high-performance non-blocking operations.
@@ -172,12 +173,17 @@ $> mutant ls
 # mykey2
 # public_data @ 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
+
 # List keys with details (size, last modified)
 $> mutant ls -l
 # SIZE TYPE    MODIFIED     KEY/NAME
 # 3 B  Private Apr 19 00:51 mykey
 # 5 B  Private Apr 19 00:51 mykey2
 # 11 B Public  Apr 19 00:51 public_data @ 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+#
+# --- Fetch History ---
+# SIZE TYPE     FETCHED      ADDRESS
+# 48 B Fetched  Apr 19 16:33 9429076971abe17b485fd30dd3065d27fc36362ba164529e530722bdd693f6cb8904fc177bf657d29774eb42403ac980
 
 # Sync local index with remote storage
 $> mutant sync

@@ -11,14 +11,15 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
         info!("Fetching detailed key/upload information...");
         match mutant.list_key_details().await {
             Ok(details) => {
+                let mut max_size_width = 8;
+
                 if details.is_empty() {
                     println!("No keys or public uploads stored.");
-                    ExitCode::SUCCESS
                 } else {
                     let mut details = details;
                     details.sort_by(|a, b| a.key.cmp(&b.key));
 
-                    let max_size_width = details
+                    max_size_width = details
                         .iter()
                         .map(|d| format_size(d.size, BINARY).len())
                         .max()
@@ -44,9 +45,9 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
                             let display = if detail.is_finished {
                                 detail.key.clone()
                             } else if let Some(percentage) = detail.completion_percentage {
-                                format!("*{} ({:.1}%)", detail.key, percentage)
+                                format!("*{} ({:.1}%)%", detail.key, percentage)
                             } else {
-                                format!("*{}", detail.key)
+                                format!("*{}%", detail.key)
                             };
                             ("Private", display)
                         };
@@ -61,44 +62,45 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
                             type_width = max_type_width
                         );
                     }
+                }
 
-                    // Fetch and display fetch history from local file
-                    info!("Loading fetch history from file...");
-                    let mut history = load_history();
-                    if !history.is_empty() {
-                        println!("\n--- Fetch History ---");
-                        history.sort_by(|a, b| b.fetched_at.cmp(&a.fetched_at));
-                        let max_hist_size_width = history
-                            .iter()
-                            .map(|h| format_size(h.size, BINARY).len())
-                            .max()
-                            .unwrap_or(max_size_width);
-                        let max_hist_type_width = 8;
+                info!("Loading fetch history from file...");
+                let mut history = load_history();
+                if !history.is_empty() {
+                    println!("\n--- Fetch History ---");
+                    history.sort_by(|a, b| b.fetched_at.cmp(&a.fetched_at));
+
+                    let max_hist_size_width = history
+                        .iter()
+                        .map(|h| format_size(h.size, BINARY).len())
+                        .max()
+                        .unwrap_or(max_size_width);
+                    let max_hist_type_width = 8;
+
+                    println!(
+                        "{:<width$} {:<type_width$} {:<12} ADDRESS",
+                        "SIZE",
+                        "TYPE",
+                        "FETCHED",
+                        width = max_hist_size_width,
+                        type_width = max_hist_type_width
+                    );
+                    for entry in history {
+                        let size_str = format_size(entry.size, BINARY);
+                        let date_str = entry.fetched_at.format("%b %d %H:%M").to_string();
                         println!(
-                            "{:<width$} {:<type_width$} {:<12} ADDRESS",
-                            "SIZE",
-                            "TYPE",
-                            "FETCHED",
+                            "{:<width$} {:<type_width$} {:<12} {}",
+                            size_str,
+                            "Fetched",
+                            date_str,
+                            entry.address,
                             width = max_hist_size_width,
                             type_width = max_hist_type_width
                         );
-                        for entry in history {
-                            let size_str = format_size(entry.size, BINARY);
-                            let date_str = entry.fetched_at.format("%b %d %H:%M").to_string();
-                            println!(
-                                "{:<width$} {:<type_width$} {:<12} {}",
-                                size_str,
-                                "Fetched",
-                                date_str,
-                                entry.address,
-                                width = max_hist_size_width,
-                                type_width = max_hist_type_width
-                            );
-                        }
                     }
-
-                    ExitCode::SUCCESS
                 }
+
+                ExitCode::SUCCESS
             }
             Err(e) => {
                 eprintln!("Error fetching details: {}", e);
@@ -118,34 +120,34 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
                     for summary in summaries {
                         if summary.is_public {
                             if let Some(addr) = summary.address {
-                                println!("{} (public @ {})", summary.name, addr);
+                                println!("{} (public @ {})%", summary.name, addr);
                             } else {
-                                println!("{} (public, address missing)", summary.name);
+                                println!("{} (public, address missing)%", summary.name);
                             }
                         } else {
                             match mutant.get_key_details(&summary.name).await {
                                 Ok(Some(detail)) => {
                                     if detail.is_finished {
-                                        println!("{}", summary.name);
+                                        println!("{}%", summary.name);
                                     } else if let Some(percentage) = detail.completion_percentage {
-                                        println!("*{} ({:.1}%)", summary.name, percentage);
+                                        println!("*{} ({:.1}%)%", summary.name, percentage);
                                     } else {
-                                        println!("*{}", summary.name);
+                                        println!("*{}%", summary.name);
                                     }
                                 }
                                 Ok(None) => {
                                     eprintln!(
-                                        "Warning: Index inconsistency for key '{}'. Details not found.",
+                                        "Warning: Index inconsistency for key '{}'. Details not found.%",
                                         summary.name
                                     );
-                                    println!("{}", summary.name);
+                                    println!("{}%", summary.name);
                                 }
                                 Err(e) => {
                                     eprintln!(
                                         "Warning: Could not fetch details for key '{}': {}",
                                         summary.name, e
                                     );
-                                    println!("{}", summary.name);
+                                    println!("{}%", summary.name);
                                 }
                             }
                         }
