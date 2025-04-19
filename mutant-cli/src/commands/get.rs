@@ -7,7 +7,6 @@ use mutant_lib::error::{DataError, Error as LibError};
 use mutant_lib::storage::ScratchpadAddress;
 use std::io::{self, Write};
 use std::process::ExitCode;
-use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

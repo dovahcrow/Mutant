@@ -1,9 +1,9 @@
 #![cfg(test)]
 
+use crate::data::PRIVATE_DATA_ENCODING;
 use crate::index::manager::DefaultIndexManager;
-use crate::index::structure::PadStatus;
-use crate::network::adapter::AutonomiNetworkAdapter;
-use crate::network::NetworkChoice;
+use crate::index::structure::{KeyInfo, PadInfo, PadStatus};
+use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::pad_lifecycle::PadOrigin;
 use autonomi::{ScratchpadAddress, SecretKey};
@@ -105,7 +105,12 @@ async fn test_acquire_pads_from_free_pool() {
         let key_bytes = key.to_bytes().to_vec();
 
         network_adapter
-            .put_raw(&key, &[0u8; 10], &PadStatus::Generated)
+            .put_raw(
+                &key,
+                &[0u8; 10],
+                &PadStatus::Generated,
+                PRIVATE_DATA_ENCODING,
+            )
             .await
             .unwrap_or_else(|e| panic!("Failed to write dummy data for pad {}: {}", i, e));
 
@@ -170,7 +175,12 @@ async fn test_acquire_mixed_pads() {
         let address = ScratchpadAddress::new(key.public_key());
         let key_bytes = key.to_bytes().to_vec();
         network_adapter
-            .put_raw(&key, &[0u8; 10], &PadStatus::Generated)
+            .put_raw(
+                &key,
+                &[0u8; 10],
+                &PadStatus::Generated,
+                PRIVATE_DATA_ENCODING,
+            )
             .await
             .unwrap_or_else(|e| panic!("Failed to write dummy data for pad {}: {}", i, e));
         free_pads_info.push((address, key_bytes));
@@ -243,7 +253,12 @@ async fn test_purge_existing_pads() {
         let key_bytes = key.to_bytes().to_vec();
 
         network_adapter
-            .put_raw(&key, &[0u8; 10], &PadStatus::Generated)
+            .put_raw(
+                &key,
+                &[0u8; 10],
+                &PadStatus::Generated,
+                PRIVATE_DATA_ENCODING,
+            )
             .await
             .expect("Failed to write test pad data for purge");
 
@@ -363,7 +378,12 @@ async fn test_purge_mixed_pads() {
         let address = ScratchpadAddress::new(key.public_key());
         let key_bytes = key.to_bytes().to_vec();
         network_adapter
-            .put_raw(&key, &[0u8; 10], &PadStatus::Generated)
+            .put_raw(
+                &key,
+                &[0u8; 10],
+                &PadStatus::Generated,
+                PRIVATE_DATA_ENCODING,
+            )
             .await
             .expect("Failed to write test pad data for purge");
         pending_pads_info.push((address, key_bytes));

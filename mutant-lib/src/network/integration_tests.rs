@@ -1,11 +1,13 @@
 #![cfg(test)]
 
+use crate::data::PRIVATE_DATA_ENCODING;
 use crate::index::structure::PadStatus;
 use crate::network::adapter::create_public_scratchpad;
 use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::{NetworkChoice, NetworkError};
 use autonomi::Bytes;
 use autonomi::{ScratchpadAddress, SecretKey};
+use serial_test::serial;
 
 const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -90,7 +92,12 @@ async fn test_put_raw_create_and_check() {
     let test_data = b"create_and_check data";
 
     let put_result = adapter
-        .put_raw(&test_key, test_data, &PadStatus::Generated)
+        .put_raw(
+            &test_key,
+            test_data,
+            &PadStatus::Generated,
+            PRIVATE_DATA_ENCODING,
+        )
         .await;
     assert!(put_result.is_ok(), "put_raw failed: {:?}", put_result.err());
     assert_eq!(
@@ -116,7 +123,12 @@ async fn test_get_raw_scratchpad() {
     let test_data = b"get_raw_scratchpad data";
 
     adapter
-        .put_raw(&test_key, test_data, &PadStatus::Generated)
+        .put_raw(
+            &test_key,
+            test_data,
+            &PadStatus::Generated,
+            PRIVATE_DATA_ENCODING,
+        )
         .await
         .expect("put_raw failed during setup");
 
@@ -137,11 +149,18 @@ async fn test_put_raw_update() {
     let data2 = b"updated data indeed";
 
     adapter
-        .put_raw(&test_key, data1, &PadStatus::Generated)
+        .put_raw(
+            &test_key,
+            data1,
+            &PadStatus::Generated,
+            PRIVATE_DATA_ENCODING,
+        )
         .await
         .expect("put_raw (create) failed during setup");
 
-    let update_result = adapter.put_raw(&test_key, data2, &PadStatus::Written).await;
+    let update_result = adapter
+        .put_raw(&test_key, data2, &PadStatus::Written, PRIVATE_DATA_ENCODING)
+        .await;
     assert!(
         update_result.is_ok(),
         "put_raw (update) failed: {:?}",
@@ -168,12 +187,22 @@ async fn test_put_raw_create_fails_if_exists() {
     let test_data = b"create fail test data";
 
     adapter
-        .put_raw(&test_key, test_data, &PadStatus::Generated)
+        .put_raw(
+            &test_key,
+            test_data,
+            &PadStatus::Generated,
+            PRIVATE_DATA_ENCODING,
+        )
         .await
         .expect("put_raw (create) failed during setup");
 
     let result = adapter
-        .put_raw(&test_key, b"different data", &PadStatus::Generated)
+        .put_raw(
+            &test_key,
+            b"different data",
+            &PadStatus::Generated,
+            PRIVATE_DATA_ENCODING,
+        )
         .await;
 
     assert!(result.is_err(), "Second create should fail");
@@ -189,7 +218,12 @@ async fn test_put_raw_update_fails_if_not_exists() {
     let test_key = SecretKey::random();
 
     let result = adapter
-        .put_raw(&test_key, b"update fail test data", &PadStatus::Written)
+        .put_raw(
+            &test_key,
+            b"update fail test data",
+            &PadStatus::Written,
+            PRIVATE_DATA_ENCODING,
+        )
         .await;
 
     assert!(result.is_err(), "Update should fail for non-existent pad");

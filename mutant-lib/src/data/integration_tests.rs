@@ -434,16 +434,21 @@ mod public_op_tests {
         let result = store_public_op(&data_manager, name.clone(), data, None).await;
         assert!(result.is_ok(), "store_public_op failed: {:?}", result.err());
         let public_index_addr = result.unwrap();
+
+        // Verify metadata in the index
         let index_copy = index_manager.get_index_copy().await.unwrap();
-        let metadata = index_copy.public_uploads.get(&name);
-        assert!(metadata.is_some(), "Metadata not found in index");
+        let entry = index_copy.index.get(&name);
+        assert!(entry.is_some(), "Entry not found in index for {}", name);
+        let metadata = match entry.unwrap() {
+            IndexEntry::PublicUpload(info) => info,
+            _ => panic!("Expected PublicUpload entry, found PrivateKey"),
+        };
         assert_eq!(
-            metadata.unwrap().address,
-            public_index_addr,
+            metadata.address, public_index_addr,
             "Stored address mismatch"
         );
 
-        // Check index state
+        // Check index state (already done above implicitly, but double-checking size)
         let index_copy = index_manager.get_index_copy().await.unwrap();
         assert!(index_copy.index.contains_key(&name));
         let entry = index_copy.index.get(&name).unwrap();

@@ -8,6 +8,7 @@ use crate::network::NetworkChoice;
 use crate::pad_lifecycle::PadOrigin;
 use crate::types::KeySummary;
 
+use crate::data::PRIVATE_DATA_ENCODING;
 use autonomi::{ScratchpadAddress, SecretKey};
 use chrono::Utc;
 use std::collections::HashMap;
@@ -59,7 +60,12 @@ async fn test_save_load_initialize() {
 
     let dummy_data = vec![0u8; 10];
     network_adapter
-        .put_raw(&pad1_key, &dummy_data, &PadStatus::Generated)
+        .put_raw(
+            &pad1_key,
+            &dummy_data,
+            &PadStatus::Generated,
+            PRIVATE_DATA_ENCODING,
+        )
         .await
         .expect("Failed to write dummy data to pad1 for test setup");
 
@@ -284,6 +290,7 @@ mod tests {
             address: addr1,
             size: 1024,
             modified: Utc::now(),
+            index_secret_key_bytes: SecretKey::random().to_bytes().to_vec(),
         };
 
         index_manager
@@ -304,6 +311,7 @@ mod tests {
             address: addr2,
             size: 2048,
             modified: Utc::now(),
+            index_secret_key_bytes: SecretKey::random().to_bytes().to_vec(),
         };
 
         index_manager
