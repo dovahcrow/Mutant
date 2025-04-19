@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Allow `mutant get -p <address>` to fetch public data without requiring a configured wallet or local index.
+- Added `MutAnt::init_public_local()` constructor for fetching public data from Devnet.
 - Allow updating public uploads using `mutant put -p <name> <value> --force`. This overwrites the data associated with the name while keeping the public index address stable.
 - Added `MutAnt::init_public()` constructor to create an instance without a private key, solely for fetching public data from Mainnet using `MutAnt::fetch_public`.
 - Statistics for public uploads (index count, index space, actual data size) added to `mutant stat` output.
@@ -24,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated `update_public_op` to replace the full `PublicUploadInfo` in the index instead of just updating metadata.
 
 ### Fixed
-- Fixed `MutAnt::init_public()` to use a randomly generated valid key instead of a dummy invalid one, resolving initialization failures when using `get -p` without a configured wallet.
+- Fixed `MutAnt::init_public()` and `MutAnt::init_public_local()` to use a randomly generated valid key instead of a dummy invalid one, resolving initialization failures when using `get -p` without a configured wallet.
 - Workaround suspected SDK bug in `scratchpad_update` causing data corruption (map instead of sequence) during public index updates. Reverted `update_public_op` to use `scratchpad_put` with fetched counter instead.
 
 ## [0.3.0] - 2024-06-02

@@ -286,9 +286,14 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
     let is_public_get = matches!(cli.command, Commands::Get { public: true, .. });
 
     let (mutant, _private_key_hex) = if is_public_get {
-        info!("Public get command detected, using public initializer.");
-        // Call the dedicated public initializer which doesn't need a key
-        let mutant_instance = MutAnt::init_public().await?;
+        // Determine which public init function to call based on --local flag
+        let mutant_instance = if cli.local {
+            info!("Public local get command detected, using public_local initializer.");
+            MutAnt::init_public_local().await?
+        } else {
+            info!("Public get command detected, using public initializer (Mainnet).");
+            MutAnt::init_public().await?
+        };
         // Need a placeholder key for the match arms, but it won't be used
         let dummy_private_key = "public_mode".to_string();
         (mutant_instance, dummy_private_key)
