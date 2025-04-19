@@ -279,6 +279,7 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+```
 
 ### Fetching Public Data (Keyless Initialization)
 
