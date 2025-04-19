@@ -6,6 +6,9 @@ use mutant_lib::events::{GetCallback, GetEvent};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+// Get the specific styles needed
+use super::progress::{get_default_spinner_style, get_default_steps_style};
+
 pub fn create_get_callback(
     multi_progress: &MultiProgress,
     quiet: bool,
@@ -27,20 +30,52 @@ pub fn create_get_callback(
 
         Box::pin(async move {
             match event {
-                GetEvent::Starting { total_chunks } => {
+                GetEvent::IndexLookup => {
                     let mut pb_guard = pb_arc.lock().await;
-                    let pb = pb_guard.get_or_insert_with(|| {
-                        let pb = StyledProgressBar::new(&multi_progress);
-                        pb.set_style(super::progress::get_default_steps_style());
-                        pb.set_message("Fetching chunks...".to_string());
+                    let _ = pb_guard.get_or_insert_with(|| {
+                        let pb = StyledProgressBar::new_with_style(
+                            &multi_progress,
+                            get_default_spinner_style(), // Use spinner style initially
+                        );
+                        pb.set_message("Fetching index...".to_string());
+                        pb.enable_steady_tick(std::time::Duration::from_millis(100));
                         pb
                     });
-                    pb.set_length(total_chunks as u64);
-                    pb.set_position(0);
-                    trace!(
-                        "Get Callback: Starting - Set length to {} chunks",
-                        total_chunks
-                    );
+                    // Don't set length/position for indeterminate state
+                    trace!("Get Callback: IndexLookup - Initializing spinner.");
+                    drop(pb_guard);
+                }
+                GetEvent::Starting { total_chunks } => {
+                    let mut pb_guard = pb_arc.lock().await;
+                    if let Some(pb) = pb_guard.as_mut() {
+                        // Switch to determinate style now that we have the total
+                        pb.set_style(get_default_steps_style());
+                        pb.set_length(total_chunks as u64);
+                        pb.set_position(0); // Start at 0 before the first ChunkFetched increments it
+                        pb.set_message("Fetching chunks...".to_string());
+                        trace!(
+                            "Get Callback: Starting - Switched to determinate, length {}, position 0",
+                            total_chunks
+                        );
+                    } else {
+                        // Should ideally not happen if IndexLookup was called first, but handle defensively
+                        error!(
+                            "Get Callback: Starting event received but progress bar does not exist."
+                        );
+                        // Attempt to create it now (though it missed the IndexLookup state)
+                        let pb = pb_guard.get_or_insert_with(|| {
+                            let pb = StyledProgressBar::new(&multi_progress);
+                            pb.set_style(get_default_steps_style());
+                            pb.set_message("Fetching chunks...".to_string());
+                            pb.set_length(total_chunks as u64);
+                            pb.set_position(0);
+                            pb
+                        });
+                        trace!(
+                            "Get Callback: Starting - Created progress bar directly, length {}, position 0",
+                            total_chunks
+                        );
+                    }
                     drop(pb_guard);
                 }
                 GetEvent::ChunkFetched { chunk_index } => {

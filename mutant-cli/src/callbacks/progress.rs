@@ -6,6 +6,7 @@ const DEFAULT_TEMPLATE: &str = "{spinner:.green} [{elapsed_precise}] [{bar:40.cy
 const DEFAULT_PROGRESS_CHARS: &str = "#>-";
 const DEFAULT_STEP_TEMPLATE: &str =
     "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] [{pos}/{len}] (ETA: {eta}) {msg}";
+const DEFAULT_SPINNER_TEMPLATE: &str = "{spinner:.green} [{elapsed_precise}] {msg}";
 
 pub fn get_default_bytes_style() -> ProgressStyle {
     ProgressStyle::default_bar()
@@ -19,6 +20,12 @@ pub fn get_default_steps_style() -> ProgressStyle {
         .template(DEFAULT_STEP_TEMPLATE)
         .expect("Invalid step progress template")
         .progress_chars(DEFAULT_PROGRESS_CHARS)
+}
+
+pub fn get_default_spinner_style() -> ProgressStyle {
+    ProgressStyle::default_spinner()
+        .template(DEFAULT_SPINNER_TEMPLATE)
+        .expect("Invalid spinner progress template")
 }
 
 #[derive(Clone)]
@@ -39,13 +46,19 @@ impl StyledProgressBar {
         StyledProgressBar { pb }
     }
 
-    fn enable_steady_tick_if_needed(&self) {
-        self.pb.enable_steady_tick(StdDuration::from_millis(100));
+    pub fn new_with_style(multi_progress: &MultiProgress, style: ProgressStyle) -> Self {
+        let pb = Arc::new(multi_progress.add(ProgressBar::new(0)));
+        pb.set_style(style);
+        StyledProgressBar { pb }
+    }
+
+    pub fn enable_steady_tick(&self, duration: StdDuration) {
+        self.pb.enable_steady_tick(duration);
     }
 
     pub fn set_length(&self, len: u64) {
         self.pb.set_length(len);
-        self.enable_steady_tick_if_needed();
+        self.enable_steady_tick(StdDuration::from_millis(100));
     }
 
     pub fn set_position(&self, pos: u64) {

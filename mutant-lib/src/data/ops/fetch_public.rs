@@ -3,7 +3,10 @@ use crate::data::{
     PUBLIC_DATA_ENCODING,
     PUBLIC_INDEX_ENCODING, // Use constants from parent
 };
-use crate::internal_events::GetCallback; // TODO: invoke_get_callback doesn't exist
+use crate::internal_events::{
+    invoke_get_callback, GetCallback,
+    GetEvent::{self, ChunkFetched, Complete, IndexLookup, Starting},
+}; // Import GetEvent variants explicitly
 use crate::network::AutonomiNetworkAdapter;
 use autonomi::{Bytes, ScratchpadAddress};
 use log::{debug, error, info, trace, warn};
@@ -23,7 +26,20 @@ pub(crate) async fn fetch_public_op(
         "DataOps: Starting fetch_public_op for index address {}",
         public_index_address
     );
-    let _callback_arc = Arc::new(Mutex::new(callback));
+    let callback_arc = Arc::new(Mutex::new(callback));
+
+    // Report index lookup start
+    if !invoke_get_callback(&mut *callback_arc.lock().await, GetEvent::IndexLookup)
+        .await
+        .map_err(|e| DataError::CallbackError(e.to_string()))?
+    // Map callback error
+    {
+        warn!(
+            "Public fetch for index {} cancelled during index lookup phase.",
+            public_index_address
+        );
+        return Err(DataError::OperationCancelled);
+    }
 
     // 1. Fetch Public Index Scratchpad
     let index_scratchpad = network_adapter
@@ -61,37 +77,88 @@ pub(crate) async fn fetch_public_op(
     let chunk_addresses: Vec<ScratchpadAddress> =
         serde_cbor::from_slice(index_scratchpad.encrypted_data())?; // Use `?` with From trait for serde_cbor::Error
 
-    let total_chunks = chunk_addresses.len();
+    let num_data_chunks = chunk_addresses.len();
+    let total_steps = num_data_chunks + 1; // +1 for the index chunk
     debug!(
-        "Deserialized {} chunk addresses from public index {}",
-        total_chunks, public_index_address
+        "Deserialized {} data chunk addresses from public index {}. Total steps: {}.",
+        num_data_chunks, public_index_address, total_steps
     );
-    if total_chunks == 0 {
+
+    // Report starting event for GetCallback, including the index fetch
+    if !invoke_get_callback(
+        &mut *callback_arc.lock().await, // Pass mutable reference to Option<GetCallback>
+        GetEvent::Starting {
+            total_chunks: total_steps,
+        },
+    )
+    .await
+    .map_err(|e| DataError::CallbackError(e.to_string()))?
+    // Map callback error
+    {
+        warn!(
+            "Public fetch for index {} cancelled at start.",
+            public_index_address
+        );
+        return Err(DataError::OperationCancelled);
+    }
+
+    // Report fetch of index chunk (chunk 0)
+    if !invoke_get_callback(
+        &mut *callback_arc.lock().await,
+        GetEvent::ChunkFetched { chunk_index: 0 },
+    )
+    .await
+    .map_err(|e| DataError::CallbackError(e.to_string()))?
+    // Map callback error
+    {
+        warn!(
+            "Public fetch for index {} cancelled after fetching index.",
+            public_index_address
+        );
+        return Err(DataError::OperationCancelled);
+    }
+
+    // Early exit if only index existed (no data chunks)
+    if num_data_chunks == 0 {
+        // Report complete event
+        if !invoke_get_callback(&mut *callback_arc.lock().await, GetEvent::Complete)
+            .await
+            .map_err(|e| DataError::CallbackError(e.to_string()))?
+        // Map callback error
+        {
+            warn!(
+                "Public fetch for index {} completed (empty data), but cancellation requested after the fact.",
+                public_index_address
+            );
+        }
         return Ok(Bytes::new());
     }
 
-    // Report starting event for GetCallback
-    // TODO: Add invoke_get_callback equivalent or handle callback differently
-    // if !invoke_get_callback(&mut *callback_arc.lock().await, GetEvent::Starting { total_chunks }).await? {
-    //     warn!("Public fetch for index {} cancelled at start.", public_index_address);
-    //     return Err(DataError::OperationCancelled);
-    // }
-
-    // 4. Fetch and Concatenate Chunks
+    // 4. Fetch and Concatenate Data Chunks
     let mut assembled_data = Vec::new();
-    // TODO: Consider parallel fetches using FuturesUnordered?
     for (i, chunk_addr) in chunk_addresses.into_iter().enumerate() {
-        // Report progress
-        // TODO: Add GetEvent::ChunkFetched { chunk_index: i }
-        // if !invoke_get_callback(&mut *callback_arc.lock().await, GetEvent::ChunkFetched { chunk_index: i }).await? {
-        //     warn!("Public fetch for index {} cancelled during chunk download.", public_index_address);
-        //     return Err(DataError::OperationCancelled);
-        // }
+        // Report progress for data chunks (index i + 1)
+        if !invoke_get_callback(
+            &mut *callback_arc.lock().await, // Pass mutable reference
+            GetEvent::ChunkFetched {
+                chunk_index: i + 1, // +1 because index was chunk 0
+            },
+        )
+        .await
+        .map_err(|e| DataError::CallbackError(e.to_string()))?
+        // Map callback error
+        {
+            warn!(
+                "Public fetch for index {} cancelled during data chunk download.",
+                public_index_address
+            );
+            return Err(DataError::OperationCancelled);
+        }
 
         trace!(
-            "Fetching public chunk {}/{} ({})",
+            "Fetching public data chunk {}/{} ({})",
             i + 1,
-            total_chunks,
+            num_data_chunks, // Log based on data chunks only
             chunk_addr
         );
         let chunk_scratchpad = match network_adapter.get_raw_scratchpad(&chunk_addr).await {
@@ -119,17 +186,29 @@ pub(crate) async fn fetch_public_op(
         }
 
         assembled_data.extend_from_slice(chunk_scratchpad.encrypted_data());
-        trace!("Appended data from chunk {} ({})", i + 1, chunk_addr);
+        trace!(
+            "Appended data from chunk {} ({})",
+            i + 1, // Log based on data chunks only
+            chunk_addr
+        );
     }
 
     info!(
-        "Successfully fetched {} public chunks for index {}",
-        total_chunks, public_index_address
+        "Successfully fetched index and {} public data chunks for index {}",
+        num_data_chunks, public_index_address
     );
-    // TODO: Final GetCallback event
-    // if !invoke_get_callback(&mut *callback_arc.lock().await, GetEvent::Complete).await? {
-    //     warn!("Public fetch for index {} cancelled after completion.", public_index_address);
-    // }
+    // Report complete event
+    if !invoke_get_callback(&mut *callback_arc.lock().await, GetEvent::Complete)
+        .await
+        .map_err(|e| DataError::CallbackError(e.to_string()))?
+    // Map callback error
+    {
+        // Log if cancelled after completion, but don't error out, data is fetched.
+        warn!(
+            "Public fetch for index {} completed, but cancellation requested after the fact.",
+            public_index_address
+        );
+    }
 
     Ok(Bytes::from(assembled_data))
 }

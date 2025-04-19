@@ -95,9 +95,12 @@ pub enum PutEvent {
 /// Events emitted during a `get` operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GetEvent {
-    /// Indicates the start of the `get` operation.
+    /// Signals the start of the index fetch operation.
+    IndexLookup,
+
+    /// Indicates the start of chunk fetching.
     Starting {
-        /// Total number of data chunks to be fetched.
+        /// Total number of data chunks to be fetched (including index).
         total_chunks: usize,
     },
 
