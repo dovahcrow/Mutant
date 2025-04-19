@@ -146,6 +146,30 @@ impl AutonomiNetworkAdapter {
                     "Attempting to create scratchpad {} (status: Generated)",
                     address
                 );
+
+                match self.check_existence(&address).await {
+                    Ok(true) => {
+                        error!(
+                            "Inconsistent state: Tried to create pad {} (status Generated), but it already exists.",
+                            address
+                        );
+                        return Err(NetworkError::InconsistentState(format!(
+                            "Attempted to create scratchpad {} which already exists.",
+                            address
+                        )));
+                    }
+                    Ok(false) => {
+                        debug!("Pad {} does not exist, proceeding with creation.", address);
+                    }
+                    Err(e) => {
+                        error!(
+                            "Network error during pre-create existence check for {}: {}",
+                            address, e
+                        );
+                        return Err(e);
+                    }
+                }
+
                 match client
                     .scratchpad_create(key, content_type, &data_bytes, payment_option)
                     .await
@@ -161,13 +185,14 @@ impl AutonomiNetworkAdapter {
                         Ok(address)
                     }
                     Err(e) if e.to_string().to_lowercase().contains("already exists") => {
-                        // Treat 'already exists' during a create attempt (due to Generated status) as a successful creation,
-                        // but log a warning about the state inconsistency.
-                        warn!(
-                            "State inconsistency handled: Tried to create pad {}, which already exists (status was Generated). Proceeding with write.",
+                        error!(
+                            "SDK Error: Create failed with 'already exists' for pad {} even after check_existence returned false.",
                             address
                         );
-                        Ok(address) // Proceed as if creation was successful
+                        Err(NetworkError::InconsistentState(format!(
+                            "SDK create error: pad {} already exists unexpectedly: {}",
+                            address, e
+                        )))
                     }
                     Err(e) => {
                         error!("Failed to create scratchpad {}: {}", address, e);

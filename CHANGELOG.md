@@ -191,3 +191,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolved several linter errors and compilation failures in integration tests related to public uploads and `put_raw` API changes.
 - Corrected `remove` operation to return `DataError::KeyNotFound` when attempting to remove a non-existent key.
 - Prevented `store` operation from overwriting an existing, completed key unless forced (returns `DataError::KeyAlreadyExists`).
+- Ensured `put_raw` returns `NetworkError::InconsistentState` if called with `PadStatus::Generated` for a pad that already exists.
