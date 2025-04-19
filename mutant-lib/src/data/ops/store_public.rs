@@ -2,8 +2,9 @@ use crate::data::chunking::chunk_data;
 use crate::data::error::DataError;
 use crate::data::manager::DefaultDataManager;
 use crate::data::{PUBLIC_DATA_ENCODING, PUBLIC_INDEX_ENCODING};
+use crate::index::error::IndexError;
 use crate::index::manager::DefaultIndexManager;
-use crate::index::structure::PublicUploadInfo;
+use crate::index::structure::{IndexEntry, PublicUploadInfo};
 use crate::internal_events::{invoke_put_callback, PutCallback, PutEvent};
 use crate::network::adapter::create_public_scratchpad;
 use crate::network::error::NetworkError;
@@ -35,15 +36,27 @@ pub(crate) async fn store_public_op(
     // 1. Check for Name Collision
     {
         let index_copy = data_manager.index_manager.get_index_copy().await?;
-        if index_copy.index.contains_key(&name) {
-            error!(
-                "Public upload name '{}' collides with an existing entry.",
-                name
-            );
-            return Err(DataError::Index(
-                crate::index::error::IndexError::KeyExists(name),
-            ));
+        if let Some(entry) = index_copy.index.get(&name) {
+            // Get the entry if it exists
+            let error_to_return = match entry {
+                IndexEntry::PublicUpload(_) => {
+                    error!(
+                        "Public upload name '{}' collides with an existing public upload.",
+                        name
+                    );
+                    IndexError::PublicUploadNameExists(name.clone()) // Use specific error
+                }
+                IndexEntry::PrivateKey(_) => {
+                    error!(
+                        "Public upload name '{}' collides with an existing private key.",
+                        name
+                    );
+                    IndexError::KeyExists(name.clone()) // Use generic error for private keys
+                }
+            };
+            return Err(DataError::Index(error_to_return));
         }
+        // No collision found, proceed
     }
 
     // 2. Call the helper function to perform the actual work

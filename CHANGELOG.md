@@ -188,3 +188,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Corrected public data storage (`store_public_op`) to use unique keys for each data chunk and the index chunk, resolving address collisions and ensuring correct encoding verification. ([#IssueNumber])
+- Resolved several linter errors and compilation failures in integration tests related to public uploads and `put_raw` API changes.
