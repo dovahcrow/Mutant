@@ -67,6 +67,20 @@ MutAnt will look for your ant wallets and ask you which one you want to use if y
 $> cargo install mutant
 ```
 
+## Migration
+
+The master index structure (local and remote) has changed and will change again in the future. If you had an older version of `mutant` installed, you will need to delete your existing index file (and lose all your scratchpad and data) and re-run `mutant` to start fresh.
+
+As long as MutAnt is being actively developed, you can expect this to happen often. Once the implementation is more stable, migration will be made easier or disappear altogether.
+
+```bash
+# /!\ This will erase all your data on the local index
+$> rm ~/.local/share/mutant/index_cache.main.cbor 
+
+# /!\ This will erase all your data on the remote index
+$> mutant sync --push-force
+```
+
 ## Command-Line Interface (CLI)
 
 MutAnt includes the `mutant` command for convenient command-line access.
@@ -272,7 +286,7 @@ This script handles the setup, startup, and shutdown of a local Autonomi EVM tes
 Before starting the testnet for the first time, run the setup command to clone the required Autonomi dependency:
 
 ```bash
-./scripts/manage_local_testnet.sh setup
+$> ./scripts/manage_local_testnet.sh setup
 ```
 
 **Commands:**
