@@ -9,6 +9,7 @@ use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::types::{KeyDetails, KeySummary, MutAntConfig, StorageStats};
 use autonomi::{Bytes, ScratchpadAddress, SecretKey};
+use hex;
 use log::{debug, info, warn};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -104,11 +105,13 @@ impl MutAnt {
         // Use the default config which defaults to Mainnet.
         let config = MutAntConfig::default();
 
-        // Initialize network adapter without a real private key.
-        // We pass a dummy hex string. This assumes the underlying client
-        // doesn't strictly require a valid key for read-only public operations.
-        // If this fails, AutonomiNetworkAdapter::new might need adjustment.
-        let network_adapter_concrete = AutonomiNetworkAdapter::new("00", config.network)
+        // Generate a random, ephemeral private key just to satisfy the wallet constructor.
+        // This key is not stored or used for any real purpose.
+        let random_key = SecretKey::random();
+        let random_key_hex = hex::encode(random_key.to_bytes());
+
+        // Initialize network adapter with the random key.
+        let network_adapter_concrete = AutonomiNetworkAdapter::new(&random_key_hex, config.network)
             .map_err(|e| Error::Config(format!("Failed network init for public fetcher: {}", e)))?;
         let network_adapter: Arc<AutonomiNetworkAdapter> = Arc::new(network_adapter_concrete);
         info!("Public Fetcher: NetworkAdapter initialized.");
