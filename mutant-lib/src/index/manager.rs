@@ -336,7 +336,7 @@ impl DefaultIndexManager {
         // --- Private Key Stats Initialization ---
         let mut occupied_pads_count = 0;
         let mut occupied_data_size_total: u64 = 0;
-        let mut allocated_written_pads_count = 0; // Pads backing incomplete keys but not yet Confirmed
+        let mut allocated_written_pads_count = 0; // Renamed for clarity
 
         let mut incomplete_keys_count = 0;
         let mut incomplete_keys_data_bytes = 0;
@@ -376,6 +376,7 @@ impl DefaultIndexManager {
                                     incomplete_keys_pads_confirmed += 1;
                                     // Confirmed pads of incomplete keys *also* count towards occupied
                                     occupied_pads_count += 1;
+                                    // Note: allocated_written_pads_count tracks non-confirmed pads only.
                                 }
                             }
                         }
@@ -461,6 +462,7 @@ impl DefaultIndexManager {
             incomplete_keys_pads_generated,
             incomplete_keys_pads_written,
             incomplete_keys_pads_confirmed,
+            incomplete_keys_pads_allocated_written: allocated_written_pads_count, // Populate the new field
 
             // Public Upload Stats
             public_index_count,

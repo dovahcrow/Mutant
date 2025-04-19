@@ -69,6 +69,9 @@ pub struct StorageStats {
     /// Number of pads confirmed (e.g., replicated or verified) for incomplete keys.
     pub incomplete_keys_pads_confirmed: usize,
 
+    /// Number of pads allocated/written but not yet confirmed for incomplete keys.
+    pub incomplete_keys_pads_allocated_written: usize,
+
     /// Number of public index entries (names).
     pub public_index_count: usize,
 

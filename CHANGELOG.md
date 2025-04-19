@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Refactored `update_public_op` and network adapter's `put_raw` to correctly handle content type encoding when updating public index scratchpads, replacing direct SDK calls.
+- Revised `mutant stat` output for clarity:
+  - Updated text labels to distinguish private/public stats.
+  - Changed Pad Usage gauge to show Occupied (Confirmed Private + Public Index) vs. Unavailable (Free + Pending + Incomplete).
+  - Changed Space Usage gauge to show Used Data (Private + Public) vs. Wasted/Overhead vs. Free.
 
 ### Fixed
 - Workaround suspected SDK bug in `scratchpad_update` causing data corruption (map instead of sequence) during public index updates. Reverted `update_public_op` to use `scratchpad_put` with fetched counter instead.

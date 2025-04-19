@@ -17,76 +17,227 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
                 "Scratchpad Size:       {}",
                 format_bytes(stats.scratchpad_size as u64)
             );
-            println!("Total Pads:            {}", stats.total_pads);
-            println!("  Occupied Pads:       {}", stats.occupied_pads);
+            println!("Total Pads Managed:    {}", stats.total_pads);
+            println!("  Occupied (Private):  {}", stats.occupied_pads);
             println!("  Free Pads:           {}", stats.free_pads);
             println!("  Pending Verify Pads: {}", stats.pending_verification_pads);
+            println!(
+                "  Incomplete Alloc/Wrtn: {}",
+                stats.incomplete_keys_pads_allocated_written
+            );
+            println!("  Occupied (Public Idx): {}", stats.public_data_pad_count); // Note: public_data_pad_count is index pads only
+
             println!("-------------------");
             println!(
-                "Total Space:           {}",
+                "Total Space Managed:   {}",
                 format_bytes(stats.total_space_bytes)
             );
             println!(
-                "  Occupied Pad Space:  {}",
+                "  Occupied Pad Space (Private):  {}",
                 format_bytes(stats.occupied_pad_space_bytes)
             );
             println!(
                 "  Free Pad Space:      {}",
                 format_bytes(stats.free_pad_space_bytes)
             );
+            println!(
+                "  Occupied Pad Space (Public Idx): {}",
+                format_bytes(stats.public_data_space_bytes) // Note: public_data_space_bytes is index pads only
+            );
             println!("-------------------");
             println!(
-                "Actual Data Stored:    {}",
+                "Actual Data Stored (Private):    {}",
                 format_bytes(stats.occupied_data_bytes)
             );
             println!(
-                "Wasted Space (Frag.):  {}",
+                "Actual Data Stored (Public):     {}",
+                format_bytes(stats.public_data_actual_bytes)
+            );
+            println!(
+                "Wasted Space (Private Frag.):  {}",
                 format_bytes(stats.wasted_space_bytes)
+            );
+            println!(
+                "Wasted Space (Public Idx): {}", // Clarify meaning
+                format_bytes(stats.public_data_wasted_bytes)
             );
             println!("-------------------");
 
-            let occupied_pads_pct = if stats.total_pads > 0 {
-                stats.occupied_pads as f64 / stats.total_pads as f64 * 100.0
-            } else {
-                0.0
-            };
-            let free_pads_pct = 100.0 - occupied_pads_pct;
+            // --- Pad Usage Gauge ---
+            let total_pads_f64 = stats.total_pads as f64;
+            let occupied_confirmed_pads = stats.occupied_pads + stats.public_data_pad_count; // Confirmed Private + Public Index
+            let unavailable_pads = stats.free_pads
+                + stats.pending_verification_pads
+                + stats.incomplete_keys_pads_allocated_written;
 
-            let used_space_pct = if stats.total_space_bytes > 0 {
-                stats.occupied_data_bytes as f64 / stats.total_space_bytes as f64 * 100.0
+            let occupied_confirmed_pct = if stats.total_pads > 0 {
+                occupied_confirmed_pads as f64 / total_pads_f64 * 100.0
             } else {
                 0.0
             };
-            let free_space_pct = if stats.total_space_bytes > 0 {
-                stats.free_pad_space_bytes as f64 / stats.total_space_bytes as f64 * 100.0
+            // Calculate remaining percentage for the second bar
+            let unavailable_pct = if stats.total_pads > 0 {
+                unavailable_pads as f64 / total_pads_f64 * 100.0
             } else {
                 0.0
             };
-            let wasted_space_pct = if stats.total_space_bytes > 0 {
-                stats.wasted_space_bytes as f64 / stats.total_space_bytes as f64 * 100.0
-            } else {
-                0.0
-            };
+
+            // Normalize percentages if sum > 100 due to rounding or potential logic edge cases
+            let total_pct_pad = occupied_confirmed_pct + unavailable_pct;
+            let (occupied_confirmed_pct, unavailable_pct) =
+                if total_pct_pad > 100.0 && total_pct_pad < 101.0 {
+                    // Allow small rounding errors
+                    // Simple normalization: scale down proportionally
+                    let scale = 100.0 / total_pct_pad;
+                    (occupied_confirmed_pct * scale, unavailable_pct * scale)
+                } else {
+                    (occupied_confirmed_pct, unavailable_pct)
+                };
 
             println!("Pad Usage Breakdown:");
             let gauge_width = 30;
             let (occ_gauge, occ_text, occ_color) =
-                create_text_gauge(occupied_pads_pct, gauge_width, Color::LightRed);
-            let (free_gauge, free_text, free_color) =
-                create_text_gauge(free_pads_pct, gauge_width, Color::LightGreen);
+                create_text_gauge(occupied_confirmed_pct, gauge_width, Color::LightRed);
+            // Use a different color for unavailable to distinguish from simple 'free'
+            let (unavail_gauge, unavail_text, unavail_color) =
+                create_text_gauge(unavailable_pct, gauge_width, Color::DarkGray);
 
             println!(
-                "  Occupied: [{}]  {} ({} pads)",
+                "  Occupied (Conf P + Pub I): [{}] {} ({} pads)",
                 occ_color.paint(occ_gauge),
                 occ_text,
-                stats.occupied_pads
+                occupied_confirmed_pads
             );
             println!(
-                "  Free:     [{}]  {} ({} pads)",
-                free_color.paint(free_gauge),
-                free_text,
-                stats.free_pads
+                "  Unavailable (F+P+Inc A/W): [{}] {} ({} pads)", // F=Free, P=Pending, Inc A/W=Incomplete Alloc/Written
+                unavail_color.paint(unavail_gauge),
+                unavail_text,
+                unavailable_pads
             );
+
+            // --- Space Usage Gauge ---
+            let total_space_f64 = stats.total_space_bytes as f64;
+            let total_used_data_bytes = stats.occupied_data_bytes + stats.public_data_actual_bytes;
+            let total_wasted_overhead_bytes =
+                stats.wasted_space_bytes + stats.public_data_wasted_bytes;
+            let total_free_space_bytes = stats.free_pad_space_bytes; // Already calculated
+
+            let used_data_pct = if stats.total_space_bytes > 0 {
+                total_used_data_bytes as f64 / total_space_f64 * 100.0
+            } else {
+                0.0
+            };
+            let wasted_overhead_pct = if stats.total_space_bytes > 0 {
+                total_wasted_overhead_bytes as f64 / total_space_f64 * 100.0
+            } else {
+                0.0
+            };
+            let free_space_pct = if stats.total_space_bytes > 0 {
+                total_free_space_bytes as f64 / total_space_f64 * 100.0
+            } else {
+                0.0
+            };
+
+            // Normalize percentages if sum > 100 due to rounding or potential logic edge cases
+            let total_pct_space = used_data_pct + wasted_overhead_pct + free_space_pct;
+            let (used_data_pct, wasted_overhead_pct, free_space_pct) =
+                if total_pct_space > 100.0 && total_pct_space < 101.0 {
+                    // Allow small rounding errors
+                    let scale = 100.0 / total_pct_space;
+                    (
+                        used_data_pct * scale,
+                        wasted_overhead_pct * scale,
+                        free_space_pct * scale,
+                    )
+                } else {
+                    (used_data_pct, wasted_overhead_pct, free_space_pct)
+                };
+
+            println!("\nSpace Usage Breakdown (based on Total Space Managed):");
+            // Create gauges - using 3 requires careful formatting
+            let (used_gauge, used_text, used_color) =
+                create_text_gauge(used_data_pct, gauge_width, Color::LightCyan);
+            let (wasted_gauge, wasted_text, wasted_color) =
+                create_text_gauge(wasted_overhead_pct, gauge_width, Color::LightYellow);
+            let (fspace_gauge, fspace_text, fspace_color) =
+                create_text_gauge(free_space_pct, gauge_width, Color::LightGreen);
+
+            // Displaying 3 bars might look cluttered, consider alternatives if needed.
+            // For now, let's print them separately.
+            println!(
+                "  Used Data (P+P): [{}] {} ({})", // P+P = Private + Public
+                used_color.paint(used_gauge),
+                used_text,
+                format_bytes(total_used_data_bytes)
+            );
+            println!(
+                "  Wasted/Ovhd(P+PI):[{}] {} ({})", // P = Private Frag, PI = Public Index Overhead
+                wasted_color.paint(wasted_gauge),
+                wasted_text,
+                format_bytes(total_wasted_overhead_bytes)
+            );
+            println!(
+                "  Free Pad Space:  [{}] {} ({})",
+                fspace_color.paint(fspace_gauge),
+                fspace_text,
+                format_bytes(total_free_space_bytes)
+            );
+
+            // --- Incomplete/Public Sections (remain mostly the same, maybe minor label tweaks) ---
+            if stats.incomplete_keys_count > 0 {
+                println!("\nIncomplete Private Uploads:");
+                println!("---------------------------");
+                println!(
+                    "  Keys:                     {}",
+                    stats.incomplete_keys_count
+                );
+                println!(
+                    "  Total Data Size Estimate: {}",
+                    format_bytes(stats.incomplete_keys_data_bytes)
+                );
+                println!(
+                    "  Pads Associated:          {}",
+                    stats.incomplete_keys_total_pads
+                );
+                println!(
+                    "    Confirmed:              {}",
+                    stats.incomplete_keys_pads_confirmed
+                );
+                println!(
+                    "    Allocated/Written:      {}",
+                    stats.incomplete_keys_pads_allocated_written
+                );
+                println!(
+                    "    Generated (Not Written):{}",
+                    stats.incomplete_keys_pads_generated
+                );
+            }
+
+            if stats.public_index_count > 0 {
+                println!("\nPublic Upload Statistics:");
+                println!("-------------------------");
+                println!("  Public Names (Indices):  {}", stats.public_index_count);
+                println!(
+                    "    Index Pad Space:       {}", // Total potential space for indices
+                    format_bytes(stats.public_index_space_bytes)
+                );
+                println!(
+                    "  Total Public Data Size:  {}", // Actual data size
+                    format_bytes(stats.public_data_actual_bytes)
+                );
+                println!("  Unique Index Pads Used:  {}", stats.public_data_pad_count);
+                println!(
+                    "    Index Pad Space Used:  {}", // Space consumed by the unique index pads
+                    format_bytes(stats.public_data_space_bytes)
+                );
+                println!(
+                    "    Wasted (Index Pad Space vs Data Size): {}", // Difference between index space and actual data
+                    format_bytes(stats.public_data_wasted_bytes)
+                );
+                println!(
+                    "    (Note: Public Pad stats count index pads only, not underlying data pads)"
+                );
+            }
 
             if stats.pending_verification_pads > 0 {
                 println!(
@@ -95,87 +246,6 @@ pub async fn handle_stats(mutant: MutAnt) -> ExitCode {
                         "Note: {} pads are pending verification. Run 'mutant purge' to process them.",
                         stats.pending_verification_pads
                     ))
-                );
-            }
-
-            println!("\nSpace Usage Breakdown (based on Total Space):");
-            let (used_gauge, used_text, used_color) =
-                create_text_gauge(used_space_pct, gauge_width, Color::LightCyan);
-            let (wasted_gauge, wasted_text, wasted_color) =
-                create_text_gauge(wasted_space_pct, gauge_width, Color::LightYellow);
-            let (fspace_gauge, fspace_text, fspace_color) =
-                create_text_gauge(free_space_pct, gauge_width, Color::LightGreen);
-
-            println!(
-                "  Used Data:[{}]  {} ({})",
-                used_color.paint(used_gauge),
-                used_text,
-                format_bytes(stats.occupied_data_bytes)
-            );
-            println!(
-                "  Wasted:   [{}]  {} ({})",
-                wasted_color.paint(wasted_gauge),
-                wasted_text,
-                format_bytes(stats.wasted_space_bytes)
-            );
-            println!(
-                "  Free:     [{}]  {} ({})",
-                fspace_color.paint(fspace_gauge),
-                fspace_text,
-                format_bytes(stats.free_pad_space_bytes)
-            );
-
-            if stats.incomplete_keys_count > 0 {
-                println!("\nIncomplete Uploads:");
-                println!("-------------------");
-                println!("  Keys:                {}", stats.incomplete_keys_count);
-                println!(
-                    "  Total Data Size:     {}",
-                    format_bytes(stats.incomplete_keys_data_bytes)
-                );
-                println!(
-                    "  Pads Associated:     {}",
-                    stats.incomplete_keys_total_pads
-                );
-                println!(
-                    "    Confirmed:         {}",
-                    stats.incomplete_keys_pads_confirmed
-                );
-                println!(
-                    "    Written (Pending): {}",
-                    stats.incomplete_keys_pads_written
-                );
-                println!(
-                    "    Generated (Pending): {}",
-                    stats.incomplete_keys_pads_generated
-                );
-            }
-
-            // --- New Section for Public Upload Stats ---
-            if stats.public_index_count > 0 {
-                println!("\nPublic Upload Statistics:");
-                println!("-------------------------");
-                println!("  Public Names (Indices):  {}", stats.public_index_count);
-                println!(
-                    "    Index Pad Space:       {}",
-                    format_bytes(stats.public_index_space_bytes)
-                );
-                println!(
-                    "  Total Public Data Size:  {}",
-                    format_bytes(stats.public_data_actual_bytes)
-                );
-                // Clarify that the following stats are based on index pads only
-                println!("  Unique Index Pads:       {}", stats.public_data_pad_count);
-                println!(
-                    "    Index Pad Space Used:  {}", // Renamed from public_data_space_bytes for clarity
-                    format_bytes(stats.public_data_space_bytes)
-                );
-                println!(
-                    "    Wasted (Index vs Data):{}", // Clarify the potentially misleading calculation
-                    format_bytes(stats.public_data_wasted_bytes)
-                );
-                println!(
-                    "    (Note: Pad stats currently only count public index pads, not data pads)"
                 );
             }
 
