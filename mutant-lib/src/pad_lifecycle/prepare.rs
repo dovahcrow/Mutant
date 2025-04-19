@@ -68,16 +68,19 @@ pub(crate) async fn prepare_pads_for_store(
     match existing_key_info_opt {
         Some(key_info) => {
             info!(
-                "Prepare: Found existing KeyInfo for key '{}'. Attempting resume.",
+                "Prepare: Found existing KeyInfo for key '{}'. Checking for resume/overwrite...",
                 user_key
             );
+
             if key_info.is_complete {
-                info!(
-                    "Prepare: Key '{}' is already marked as complete. Nothing to do.",
+                error!(
+                    "Prepare: Attempting to store to key '{}' which already exists and is complete.",
                     user_key
                 );
-                return Ok((key_info, Vec::new()));
+                return Err(DataError::KeyAlreadyExists(user_key.to_string()));
             }
+
+            info!("Prepare: Resuming upload for key '{}'.", user_key);
 
             if key_info.data_size != data_size {
                 error!(
