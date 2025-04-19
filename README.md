@@ -79,10 +79,10 @@ Distributed mutable key value storage over the Autonomi network
 Usage: mutant [OPTIONS] <COMMAND>
 
 Commands:
-  put      Puts a key-value pair onto the network. Reads value from stdin if omitted. Use --force to overwrite an existing key
+  put      Stores private or public data. Use `-p <name>` for public uploads (no encryption). Use `--force` to overwrite. Reads value from stdin if omitted
   get      Gets the value for a given key from the network and prints it to stdout
   rm       Deletes a key-value pair from the network
-  ls       Lists all keys stored on the network. Use -l for detailed view
+  ls       Lists all stored private keys and public uploads. Use -l for detailed view including public addresses
   stats    Get storage summary (allocator perspective)
   reset    Resets the master index to its initial empty state. Requires confirmation
   import   Imports a free scratchpad using its private key
@@ -102,20 +102,31 @@ Options:
 # Store a value directly
 mutant put mykey "my value"
 
+# Store data publicly (no encryption) under a name
+mutant put -p public_data "some public content"
+
 # Get a value and print to stdout
 mutant get mykey
 # Output: my value
 
+# Get public data
+mutant get public_data
+# Output: some public content
+
 # Store a value from stdin (e.g., piping a file)
 cat data.txt | mutant put mykey2
 
-# Force overwrite an existing key
+# Force overwrite an existing private key
 echo "new content" | mutant put mykey2 --force
+
+# Force overwrite an existing public upload
+echo "updated public stuff" | mutant put -p public_data --force
 
 # List stored keys
 mutant ls
 # mykey
 # mykey2
+# public_data
 
 # List keys with details (size, last modified)
 mutant ls -l
