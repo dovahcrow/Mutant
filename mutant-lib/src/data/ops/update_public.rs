@@ -2,14 +2,11 @@ use crate::data::chunking::chunk_data;
 use crate::data::error::DataError;
 use crate::data::manager::DefaultDataManager;
 use crate::data::{PUBLIC_DATA_ENCODING, PUBLIC_INDEX_ENCODING};
-use crate::index::error::IndexError;
-use crate::index::structure::{IndexEntry, PadStatus, PublicUploadInfo};
+use crate::index::structure::{PadStatus /*IndexEntry, PublicUploadInfo*/};
 use crate::internal_events::{invoke_put_callback, PutCallback, PutEvent};
 use crate::network::adapter::create_public_scratchpad;
-use crate::network::AutonomiNetworkAdapter;
 use autonomi::client::payment::PaymentOption;
 use autonomi::{Bytes, ScratchpadAddress, SecretKey};
-use chrono::Utc;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
 use serde_cbor;
@@ -66,7 +63,7 @@ pub(crate) async fn update_public_op(
         }
         let chunks = chunk_data(data_bytes, chunk_size)?;
         let total_chunks = chunks.len();
-        let chunk_count = total_chunks;
+        let _chunk_count = total_chunks;
         debug!(
             "Public data for '{}' chunked into {} pieces using size {}.",
             name, total_chunks, chunk_size
@@ -204,22 +201,35 @@ pub(crate) async fn update_public_op(
             .map(Bytes::from)
             .map_err(|e| DataError::Serialization(e.to_string()))?;
 
-        // 6. Overwrite the existing public index scratchpad using put_raw
+        // 6. Overwrite the existing public index scratchpad using scratchpad_update directly
         debug!(
-            "Updating public index scratchpad {} with new chunk list...",
-            name
+            "Updating public index scratchpad {} with new chunk list using encoding {}.",
+            public_index_address, PUBLIC_INDEX_ENCODING
         );
-        let update_status = PadStatus::Confirmed; // Use a status that implies existence
-                                                  // put_raw expects the *raw data* to be encrypted, it handles the encryption.
-                                                  // So we pass the CBOR-serialized list of addresses directly.
+        // Use put_raw instead
         manager
             .network_adapter
-            .put_raw(&index_sk, &new_index_data_bytes, &update_status)
+            .put_raw(
+                &index_sk,
+                &new_index_data_bytes,
+                &PadStatus::Written, // Assuming Written status for update
+                PUBLIC_INDEX_ENCODING,
+            )
             .await
-            .map_err(|e| DataError::Network(e))?;
+            .map_err(|e| {
+                // Log the specific error from put_raw
+                error!(
+                    "Failed to update public index scratchpad {} using put_raw: {}",
+                    public_index_address, e
+                );
+                // Map to DataError::Network or a more specific error if appropriate
+                DataError::Network(e)
+            })?;
+
         info!(
             "Successfully updated public index for '{}' at address {}",
-            name, name
+            name,
+            public_index_address // Use the actual address variable
         );
 
         // 7. Update metadata (size, modified time) in the MasterIndex via IndexManager

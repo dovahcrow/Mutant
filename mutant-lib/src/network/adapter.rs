@@ -6,9 +6,7 @@ use crate::network::NetworkChoice;
 
 use autonomi::client::payment::PaymentOption;
 use autonomi::AttoTokens;
-use autonomi::{
-    Bytes, Client, Scratchpad, ScratchpadAddress, SecretKey, Wallet,
-};
+use autonomi::{Bytes, Client, Scratchpad, ScratchpadAddress, SecretKey, Wallet};
 use log::{debug, error, info, trace, warn};
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -59,7 +57,7 @@ impl AutonomiNetworkAdapter {
     /// # Errors
     ///
     /// Returns `NetworkError` if client initialization fails.
-    async fn get_or_init_client(&self) -> Result<Arc<Client>, NetworkError> {
+    pub async fn get_or_init_client(&self) -> Result<Arc<Client>, NetworkError> {
         self.client
             .get_or_try_init(|| async {
                 let _wallet_clone = Arc::clone(&self.wallet);
@@ -114,6 +112,7 @@ impl AutonomiNetworkAdapter {
     /// * `key` - The secret key associated with the scratchpad.
     /// * `data` - The raw byte data to be stored.
     /// * `current_status` - The last known status of the pad, used to determine whether to create or update.
+    /// * `content_type` - The content type of the data being stored.
     ///
     /// # Errors
     ///
@@ -126,18 +125,19 @@ impl AutonomiNetworkAdapter {
         key: &SecretKey,
         data: &[u8],
         current_status: &PadStatus,
+        content_type: u64,
     ) -> Result<ScratchpadAddress, NetworkError> {
         trace!(
-            "AutonomiNetworkAdapter::put_raw called, data_len: {}, status: {:?}",
+            "AutonomiNetworkAdapter::put_raw called, data_len: {}, status: {:?}, content_type: {}",
             data.len(),
-            current_status
+            current_status,
+            content_type
         );
         let client = self.get_or_init_client().await?;
 
         let public_key = key.public_key();
         let address = ScratchpadAddress::new(public_key);
         let data_bytes = Bytes::copy_from_slice(data);
-        let content_type = 0u64;
         let payment_option = PaymentOption::Wallet((*self.wallet).clone());
 
         match current_status {

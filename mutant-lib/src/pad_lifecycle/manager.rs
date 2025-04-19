@@ -10,6 +10,7 @@ use crate::pad_lifecycle::import;
 use crate::pad_lifecycle::pool::acquire_free_pad;
 use crate::pad_lifecycle::verification::verify_pads_concurrently;
 use crate::pad_lifecycle::PadOrigin;
+use crate::data::PRIVATE_DATA_ENCODING;
 
 use autonomi::{ScratchpadAddress, SecretKey};
 use log::error;
@@ -438,7 +439,12 @@ impl DefaultPadLifecycleManager {
 
                 
                 match network_adapter
-                    .put_raw(&secret_key, &[0u8], &PadStatus::Generated)
+                    .put_raw(
+                        &secret_key,
+                        &[0u8],
+                        &PadStatus::Generated,
+                        PRIVATE_DATA_ENCODING,
+                    )
                     .await
                 {
                     Ok(created_address) => {

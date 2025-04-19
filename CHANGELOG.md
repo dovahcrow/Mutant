@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Allow updating public uploads using `mutant put -p <name> <value> --force`. This overwrites the data associated with the name while keeping the public index address stable.
 
+### Changed
+
+- Refactored `update_public_op` and network adapter's `put_raw` to correctly handle content type encoding when updating public index scratchpads, replacing direct SDK calls.
+
 ## [0.3.0] - 2024-06-02
 
 ### Added

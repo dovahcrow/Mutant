@@ -1,5 +1,6 @@
 use crate::data::chunking::chunk_data;
 use crate::data::error::DataError;
+use crate::data::PRIVATE_DATA_ENCODING;
 use crate::index::manager::DefaultIndexManager;
 use crate::index::structure::PadInfo;
 use crate::index::structure::PadStatus;
@@ -416,7 +417,12 @@ async fn execute_write_confirm_tasks(
                     pad_info_write.address
                 );
                 let write_attempt_result = network_adapter_clone
-                    .put_raw(&secret_key_write, &chunk_data, &current_status)
+                    .put_raw(
+                        &secret_key_write,
+                        &chunk_data,
+                        &current_status,
+                        PRIVATE_DATA_ENCODING,
+                    )
                     .await
                     .map(|_| ())
                     .map_err(DataError::Network);

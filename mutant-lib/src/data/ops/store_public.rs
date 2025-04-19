@@ -15,7 +15,6 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
 use serde_cbor;
 use std::sync::Arc;
-use std::time::SystemTime;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 

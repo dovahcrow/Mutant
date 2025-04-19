@@ -1,3 +1,4 @@
+use crate::data::MASTER_INDEX_ENCODING;
 use crate::index::error::IndexError;
 use crate::index::structure::{MasterIndex, PadStatus};
 use crate::network::AutonomiNetworkAdapter;
@@ -179,7 +180,7 @@ pub(crate) async fn save_index(
     };
 
     network_adapter
-        .put_raw(key, &serialized_data, &status_hint)
+        .put_raw(key, &serialized_data, &status_hint, MASTER_INDEX_ENCODING)
         .await
         .map_err(|e| {
             error!("Failed to write index via NetworkAdapter: {}", e);
