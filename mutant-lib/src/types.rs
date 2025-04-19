@@ -4,18 +4,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Configuration settings for a MutAnt instance.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MutAntConfig {
     /// Specifies the network (e.g., Mainnet, Testnet) to connect to.
     pub network: NetworkChoice,
-}
-
-impl Default for MutAntConfig {
-    fn default() -> Self {
-        Self {
-            network: NetworkChoice::Mainnet,
-        }
-    }
 }
 
 /// Provides detailed statistics about the storage backend's state.

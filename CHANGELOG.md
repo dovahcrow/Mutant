@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - UNRELEASED
 
 ### Added
+- Allow `mutant get -p <address>` to fetch public data without requiring a configured wallet or local index.
 - Allow updating public uploads using `mutant put -p <name> <value> --force`. This overwrites the data associated with the name while keeping the public index address stable.
 - Added `MutAnt::init_public()` constructor to create an instance without a private key, solely for fetching public data from Mainnet using `MutAnt::fetch_public`.
 - Statistics for public uploads (index count, index space, actual data size) added to `mutant stat` output.

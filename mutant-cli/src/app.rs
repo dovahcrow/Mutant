@@ -13,6 +13,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::task::JoinHandle;
 
 use crate::callbacks::create_init_callback;
@@ -260,85 +262,124 @@ async fn cleanup_background_tasks(
 }
 
 pub async fn run_cli() -> Result<ExitCode, CliError> {
-    info!("MutAnt CLI started processing.");
-
     let cli = Cli::parse();
-    debug!("Parsed CLI arguments: {:?}", cli);
 
-    let private_key_hex = if cli.local {
-        info!("Using hardcoded local/devnet secret key for testing.");
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
-    } else {
-        initialize_wallet().await?
-    };
-    debug!("Wallet initialization complete or local key used.");
-
-    let multi_progress = MultiProgress::new();
+    let mp = MultiProgress::new();
     let draw_target = if cli.quiet {
         ProgressDrawTarget::hidden()
     } else {
-        ProgressDrawTarget::stderr()
+        ProgressDrawTarget::stderr_with_hz(2)
     };
-    multi_progress.set_draw_target(draw_target);
+    mp.set_draw_target(draw_target);
 
-    let (init_pb_opt_arc, init_cb) = create_init_callback(&multi_progress, cli.quiet);
-
-    let network_choice = if cli.local {
-        NetworkChoice::Devnet
-    } else {
-        NetworkChoice::Mainnet
-    };
-
-    let mut config = MutAntConfig::default();
-    config.network = network_choice;
-
-    let mutant = MutAnt::init_with_progress(private_key_hex.clone(), config, Some(init_cb)).await?;
-
-    let mut pb_to_finish = init_pb_opt_arc.lock().await;
-
-    if let Some(pb) = pb_to_finish.as_mut() {
-        if !pb.is_finished() {
-            debug!("Clearing initialization progress bar.");
-            pb.finish_and_clear();
+    let mp_clone = mp.clone();
+    let mp_join_handle = tokio::spawn(async move {
+        if mp_clone.is_hidden() {
+            return;
         }
-    }
+        std::future::pending::<()>().await;
+    });
 
-    debug!("MutAnt core initialized.");
+    let mut mutant_init_handle: Option<JoinHandle<()>> = None;
 
-    let mp_join_handle = {
-        let mp_clone = multi_progress.clone();
-        tokio::spawn(async move {
-            let _keep_alive = mp_clone;
-            std::future::pending::<()>().await;
-        })
+    // Determine if this is a 'get -p' command BEFORE initializing wallet
+    let is_public_get = matches!(cli.command, Commands::Get { public: true, .. });
+
+    let (mutant, _private_key_hex) = if is_public_get {
+        info!("Public get command detected, using public initializer.");
+        // Call the dedicated public initializer which doesn't need a key
+        let mutant_instance = MutAnt::init_public().await?;
+        // Need a placeholder key for the match arms, but it won't be used
+        let dummy_private_key = "public_mode".to_string();
+        (mutant_instance, dummy_private_key)
+    } else {
+        // Proceed with wallet initialization for all other commands
+        let private_key_hex = initialize_wallet().await?;
+        let network_choice = if cli.local {
+            NetworkChoice::Devnet
+        } else {
+            NetworkChoice::Mainnet
+        };
+        // Create config using the default derived impl
+        let mut config = MutAntConfig::default();
+        config.network = network_choice;
+
+        let (init_pb_opt_arc, init_callback) = create_init_callback(&mp, cli.quiet);
+
+        // Use init_with_progress for regular initialization
+        let mutant_instance =
+            MutAnt::init_with_progress(private_key_hex.clone(), config, Some(init_callback))
+                .await?;
+        let _mutant_clone_for_bg = mutant_instance.clone();
+        let init_pb_clone = Arc::clone(&init_pb_opt_arc); // Clone Arc for the task
+
+        let init_handle = tokio::spawn(async move {
+            info!("Starting background MutAnt/Storage initialization...");
+            // Initialize is implicitly called by init_with_progress, just monitor the progress bar
+            let mut pb_guard = init_pb_clone.lock().await;
+            if let Some(pb) = pb_guard.as_mut() {
+                // Create a future that resolves when the progress bar is finished.
+                // This might require a more sophisticated approach depending on how finish is signaled.
+                // For now, let's poll the is_finished status.
+                let pb_future = async {
+                    while !pb.is_finished() {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                };
+
+                // Wait for the progress bar to finish with a timeout
+                if tokio::time::timeout(Duration::from_secs(300), pb_future)
+                    .await
+                    .is_err()
+                {
+                    error!("Background init progress bar timed out");
+                    // Ensure pb is still valid before calling abandon
+                    if !pb.is_finished() {
+                        pb.abandon_with_message("Initialization timed out".to_string());
+                    }
+                }
+                // No need to call finish_and_clear here, it should happen when init completes
+            } else {
+                // Handle case where progress bar wasn't created (e.g., quiet mode)
+                debug!("No progress bar found for background init task.");
+                // We might need to await the actual init future if it doesn't drive the progress bar.
+                // Assuming init_with_progress handles this internally for now.
+            }
+            // Drop the guard explicitly
+            drop(pb_guard);
+            info!("Background MutAnt/Storage monitoring task finished.");
+        });
+
+        // Clear the main thread's reference to the progress bar immediately after spawning the monitor
+        let mut pb_main_guard = init_pb_opt_arc.lock().await;
+        if let Some(_pb) = pb_main_guard.take() {
+            // Don't clear it here, let the initialization logic handle it
+        }
+        drop(pb_main_guard);
+
+        mutant_init_handle = Some(init_handle);
+        (mutant_instance, private_key_hex)
     };
 
-    let exit_code = match cli.command {
+    let result = match cli.command {
         Commands::Put {
             key,
             value,
             force,
             public,
         } => {
-            crate::commands::put::handle_put(
-                mutant,
-                key,
-                value,
-                force,
-                public,
-                &multi_progress,
-                cli.quiet,
-            )
-            .await
+            crate::commands::put::handle_put(mutant, key, value, force, public, &mp, cli.quiet)
+                .await
         }
         Commands::Get { key, public } => {
-            crate::commands::get::handle_get(mutant, key, public, &multi_progress, cli.quiet).await
+            crate::commands::get::handle_get(mutant, key, public, &mp, cli.quiet).await
         }
         Commands::Rm { key } => crate::commands::remove::handle_rm(mutant, key).await,
         Commands::Ls { long } => crate::commands::ls::handle_ls(mutant, long).await,
         Commands::Stats => crate::commands::stats::handle_stats(mutant).await,
         Commands::Reset => crate::commands::reset::handle_reset(mutant).await,
         Commands::Import { private_key } => {
+            // Import needs the live mutant instance now
             crate::commands::import::handle_import(mutant, private_key).await
         }
         Commands::Sync { push_force } => {
@@ -354,7 +395,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
             match crate::commands::purge::run(
                 crate::commands::purge::PurgeArgs {},
                 mutant,
-                &multi_progress,
+                &mp,
                 cli.quiet,
             )
             .await
@@ -366,23 +407,17 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
                 }
             }
         }
-        Commands::Reserve(reserve_cmd) => {
-            info!("Executing Reserve command...");
-            match reserve_cmd.run(&mutant, &multi_progress).await {
-                Ok(_) => {
-                    info!("Reserve command completed successfully.");
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    error!("Reserve command failed: {}", e);
-                    ExitCode::FAILURE
-                }
+        Commands::Reserve(reserve_cmd) => match reserve_cmd.run(&mutant, &mp).await {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(e) => {
+                error!("Reserve command failed: {}", e);
+                ExitCode::FAILURE
             }
-        }
+        },
     };
 
-    cleanup_background_tasks(mp_join_handle, None).await;
+    cleanup_background_tasks(mp_join_handle, mutant_init_handle).await;
 
-    debug!("CLI exiting with code: {:?}", exit_code);
-    Ok(exit_code)
+    debug!("CLI exiting with code: {:?}", result);
+    Ok(result)
 }

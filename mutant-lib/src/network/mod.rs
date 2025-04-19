@@ -12,5 +12,11 @@ pub enum NetworkChoice {
     Mainnet,
 }
 
+impl Default for NetworkChoice {
+    fn default() -> Self {
+        NetworkChoice::Mainnet // Default to Mainnet
+    }
+}
+
 #[cfg(test)]
 pub mod integration_tests;
