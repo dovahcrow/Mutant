@@ -32,7 +32,7 @@
 *   **Public/Private Uploads:** Store data publicly to share with others (no encryption) or store privately (encrypted with your private key).
 *   **Resumable Uploads:** Automatic resume of interrupted uploads; pick up right where you left off.
 *   **Fetch History:** Keep track of the public data you've fetched to re-fetch it later.
-*   **Efficient Space Reuse:** Frees and reuses storage pads, minimizing on-chain costs.
+*   **Efficient Space Reuse:** Frees and reuses storage pads, minimizing storage costs.
 *   **Local Cache Index:** Fast local lookups and seamless remote synchronization.
 *   **Async-first Design:** Built on `tokio` for high-performance non-blocking operations.
 *   **Dual Interface:** Use as a Rust library (`mutant-lib`) or via the `mutant` CLI.
