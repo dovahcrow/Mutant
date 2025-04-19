@@ -5,7 +5,6 @@ use crate::data::error::DataError;
 use crate::data::manager::DefaultDataManager;
 use crate::data::ops::fetch_public::fetch_public_op;
 use crate::data::ops::store_public::store_public_op;
-use crate::index::error::IndexError;
 use crate::index::manager::DefaultIndexManager;
 use crate::index::structure::IndexEntry;
 use crate::network::adapter::create_public_scratchpad;
@@ -14,7 +13,6 @@ use crate::network::NetworkChoice;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use autonomi::client::payment::PaymentOption;
 use autonomi::{Bytes, ScratchpadAddress, SecretKey};
-use serial_test::serial;
 use std::sync::Arc;
 
 // Define constant locally

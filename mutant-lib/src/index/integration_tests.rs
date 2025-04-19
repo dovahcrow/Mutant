@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::index::manager::DefaultIndexManager;
-use crate::index::structure::{IndexEntry, KeyInfo, PadInfo, PadStatus, PublicUploadInfo};
+use crate::index::structure::{KeyInfo, PadInfo, PadStatus};
 
 use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::NetworkChoice;
@@ -246,13 +246,13 @@ mod tests {
     use super::*;
     use crate::index::error::IndexError;
     use crate::index::manager::DefaultIndexManager;
-    use crate::index::persistence::{load_index, save_index};
-    use crate::index::structure::{IndexEntry, KeyInfo, MasterIndex, PadStatus, PublicUploadInfo};
+    
+    use crate::index::structure::{IndexEntry, KeyInfo, PublicUploadInfo};
     use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
     use autonomi::{ScratchpadAddress, SecretKey};
     use serial_test::serial;
     use std::collections::HashMap;
-    use tempfile::tempdir;
+    
 
     // Helper to set up adapter and index manager for tests
     async fn setup_test_index_manager() -> (DefaultIndexManager, ScratchpadAddress, SecretKey) {

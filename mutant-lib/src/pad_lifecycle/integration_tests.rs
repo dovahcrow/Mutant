@@ -2,7 +2,7 @@
 
 use crate::data::PRIVATE_DATA_ENCODING;
 use crate::index::manager::DefaultIndexManager;
-use crate::index::structure::{KeyInfo, PadInfo, PadStatus};
+use crate::index::structure::PadStatus;
 use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::pad_lifecycle::PadOrigin;

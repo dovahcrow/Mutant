@@ -428,15 +428,3 @@ pub(crate) async fn upload_public_data_and_create_index(
 
     Ok(public_index_address)
 }
-
-// Helper to verify public scratchpad existence (simplified from purge logic)
-async fn verify_scratchpad_exists(
-    network_adapter: &Arc<AutonomiNetworkAdapter>,
-    address: &ScratchpadAddress,
-) -> Result<bool, NetworkError> {
-    match network_adapter.get_raw_scratchpad(address).await {
-        Ok(_) => Ok(true), // Found it
-        Err(NetworkError::InternalError(msg)) if msg.contains("not found") => Ok(false), // Confirmed not found
-        Err(e) => Err(e), // Other network error
-    }
-}

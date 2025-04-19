@@ -281,7 +281,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
     };
     multi_progress.set_draw_target(draw_target);
 
-    let (init_pb_opt_arc, init_cb) = create_init_callback(&multi_progress, cli.quiet);
+    let (init_pb_opt_arc, _init_cb) = create_init_callback(&multi_progress, cli.quiet);
 
     let network_choice = if cli.local {
         NetworkChoice::Devnet
