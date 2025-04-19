@@ -5,28 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - UNRELEASED
+## [Unreleased]
+
+## [0.4.0] - 2024-05-14
 
 ### Added
-- Allow `mutant get -p <address>` to fetch public data without requiring a configured wallet or local index.
-- Added `MutAnt::init_public_local()` constructor for fetching public data from Devnet.
-- Allow updating public uploads using `mutant put -p <name> <value> --force`. This overwrites the data associated with the name while keeping the public index address stable.
-- Added `MutAnt::init_public()` constructor to create an instance without a private key, solely for fetching public data from Mainnet using `MutAnt::fetch_public`.
-- Statistics for public uploads (index count, index space, actual data size) added to `mutant stat` output.
-- Store public data pad addresses within `PublicUploadInfo` in the MasterIndex.
+- **Public Uploads:**
+    - Store public, unencrypted data using `mutant put -p <name> <value>` or `mutant.store_public(name, data)`.
+    - Fetch public data by name (`mutant get <name>`) or by its scratchpad address (`mutant get -p <address>`).
+    - Update public uploads using `mutant put -p <name> <new_value> --force`.
+    - List public uploads alongside private keys using `mutant ls` (shows name) and `mutant ls -l` (shows name, type, size, modified date, and address).
+- **Keyless Public Fetch:** Initialize `MutAnt` without a private key using `MutAnt::init_public().await?` or `MutAnt::init_public_local().await?` to fetch public data by address using `fetch_public(address, progress_hook)`. This is useful for applications that only need read access to public data.
+- **Progress Bars:** Added progress bars for `put` and `get` operations in the CLI.
 
 ### Changed
-- Refactored `update_public_op` and network adapter's `put_raw` to correctly handle content type encoding when updating public index scratchpads, replacing direct SDK calls.
-- Revised `mutant stat` output for clarity:
-  - Updated text labels to distinguish private/public stats.
-  - Changed Pad Usage gauge to show Occupied (Confirmed Private + Public Index+Data) vs. Unavailable (Free + Pending + Incomplete).
-  - Changed Space Usage gauge to show Used Data (Private + Public) vs. Wasted/Frag (Private + Public Data) vs. Free.
-  - Public stats section now accurately reflects space used by unique public index and data pads.
-- Updated `update_public_op` to replace the full `PublicUploadInfo` in the index instead of just updating metadata.
+- **BREAKING (Internal API):** Refactored storage interaction logic. The `store` and `fetch` operations now potentially use different underlying storage methods based on data size or type, though the high-level API remains largely the same for standard usage. Direct interaction with lower-level storage components might be affected.
+- **BREAKING (Index Format):** The internal structure for storing public upload metadata has changed. While upgrades should ideally be seamless, issues might arise. If you encounter problems fetching previously stored *public* data after upgrading, you might need to resynchronize (`mutant sync`) or potentially remove the old index cache (`rm ~/.local/share/mutant/index_cache.*.cbor`) and force-push the index (`mutant sync --push-force`). Private data indexing remains unchanged.
+- Improved output formatting for `mutant stats`.
+- Updated `autonomi` dependency and other minor dependencies.
+- Enhanced error handling and logging details.
 
 ### Fixed
-- Fixed `MutAnt::init_public()` and `MutAnt::init_public_local()` to use a randomly generated valid key instead of a dummy invalid one, resolving initialization failures when using `get -p` without a configured wallet.
-- Workaround suspected SDK bug in `scratchpad_update` causing data corruption (map instead of sequence) during public index updates. Reverted `update_public_op` to use `scratchpad_put` with fetched counter instead.
+- Prevented `store` from overwriting existing completed keys unless `--force` is used.
+- Fixed `rm` command to return a `KeyNotFound` error when trying to remove a non-existent key.
+- Addressed potential data corruption issues when updating public data scratchpads (worked around a suspected SDK bug).
+- Resolved various minor bugs and compilation issues, particularly in integration tests.
+- Corrected dummy private key generation for local network initialization.
 
 ## [0.3.0] - 2024-06-02
 

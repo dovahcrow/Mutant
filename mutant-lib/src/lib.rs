@@ -23,7 +23,7 @@
 //!
 //! Add to `Cargo.toml`:
 //! ```toml
-//! mutant-lib = "0.2"
+//! mutant-lib = "0.4.0"
 //! ```
 //!
 //! ```rust,no_run
