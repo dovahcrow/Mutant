@@ -281,7 +281,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
     };
     multi_progress.set_draw_target(draw_target);
 
-    let (init_pb_opt_arc, _init_cb) = create_init_callback(&multi_progress, cli.quiet);
+    let (init_pb_opt_arc, init_cb) = create_init_callback(&multi_progress, cli.quiet);
 
     let network_choice = if cli.local {
         NetworkChoice::Devnet
@@ -292,7 +292,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
     let mut config = MutAntConfig::default();
     config.network = network_choice;
 
-    let mutant = MutAnt::init_with_progress(private_key_hex.clone(), config, None).await?;
+    let mutant = MutAnt::init_with_progress(private_key_hex.clone(), config, Some(init_cb)).await?;
 
     let mut pb_to_finish = init_pb_opt_arc.lock().await;
 

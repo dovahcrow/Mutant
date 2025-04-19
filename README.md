@@ -1,4 +1,4 @@
-# MutAnt: Private Mutable Key-Value Storage for Autonomi
+# MutAnt: Mutable Key-Value Storage for Autonomi
 
 <!-- Badges -->
 [![Build Status](https://github.com/Champii/MutAnt/actions/workflows/rust.yml/badge.svg)](https://github.com/Champii/MutAnt/actions/workflows/rust.yml)
@@ -24,7 +24,8 @@
 
 ## Core Concepts
 
-*   **Private Mutable Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `rm`).
+*   **Mutable Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `rm`).
+*   **Public/Private Uploads:** Store data publicly to share with others (no encryption) or store privately (encrypted with your private key).
 *   **Resumable Uploads:** Automatic resume of interrupted uploads; pick up right where you left off.
 *   **Efficient Space Reuse:** Frees and reuses storage pads, minimizing on-chain costs.
 *   **Local Cache Index:** Fast local lookups and seamless remote synchronization.
