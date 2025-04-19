@@ -3,7 +3,7 @@
 <!-- Badges -->
 [![Build Status](https://github.com/Champii/MutAnt/actions/workflows/ci.yml/badge.svg)](https://github.com/Champii/MutAnt/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/mutant-lib.svg)](https://crates.io/crates/mutant-lib)
-[![Docs.rs](https://docs.rs/mutant_lib/badge.svg)](https://docs.rs/mutant_lib)
+[![Docs.rs](https://docs.rs/mutant-lib/badge.svg)](https://docs.rs/mutant-lib)
 [![License: LGPLv3](https://img.shields.io/badge/license-LGPLv3-blue.svg)](LICENSE)
 
 > **MutAnt** is a public/private mutable key-value store on the Autonomi decentralized storage network, featuring resumable uploads, local index caching, and a powerful async Rust API + CLI.
