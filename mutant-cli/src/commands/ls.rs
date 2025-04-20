@@ -45,9 +45,9 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
                             let display = if detail.is_finished {
                                 detail.key.clone()
                             } else if let Some(percentage) = detail.completion_percentage {
-                                format!("*{} ({:.1}%)%", detail.key, percentage)
+                                format!("*{} ({:.1}%)", detail.key, percentage)
                             } else {
-                                format!("*{}%", detail.key)
+                                format!("*{}?", detail.key)
                             };
                             ("Private", display)
                         };
@@ -58,7 +58,7 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
                             type_str,
                             date_str,
                             key_display,
-                            width = max_size_width,
+                            width = max_size_width + 1,
                             type_width = max_type_width
                         );
                     }
@@ -120,19 +120,19 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
                     for summary in summaries {
                         if summary.is_public {
                             if let Some(addr) = summary.address {
-                                println!("{} (public @ {})%", summary.name, addr);
+                                println!("{} (public @ {})", summary.name, addr);
                             } else {
-                                println!("{} (public, address missing)%", summary.name);
+                                println!("{} (public, address missing)", summary.name);
                             }
                         } else {
                             match mutant.get_key_details(&summary.name).await {
                                 Ok(Some(detail)) => {
                                     if detail.is_finished {
-                                        println!("{}%", summary.name);
+                                        println!("{}", summary.name);
                                     } else if let Some(percentage) = detail.completion_percentage {
-                                        println!("*{} ({:.1}%)%", summary.name, percentage);
+                                        println!("*{} ({:.1}%)", summary.name, percentage);
                                     } else {
-                                        println!("*{}%", summary.name);
+                                        println!("*{}", summary.name);
                                     }
                                 }
                                 Ok(None) => {
@@ -140,14 +140,14 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
                                         "Warning: Index inconsistency for key '{}'. Details not found.%",
                                         summary.name
                                     );
-                                    println!("{}%", summary.name);
+                                    println!("{}", summary.name);
                                 }
                                 Err(e) => {
                                     eprintln!(
                                         "Warning: Could not fetch details for key '{}': {}",
                                         summary.name, e
                                     );
-                                    println!("{}%", summary.name);
+                                    println!("{}", summary.name);
                                 }
                             }
                         }
