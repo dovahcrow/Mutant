@@ -45,7 +45,7 @@
 ## Core Concepts
 
 *   **Decentralized:** Data is stored on the Autonomi decentralized storage network, not a centralized server. This means that no one can censor you, and you are in control of your own data, and it is accessible for anyone from anywhere. (If you wish so)
-*   **Mutable:** Data can be updated and deleted, and the changes are propagated to all the nodes on the network.
+*   **Mutable:** Data can be updated and deleted, and the changes are persisted on the network.
 *   **Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `rm`).
 *   **Public/Private Uploads:** Store data publicly to share with others (no encryption) or store privately (encrypted with your private key).
 *   **Resumable Uploads:** Automatic resume of interrupted uploads; pick up right where you left off.
