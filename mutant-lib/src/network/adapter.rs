@@ -147,31 +147,8 @@ impl AutonomiNetworkAdapter {
                     address
                 );
 
-                match self.check_existence(&address).await {
-                    Ok(true) => {
-                        error!(
-                            "Inconsistent state: Tried to create pad {} (status Generated), but it already exists.",
-                            address
-                        );
-                        return Err(NetworkError::InconsistentState(format!(
-                            "Attempted to create scratchpad {} which already exists.",
-                            address
-                        )));
-                    }
-                    Ok(false) => {
-                        debug!("Pad {} does not exist, proceeding with creation.", address);
-                    }
-                    Err(e) => {
-                        error!(
-                            "Network error during pre-create existence check for {}: {}",
-                            address, e
-                        );
-                        return Err(e);
-                    }
-                }
-
                 match client
-                    .scratchpad_create(key, content_type, &data_bytes, payment_option)
+                    .scratchpad_create(key, content_type, &data_bytes, payment_option.clone())
                     .await
                 {
                     Ok((_cost, created_addr)) => {
@@ -185,14 +162,32 @@ impl AutonomiNetworkAdapter {
                         Ok(address)
                     }
                     Err(e) if e.to_string().to_lowercase().contains("already exists") => {
-                        error!(
-                            "SDK Error: Create failed with 'already exists' for pad {} even after check_existence returned false.",
+                        trace!(
+                            "Create failed for pad {} (already exists), attempting update...",
                             address
                         );
-                        Err(NetworkError::InconsistentState(format!(
-                            "SDK create error: pad {} already exists unexpectedly: {}",
-                            address, e
-                        )))
+                        match client
+                            .scratchpad_update(key, content_type, &data_bytes)
+                            .await
+                        {
+                            Ok(_) => {
+                                info!(
+                                    "Successfully updated scratchpad {} after initial create failed (already exists).",
+                                    address
+                                );
+                                Ok(address)
+                            }
+                            Err(update_err) => {
+                                error!(
+                                    "Failed to update scratchpad {} after create failed: {}",
+                                    address, update_err
+                                );
+                                Err(NetworkError::InternalError(format!(
+                                    "Failed to update scratchpad {} after create failed: {}",
+                                    address, update_err
+                                )))
+                            }
+                        }
                     }
                     Err(e) => {
                         error!("Failed to create scratchpad {}: {}", address, e);
