@@ -122,6 +122,7 @@ pub(crate) async fn initialize_layers(
         },
     )
     .await?;
+
     let prompt_needed = !pad_lifecycle_manager
         .initialize_index(&master_index_address, &master_index_key, config.network)
         .await?;

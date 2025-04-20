@@ -25,7 +25,7 @@ pub fn create_init_callback(
                 match event {
                     InitProgressEvent::PromptCreateRemoteIndex => {
                         let confirmation = Confirm::new()
-                            .with_prompt("No local cache found, and no remote index exists. Create remote index now?")
+                            .with_prompt("No local cache found, and no remote index exists. Create remote index now ? If not, you can sync it later.")
                             .interact()
                             
                             .map_err(|e| LibError::Internal(format!("Dialoguer interaction failed: {}", e)))
@@ -83,7 +83,7 @@ pub fn create_init_callback(
                         drop(pb_guard);
                         let confirmation = multi_progress.suspend(|| {
                             Confirm::new()
-                                .with_prompt("No local cache found, and no remote index exists. Create remote index now?")
+                                .with_prompt("No local cache found, and no remote index exists. Create remote index now ? If not, you can sync it later.")
                                 .interact()
                                 
                                 .map_err(|e| LibError::Internal(format!("Dialoguer interaction failed: {}", e)))
