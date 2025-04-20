@@ -41,6 +41,10 @@ pub struct PadInfo {
     /// Flag indicating if the pad needs reverification.
     #[serde(default)]
     pub needs_reverification: bool,
+
+    /// The last counter value read from the network for this pad during confirmation.
+    #[serde(default)] // For compatibility with older index formats. Defaults to 0 if missing.
+    pub last_known_counter: u64,
 }
 
 /// Information about a specific key stored in the system.

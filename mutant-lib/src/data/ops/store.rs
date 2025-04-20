@@ -272,9 +272,15 @@ async fn confirm_pad_write(
                 }
 
                 if counter_check_passed && data_check_passed {
+                    let final_counter = scratchpad.counter();
                     match ctx
                         .index_manager
-                        .update_pad_status(&user_key, &pad_info.address, PadStatus::Confirmed)
+                        .update_pad_status(
+                            &user_key,
+                            &pad_info.address,
+                            PadStatus::Confirmed,
+                            Some(final_counter),
+                        )
                         .await
                     {
                         Ok(_) => {
@@ -521,7 +527,12 @@ async fn execute_write_confirm_tasks(
                         let user_key_clone = user_key.clone();
                         let completed_pad_address = completed_pad_info.address;
                         match index_manager_clone
-                            .update_pad_status(&user_key_clone, &completed_pad_address, PadStatus::Written)
+                            .update_pad_status(
+                                &user_key_clone,
+                                &completed_pad_address,
+                                PadStatus::Written,
+                                None,
+                            )
                             .await
                         {
                             Ok(_) => {

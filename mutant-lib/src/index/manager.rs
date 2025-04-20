@@ -600,12 +600,14 @@ impl DefaultIndexManager {
     }
 
     /// Updates the status (`PadStatus`) of a specific pad associated with a given key.
+    /// Optionally updates the last known counter for the pad.
     ///
     /// # Arguments
     ///
     /// * `key` - The user key the pad belongs to.
     /// * `pad_address` - The address of the pad to update.
     /// * `new_status` - The new `PadStatus` to set.
+    /// * `new_counter` - If `Some`, updates the `last_known_counter` field of the `PadInfo`.
     ///
     /// # Errors
     ///
@@ -617,6 +619,7 @@ impl DefaultIndexManager {
         key: &str,
         pad_address: &ScratchpadAddress,
         new_status: PadStatus,
+        new_counter: Option<u64>,
     ) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
         match state_guard.index.get_mut(key) {
@@ -628,10 +631,13 @@ impl DefaultIndexManager {
                     .find(|p| p.address == *pad_address)
                 {
                     debug!(
-                        "IndexManager: Updating pad {} for key '{}' to status {:?}",
-                        pad_address, key, new_status
+                        "IndexManager: Updating pad {} for key '{}' to status {:?} (Counter: {:?})",
+                        pad_address, key, new_status, new_counter
                     );
                     pad_info.status = new_status;
+                    if let Some(counter) = new_counter {
+                        pad_info.last_known_counter = counter;
+                    }
                     pad_info.needs_reverification = false; // Assume status update implies verification not needed
                     key_info.modified = Utc::now();
                     Ok(())
@@ -896,42 +902,19 @@ impl DefaultIndexManager {
                         pads_to_add_pending_locally.push((pad_info.address, key_bytes));
                     }
                     PadStatus::Allocated | PadStatus::Written | PadStatus::Confirmed => {
+                        // Use the last known counter stored in PadInfo
+                        let counter_to_add = pad_info.last_known_counter;
                         trace!(
-                            "Harvesting pad {} ({:?}), fetching counter before adding to free list.",
+                            "Harvesting pad {} ({:?}) to free list with last known counter {} (local)",
                             pad_info.address,
-                            pad_info.status
+                            pad_info.status,
+                            counter_to_add
                         );
-                        // Fetch the current counter from the network
-                        match self
-                            .network_adapter
-                            .get_raw_scratchpad(&pad_info.address)
-                            .await
-                        {
-                            Ok(scratchpad) => {
-                                let counter = scratchpad.counter();
-                                trace!(
-                                    "Harvest: Fetched counter {} for pad {}. Adding to free list.",
-                                    counter,
-                                    pad_info.address
-                                );
-                                pads_to_add_free_locally.push((
-                                    pad_info.address,
-                                    key_bytes,
-                                    counter,
-                                ));
-                            }
-                            Err(e) => {
-                                // If fetching fails (network error, not found), add with counter 0 as fallback.
-                                // This maintains the previous behavior for unreachable pads but fixes it for reachable ones.
-                                warn!(
-                                    "Harvest: Failed to fetch scratchpad for pad {} ({:?}): {}. Adding to free list with counter 0.",
-                                    pad_info.address,
-                                    pad_info.status,
-                                    e
-                                );
-                                pads_to_add_free_locally.push((pad_info.address, key_bytes, 0));
-                            }
-                        }
+                        pads_to_add_free_locally.push((
+                            pad_info.address,
+                            key_bytes,
+                            counter_to_add,
+                        ));
                     }
                 }
             } else {

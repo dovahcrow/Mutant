@@ -453,6 +453,11 @@ pub(crate) async fn prepare_pads_for_store(
                     PadOrigin::Generated => PadStatus::Generated,
                     PadOrigin::FreePool { .. } => PadStatus::Allocated,
                 };
+                // Get counter from origin (0 if Generated, fetched value if FreePool)
+                let initial_counter = match pad_origin {
+                    PadOrigin::Generated => 0,
+                    PadOrigin::FreePool { initial_counter } => initial_counter,
+                };
 
                 let pad_info = PadInfo {
                     chunk_index: i,
@@ -460,6 +465,7 @@ pub(crate) async fn prepare_pads_for_store(
                     origin: pad_origin,
                     needs_reverification: false,
                     address: pad_address,
+                    last_known_counter: initial_counter, // Use counter from origin
                 };
 
                 initial_pads.push(pad_info.clone());
