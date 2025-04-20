@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Correctly fetch and store network counter for harvested pads added to the free list, ensuring accurate `initial_counter` for `PadOrigin::FreePool`.
+
 ## [0.4.1] - 2024-07-26
 
 ### Added

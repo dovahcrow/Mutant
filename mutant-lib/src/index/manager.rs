@@ -885,23 +885,53 @@ impl DefaultIndexManager {
         let mut pads_to_add_pending_locally: Vec<(ScratchpadAddress, Vec<u8>)> = Vec::new();
 
         for pad_info in key_info.pads {
-            if let Some(key_bytes) = key_info.pad_keys.get(&pad_info.address) {
+            if let Some(key_bytes) = key_info.pad_keys.get(&pad_info.address).cloned() {
+                // Clone key_bytes here
                 match pad_info.status {
                     PadStatus::Generated => {
                         trace!(
                             "Harvesting pad {} (Generated) to pending verification list (local)",
                             pad_info.address
                         );
-                        pads_to_add_pending_locally.push((pad_info.address, key_bytes.clone()));
+                        pads_to_add_pending_locally.push((pad_info.address, key_bytes));
                     }
                     PadStatus::Allocated | PadStatus::Written | PadStatus::Confirmed => {
                         trace!(
-                            "Harvesting pad {} ({:?}) to free list with counter 0 (local)",
+                            "Harvesting pad {} ({:?}), fetching counter before adding to free list.",
                             pad_info.address,
                             pad_info.status
                         );
-                        // Add directly with counter 0, network check/fetch happens on reuse/purge
-                        pads_to_add_free_locally.push((pad_info.address, key_bytes.clone(), 0));
+                        // Fetch the current counter from the network
+                        match self
+                            .network_adapter
+                            .get_raw_scratchpad(&pad_info.address)
+                            .await
+                        {
+                            Ok(scratchpad) => {
+                                let counter = scratchpad.counter();
+                                trace!(
+                                    "Harvest: Fetched counter {} for pad {}. Adding to free list.",
+                                    counter,
+                                    pad_info.address
+                                );
+                                pads_to_add_free_locally.push((
+                                    pad_info.address,
+                                    key_bytes,
+                                    counter,
+                                ));
+                            }
+                            Err(e) => {
+                                // If fetching fails (network error, not found), add with counter 0 as fallback.
+                                // This maintains the previous behavior for unreachable pads but fixes it for reachable ones.
+                                warn!(
+                                    "Harvest: Failed to fetch scratchpad for pad {} ({:?}): {}. Adding to free list with counter 0.",
+                                    pad_info.address,
+                                    pad_info.status,
+                                    e
+                                );
+                                pads_to_add_free_locally.push((pad_info.address, key_bytes, 0));
+                            }
+                        }
                     }
                 }
             } else {
