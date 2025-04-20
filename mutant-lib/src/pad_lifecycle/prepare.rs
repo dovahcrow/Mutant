@@ -449,23 +449,21 @@ pub(crate) async fn prepare_pads_for_store(
             for (i, chunk) in chunks.iter().enumerate() {
                 let (pad_address, secret_key, pad_origin) = acquired_pads[i].clone();
 
-                let initial_status = match pad_origin {
-                    PadOrigin::Generated => PadStatus::Generated,
-                    PadOrigin::FreePool { .. } => PadStatus::Allocated,
-                };
-                // Get counter from origin (0 if Generated, fetched value if FreePool)
-                let initial_counter = match pad_origin {
-                    PadOrigin::Generated => 0,
-                    PadOrigin::FreePool { initial_counter } => initial_counter,
+                // Combine matches on pad_origin
+                let (initial_status, initial_counter) = match pad_origin {
+                    PadOrigin::Generated => (PadStatus::Generated, 0),
+                    PadOrigin::FreePool { initial_counter } => {
+                        (PadStatus::Allocated, initial_counter)
+                    }
                 };
 
                 let pad_info = PadInfo {
                     chunk_index: i,
-                    status: initial_status.clone(),
+                    status: initial_status.clone(), // Clone needed due to use in debug! after move
                     origin: pad_origin,
                     needs_reverification: false,
                     address: pad_address,
-                    last_known_counter: initial_counter, // Use counter from origin
+                    last_known_counter: initial_counter,
                 };
 
                 initial_pads.push(pad_info.clone());
