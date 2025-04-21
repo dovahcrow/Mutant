@@ -164,32 +164,15 @@ impl AutonomiNetworkAdapter {
                         Ok(address)
                     }
                     Err(e) if matches!(e, ScratchpadError::ScratchpadAlreadyExists(_)) => {
-                        trace!(
-                            "Create failed for pad {} (already exists), attempting update...",
+                        // If create fails because it exists, return InconsistentState error
+                        error!(
+                            "Inconsistent state: Tried to create pad {}, but it already exists.",
                             address
                         );
-                        match client
-                            .scratchpad_update(key, content_type, &data_bytes)
-                            .await
-                        {
-                            Ok(_) => {
-                                info!(
-                                    "Successfully updated scratchpad {} after initial create failed (already exists).",
-                                    address
-                                );
-                                Ok(address)
-                            }
-                            Err(update_err) => {
-                                error!(
-                                    "Failed to update scratchpad {} after create failed: {}",
-                                    address, update_err
-                                );
-                                Err(NetworkError::InternalError(format!(
-                                    "Failed to update scratchpad {} after create failed: {}",
-                                    address, update_err
-                                )))
-                            }
-                        }
+                        Err(NetworkError::InconsistentState(format!(
+                            "Create failed for Generated pad {}: already exists",
+                            address
+                        )))
                     }
                     Err(e) => {
                         error!("Failed to create scratchpad {}: {}", address, e);
