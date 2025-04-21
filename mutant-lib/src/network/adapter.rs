@@ -5,6 +5,7 @@ use crate::network::wallet::create_wallet;
 use crate::network::NetworkChoice;
 
 use autonomi::client::payment::PaymentOption;
+use autonomi::scratchpad::ScratchpadError;
 use autonomi::AttoTokens;
 use autonomi::{Bytes, Client, Scratchpad, ScratchpadAddress, SecretKey, Wallet};
 use log::{debug, error, info, trace, warn};
@@ -161,7 +162,7 @@ impl AutonomiNetworkAdapter {
                         info!("Successfully created new scratchpad at {}", address);
                         Ok(address)
                     }
-                    Err(e) if e.to_string().to_lowercase().contains("already exists") => {
+                    Err(e) if matches!(e, ScratchpadError::ScratchpadAlreadyExists(_)) => {
                         trace!(
                             "Create failed for pad {} (already exists), attempting update...",
                             address

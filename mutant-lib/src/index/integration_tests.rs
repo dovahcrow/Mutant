@@ -77,6 +77,7 @@ async fn test_save_load_initialize() {
             status: PadStatus::Written,
             origin: PadOrigin::Generated,
             needs_reverification: false,
+            last_known_counter: 0,
         }],
         pad_keys: HashMap::from([(pad1_addr, pad1_key_bytes.clone())]),
         modified: Utc::now(),
