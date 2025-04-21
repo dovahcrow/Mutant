@@ -2,6 +2,8 @@ use crate::network::NetworkError;
 use crate::storage::ScratchpadAddress;
 use blsttc::SecretKey;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// Status of an individual pad within a key.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -79,6 +81,9 @@ impl PadInfo {
     }
 
     pub fn checksum(data: &[u8]) -> usize {
-        data.iter().fold(0, |acc, b| acc.wrapping_add(*b as usize))
+        let mut hasher = DefaultHasher::new();
+        data.len().hash(&mut hasher);
+        data.hash(&mut hasher);
+        hasher.finish() as usize
     }
 }

@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::data::{PRIVATE_DATA_ENCODING, PUBLIC_DATA_ENCODING};
+use crate::data::{DATA_ENCODING_PRIVATE_DATA, DATA_ENCODING_PUBLIC_DATA};
 use crate::index::{PadInfo, PadStatus};
 use crate::network::{Network, NetworkChoice};
 use autonomi::{AttoTokens, ScratchpadAddress, SecretKey};
@@ -27,10 +27,10 @@ fn create_initial_pad_info(data_size: usize) -> (PadInfo, ScratchpadAddress) {
 
     let pad_info = PadInfo {
         address,
-        chunk_index: 0,
         size: data_size,
         status: PadStatus::Generated,
         last_known_counter: 0,
+        checksum: 0,
         sk_bytes,
     };
     (pad_info, address)
@@ -43,7 +43,7 @@ async fn test_put_public_create() {
     let (pad_info, address) = create_initial_pad_info(data.len());
 
     let result = adapter
-        .put_public(&pad_info, &data, PUBLIC_DATA_ENCODING)
+        .put_public(&pad_info, &data, DATA_ENCODING_PUBLIC_DATA)
         .await;
 
     assert!(
@@ -69,7 +69,7 @@ async fn test_put_public_create() {
     assert_eq!(get_result.data, data, "Retrieved private data mismatch");
     assert_eq!(get_result.counter, 0, "Counter should be 0");
     assert_eq!(
-        get_result.data_encoding, PUBLIC_DATA_ENCODING,
+        get_result.data_encoding, DATA_ENCODING_PUBLIC_DATA,
         "Retrieved public encoding mismatch"
     );
 }
@@ -81,7 +81,7 @@ async fn test_put_public_update() {
     let (mut pad_info, address) = create_initial_pad_info(initial_data.len());
 
     let create_result = adapter
-        .put_public(&pad_info, &initial_data, PUBLIC_DATA_ENCODING)
+        .put_public(&pad_info, &initial_data, DATA_ENCODING_PUBLIC_DATA)
         .await;
     assert!(
         create_result.is_ok(),
@@ -102,7 +102,7 @@ async fn test_put_public_update() {
     pad_info.last_known_counter = initial_counter + 1;
 
     let update_result = adapter
-        .put_public(&pad_info, &updated_data, PUBLIC_DATA_ENCODING)
+        .put_public(&pad_info, &updated_data, DATA_ENCODING_PUBLIC_DATA)
         .await;
     assert!(
         update_result.is_ok(),
@@ -142,7 +142,7 @@ async fn test_put_private_create() {
     let (pad_info, address) = create_initial_pad_info(data.len());
 
     let result = adapter
-        .put_private(&pad_info, &data, PRIVATE_DATA_ENCODING)
+        .put_private(&pad_info, &data, DATA_ENCODING_PRIVATE_DATA)
         .await;
 
     assert!(
@@ -170,7 +170,7 @@ async fn test_put_private_create() {
     assert_eq!(get_result.data, data, "Retrieved private data mismatch");
     assert_eq!(get_result.counter, 0, "Counter should be 0");
     assert_eq!(
-        get_result.data_encoding, PRIVATE_DATA_ENCODING,
+        get_result.data_encoding, DATA_ENCODING_PRIVATE_DATA,
         "Retrieved private encoding mismatch"
     );
 }
@@ -182,7 +182,7 @@ async fn test_put_private_update() {
     let (mut pad_info, address) = create_initial_pad_info(initial_data.len());
 
     let create_result = adapter
-        .put_private(&pad_info, &initial_data, PRIVATE_DATA_ENCODING)
+        .put_private(&pad_info, &initial_data, DATA_ENCODING_PRIVATE_DATA)
         .await;
     assert!(
         create_result.is_ok(),
@@ -200,7 +200,7 @@ async fn test_put_private_update() {
     pad_info.last_known_counter = 1;
 
     let update_result = adapter
-        .put_private(&pad_info, &updated_data, PRIVATE_DATA_ENCODING)
+        .put_private(&pad_info, &updated_data, DATA_ENCODING_PRIVATE_DATA)
         .await;
     assert!(
         update_result.is_ok(),
