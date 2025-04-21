@@ -1,68 +1,77 @@
-use crate::internal_error::Error as LibError;
+// use crate::api::init::initialize_layers;
+// use crate::api::ReserveCallback;
+// use crate::data::manager::DefaultDataManager;
+// use crate::index::manager::DefaultIndexManager;
+// use crate::index::structure::{IndexEntry, MasterIndex};
+// use crate::internal_error::Error;
+// use crate::internal_events::{GetCallback, InitCallback, PurgeCallback, PutCallback};
+// use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
+// use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
+// use crate::types::{KeyDetails, KeySummary, MutAntConfig, StorageStats};
+// use autonomi::{Bytes, ScratchpadAddress, SecretKey};
+// use log::{debug, info, warn};
+// use std::collections::HashSet;
+// use std::sync::Arc;
 
-use autonomi::ScratchpadAddress;
-use std::future::Future;
-use std::pin::Pin;
+use std::sync::Arc;
 
-/// Contains initialization logic for the MutAnt API.
-pub mod init;
-/// Defines the main `MutAnt` struct and its associated methods.
-pub mod mutant;
+use tokio::sync::RwLock;
 
-/// Re-exports the main `MutAnt` structure for easy access.
-pub use mutant::MutAnt;
+use crate::{
+    data::Data,
+    index::master_index::{KeysInfo, MasterIndex},
+    internal_error::Error,
+    network::{Network, NetworkChoice},
+};
 
-use crate::internal_events::PutEvent;
-/// Callback type specific to the API layer for `put` operations.
-/// Note: This might shadow the callback type defined in `crate::events`.
-#[allow(dead_code)]
-pub type PutCallback = Box<
-    dyn Fn(PutEvent) -> Pin<Box<dyn Future<Output = Result<bool, LibError>> + Send>> + Send + Sync,
->;
-
-use crate::internal_events::GetEvent;
-/// Callback type specific to the API layer for `get` operations.
-/// Note: This might shadow the callback type defined in `crate::events`.
-#[allow(dead_code)]
-pub type GetCallback = Box<
-    dyn Fn(GetEvent) -> Pin<Box<dyn Future<Output = Result<bool, LibError>> + Send>> + Send + Sync,
->;
-
-/// Events emitted during a `reserve` operation (explicit pad reservation).
-#[derive(Debug, Clone)]
-pub enum ReserveEvent {
-    /// Indicates the start of the reserve operation.
-    Starting {
-        /// The total number of pads requested.
-        total_requested: usize,
-    },
-    /// Indicates that a single pad has been successfully reserved.
-    PadReserved {
-        /// The address of the reserved pad.
-        address: ScratchpadAddress,
-    },
-    /// Indicates that the index is being updated with the newly reserved pads.
-    SavingIndex {
-        /// The number of pads successfully reserved so far.
-        reserved_count: usize,
-    },
-    /// Indicates the completion of the reserve operation.
-    Complete {
-        /// The total number of pads successfully reserved.
-        succeeded: usize,
-        /// The number of pads that failed to be reserved.
-        failed: usize,
-    },
+/// The main entry point for interacting with the MutAnt distributed storage system.
+///
+/// This struct encapsulates the different managers (data, index, pad lifecycle) and the network adapter.
+/// Instances are typically created using the `init` or `init_with_progress` associated functions.
+#[derive(Clone)]
+pub struct MutAnt {
+    // data_manager: Arc<DefaultDataManager>,
+    // pad_lifecycle_manager: Arc<DefaultPadLifecycleManager>,
+    // index_manager: Arc<DefaultIndexManager>,
+    // network: Network,
+    network: Arc<Network>,
+    index: Arc<RwLock<MasterIndex>>,
+    data: Arc<Data>,
 }
 
-/// Callback type used during `reserve` operations to report progress and allow cancellation.
-///
-/// The callback receives `ReserveEvent` variants and returns a `Future` that resolves to:
-/// - `Ok(true)`: Continue the operation.
-/// - `Ok(false)`: Cancel the operation (results in `Error::OperationCancelled`).
-/// - `Err(e)`: Propagate an error from the callback.
-pub type ReserveCallback = Box<
-    dyn Fn(ReserveEvent) -> Pin<Box<dyn Future<Output = Result<bool, LibError>> + Send>>
-        + Send
-        + Sync,
->;
+impl MutAnt {
+    pub async fn init(private_key_hex: &str) -> Result<Self, Error> {
+        let network = Arc::new(Network::new(private_key_hex, NetworkChoice::Mainnet)?);
+        let index = Arc::new(RwLock::new(MasterIndex::new()));
+
+        let data = Arc::new(Data::new(network.clone(), index.clone()));
+
+        Ok(Self {
+            network,
+            index,
+            data,
+        })
+    }
+
+    pub async fn store(&self, user_key: &str, data_bytes: &[u8]) -> Result<(), Error> {
+        self.data.store(user_key, data_bytes).await
+    }
+
+    // pub async fn store_public(&self, user_key: &[u8], data_bytes: &[u8]) -> Result<(), Error> {}
+
+    // pub async fn get(&self, user_key: &[u8]) -> Result<Vec<u8>, Error> {}
+
+    // pub async fn get_public(&self, user_key: &[u8]) -> Result<Vec<u8>, Error> {}
+
+    // pub async fn remove(&self, user_key: &[u8]) -> Result<(), Error> {}
+
+    // pub async fn reserve_pads(&self, count: usize) -> Result<usize, Error> {}
+
+    // pub async fn sync(&self, force: bool) -> Result<(), Error> {}
+
+    pub async fn list(&self) -> Result<KeysInfo, Error> {
+        let keys = self.index.read().await.list();
+
+        Ok(KeysInfo { keys })
+    }
+}

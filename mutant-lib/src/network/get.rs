@@ -1,5 +1,5 @@
 use crate::network::error::NetworkError;
-use crate::network::AutonomiNetworkAdapter;
+use crate::network::Network;
 use autonomi::ScratchpadAddress;
 use autonomi::SecretKey;
 use log::{error, trace};
@@ -21,7 +21,7 @@ use super::GetResult;
 ///
 /// Returns `NetworkError` if the client cannot be initialized, fetching fails, or decryption fails.
 pub(super) async fn get(
-    adapter: &AutonomiNetworkAdapter,
+    adapter: &Network,
     address: &ScratchpadAddress,
     owner_sk: Option<&SecretKey>,
 ) -> Result<GetResult, NetworkError> {

@@ -5,12 +5,14 @@
 // /// Handles the persistence (loading and saving) of the index data.
 // pub mod persistence;
 // /// Defines the core data structures representing the index (`MasterIndex`, `KeyInfo`, `PadInfo`).
-pub mod structure;
+pub mod error;
+pub mod master_index;
+pub mod pad_info;
 
-// /// Re-exports the primary error type for the index module.
-// pub use error::IndexError;
-// /// Re-exports the core index data structures.
-// pub use structure::{KeyInfo, PadInfo};
+/// Default size for scratchpads in bytes (4 MiB minus one page for metadata).
+pub(crate) const DEFAULT_SCRATCHPAD_SIZE: usize = (4 * 1024 * 1024) - 4096;
 
-// #[cfg(test)]
-// mod integration_tests; // Renamed to mod as it's test-only
+pub(crate) use pad_info::{PadInfo, PadStatus};
+
+#[cfg(test)]
+mod integration_tests;

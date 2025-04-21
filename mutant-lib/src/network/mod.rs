@@ -9,7 +9,7 @@ pub use error::NetworkError;
 
 use self::client::create_client;
 use self::wallet::create_wallet;
-use crate::index::structure::PadInfo;
+use crate::index::PadInfo;
 
 use autonomi::{AttoTokens, Client, ScratchpadAddress, Wallet};
 use log::{debug, info};
@@ -24,7 +24,7 @@ pub enum NetworkChoice {
 
 impl Default for NetworkChoice {
     fn default() -> Self {
-        NetworkChoice::Mainnet // Default to Mainnet
+        NetworkChoice::Mainnet
     }
 }
 
@@ -52,14 +52,15 @@ pub struct PutResult {
 ///
 /// This adapter handles client initialization, wallet management, and delegates
 /// network interactions like reading and writing scratchpads to specialized modules.
-pub struct AutonomiNetworkAdapter {
+#[derive(Clone)]
+pub struct Network {
     wallet: Wallet,
     network_choice: NetworkChoice,
     client: OnceCell<Arc<Client>>,
     secret_key: SecretKey,
 }
 
-impl AutonomiNetworkAdapter {
+impl Network {
     /// Creates a new `AutonomiNetworkAdapter` instance.
     pub(crate) fn new(
         private_key_hex: &str,

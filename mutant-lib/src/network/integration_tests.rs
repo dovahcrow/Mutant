@@ -1,16 +1,16 @@
 #![cfg(test)]
 
 use crate::data::{PRIVATE_DATA_ENCODING, PUBLIC_DATA_ENCODING};
-use crate::index::structure::{PadInfo, PadStatus};
-use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
+use crate::index::{PadInfo, PadStatus};
+use crate::network::{Network, NetworkChoice};
 use autonomi::{AttoTokens, ScratchpadAddress, SecretKey};
 use rand::RngCore;
 
 const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-async fn setup_adapter() -> AutonomiNetworkAdapter {
-    AutonomiNetworkAdapter::new(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet)
+async fn setup_adapter() -> Network {
+    Network::new(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet)
         .expect("Test adapter setup failed")
 }
 

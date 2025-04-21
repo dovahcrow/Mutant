@@ -1,6 +1,6 @@
-use crate::index::structure::PadInfo;
+use crate::index::PadInfo;
 use crate::network::error::NetworkError;
-use crate::network::{AutonomiNetworkAdapter, PutResult};
+use crate::network::{Network, PutResult};
 use autonomi::client::payment::PaymentOption;
 use autonomi::{Bytes, Scratchpad, ScratchpadAddress, SecretKey};
 use log::{error, trace};
@@ -27,7 +27,7 @@ use log::{error, trace};
 /// - The `SecretKey` cannot be reconstructed from `pad_info`.
 /// - The `scratchpad_put` operation fails.
 pub(super) async fn put(
-    adapter: &AutonomiNetworkAdapter,
+    adapter: &Network,
     pad_info: &PadInfo,
     data: &[u8],
     data_encoding: u64,

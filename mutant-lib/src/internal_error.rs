@@ -1,7 +1,7 @@
-use crate::data::DataError;
-use crate::index::IndexError;
-use crate::network::NetworkError;
-use crate::pad_lifecycle::PadLifecycleError;
+// use crate::data::DataError;
+// use crate::index::IndexError;
+use crate::{index::error::IndexError, network::NetworkError};
+// use crate::pad_lifecycle::PadLifecycleError;
 use thiserror::Error;
 
 /// Represents the primary error type returned by `mutant-lib` functions.
@@ -18,18 +18,20 @@ pub enum Error {
     #[error("Network Layer Error: {0}")]
     Network(#[from] NetworkError),
 
-    /// Errors originating from the indexing layer (e.g., search failures, index inconsistency).
     #[error("Index Layer Error: {0}")]
     Index(#[from] IndexError),
 
-    /// Errors related to pad lifecycle management (e.g., creation, deletion, update failures).
-    #[error("Pad Lifecycle Layer Error: {0}")]
-    PadLifecycle(#[from] PadLifecycleError),
+    // /// Errors originating from the indexing layer (e.g., search failures, index inconsistency).
+    // #[error("Index Layer Error: {0}")]
+    // Index(#[from] IndexError),
 
-    /// Errors related to data processing or handling (e.g., serialization, deserialization issues).
-    #[error("Data Operation Layer Error: {0}")]
-    Data(#[from] DataError),
+    // /// Errors related to pad lifecycle management (e.g., creation, deletion, update failures).
+    // #[error("Pad Lifecycle Layer Error: {0}")]
+    // PadLifecycle(#[from] PadLifecycleError),
 
+    // /// Errors related to data processing or handling (e.g., serialization, deserialization issues).
+    // #[error("Data Operation Layer Error: {0}")]
+    // Data(#[from] DataError),
     /// Errors occurring within user-provided callback functions.
     #[error("Callback Error: {0}")]
     Callback(String),

@@ -84,19 +84,19 @@
 //! - Issues     : https://github.com/Champii/MutAnt/issues
 //!
 
-// /// Provides the main API entry point for interacting with MutAnt.
-// mod api;
-// /// Handles data structures and serialization/deserialization logic.
+/// Provides the main API entry point for interacting with MutAnt.
+mod api;
+/// Handles data structures and serialization/deserialization logic.
 mod data;
-// /// Manages indexing and search functionality for stored data.
+/// Manages indexing and search functionality for stored data.
 mod index;
-// /// Contains network-related functionalities, including data persistence via scratchpads.
+/// Contains network-related functionalities, including data persistence via scratchpads.
 mod network;
 // /// Manages the lifecycle of pads, including creation, deletion, and updates.
 // mod pad_lifecycle;
 
-// /// Defines custom error types used throughout the `mutant-lib`.
-// mod internal_error;
+/// Defines custom error types used throughout the `mutant-lib`.
+mod internal_error;
 // /// Defines events and callbacks used for asynchronous operations and progress reporting.
 // mod internal_events;
 // /// Contains core data types and configuration structures used by MutAnt.
@@ -109,10 +109,10 @@ mod network;
 //     pub use crate::network::NetworkChoice;
 //     pub use crate::types::MutAntConfig;
 // }
-// pub mod storage {
-//     pub use crate::types::{KeyDetails, StorageStats};
-//     pub use autonomi::ScratchpadAddress;
-// }
+pub mod storage {
+    // pub use crate::types::{KeyDetails, StorageStats};
+    pub use autonomi::ScratchpadAddress;
+}
 // pub mod error {
 //     pub use crate::data::error::DataError;
 //     pub use crate::index::error::IndexError;
