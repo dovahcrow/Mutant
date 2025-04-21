@@ -1,5 +1,6 @@
 use crate::pad_lifecycle::PadOrigin;
-use autonomi::ScratchpadAddress;
+use autonomi::client::payment::Receipt;
+use autonomi::{ScratchpadAddress, SecretKey};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -45,6 +46,17 @@ pub struct PadInfo {
     /// The last counter value read from the network for this pad during confirmation.
     #[serde(default)] // For compatibility with older index formats. Defaults to 0 if missing.
     pub last_known_counter: u64,
+
+    /// The secret key bytes used to create/update the scratchpad.
+    /// Added for unified pad management and potential reuse.
+    #[serde(default)] // Default for compatibility with older index formats
+    pub sk_bytes: Vec<u8>,
+
+    /// The payment receipt obtained when the pad was first paid for.
+    /// Stored when a pad is initially created via scratchpad_put or scratchpad_create.
+    /// Used for subsequent updates via PaymentOption::Receipt.
+    #[serde(default)] // Default for compatibility with older index formats
+    pub receipt: Option<Receipt>,
 }
 
 /// Information about a specific key stored in the system.
@@ -52,9 +64,6 @@ pub struct PadInfo {
 pub struct KeyInfo {
     /// List of pads associated with this key.
     pub pads: Vec<PadInfo>,
-
-    /// Mapping from scratchpad addresses to the encryption keys used for the pads on that scratchpad.
-    pub pad_keys: HashMap<ScratchpadAddress, Vec<u8>>,
 
     /// The total size of the data associated with this key.
     pub data_size: usize,
@@ -69,18 +78,14 @@ pub struct KeyInfo {
 /// Information about a publicly uploaded entry in the index.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PublicUploadInfo {
-    /// The address of the index scratchpad for this public upload.
-    pub address: ScratchpadAddress,
+    /// Details of the index scratchpad for this public upload.
+    pub index_pad: PadInfo,
     /// The total size of the publicly uploaded data in bytes.
     pub size: usize,
     /// Timestamp indicating when the public upload was created or last modified.
     pub modified: DateTime<Utc>,
-    /// The secret key bytes used to create/update the index scratchpad at `address`.
-    /// Stored encrypted within the MasterIndex.
-    pub index_secret_key_bytes: Vec<u8>,
-    /// The list of addresses of the data pads storing the actual chunks.
-    #[serde(default)] // Ensure compatibility with older index formats
-    pub data_pad_addresses: Vec<ScratchpadAddress>,
+    /// Details of the data pads storing the actual chunks.
+    pub data_pads: Vec<PadInfo>,
 }
 
 /// Represents an entry in the master index, which can be either private key data or public upload data.

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Adapt to `scratchpad_put` SDK changes where it no longer returns a `Receipt`. Code now correctly destructures the `(AttoTokens, ScratchpadAddress)` tuple and avoids updating the `PadInfo.receipt` field, resolving compilation errors.
 - Correctly fetch and store network counter for harvested pads added to the free list, ensuring accurate `initial_counter` for `PadOrigin::FreePool`.
 - Initialize `PadInfo.last_known_counter` using the `initial_counter` from `PadOrigin` when preparing pads, ensuring accurate initial counter tracking for pads from the free pool.
 

@@ -78,8 +78,9 @@ async fn test_save_load_initialize() {
             origin: PadOrigin::Generated,
             needs_reverification: false,
             last_known_counter: 0,
+            sk_bytes: pad1_key_bytes.clone(),
+            receipt: None,
         }],
-        pad_keys: HashMap::from([(pad1_addr, pad1_key_bytes.clone())]),
         modified: Utc::now(),
         is_complete: false,
     };
@@ -185,7 +186,6 @@ async fn test_reset() {
         .unwrap();
     let default_key_info = KeyInfo {
         pads: vec![],
-        pad_keys: HashMap::new(),
         data_size: 0,
         modified: Utc::now(),
         is_complete: false,
@@ -285,13 +285,23 @@ mod tests {
             .unwrap();
 
         let name1 = "public_upload_1".to_string();
-        let addr1 = ScratchpadAddress::new(SecretKey::random().public_key());
-        let metadata1 = PublicUploadInfo {
+        let index_key1 = SecretKey::random();
+        let addr1 = ScratchpadAddress::new(index_key1.public_key());
+        let index_pad_info1 = PadInfo {
             address: addr1,
+            chunk_index: 0,
+            status: PadStatus::Written,
+            origin: PadOrigin::Generated,
+            needs_reverification: false,
+            last_known_counter: 0,
+            sk_bytes: index_key1.to_bytes().to_vec(),
+            receipt: None,
+        };
+        let metadata1 = PublicUploadInfo {
+            index_pad: index_pad_info1,
             size: 1024,
             modified: Utc::now(),
-            index_secret_key_bytes: SecretKey::random().to_bytes().to_vec(),
-            data_pad_addresses: Vec::new(),
+            data_pads: Vec::new(),
         };
 
         index_manager
@@ -307,13 +317,23 @@ mod tests {
         }
 
         let name2 = "public_upload_2".to_string();
-        let addr2 = ScratchpadAddress::new(SecretKey::random().public_key());
-        let metadata2 = PublicUploadInfo {
+        let index_key2 = SecretKey::random();
+        let addr2 = ScratchpadAddress::new(index_key2.public_key());
+        let index_pad_info2 = PadInfo {
             address: addr2,
+            chunk_index: 0,
+            status: PadStatus::Written,
+            origin: PadOrigin::Generated,
+            needs_reverification: false,
+            last_known_counter: 0,
+            sk_bytes: index_key2.to_bytes().to_vec(),
+            receipt: None,
+        };
+        let metadata2 = PublicUploadInfo {
+            index_pad: index_pad_info2,
             size: 2048,
             modified: Utc::now(),
-            index_secret_key_bytes: SecretKey::random().to_bytes().to_vec(),
-            data_pad_addresses: Vec::new(),
+            data_pads: Vec::new(),
         };
 
         index_manager
@@ -339,7 +359,6 @@ mod tests {
         let name3 = "private_key_3".to_string();
         let metadata3 = KeyInfo {
             pads: vec![],
-            pad_keys: HashMap::new(),
             data_size: 500,
             modified: Utc::now(),
             is_complete: true,

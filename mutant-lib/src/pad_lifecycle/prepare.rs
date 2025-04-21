@@ -137,44 +137,47 @@ pub(crate) async fn prepare_pads_for_store(
             let mut key_info_mut = key_info;
 
             debug!("Prepare: Identifying resume tasks based on pad status...");
-            for pad_info in key_info_mut.pads.iter() {
+            for pad_info in key_info_mut.pads.iter_mut() {
                 if pad_info.status == PadStatus::Generated
                     || pad_info.status == PadStatus::Allocated
                 {
-                    if let Some(key_bytes) = key_info_mut.pad_keys.get(&pad_info.address) {
-                        let secret_key =
-                            SecretKey::from_bytes(key_bytes.clone().try_into().map_err(|_| {
-                                DataError::InternalError("Invalid key size in index".to_string())
-                            })?)?;
-                        let chunk = chunks.get(pad_info.chunk_index).ok_or_else(|| {
-                            DataError::InternalError(format!(
-                                "Chunk index {} out of bounds during resume preparation",
-                                pad_info.chunk_index
-                            ))
-                        })?;
-
-                        debug!(
-                            "Prepare: Task: Write chunk {} to pad {} (Origin: {:?}, Status: {:?})",
-                            pad_info.chunk_index,
-                            pad_info.address,
-                            pad_info.origin,
-                            pad_info.status
-                        );
-                        tasks_to_run.push(WriteTaskInput {
-                            pad_info: pad_info.clone(),
-                            secret_key: secret_key.clone(),
-                            chunk_data: chunk.clone(),
-                        });
-                    } else {
-                        warn!(
-                            "Prepare: Missing secret key for pad {} in KeyInfo during resume preparation. Skipping.",
-                            pad_info.address
+                    // Ensure sk_bytes exist before proceeding
+                    if pad_info.sk_bytes.is_empty() {
+                        error!(
+                            "Pad {} for existing key '{}' is missing its secret key bytes. Cannot reuse.",
+                            pad_info.address, user_key
                         );
                         return Err(DataError::InternalError(format!(
-                            "Missing key for pad {} during resume preparation",
+                            "Missing key for pad {} during reuse prep",
                             pad_info.address
                         )));
                     }
+                    // sk_bytes are available, proceed with reuse logic
+                    let key_bytes = &pad_info.sk_bytes; // Use directly
+
+                    let secret_key =
+                        SecretKey::from_bytes(key_bytes.clone().try_into().map_err(|_| {
+                            DataError::InternalError("Invalid key size in index".to_string())
+                        })?)?;
+                    let chunk = chunks.get(pad_info.chunk_index).ok_or_else(|| {
+                        DataError::InternalError(format!(
+                            "Chunk index {} out of bounds during resume preparation",
+                            pad_info.chunk_index
+                        ))
+                    })?;
+
+                    debug!(
+                        "Prepare: Task: Write chunk {} to pad {} (Origin: {:?}, Status: {:?})",
+                        pad_info.chunk_index, pad_info.address, pad_info.origin, pad_info.status
+                    );
+                    tasks_to_run.push(WriteTaskInput {
+                        pad_info: pad_info.clone(),
+                        secret_key: secret_key.clone(),
+                        chunk_data: chunk.clone(),
+                    });
+
+                    pad_info.status = PadStatus::Generated;
+                    pad_info.needs_reverification = true;
                 }
             }
             info!("Prepare: Prepared {} tasks for resume.", tasks_to_run.len());
@@ -197,7 +200,6 @@ pub(crate) async fn prepare_pads_for_store(
                 debug!("Prepare: Storing empty data for key '{}'", user_key);
                 let key_info = KeyInfo {
                     pads: Vec::new(),
-                    pad_keys: HashMap::new(),
                     data_size,
                     modified: Utc::now(),
                     is_complete: true,
@@ -267,7 +269,6 @@ pub(crate) async fn prepare_pads_for_store(
             );
 
             let mut initial_pads = Vec::with_capacity(num_chunks);
-            let mut initial_pad_keys = HashMap::with_capacity(num_chunks);
 
             for (i, chunk) in chunks.iter().enumerate() {
                 let (pad_address, secret_key, pad_origin) = acquired_pads[i].clone();
@@ -280,24 +281,25 @@ pub(crate) async fn prepare_pads_for_store(
                     }
                 };
 
-                let pad_info = PadInfo {
-                    chunk_index: i,
-                    status: initial_status.clone(), // Clone needed due to use in debug! after move
+                let new_pad_info = PadInfo {
+                    address: pad_address,
+                    chunk_index: i, // Use the loop index directly
+                    status: PadStatus::Generated,
                     origin: pad_origin,
                     needs_reverification: false,
-                    address: pad_address,
-                    last_known_counter: initial_counter,
+                    last_known_counter: 0, // New pads start at 0
+                    sk_bytes: secret_key.to_bytes().to_vec(),
+                    receipt: None, // Initialize receipt as None
                 };
 
-                initial_pads.push(pad_info.clone());
-                initial_pad_keys.insert(pad_address, secret_key.to_bytes().to_vec());
+                initial_pads.push(new_pad_info.clone());
 
                 debug!(
                     "Prepare: Task: Write chunk {} to new pad {} (Origin: {:?}, Status: {:?})",
                     i, pad_address, pad_origin, initial_status
                 );
                 tasks_to_run.push(WriteTaskInput {
-                    pad_info,
+                    pad_info: new_pad_info,
                     secret_key,
                     chunk_data: chunk.clone(),
                 });
@@ -305,7 +307,6 @@ pub(crate) async fn prepare_pads_for_store(
 
             let key_info = KeyInfo {
                 pads: initial_pads,
-                pad_keys: initial_pad_keys,
                 data_size,
                 modified: Utc::now(),
                 is_complete: false,

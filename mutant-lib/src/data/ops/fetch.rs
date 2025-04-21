@@ -114,37 +114,39 @@ pub(crate) async fn fetch_op(
                     pad_address
                 );
 
-                let key_bytes_vec = key_info.pad_keys.get(&pad_address).ok_or_else(|| {
-                    error!("Secret key for pad {} not found in KeyInfo", pad_address);
-                    DataError::InternalError(format!("Pad key missing for {}", pad_address))
-                })?;
-
-                let pad_secret_key = {
-                    let key_array: [u8; 32] =
-                        key_bytes_vec.as_slice().try_into().map_err(|_| {
-                            error!(
-                                "Secret key for pad {} has incorrect length (expected 32): {}",
-                                pad_address,
-                                key_bytes_vec.len()
-                            );
-                            DataError::InternalError(format!(
-                                "Invalid key length for {}",
-                                pad_address
-                            ))
-                        })?;
-                    SecretKey::from_bytes(key_array).map_err(|e| {
-                        error!(
-                            "Failed to deserialize secret key for pad {}: {}",
-                            pad_address, e
+                let key_bytes = key_info
+                    .pads
+                    .iter()
+                    .find(|p| p.address == pad_address)
+                    .and_then(|p| if p.sk_bytes.is_empty() { None } else { Some(p.sk_bytes.clone()) })
+                    .ok_or_else(|| {
+                        warn!(
+                            "Secret key bytes not found in PadInfo for pad {} (key '{}'). Cannot decrypt.",
+                            pad_address,
+                            user_key
                         );
                         DataError::InternalError(format!(
-                            "Pad key deserialization failed for {}",
+                            "Missing decryption key for pad {}",
                             pad_address
                         ))
-                    })?
-                };
+                    })?;
 
-                let decrypted_data = scratchpad.decrypt_data(&pad_secret_key).map_err(|e| {
+                let secret_key =
+                    SecretKey::from_bytes(key_bytes.as_slice().try_into().map_err(|_| {
+                        DataError::InternalError(format!(
+                            "Invalid key length ({}) for pad {}",
+                            key_bytes.len(),
+                            pad_address
+                        ))
+                    })?)
+                    .map_err(|_| {
+                        DataError::InternalError(format!(
+                            "Invalid key format for pad {}",
+                            pad_address
+                        ))
+                    })?;
+
+                let decrypted_data = scratchpad.decrypt_data(&secret_key).map_err(|e| {
                     error!(
                         "Failed to decrypt chunk {} from pad {}: {}",
                         chunk_index, pad_address, e

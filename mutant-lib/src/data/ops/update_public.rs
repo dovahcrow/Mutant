@@ -2,7 +2,7 @@ use crate::data::chunking::chunk_data;
 use crate::data::error::DataError;
 use crate::data::manager::DefaultDataManager;
 use crate::data::{PUBLIC_DATA_ENCODING, PUBLIC_INDEX_ENCODING};
-use crate::index::structure::PublicUploadInfo;
+use crate::index::structure::{PadInfo, PublicUploadInfo};
 use crate::internal_events::{invoke_put_callback, PutCallback, PutEvent};
 use crate::network::adapter::create_public_scratchpad;
 use autonomi::client::payment::PaymentOption;
@@ -14,368 +14,414 @@ use serde_cbor;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-// Import the helper function from the same module
-use super::store_public::upload_public_data_and_create_index;
-
 pub(crate) async fn update_public_op(
     manager: &DefaultDataManager,
     name: &str,
     data_bytes: &[u8],
     callback: Option<PutCallback>,
 ) -> Result<(), DataError> {
-    info!(
-        "DataOps: Starting update_public_op for name '{}' (remove then store)",
-        name
-    );
+    info!("DataOps: Starting update_public_op for name '{}'", name);
     let callback_arc = Arc::new(Mutex::new(callback));
-    let data_size = data_bytes.len();
+    let new_data_size = data_bytes.len();
 
-    // 1. Check existence and type
-    debug!("Checking existence and type for '{}'...", name);
-    let maybe_public_info = manager
+    // 1. Get existing public info
+    debug!("Fetching existing public upload info for '{}'...", name);
+    let mut public_info = manager
         .index_manager
         .get_public_upload_info(name)
         .await
-        .map_err(DataError::Index)?;
+        .map_err(DataError::Index)?
+        .ok_or_else(|| {
+            error!("Public upload '{}' not found for update.", name);
+            // Before returning NotFound, check if it exists as a private key
+            // This check requires an async block or separate function
+            // For now, assume it doesn't exist if get_public_upload_info returned None
+            DataError::KeyNotFound(name.to_string())
+        })?;
 
-    if let Some(public_info) = maybe_public_info {
-        // --- It exists and is public: Perform UPDATE ---
-        debug!("Found existing public upload. Proceeding with update...");
-        let public_index_address = public_info.address;
-        let index_sk = SecretKey::from_bytes(
-            public_info
-                .index_secret_key_bytes
-                .as_slice()
-                .try_into()
-                .map_err(|_| {
-                    DataError::InternalError("Invalid index secret key length".to_string())
-                })?,
-        )
-        .map_err(|_| DataError::InternalError("Invalid index secret key format".to_string()))?;
+    // Retrieve index pad details for later update
+    let index_pad_info = public_info.index_pad.clone(); // Clone needed info
 
-        // 2. Chunk Data
-        let chunk_size = manager.index_manager.get_scratchpad_size().await?;
-        if chunk_size == 0 {
-            error!("Configured scratchpad size is 0. Cannot proceed with chunking.");
-            return Err(DataError::ChunkingError(
-                "Invalid scratchpad size (0) configured".to_string(),
-            ));
-        }
-        let chunks = chunk_data(data_bytes, chunk_size)?;
-        let total_chunks = chunks.len();
-        let _chunk_count = total_chunks;
+    // 2. Chunk New Data
+    let chunk_size = manager.index_manager.get_scratchpad_size().await?;
+    if chunk_size == 0 {
+        error!("Configured scratchpad size is 0. Cannot proceed with chunking.");
+        return Err(DataError::ChunkingError(
+            "Invalid scratchpad size (0) configured".to_string(),
+        ));
+    }
+    let new_chunks = chunk_data(data_bytes, chunk_size)?;
+    let new_total_chunks = new_chunks.len();
+    let old_total_chunks = public_info.data_pads.len();
+    debug!(
+        "Public data for '{}' chunked into {} pieces (was {}).",
+        name, new_total_chunks, old_total_chunks
+    );
+
+    // --- Handle Chunk Count Mismatch (Scenario B - Simplified/Error for now) ---
+    if new_total_chunks != old_total_chunks {
+        // For now, we don't support changing the number of chunks during update.
+        // This requires deleting old pads and creating new ones, re-introducing payment issues.
+        error!(
+            "Update for '{}' failed: Number of chunks changed from {} to {}. This is not yet supported.",
+            name, old_total_chunks, new_total_chunks
+        );
+        // Ensure this returns immediately
+        return Err(DataError::InvalidOperation(
+            "Updating with a different number of chunks is not supported yet.".to_string(),
+        ));
+        // Removed TODO comment as return is sufficient
+    }
+    // --- End Chunk Count Mismatch Handling ---
+
+    // If chunk count is 0 (both old and new must be 0 here)
+    if new_total_chunks == 0 {
         debug!(
-            "Public data for '{}' chunked into {} pieces using size {}.",
-            name, total_chunks, chunk_size
+            "Public update '{}': No data chunks to update (empty data).",
+            name
+        );
+        // Skip data pad updates, proceed directly to index pad update.
+    } else {
+        // --- Update Data Pads (Scenario A) ---
+        debug!(
+            "Updating {} existing data pads in parallel...",
+            new_total_chunks
         );
 
-        // 3. Emit Starting event
+        // 3. Emit Starting event (using new chunk count, which is same as old)
         if !invoke_put_callback(
             &mut *callback_arc.lock().await,
             PutEvent::Starting {
-                total_chunks,
-                initial_written_count: 0,
-                initial_confirmed_count: 0,
+                total_chunks: new_total_chunks,
+                initial_written_count: 0,   // Not applicable
+                initial_confirmed_count: 0, // Not applicable
             },
         )
         .await
         .map_err(|e| DataError::CallbackError(e.to_string()))?
         {
-            warn!("Public update/store for '{}' cancelled at start.", name);
+            warn!("Public update for '{}' cancelled at start.", name);
             return Err(DataError::OperationCancelled);
         }
 
-        let chunk_addresses: Vec<ScratchpadAddress>;
+        let mut update_futures = FuturesUnordered::new();
+        // Keep track of updated PadInfo structs
+        let mut updated_data_pad_infos: Vec<Option<PadInfo>> = vec![None; new_total_chunks];
 
-        if total_chunks == 0 {
-            debug!(
-                "Public update/store '{}': No chunks to upload (empty data).",
-                name
-            );
-            chunk_addresses = Vec::new();
-        } else {
-            // 4. Upload Chunks in Parallel
-            let mut upload_futures = FuturesUnordered::new();
-            let mut chunk_addresses_results: Vec<Option<ScratchpadAddress>> =
-                vec![None; total_chunks];
+        // Iterate through existing pads and new chunks together
+        for (i, (mut existing_pad_info, new_chunk_data)) in public_info
+            .data_pads // Use existing pads
+            .into_iter() // Note: This consumes public_info.data_pads temporarily
+            .zip(new_chunks.into_iter())
+            .enumerate()
+        {
+            let network_adapter_clone = Arc::clone(&manager.network_adapter);
+            let chunk_bytes = Bytes::from(new_chunk_data);
+            let callback_arc_clone = Arc::clone(&callback_arc); // Clone for async block
 
-            for (i, chunk) in chunks.into_iter().enumerate() {
-                let network_adapter_clone = Arc::clone(&manager.network_adapter);
-                let chunk_sk = SecretKey::random();
-                let chunk_bytes = Bytes::from(chunk);
+            update_futures.push(async move {
+                let pad_address = existing_pad_info.address; // Store for error messages
+                trace!(
+                    "Starting update task for data chunk {} on pad {}",
+                    i,
+                    pad_address
+                );
 
-                upload_futures.push(async move {
-                    trace!("Starting upload task for public chunk {}", i);
-                    let chunk_scratchpad =
-                        create_public_scratchpad(&chunk_sk, PUBLIC_DATA_ENCODING, &chunk_bytes, 0);
-                    let chunk_addr = *chunk_scratchpad.address();
-                    let payment = PaymentOption::Wallet((*network_adapter_clone.wallet()).clone());
-                    match network_adapter_clone
-                        .scratchpad_put(chunk_scratchpad, payment)
-                        .await
-                    {
-                        Ok((_cost, addr)) => {
-                            trace!("Upload task successful for public chunk {} -> {}", i, addr);
-                            Ok((i, addr))
-                        }
-                        Err(e) => {
-                            error!(
-                                "Upload task failed for public chunk {} (addr: {}): {}",
-                                i, chunk_addr, e
-                            );
-                            Err(DataError::Network(e))
-                        }
+                // 1. Fetch current counter (required for scratchpad_put)
+                let current_pad = match network_adapter_clone.get_raw_scratchpad(&pad_address).await {
+                    Ok(pad) => pad,
+                    Err(e) => {
+                        error!("Failed to fetch current data pad {} to get counter for update: {}", pad_address, e);
+                        return Err((i, DataError::Network(e)));
                     }
-                });
-            }
+                };
+                let current_counter = current_pad.counter();
+                let new_counter = current_counter + 1;
+                trace!("Data pad {} current counter: {}, new counter: {}", pad_address, current_counter, new_counter);
 
-            let mut first_error: Option<DataError> = None;
-            let mut completed_count = 0;
 
-            while let Some(result) = upload_futures.next().await {
-                match result {
-                    Ok((index, addr)) => {
-                        debug!(
-                            "Successfully uploaded public chunk {} ({}) for {}",
-                            index, addr, name
+                // 2. Prepare Scratchpad object for put
+                let owner_key = match existing_pad_info.sk_bytes.as_slice().try_into() {
+                    Ok(sk_array) => SecretKey::from_bytes(sk_array).map_err(|_| {
+                        DataError::InternalError(format!(
+                            "Invalid secret key format for pad {}",
+                            pad_address
+                        ))
+                    }),
+                    Err(_) => Err(DataError::InternalError(format!(
+                        "Invalid secret key length ({}) for pad {}",
+                        existing_pad_info.sk_bytes.len(),
+                        pad_address
+                    ))),
+                }
+                .map_err(|e| (i, e))?; // Map error to (usize, DataError) and propagate
+
+
+                let chunk_scratchpad = create_public_scratchpad(
+                    &owner_key,
+                    PUBLIC_DATA_ENCODING,
+                    &chunk_bytes,
+                    new_counter,
+                );
+
+
+                // 3. Determine Payment Option (using receipt)
+                let payment_option = match existing_pad_info.receipt.clone() { // Clone receipt if needed
+                    Some(receipt) => PaymentOption::Receipt(receipt),
+                    None => {
+                        error!("Missing payment receipt for existing data pad {} during update.", pad_address);
+                        return Err((i, DataError::MissingReceipt(pad_address)));
+                    }
+                };
+
+                // 4. Call scratchpad_put
+                trace!("Calling scratchpad_put for data chunk {} on pad {} with counter {}", i, pad_address, new_counter);
+                match network_adapter_clone
+                    .scratchpad_put(chunk_scratchpad, payment_option)
+                    .await
+                {
+                    Ok((_cost, returned_addr)) => { // Destructure cost and address
+                        trace!(
+                            "Put task successful for data chunk {} on pad {} (returned {})",
+                            i,
+                            pad_address,
+                            returned_addr
                         );
-                        chunk_addresses_results[index] = Some(addr);
-                        completed_count += 1;
-
-                        if !invoke_put_callback(
-                            &mut *callback_arc.lock().await,
-                            PutEvent::ChunkWritten { chunk_index: index },
-                        )
-                        .await
-                        .map_err(|e| DataError::CallbackError(e.to_string()))?
-                        {
-                            warn!(
-                                "Public update/store for '{}' cancelled after chunk {} write.",
-                                name, index
+                        if returned_addr != pad_address {
+                             warn!(
+                                "scratchpad_put during data update for chunk {} returned address {} but expected {}",
+                                i, returned_addr, pad_address
                             );
-                            if first_error.is_none() {
-                                first_error = Some(DataError::OperationCancelled);
-                            }
-                            break;
+                            // Decide if this is fatal? For now, just warn and proceed.
                         }
+                        // Update counter in the pad info
+                        existing_pad_info.last_known_counter = new_counter;
+                        Ok((i, existing_pad_info)) // Return index and updated PadInfo
                     }
                     Err(e) => {
+                        error!(
+                            "Put task failed for data chunk {} on pad {}: {}",
+                            i, pad_address, e
+                        );
+                        Err((i, DataError::Network(e))) // Return index and error
+                    }
+                }
+            });
+        }
+
+        // Process update results
+        let mut first_error: Option<DataError> = None;
+        let mut completed_count = 0;
+
+        while let Some(result) = update_futures.next().await {
+            match result {
+                Ok((index, updated_pad_info)) => {
+                    debug!(
+                        "Successfully updated data chunk {} on pad {}",
+                        index, updated_pad_info.address
+                    );
+                    updated_data_pad_infos[index] = Some(updated_pad_info); // Store updated PadInfo
+                    completed_count += 1;
+
+                    // Emit ChunkWritten event
+                    if !invoke_put_callback(
+                        &mut *callback_arc.lock().await,
+                        PutEvent::ChunkWritten { chunk_index: index },
+                    )
+                    .await
+                    .map_err(|e| DataError::CallbackError(e.to_string()))?
+                    {
+                        warn!(
+                            "Public update for '{}' cancelled after chunk {} update.",
+                            name, index
+                        );
                         if first_error.is_none() {
-                            first_error = Some(e);
+                            first_error = Some(DataError::OperationCancelled);
                         }
                         break;
                     }
                 }
+                Err((index, e)) => {
+                    error!("Error updating chunk {}: {}", index, e);
+                    if first_error.is_none() {
+                        first_error = Some(e);
+                    }
+                    break;
+                }
             }
-
-            if let Some(err) = first_error {
-                error!(
-                    "Public update/store for '{}' failed during chunk upload: {}",
-                    name, err
-                );
-                return Err(err);
-            }
-
-            if completed_count != total_chunks {
-                error!(
-                    "Public update/store for '{}': Mismatch in completed chunks ({} vs {}). Internal error.",
-                    name, completed_count, total_chunks
-                );
-                return Err(DataError::InternalError(
-                    "Mismatch in completed chunk count".to_string(),
-                ));
-            }
-
-            chunk_addresses = chunk_addresses_results
-                .into_iter()
-                .map(|opt| opt.unwrap())
-                .collect();
-            debug!(
-                "Finished uploading {} data chunks for {}",
-                total_chunks, name
-            );
         }
 
-        // 5. Serialize new list of chunk addresses using CBOR
-        let new_index_data_bytes = serde_cbor::to_vec(&chunk_addresses)
-            .map(Bytes::from)
-            .map_err(|e| DataError::Serialization(e.to_string()))?;
+        // Handle errors and completion check
+        if let Some(err) = first_error {
+            error!(
+                "Public update for '{}' failed during data chunk update: {}",
+                name, err
+            );
+            // Reconstruct public_info.data_pads before returning error
+            // This is tricky because the original was moved. We need to re-fetch or rethink ownership.
+            // For now, the state might be inconsistent if an error occurs mid-way.
+            // Consider collecting results into a Vec first, then updating public_info if all succeed.
+            return Err(err);
+        }
 
-        // 6. Overwrite the existing public index scratchpad using scratchpad_update directly
-        debug!(
-            "Updating public index scratchpad {} with new chunk list using encoding {}.",
-            public_index_address, PUBLIC_INDEX_ENCODING
-        );
-        // Use put_raw instead
-        /* manager
+        if completed_count != new_total_chunks {
+            error!(
+                 "Public update for '{}': Mismatch in completed chunk updates ({} vs {}). Internal error.",
+                 name, completed_count, new_total_chunks
+             );
+            // Similar state issue as above if we error out here.
+            return Err(DataError::InternalError(
+                "Mismatch in completed chunk update count".to_string(),
+            ));
+        }
+
+        // Update the data_pads in public_info with the results
+        // Ensure we only collect if successful completion
+        public_info.data_pads = updated_data_pad_infos
+            .into_iter()
+            .map(|opt| {
+                opt.expect("Internal error: Missing updated PadInfo after successful completion")
+            })
+            .collect();
+
+        debug!("Finished updating {} data pads.", new_total_chunks);
+    }
+    // --- End Update Data Pads ---
+
+    // 4. Update Index Pad (Reverting to scratchpad_put via fetch counter)
+    debug!(
+        "Updating index pad {} using scratchpad_put (fetch counter method)...",
+        index_pad_info.address
+    );
+
+    // Fetch current counter
+    let current_index_pad = manager
         .network_adapter
-        .put_raw(
-            &index_sk,
-            &new_index_data_bytes,
-            &PadStatus::Written, // Assuming Written status for update
-            PUBLIC_INDEX_ENCODING,
-        )
+        .get_raw_scratchpad(&index_pad_info.address)
         .await
         .map_err(|e| {
-            // Log the specific error from put_raw
             error!(
-                "Failed to update public index scratchpad {} using put_raw: {}",
-                public_index_address, e
+                "Failed to fetch current index pad {} to get counter for update: {}",
+                index_pad_info.address, e
             );
-            // Map to DataError::Network or a more specific error if appropriate
             DataError::Network(e)
-        })?; */
+        })?;
+    let current_counter = current_index_pad.counter();
+    let new_counter = current_counter + 1;
+    debug!(
+        "Current index counter is {}, updating with counter {}",
+        current_counter, new_counter
+    );
 
-        // Avoid scratchpad_update (via put_raw) due to suspected SDK bug.
-        // Instead, fetch current counter and use scratchpad_put to overwrite.
-        debug!(
-            "Fetching current index scratchpad {} to get counter for update...",
-            public_index_address
-        );
-        let current_scratchpad = manager
-            .network_adapter
-            .get_raw_scratchpad(&public_index_address)
-            .await
-            .map_err(|e| {
-                error!(
-                    "Failed to fetch current public index scratchpad {} for update: {}",
-                    public_index_address, e
-                );
-                DataError::Network(e) // Or more specific error
-            })?;
-        let current_counter = current_scratchpad.counter();
-        let new_counter = current_counter + 1;
-        debug!(
-            "Current counter is {}, updating with counter {}",
-            current_counter, new_counter
-        );
+    let index_owner_key =
+        SecretKey::from_bytes(index_pad_info.sk_bytes.as_slice().try_into().map_err(|_| {
+            DataError::InternalError(format!(
+                "Invalid secret key length ({}) for index pad {}",
+                index_pad_info.sk_bytes.len(),
+                index_pad_info.address
+            ))
+        })?)
+        .map_err(|_| {
+            DataError::InternalError(format!(
+                "Invalid secret key format for index pad {}",
+                index_pad_info.address
+            ))
+        })?;
 
-        let updated_index_scratchpad = create_public_scratchpad(
-            &index_sk,
-            PUBLIC_INDEX_ENCODING,
-            &new_index_data_bytes, // Serialized Vec<ScratchpadAddress>
-            new_counter,
-        );
+    // Serialize the list of potentially updated data pad addresses
+    let updated_index_content_addresses: Vec<ScratchpadAddress> =
+        public_info.data_pads.iter().map(|p| p.address).collect();
+    let new_index_data_bytes = serde_cbor::to_vec(&updated_index_content_addresses)
+        .map(Bytes::from)
+        .map_err(|e| DataError::Serialization(e.to_string()))?;
 
-        debug!(
-            "Uploading updated index scratchpad {} via scratchpad_put",
-            public_index_address
-        );
-        let payment = PaymentOption::Wallet((*manager.network_adapter.wallet()).clone());
-        let (_cost, returned_addr) = manager
-            .network_adapter
-            .scratchpad_put(updated_index_scratchpad, payment)
-            .await
-            .map_err(|e| {
-                error!(
-                    "Failed to update public index scratchpad {} using scratchpad_put: {}",
-                    public_index_address, e
-                );
-                DataError::Network(e)
-            })?;
+    // Create a new scratchpad object with updated data and new counter
+    let updated_index_scratchpad = create_public_scratchpad(
+        &index_owner_key,
+        PUBLIC_INDEX_ENCODING,
+        &new_index_data_bytes,
+        new_counter, // Use the incremented counter
+    );
 
-        // Sanity check the returned address
-        if returned_addr != public_index_address {
-            warn!(
-                "scratchpad_put during update returned address {} but expected {}",
-                returned_addr, public_index_address
-            );
-            // Continue anyway, but log warning
-        }
-
-        info!(
-            "Successfully updated public index for '{}' at address {}",
-            name,
-            public_index_address // Use the actual address variable
-        );
-
-        // 7. Update metadata (size, modified time) in the MasterIndex via IndexManager
-        debug!(
-            "Replacing public upload info in master index for '{}'",
-            name
-        );
-        let updated_public_info = PublicUploadInfo {
-            address: public_index_address, // The index address remains the same
-            size: data_size,               // Update size
-            modified: Utc::now(),          // Update modified time
-            index_secret_key_bytes: index_sk.to_bytes().to_vec(), // Keep the original index key
-            data_pad_addresses: chunk_addresses, // Store the NEW data pad addresses
-        };
-
-        manager
-            .index_manager
-            .replace_public_upload_info(name, updated_public_info) // Use the new replace method
-            .await
-            .map_err(|e| {
-                // Log failure but don't fail the whole operation if index update fails?
-                // For now, let's return the error.
-                error!(
-                    "Failed to replace public upload info in master index for '{}': {}",
-                    name, e
-                );
-                DataError::Index(e)
-            })?;
-
-        // 8. Call Complete Event for Update Path
-        if !invoke_put_callback(&mut *callback_arc.lock().await, PutEvent::Complete)
-            .await
-            .map_err(|e| DataError::CallbackError(e.to_string()))?
-        {
-            warn!(
-                "Callback indicated cancellation after completion event for {}",
-                name
-            );
-            // Don't return error, update technically succeeded
-        }
-        debug!(
-            "update_public_op (update path) completed successfully for name: {}",
-            name
-        );
-        // 9. Explicitly return Ok(()) for the update path
-        Ok(())
-    } else {
-        // --- It does NOT exist as public key ---
-        debug!(
-            "Public key '{}' not found, checking if private key exists...",
-            name
-        );
-        let maybe_private_info = manager
-            .index_manager
-            .get_key_info(name)
-            .await
-            .map_err(DataError::Index)?;
-        if maybe_private_info.is_some() {
+    // Determine Payment Option for Index Pad (using receipt)
+    let index_payment_option = match index_pad_info.receipt.clone() {
+        // Clone receipt if needed
+        Some(receipt) => PaymentOption::Receipt(receipt),
+        None => {
             error!(
-                "Cannot update/create public key '{}': Name already exists as a private key.",
-                name
+                "Missing payment receipt for index pad {} during update.",
+                index_pad_info.address
             );
-            return Err(DataError::InvalidOperation(format!(
-                "Key '{}' exists as private.",
-                name
-            )));
-        } else {
-            // --- Does not exist at all: Perform CREATE using helper ---
-            debug!(
-                "Key '{}' does not exist. Creating new public upload (due to --force)...",
-                name
-            );
-
-            // Call the helper function from store_public
-            let _new_address = upload_public_data_and_create_index(
-                manager.network_adapter.clone(),
-                manager.index_manager.clone(),
-                name.to_string(), // Helper takes ownership
-                data_bytes,
-                callback_arc.clone(), // Clone Arc for helper
-            )
-            .await?;
-            // Helper function already calls PutEvent::Complete
-            debug!(
-                "update_public_op (create path) completed successfully for name: {}",
-                name
-            );
-            // Uncommented and ensure Ok(()) is returned correctly
-            Ok(())
+            return Err(DataError::MissingReceipt(index_pad_info.address));
         }
+    };
+
+    // Call scratchpad_put to overwrite
+    trace!(
+        "Calling scratchpad_put for index pad {} with counter {}",
+        index_pad_info.address,
+        new_counter
+    );
+    let (_cost, returned_addr) = manager // Destructure cost and address
+        .network_adapter
+        .scratchpad_put(updated_index_scratchpad, index_payment_option) // Use receipt payment
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to update index pad {} using scratchpad_put: {}",
+                index_pad_info.address, e
+            );
+            DataError::Network(e)
+        })?;
+
+    // Sanity check address
+    if returned_addr != index_pad_info.address {
+        warn!(
+            "scratchpad_put during index update returned address {} but expected {}",
+            returned_addr, index_pad_info.address
+        );
+        // Continue anyway?
     }
+
+    // Update counter in the index PadInfo stored in public_info
+    public_info.index_pad.last_known_counter = new_counter; // Use the counter we just put
+
+    info!(
+        "Successfully updated index pad {} for '{}' via scratchpad_put",
+        index_pad_info.address, name
+    );
+
+    // 5. Update metadata in MasterIndex
+    debug!("Updating public upload info in master index for '{}'", name);
+    // Update size and modified time
+    public_info.size = new_data_size;
+    public_info.modified = Utc::now();
+    // data_pads and index_pad counters were updated in place above
+
+    manager
+        .index_manager
+        .replace_public_upload_info(name, public_info) // Pass the modified public_info
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to replace public upload info in master index for '{}': {}",
+                name, e
+            );
+            DataError::Index(e)
+        })?;
+
+    // 6. Call Complete Event
+    if !invoke_put_callback(&mut *callback_arc.lock().await, PutEvent::Complete)
+        .await
+        .map_err(|e| DataError::CallbackError(e.to_string()))?
+    {
+        warn!(
+            "Callback indicated cancellation after completion event for {}",
+            name
+        );
+        // Don't return error, update technically succeeded
+    }
+
+    debug!("update_public_op completed successfully for name: {}", name);
+    Ok(())
 }

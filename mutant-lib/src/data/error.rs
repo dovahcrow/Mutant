@@ -90,6 +90,10 @@ pub enum DataError {
     /// An error occurred within a user-provided callback.
     #[error("Callback error: {0}")]
     CallbackError(String),
+
+    /// A required payment receipt was missing for scratchpad {0}
+    #[error("A required payment receipt was missing for scratchpad {0}")]
+    MissingReceipt(ScratchpadAddress),
 }
 
 impl From<blsttc::Error> for DataError {

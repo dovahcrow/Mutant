@@ -5,9 +5,10 @@ use crate::network::wallet::create_wallet;
 use crate::network::NetworkChoice;
 
 use autonomi::client::payment::PaymentOption;
+use autonomi::client::quote::{CostError, DataTypes, StoreQuote};
 use autonomi::scratchpad::ScratchpadError;
 use autonomi::AttoTokens;
-use autonomi::{Bytes, Client, Scratchpad, ScratchpadAddress, SecretKey, Wallet};
+use autonomi::{Bytes, Client, Scratchpad, ScratchpadAddress, SecretKey, Wallet, XorName};
 use log::{debug, error, info, trace, warn};
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -289,6 +290,7 @@ impl AutonomiNetworkAdapter {
     ///
     /// This is used for public uploads where the scratchpad is created
     /// with specific encoding and without encryption by the caller.
+    /// Uses `PaymentOption::Wallet` or `PaymentOption::Receipt` depending on context.
     ///
     /// # Arguments
     ///
@@ -316,6 +318,103 @@ impl AutonomiNetworkAdapter {
             .map_err(|e| {
                 error!("Failed to put scratchpad {}: {}", addr, e);
                 NetworkError::InternalError(format!("Failed to put scratchpad {}: {}", addr, e))
+            })
+    }
+
+    /// Updates an existing scratchpad on the network using its secret key.
+    ///
+    /// This assumes the scratchpad already exists and was paid for.
+    /// It uses the underlying `client.scratchpad_update` which is documented as free.
+    /// The client method handles fetching the current pad, updating content, incrementing counter, and re-signing.
+    ///
+    /// # Arguments
+    ///
+    /// * `owner_key` - The secret key of the scratchpad to update.
+    /// * `data_encoding` - The encoding type identifier for the data.
+    /// * `data` - The new unencrypted data to store.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NetworkError` if the client cannot be initialized or if the update fails.
+    pub async fn scratchpad_update(
+        &self,
+        owner_key: &SecretKey,
+        data_encoding: u64,
+        data: &Bytes,
+    ) -> Result<(), NetworkError> {
+        let addr = ScratchpadAddress::new(owner_key.public_key());
+        trace!(
+            "AutonomiNetworkAdapter::scratchpad_update called for address: {} with encoding {}",
+            addr,
+            data_encoding
+        );
+        let client = self.get_or_init_client().await?;
+
+        client
+            .scratchpad_update(owner_key, data_encoding, data)
+            .await
+            .map_err(|e| {
+                error!("Failed to update scratchpad {}: {}", addr, e);
+                // Adjust error mapping based on available ScratchpadError variants
+                match e {
+                    // If the network layer itself returns an error, wrap it.
+                    ScratchpadError::Network(client_err) => NetworkError::InternalError(format!(
+                        "Network error during scratchpad_update for {}: {}",
+                        addr, client_err
+                    )),
+                    // Treat other specific scratchpad errors as internal network errors
+                    // as they likely indicate issues finding/accessing the pad on the network.
+                    _ => NetworkError::InternalError(format!(
+                        "Failed to update scratchpad {}: {}",
+                        addr, e
+                    )),
+                }
+            })
+    }
+
+    /// Fetches storage quotes for the given content addresses and sizes.
+    /// Wraps the `Client::get_store_quotes` method.
+    ///
+    /// # Arguments
+    ///
+    /// * `data_type` - The type of data being stored (e.g., `DataTypes::Scratchpad`).
+    /// * `content_addrs` - An iterator providing tuples of `(XorName, usize)` representing
+    ///                     the address and size of each content chunk.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NetworkError` if the client cannot be initialized or if fetching quotes fails.
+    pub async fn get_store_quotes(
+        &self,
+        data_type: DataTypes,
+        content_addrs: impl Iterator<Item = (XorName, usize)>,
+    ) -> Result<StoreQuote, NetworkError> {
+        trace!(
+            "AutonomiNetworkAdapter::get_store_quotes called for data type {:?}",
+            data_type
+        );
+        let client = self.get_or_init_client().await?;
+
+        // Collect into a Vec because the underlying client method might require it
+        // or if the iterator needs to be consumed multiple times (though it shouldn't here).
+        // If the client method truly accepts any iterator, this collect can be removed.
+        let addrs_vec: Vec<(XorName, usize)> = content_addrs.collect();
+        let addrs_count = addrs_vec.len();
+
+        client
+            .get_store_quotes(data_type, addrs_vec.into_iter())
+            .await
+            .map_err(|e: CostError| {
+                error!(
+                    "Failed to get store quotes for {} addresses: {}",
+                    addrs_count, e
+                );
+                // Map CostError to NetworkError. Need to decide on the variant.
+                // InternalError seems appropriate as it's a failure in a required network op.
+                NetworkError::InternalError(format!(
+                    "Failed to get store quotes for {} addresses: {}",
+                    addrs_count, e
+                ))
             })
     }
 }

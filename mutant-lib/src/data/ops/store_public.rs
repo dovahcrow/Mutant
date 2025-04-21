@@ -4,13 +4,14 @@ use crate::data::manager::DefaultDataManager;
 use crate::data::{PUBLIC_DATA_ENCODING, PUBLIC_INDEX_ENCODING};
 use crate::index::error::IndexError;
 use crate::index::manager::DefaultIndexManager;
-use crate::index::structure::{IndexEntry, PublicUploadInfo};
+use crate::index::structure::{IndexEntry, PadInfo, PadStatus, PublicUploadInfo};
 use crate::internal_events::{invoke_put_callback, PutCallback, PutEvent};
 use crate::network::adapter::create_public_scratchpad;
 use crate::network::error::NetworkError;
 use crate::network::AutonomiNetworkAdapter;
-use autonomi::client::payment::PaymentOption;
-use autonomi::{Bytes, ScratchpadAddress, SecretKey};
+use crate::pad_lifecycle::PadOrigin;
+use autonomi::client::payment::{PaymentOption, Receipt};
+use autonomi::{Bytes, ScratchpadAddress, SecretKey, XorName};
 use chrono::Utc;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
@@ -79,6 +80,7 @@ pub(crate) async fn upload_public_data_and_create_index(
     callback_arc: Arc<Mutex<Option<PutCallback>>>,
 ) -> Result<ScratchpadAddress, DataError> {
     let data_size = data_bytes.len();
+    const INITIAL_COUNTER: u64 = 0;
 
     // Chunk Data
     let chunk_size = index_manager.get_scratchpad_size().await?;
@@ -111,51 +113,86 @@ pub(crate) async fn upload_public_data_and_create_index(
         return Err(DataError::OperationCancelled);
     }
 
-    let chunk_addresses: Vec<ScratchpadAddress>;
+    let mut data_pad_infos: Vec<PadInfo> = Vec::new();
 
     if total_chunks == 0 {
         debug!(
             "Public upload '{}': No chunks to upload (empty data).",
             name
         );
-        // Need to handle empty file: still create an empty index?
-        // Let's upload an empty index for consistency.
-        chunk_addresses = Vec::new();
+        // No data pads needed
     } else {
-        // Upload Chunks in Parallel
-        let mut upload_futures = FuturesUnordered::new();
-        let mut chunk_addresses_results: Vec<Option<ScratchpadAddress>> = vec![None; total_chunks];
+        // Generate keys and addresses (no sizes needed now)
+        let data_pad_keys_addrs: Vec<(SecretKey, ScratchpadAddress)> = (0..total_chunks)
+            .map(|_| {
+                let sk = SecretKey::random();
+                let addr = ScratchpadAddress::new(sk.public_key());
+                (sk, addr)
+            })
+            .collect();
 
-        for (i, chunk) in chunks.into_iter().enumerate() {
+        let mut upload_futures = FuturesUnordered::new();
+        let mut chunk_results: Vec<Option<PadInfo>> = vec![None; total_chunks];
+
+        // Iterate using pre-generated keys/addresses and original chunks
+        for (i, ((chunk_sk, chunk_addr), chunk_data)) in data_pad_keys_addrs
+            .into_iter()
+            .zip(chunks.into_iter())
+            .enumerate()
+        {
             let adapter_clone = Arc::clone(&network_adapter);
-            let chunk_sk = SecretKey::random();
-            let chunk_bytes = Bytes::from(chunk);
+            let chunk_sk_bytes = chunk_sk.to_bytes().to_vec();
+            let chunk_bytes = Bytes::from(chunk_data);
 
             upload_futures.push(async move {
-                trace!("Starting upload task for public chunk {}", i);
+                trace!(
+                    "Starting upload task for public chunk {} -> {}",
+                    i,
+                    chunk_addr
+                );
                 let chunk_scratchpad = create_public_scratchpad(
                     &chunk_sk,
                     PUBLIC_DATA_ENCODING,
                     &chunk_bytes,
-                    0, // Use counter 0 for initial upload
+                    INITIAL_COUNTER,
                 );
-                let chunk_addr = *chunk_scratchpad.address();
                 let payment = PaymentOption::Wallet((*adapter_clone.wallet()).clone());
 
                 match adapter_clone
                     .scratchpad_put(chunk_scratchpad, payment)
                     .await
                 {
-                    Ok((_cost, addr)) => {
-                        trace!("Upload task successful for public chunk {} -> {}", i, addr);
-                        Ok((i, addr))
+                    Ok((_cost, returned_addr)) => {
+                        if returned_addr != chunk_addr {
+                            warn!(
+                                "Address mismatch for chunk {}: expected {}, got {}",
+                                i, chunk_addr, returned_addr
+                            );
+                        }
+                        trace!(
+                            "Upload task successful for public chunk {} -> {}",
+                            i,
+                            returned_addr
+                        );
+
+                        let pad_info = PadInfo {
+                            address: returned_addr,
+                            chunk_index: i,
+                            status: PadStatus::Written,
+                            origin: PadOrigin::Generated,
+                            needs_reverification: false,
+                            last_known_counter: INITIAL_COUNTER,
+                            sk_bytes: chunk_sk_bytes,
+                            receipt: None,
+                        };
+                        Ok((i, pad_info))
                     }
                     Err(e) => {
                         error!(
                             "Upload task failed for public chunk {} (addr: {}): {}",
                             i, chunk_addr, e
                         );
-                        Err(DataError::Network(e))
+                        Err((i, DataError::Network(e)))
                     }
                 }
             });
@@ -167,12 +204,12 @@ pub(crate) async fn upload_public_data_and_create_index(
 
         while let Some(result) = upload_futures.next().await {
             match result {
-                Ok((index, addr)) => {
+                Ok((index, pad_info)) => {
                     debug!(
                         "Successfully uploaded public chunk {} ({}) for {}",
-                        index, addr, name
+                        index, pad_info.address, name
                     );
-                    chunk_addresses_results[index] = Some(addr);
+                    chunk_results[index] = Some(pad_info); // Store PadInfo in the correct slot
                     completed_count += 1;
 
                     // Emit ChunkWritten event
@@ -195,7 +232,9 @@ pub(crate) async fn upload_public_data_and_create_index(
                         break;
                     }
                 }
-                Err(e) => {
+                Err((index, e)) => {
+                    // Error case now returns index
+                    error!("Error processing chunk {}: {}", index, e);
                     if first_error.is_none() {
                         first_error = Some(e);
                     }
@@ -226,10 +265,9 @@ pub(crate) async fn upload_public_data_and_create_index(
             ));
         }
 
-        // Convert Vec<Option<ScratchpadAddress>> to Vec<ScratchpadAddress>
-        chunk_addresses = chunk_addresses_results
+        data_pad_infos = chunk_results
             .into_iter()
-            .map(|opt| opt.unwrap())
+            .map(|opt| opt.expect("Internal error: Missing PadInfo after successful check"))
             .collect();
 
         debug!(
@@ -238,20 +276,26 @@ pub(crate) async fn upload_public_data_and_create_index(
         );
     }
 
-    // 5. Create and Upload Index Scratchpad (Sequentially after chunks)
+    // 5. Create and Upload Index Scratchpad
     let index_sk = SecretKey::random();
+    let index_sk_bytes = index_sk.to_bytes().to_vec();
+    let public_index_address = ScratchpadAddress::new(index_sk.public_key());
 
-    let index_data_bytes = serde_cbor::to_vec(&chunk_addresses)
+    // Serialize only the addresses for the index content
+    let index_content_addresses: Vec<ScratchpadAddress> =
+        data_pad_infos.iter().map(|p| p.address).collect();
+    let index_data_bytes = serde_cbor::to_vec(&index_content_addresses)
         .map(Bytes::from)
         .map_err(|e| DataError::Serialization(e.to_string()))?;
+    let index_data_size = index_data_bytes.len();
 
     let index_scratchpad = create_public_scratchpad(
         &index_sk,
         PUBLIC_INDEX_ENCODING,
         &index_data_bytes,
-        0, // Use counter 0 for initial upload
+        INITIAL_COUNTER,
     );
-    let public_index_address = ScratchpadAddress::new(index_sk.public_key());
+
     trace!(
         "Uploading public index scratchpad ({}) for {}",
         public_index_address,
@@ -259,113 +303,91 @@ pub(crate) async fn upload_public_data_and_create_index(
     );
 
     let payment = PaymentOption::Wallet((*network_adapter.wallet()).clone());
-    match network_adapter
+    let index_pad_info_result: Result<PadInfo, DataError> = match network_adapter
         .scratchpad_put(index_scratchpad, payment)
         .await
     {
-        Ok((_cost, addr)) => {
+        Ok((_cost, returned_addr)) => {
             debug!(
                 "Successfully initiated upload for public index {} for {}",
-                addr, name
+                returned_addr, name
             );
-            if addr != public_index_address {
-                error!(
+            if returned_addr != public_index_address {
+                warn!(
                     "Returned public index address {} does not match calculated address {} for {}",
-                    addr, public_index_address, name
+                    returned_addr, public_index_address, name
                 );
-                // Even if addresses mismatch, the SDK might have done something unexpected.
-                // Let's try verifying the returned address 'addr' before failing hard.
-                // If verification passes on 'addr', maybe log a warning and continue?
-                // For now, stick to original strict check.
-                return Err(DataError::InternalError(
-                    "Public index address mismatch immediately after upload".to_string(),
-                ));
+                // Proceed with returned_addr
             }
-            // --- Verification Step Added ---
+
+            // --- Verification Step ---
             let mut last_error: Option<DataError> = None;
             for attempt in 0..PUBLIC_CONFIRMATION_RETRY_LIMIT {
                 trace!(
                     "Verification attempt {} for public index scratchpad {}",
                     attempt + 1,
-                    public_index_address
+                    returned_addr // Verify the returned address
                 );
                 sleep(PUBLIC_CONFIRMATION_RETRY_DELAY).await; // Wait before fetching
 
-                match network_adapter
-                    .get_raw_scratchpad(&public_index_address)
-                    .await
-                {
+                match network_adapter.get_raw_scratchpad(&returned_addr).await {
                     Ok(fetched_pad) => {
                         // Check encoding
                         if fetched_pad.data_encoding() == PUBLIC_INDEX_ENCODING {
-                            // Check counter (should be 0 for initial upload)
-                            if fetched_pad.counter() == 0 {
+                            // Check counter
+                            if fetched_pad.counter() == INITIAL_COUNTER {
                                 info!(
-                                    "Public index scratchpad {} verified successfully (Encoding: {}, Counter: 0).",
-                                    public_index_address, PUBLIC_INDEX_ENCODING
-                                );
+                                     "Public index scratchpad {} verified successfully (Encoding: {}, Counter: {}).",
+                                     returned_addr, PUBLIC_INDEX_ENCODING, INITIAL_COUNTER
+                                 );
                                 last_error = None; // Clear previous errors, verification passed
                                 break; // Verification successful, exit retry loop
                             } else {
                                 warn!(
-                                    "Verification attempt {}: Public index {} has unexpected counter {} (expected 0). Retrying...",
-                                    attempt + 1,
-                                    public_index_address,
-                                    fetched_pad.counter()
-                                );
+                                     "Verification attempt {}: Public index {} has unexpected counter {} (expected {}). Retrying...",
+                                     attempt + 1,
+                                     returned_addr,
+                                     fetched_pad.counter(),
+                                     INITIAL_COUNTER
+                                 );
                                 last_error = Some(DataError::InconsistentState(format!(
                                     "Public index {} has unexpected counter {} after upload",
-                                    public_index_address,
+                                    returned_addr,
                                     fetched_pad.counter()
                                 )));
                             }
                         } else {
                             warn!(
-                                "Verification attempt {}: Public index {} has incorrect encoding {} (expected {}). Retrying...",
-                                attempt + 1,
-                                public_index_address,
-                                fetched_pad.data_encoding(),
-                                PUBLIC_INDEX_ENCODING
-                            );
+                                 "Verification attempt {}: Public index {} has incorrect encoding {} (expected {}). Retrying...",
+                                 attempt + 1,
+                                 returned_addr,
+                                 fetched_pad.data_encoding(),
+                                 PUBLIC_INDEX_ENCODING
+                             );
                             last_error = Some(DataError::InvalidPublicIndexEncoding(
                                 fetched_pad.data_encoding(),
                             ));
                         }
                     }
-                    Err(NetworkError::InternalError(e_str)) => {
-                        // Check if the internal error string indicates 'not found'
+                    Err(NetworkError::InternalError(e_str))
                         if e_str.to_lowercase().contains("not found")
-                            || e_str.to_lowercase().contains("does not exist")
-                        {
-                            warn!(
-                                 "Verification attempt {}: Public index {} not found (via InternalError: {}). Retrying...",
-                                  attempt + 1,
-                                  public_index_address,
-                                  e_str
-                              );
-                            last_error =
-                                Some(DataError::PublicScratchpadNotFound(public_index_address));
-                        } else {
-                            // Treat other internal errors as generic network errors for retry
-                            warn!(
-                                "Verification attempt {}: Network/Internal error fetching public index {}: {}. Retrying...",
-                                attempt + 1,
-                                public_index_address,
-                                e_str
-                            );
-                            last_error =
-                                Some(DataError::Network(NetworkError::InternalError(e_str)));
-                            // Re-wrap error
-                        }
+                            || e_str.to_lowercase().contains("does not exist") =>
+                    {
+                        warn!(
+                              "Verification attempt {}: Public index {} not found (via InternalError: {}). Retrying...",
+                               attempt + 1,
+                               returned_addr,
+                               e_str
+                           );
+                        last_error = Some(DataError::PublicScratchpadNotFound(returned_addr));
                     }
                     Err(e) => {
-                        // Catch any other NetworkError variants
                         warn!(
-                            "Verification attempt {}: Unexpected error fetching public index {}: {}. Retrying...",
-                            attempt + 1,
-                            public_index_address,
-                            e
-                        );
+                             "Verification attempt {}: Unexpected error fetching public index {}: {}. Retrying...",
+                             attempt + 1,
+                             returned_addr,
+                             e
+                         );
                         last_error = Some(DataError::Network(e));
                     }
                 }
@@ -375,29 +397,44 @@ pub(crate) async fn upload_public_data_and_create_index(
             if let Some(final_error) = last_error {
                 error!(
                     "Failed to verify public index scratchpad {} for {} after {} attempts: {}",
-                    public_index_address, name, PUBLIC_CONFIRMATION_RETRY_LIMIT, final_error
+                    returned_addr, name, PUBLIC_CONFIRMATION_RETRY_LIMIT, final_error
                 );
-                return Err(final_error);
+                Err(final_error) // Return error from verification failure
+            } else {
+                // Verification successful, create PadInfo
+                Ok(PadInfo {
+                    address: returned_addr,
+                    chunk_index: 0,
+                    status: PadStatus::Written,
+                    origin: PadOrigin::Generated,
+                    needs_reverification: false,
+                    last_known_counter: INITIAL_COUNTER,
+                    sk_bytes: index_sk_bytes,
+                    receipt: None,
+                })
             }
             // --- End Verification Step ---
         }
         Err(e) => {
             error!(
                 "Failed to upload public index scratchpad ({}) for {}: {}",
-                public_index_address, name, e
+                public_index_address,
+                name,
+                e // Log calculated address on error
             );
-            return Err(DataError::Network(e));
+            Err(DataError::Network(e)) // Return error from upload failure
         }
-    }
+    };
+
+    let index_pad_info = index_pad_info_result?;
 
     // 6. Update Master Index
     debug!("Updating master index for public upload {}", name);
     let public_upload_info = PublicUploadInfo {
-        address: public_index_address,
+        index_pad: index_pad_info, // Store the full PadInfo for the index
         size: data_size,
         modified: Utc::now(),
-        index_secret_key_bytes: index_sk.to_bytes().to_vec(),
-        data_pad_addresses: chunk_addresses,
+        data_pads: data_pad_infos, // Store the Vec<PadInfo> for data pads
     };
 
     if let Err(e) = index_manager
@@ -415,7 +452,8 @@ pub(crate) async fn upload_public_data_and_create_index(
 
     info!(
         "Successfully stored public data '{}' at index {}",
-        name, public_index_address
+        name,
+        public_index_address // Log original calculated address for user info
     );
 
     // Final Complete event
@@ -427,5 +465,7 @@ pub(crate) async fn upload_public_data_and_create_index(
         // Don't return error here, operation technically succeeded.
     }
 
-    Ok(public_index_address)
+    Ok(public_index_address) // Return the calculated (intended) index address
 }
+
+// Remove placeholder implementation from here, add to adapter

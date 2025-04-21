@@ -182,22 +182,15 @@ impl DefaultIndexManager {
 
         // Collect all entries from the unified index
         for (key, entry) in state_guard.index.iter() {
-            match entry {
-                IndexEntry::PrivateKey(_) => {
-                    summaries.push(KeySummary {
-                        name: key.clone(),
-                        is_public: false,
-                        address: None,
-                    });
-                }
-                IndexEntry::PublicUpload(info) => {
-                    summaries.push(KeySummary {
-                        name: key.clone(),
-                        is_public: true,
-                        address: Some(info.address),
-                    });
-                }
-            }
+            let (is_public, address) = match entry {
+                IndexEntry::PrivateKey(_) => (false, None),
+                IndexEntry::PublicUpload(info) => (true, Some(info.index_pad.address)),
+            };
+            summaries.push(KeySummary {
+                name: key.clone(),
+                is_public,
+                address,
+            });
         }
 
         Ok(summaries)
@@ -253,7 +246,7 @@ impl DefaultIndexManager {
                     modified: info.modified,
                     is_finished: true, // Public uploads are inherently finished once created
                     completion_percentage: None,
-                    public_address: Some(info.address),
+                    public_address: Some(info.index_pad.address),
                 }))
             }
             None => Ok(None),
@@ -275,8 +268,9 @@ impl DefaultIndexManager {
 
         // Process all entries from the unified index
         for (key, entry) in state_guard.index.iter() {
-            match entry {
+            let details = match entry {
                 IndexEntry::PrivateKey(info) => {
+                    // Calculate completion percentage specifically for private keys
                     let percentage = if !info.is_complete && !info.pads.is_empty() {
                         let confirmed_count = info
                             .pads
@@ -287,26 +281,28 @@ impl DefaultIndexManager {
                     } else {
                         None
                     };
-                    all_details.push(KeyDetails {
+                    KeyDetails {
                         key: key.clone(),
                         size: info.data_size,
                         modified: info.modified,
                         is_finished: info.is_complete,
-                        completion_percentage: percentage,
+                        completion_percentage: percentage, // Use calculated percentage
                         public_address: None,
-                    });
+                    }
                 }
                 IndexEntry::PublicUpload(info) => {
-                    all_details.push(KeyDetails {
+                    // Public uploads don't have completion percentage in this sense
+                    KeyDetails {
                         key: key.clone(),
                         size: info.size,
                         modified: info.modified,
                         is_finished: true,
                         completion_percentage: None,
-                        public_address: Some(info.address),
-                    });
+                        public_address: Some(info.index_pad.address),
+                    }
                 }
-            }
+            };
+            all_details.push(details);
         }
 
         Ok(all_details)
@@ -349,7 +345,7 @@ impl DefaultIndexManager {
         let mut public_index_count = 0;
         let mut public_data_actual_bytes: u64 = 0;
         let mut unique_public_pads = HashSet::new(); // Tracks unique index AND data pads
-        let mut unique_public_data_only_pads = HashSet::new(); // Tracks unique data pads only (for wasted space calc)
+        let mut unique_public_data_only_pads: HashSet<ScratchpadAddress> = HashSet::new(); // Tracks unique data pads only (for wasted space calc)
 
         // --- Iterating through all index entries ---
         for entry in state_guard.index.values() {
@@ -390,21 +386,24 @@ impl DefaultIndexManager {
                     public_data_actual_bytes += upload_info.size as u64;
 
                     // Add index pad to the set of all public pads
-                    unique_public_pads.insert(upload_info.address);
+                    unique_public_pads.insert(upload_info.index_pad.address);
 
-                    // Add data pads to both sets
-                    if upload_info.data_pad_addresses.is_empty() && upload_info.size > 0 {
-                        // Log a warning if data pads are missing for a non-empty upload
+                    // Check for orphaned public uploads
+                    if upload_info.data_pads.is_empty() && upload_info.size > 0 {
                         warn!(
-                            "Public upload info for index {} (size {}) is missing data pad addresses. \\
-                             Stats for this entry may be incomplete. Recreate the upload with a newer version for accurate stats.",
-                            upload_info.address,
-                            upload_info.size
+                            "Public upload '{}' has size {} but no data pads listed.",
+                            upload_info.index_pad.address, upload_info.size
+                        );
+                    } else if upload_info.data_pads.is_empty() && upload_info.size == 0 {
+                        // Size 0, no pads - this is fine for an empty upload
+                        trace!(
+                            "Public upload '{}' is empty (size 0, no pads).",
+                            upload_info.index_pad.address
                         );
                     } else {
-                        for data_pad_addr in &upload_info.data_pad_addresses {
-                            unique_public_pads.insert(*data_pad_addr);
-                            unique_public_data_only_pads.insert(*data_pad_addr);
+                        // Iterate through PadInfo in data_pads
+                        for data_pad_info in &upload_info.data_pads {
+                            unique_public_pads.insert(data_pad_info.address);
                         }
                     }
                 }
@@ -891,15 +890,16 @@ impl DefaultIndexManager {
         let mut pads_to_add_pending_locally: Vec<(ScratchpadAddress, Vec<u8>)> = Vec::new();
 
         for pad_info in key_info.pads {
-            if let Some(key_bytes) = key_info.pad_keys.get(&pad_info.address).cloned() {
-                // Clone key_bytes here
+            // Iterate directly over owned pads
+            // The secret key is now part of PadInfo
+            if !pad_info.sk_bytes.is_empty() {
                 match pad_info.status {
                     PadStatus::Generated => {
                         trace!(
                             "Harvesting pad {} (Generated) to pending verification list (local)",
                             pad_info.address
                         );
-                        pads_to_add_pending_locally.push((pad_info.address, key_bytes));
+                        pads_to_add_pending_locally.push((pad_info.address, pad_info.sk_bytes));
                     }
                     PadStatus::Allocated | PadStatus::Written | PadStatus::Confirmed => {
                         // Use the last known counter stored in PadInfo
@@ -912,14 +912,14 @@ impl DefaultIndexManager {
                         );
                         pads_to_add_free_locally.push((
                             pad_info.address,
-                            key_bytes,
+                            pad_info.sk_bytes, // Use sk_bytes from PadInfo
                             counter_to_add,
                         ));
                     }
                 }
             } else {
                 warn!(
-                    "Could not find key for pad {} during harvesting. Skipping.",
+                    "Secret key bytes missing for pad {} during harvesting. Skipping.",
                     pad_info.address
                 );
             }

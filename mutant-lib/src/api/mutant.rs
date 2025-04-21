@@ -795,7 +795,7 @@ impl MutAnt {
         debug!("MutAnt::get_public_address for name '{}'", name);
         let index_copy = self.index_manager.get_index_copy().await?;
         Ok(index_copy.index.get(name).and_then(|entry| match entry {
-            IndexEntry::PublicUpload(info) => Some(info.address),
+            IndexEntry::PublicUpload(info) => Some(info.index_pad.address),
             IndexEntry::PrivateKey(_) => None, // Name exists but is a private key
         }))
     }

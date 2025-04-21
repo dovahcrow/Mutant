@@ -5,14 +5,20 @@ use crate::data::error::DataError;
 use crate::data::manager::DefaultDataManager;
 use crate::data::ops::fetch_public::fetch_public_op;
 use crate::data::ops::store_public::store_public_op;
+use crate::data::{PUBLIC_DATA_ENCODING, PUBLIC_INDEX_ENCODING};
 use crate::index::manager::DefaultIndexManager;
 use crate::index::structure::IndexEntry;
+use crate::index::structure::PadInfo;
+use crate::index::structure::PadStatus;
 use crate::network::adapter::create_public_scratchpad;
 use crate::network::adapter::AutonomiNetworkAdapter;
 use crate::network::NetworkChoice;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use autonomi::client::payment::PaymentOption;
 use autonomi::{Bytes, ScratchpadAddress, SecretKey};
+use rand::RngCore;
+use serial_test::serial;
+use std::assert_eq;
 use std::sync::Arc;
 
 // Define constant locally
@@ -276,6 +282,14 @@ async fn test_store_basic() {
     let info = key_info.unwrap();
     assert_eq!(info.data_size as usize, data.len());
     assert!(!info.pads.is_empty());
+    // Add checks for sk_bytes and counter in the first pad
+    let first_pad = &info.pads[0];
+    assert!(!first_pad.sk_bytes.is_empty(), "sk_bytes should be stored");
+    assert_eq!(
+        first_pad.last_known_counter, 0,
+        "Initial counter should be 0"
+    );
+    assert!(first_pad.receipt.is_none(), "Receipt should be None");
 }
 
 #[tokio::test]
@@ -384,7 +398,8 @@ mod public_op_tests {
     use super::*; // Bring outer scope items in
     use crate::data::error::DataError; // Specific errors might be needed
     use crate::index::error::IndexError;
-    use serial_test::serial;
+    use crate::index::structure::PadInfo;
+    use serial_test::serial; // Ensure PadInfo imported here too
 
     // Renamed helper to avoid potential conflicts
     async fn setup_public_test_env() -> (
@@ -426,70 +441,73 @@ mod public_op_tests {
     #[tokio::test]
     #[serial]
     async fn test_store_public_op_basic() {
-        let (_net_adapter, data_manager, index_manager) = setup_public_test_env().await;
-        let name = "public_store_basic".to_string();
-        let data = b"some public data here";
-        let result = store_public_op(&data_manager, name.clone(), data, None).await;
-        assert!(result.is_ok(), "store_public_op failed: {:?}", result.err());
-        let public_index_addr = result.unwrap();
+        let (net_adapter, data_manager, index_manager) = setup_public_test_env().await;
+        let name = "test_public_basic".to_string();
+        let mut data = vec![0u8; 1024]; // 1KB data
+        rand::thread_rng().fill_bytes(&mut data);
 
-        // Verify metadata in the index
-        let index_copy = index_manager.get_index_copy().await.unwrap();
-        let entry = index_copy.index.get(&name);
-        assert!(entry.is_some(), "Entry not found in index for {}", name);
-        let metadata = match entry.unwrap() {
-            IndexEntry::PublicUpload(info) => info,
-            _ => panic!("Expected PublicUpload entry, found PrivateKey"),
-        };
-        assert_eq!(
-            metadata.address, public_index_addr,
-            "Stored address mismatch"
+        let store_res = data_manager.store_public(name.clone(), &data, None).await;
+        assert!(
+            store_res.is_ok(),
+            "store_public failed: {:?}",
+            store_res.err()
         );
+        let public_index_addr = store_res.unwrap();
 
-        // Check index state (already done above implicitly, but double-checking size)
-        let index_copy = index_manager.get_index_copy().await.unwrap();
-        assert!(index_copy.index.contains_key(&name));
-        let entry = index_copy.index.get(&name).unwrap();
-        let metadata = match entry {
-            IndexEntry::PublicUpload(info) => info,
-            _ => panic!("Expected PublicUpload entry, found PrivateKey"),
-        };
-        assert_eq!(metadata.size, data.len());
+        // Verify index entry
+        let index_info_res = index_manager.get_public_upload_info(&name).await;
+        assert!(index_info_res.is_ok());
+        let index_info_opt = index_info_res.unwrap();
+        assert!(index_info_opt.is_some());
+        let index_info = index_info_opt.unwrap();
 
-        // Clean up (remove is not implemented for public, just clear index state)
-        // data_manager.remove(&name).await.unwrap(); // Assume remove works for public names too?
-        // For now, just manually remove from index for test isolation
-        index_manager.remove_key_info(&name).await.unwrap();
+        assert_eq!(index_info.index_pad.address, public_index_addr);
+        assert_eq!(index_info.size, data.len());
+        // Check data pads
+        assert!(!index_info.data_pads.is_empty());
+        for pad_info in &index_info.data_pads {
+            assert_eq!(pad_info.last_known_counter, 0);
+            assert!(!pad_info.sk_bytes.is_empty());
+            assert_eq!(pad_info.status, PadStatus::Written);
+            assert!(pad_info.receipt.is_none()); // Check receipt is None
+        }
+        // Check index pad
+        assert_eq!(index_info.index_pad.last_known_counter, 0);
+        assert!(!index_info.index_pad.sk_bytes.is_empty());
+        assert_eq!(index_info.index_pad.status, PadStatus::Written);
+        assert!(index_info.index_pad.receipt.is_none()); // Check receipt is None
     }
 
     #[tokio::test]
     #[serial]
     async fn test_store_public_op_empty_data() {
         let (_net_adapter, data_manager, index_manager) = setup_public_test_env().await;
-        let name = "public_empty_data".to_string();
-        let data: Vec<u8> = vec![];
+        let name = "test_public_empty".to_string();
+        let data = vec![];
 
-        let result = store_public_op(&data_manager, name.clone(), &data, None).await;
-        assert!(result.is_ok());
-        let public_addr = result.unwrap();
+        let store_res = data_manager.store_public(name.clone(), &data, None).await;
+        assert!(
+            store_res.is_ok(),
+            "store_public (empty) failed: {:?}",
+            store_res.err()
+        );
+        let public_index_addr = store_res.unwrap();
 
-        // Check index state
-        let index_copy = index_manager.get_index_copy().await.unwrap();
-        let entry = index_copy.index.get(&name).unwrap();
-        let metadata = match entry {
-            IndexEntry::PublicUpload(info) => info,
-            _ => panic!("Expected PublicUpload entry, found PrivateKey"),
-        };
-        assert_eq!(metadata.size, 0);
-        assert_eq!(metadata.address, public_addr);
+        // Verify index entry
+        let index_info = index_manager
+            .get_public_upload_info(&name)
+            .await
+            .unwrap()
+            .expect("Index info not found for empty public store");
 
-        // Fetch the empty data via public fetch op
-        let fetched_data = fetch_public_op(&data_manager, public_addr, None).await;
-        assert!(fetched_data.is_ok());
-        assert!(fetched_data.unwrap().is_empty());
-
-        // Clean up
-        index_manager.remove_key_info(&name).await.unwrap();
+        assert_eq!(index_info.index_pad.address, public_index_addr);
+        assert_eq!(index_info.size, 0);
+        assert!(index_info.data_pads.is_empty());
+        // Check index pad
+        assert_eq!(index_info.index_pad.last_known_counter, 0);
+        assert!(!index_info.index_pad.sk_bytes.is_empty());
+        assert_eq!(index_info.index_pad.status, PadStatus::Written);
+        assert!(index_info.index_pad.receipt.is_none()); // Check receipt is None
     }
 
     #[tokio::test]
@@ -516,39 +534,39 @@ mod public_op_tests {
     #[serial]
     async fn test_fetch_public_op_basic() {
         let (_net_adapter, data_manager, _index_manager) = setup_public_test_env().await;
-        let name = "public_fetch_basic_integrated".to_string();
-        let data = b"some fetchable public data integrated";
-        let store_result = store_public_op(&data_manager, name.clone(), data, None).await;
-        assert!(store_result.is_ok(), "Setup store failed");
-        let public_index_addr = store_result.unwrap();
+        let name = "test_fetch_public_basic".to_string();
+        let mut data = vec![0u8; 2048]; // 2KB data
+        rand::thread_rng().fill_bytes(&mut data);
 
-        let fetch_result = fetch_public_op(&data_manager, public_index_addr, None).await;
+        let store_res = data_manager.store_public(name.clone(), &data, None).await;
+        let public_index_addr = store_res.expect("store_public failed in fetch test");
+
+        let fetch_res = data_manager.fetch_public(public_index_addr, None).await;
         assert!(
-            fetch_result.is_ok(),
-            "fetch_public_op failed: {:?}",
-            fetch_result.err()
+            fetch_res.is_ok(),
+            "fetch_public failed: {:?}",
+            fetch_res.err()
         );
-        let fetched_data = fetch_result.unwrap();
-        assert_eq!(fetched_data.as_ref(), data, "Fetched data mismatch");
+        assert_eq!(fetch_res.unwrap().to_vec(), data);
     }
 
     #[tokio::test]
     #[serial]
     async fn test_fetch_public_op_empty() {
         let (_net_adapter, data_manager, _index_manager) = setup_public_test_env().await;
-        let name = "public_fetch_empty_integrated".to_string();
-        let data = b"";
-        let store_result = store_public_op(&data_manager, name.clone(), data, None).await;
-        assert!(store_result.is_ok(), "Setup store for empty failed");
-        let public_index_addr = store_result.unwrap();
-        let fetch_result = fetch_public_op(&data_manager, public_index_addr, None).await;
+        let name = "test_fetch_public_empty".to_string();
+        let data = vec![];
+
+        let store_res = data_manager.store_public(name.clone(), &data, None).await;
+        let public_index_addr = store_res.expect("store_public (empty) failed in fetch test");
+
+        let fetch_res = data_manager.fetch_public(public_index_addr, None).await;
         assert!(
-            fetch_result.is_ok(),
-            "fetch_public_op for empty failed: {:?}",
-            fetch_result.err()
+            fetch_res.is_ok(),
+            "fetch_public (empty) failed: {:?}",
+            fetch_res.err()
         );
-        let fetched_data = fetch_result.unwrap();
-        assert!(fetched_data.is_empty(), "Fetched data should be empty");
+        assert!(fetch_res.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -614,6 +632,125 @@ mod public_op_tests {
                 assert_eq!(enc, invalid_encoding, "Incorrect encoding reported");
             }
             e => panic!("Expected InvalidPublicIndexEncoding error, got {:?}", e),
+        }
+    }
+
+    // --- Update Test ---
+    #[tokio::test]
+    #[serial]
+    async fn test_update_public_op_basic_and_counter() {
+        let (_net_adapter, data_manager, index_manager) = setup_public_test_env().await;
+        let name = "test_public_update_basic".to_string();
+        let mut data1 = vec![0u8; 1024]; // 1KB initial data
+        rand::thread_rng().fill_bytes(&mut data1);
+        let mut data2 = vec![0u8; 1024]; // 1KB updated data
+        rand::thread_rng().fill_bytes(&mut data2);
+
+        // 1. Initial Store
+        let store_res = data_manager.store_public(name.clone(), &data1, None).await;
+        assert!(store_res.is_ok(), "Initial store_public failed");
+        let public_index_addr = store_res.unwrap();
+
+        // Quick check initial state
+        let initial_info = index_manager
+            .get_public_upload_info(&name)
+            .await
+            .unwrap()
+            .expect("Index info not found after initial store");
+        assert_eq!(
+            initial_info.data_pads[0].last_known_counter, 0,
+            "Initial data pad counter mismatch"
+        );
+        assert_eq!(
+            initial_info.index_pad.last_known_counter, 0,
+            "Initial index pad counter mismatch"
+        );
+
+        // 2. Update
+        let update_res = data_manager.update_public(&name, &data2, None).await;
+        assert!(
+            update_res.is_ok(),
+            "update_public failed: {:?}",
+            update_res.err()
+        );
+
+        // 3. Verify state after update
+        let updated_info_res = index_manager.get_public_upload_info(&name).await;
+        assert!(updated_info_res.is_ok());
+        let updated_info = updated_info_res
+            .unwrap()
+            .expect("Index info not found after update");
+
+        assert_eq!(
+            updated_info.index_pad.address, public_index_addr,
+            "Index address should not change"
+        );
+        assert_eq!(updated_info.size, data2.len());
+        assert_eq!(
+            updated_info.data_pads.len(),
+            initial_info.data_pads.len(),
+            "Data pad count should not change"
+        );
+
+        // Check counters are incremented
+        assert_eq!(
+            updated_info.data_pads[0].last_known_counter, 1,
+            "Data pad counter should be incremented"
+        );
+        assert_eq!(
+            updated_info.index_pad.last_known_counter, 1,
+            "Index pad counter should be incremented"
+        );
+        // Check other fields remain valid
+        assert!(!updated_info.data_pads[0].sk_bytes.is_empty());
+        assert!(updated_info.data_pads[0].receipt.is_none());
+        assert!(!updated_info.index_pad.sk_bytes.is_empty());
+        assert!(updated_info.index_pad.receipt.is_none());
+
+        // 4. Fetch updated data
+        let fetch_res = data_manager.fetch_public(public_index_addr, None).await;
+        assert!(
+            fetch_res.is_ok(),
+            "fetch_public after update failed: {:?}",
+            fetch_res.err()
+        );
+        assert_eq!(
+            fetch_res.unwrap().to_vec(),
+            data2,
+            "Fetched updated data mismatch"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_update_public_op_chunk_count_change_fails() {
+        let (_net_adapter, data_manager, _index_manager) = setup_public_test_env().await;
+        let name = "test_public_update_chunk_change".to_string();
+        let chunk_size = 4 * 1024; // Assume default or get from index? Let's assume 4KB
+        let data1 = vec![1u8; chunk_size - 10]; // 1 chunk initially
+        let data2 = vec![2u8; chunk_size + 10]; // 2 chunks after update
+
+        // Initial Store
+        data_manager
+            .store_public(name.clone(), &data1, None)
+            .await
+            .expect("Initial store failed");
+
+        // Attempt Update with different chunk count
+        let update_res = data_manager.update_public(&name, &data2, None).await;
+        assert!(
+            update_res.is_err(),
+            "Update with chunk count change should fail"
+        );
+        match update_res.err().unwrap() {
+            DataError::InvalidOperation(msg) => {
+                assert!(
+                    msg.contains("different number of chunks is not supported"),
+                    "Incorrect error message: {}",
+                    msg
+                );
+            }
+            e => panic!("Expected InvalidOperation error, got {:?}", e),
         }
     }
 }
