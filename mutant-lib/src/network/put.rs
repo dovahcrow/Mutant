@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::index::structure::PadInfo;
 use crate::network::error::NetworkError;
 use crate::network::wallet::payment_option_for_pad;
@@ -36,14 +38,11 @@ pub(super) async fn put(
 ) -> Result<PutResult, NetworkError> {
     let client = adapter.get_or_init_client().await?;
 
-    let mut secret_key_bytes: [u8; 32] = [0; 32];
-    secret_key_bytes.copy_from_slice(&pad_info.sk_bytes);
-
     // Reconstruct SecretKey from bytes stored in PadInfo
-    let owner_sk = SecretKey::from_bytes(secret_key_bytes)
-        .map_err(|e| NetworkError::InternalError(format!("Failed to reconstruct SK: {}", e)))?;
+    let owner_sk = pad_info.secret_key();
 
-    let data_bytes = Bytes::copy_from_slice(data);
+    // i want the data to be a Scratchpad::MAX_SIZE
+    let data_bytes = Bytes::copy_from_slice(&data);
 
     let scratchpad = if is_public {
         create_public_scratchpad(
@@ -65,6 +64,10 @@ pub(super) async fn put(
     trace!("network::put called for address: {}", addr);
 
     let payment = payment_option_for_pad(pad_info, &adapter.wallet)?;
+    match &payment {
+        PaymentOption::Wallet(_) => println!("payment: Wallet"),
+        PaymentOption::Receipt(receipt) => println!("payment: Receipt {:#?}", receipt),
+    }
 
     let (cost, addr) = client
         .scratchpad_put(scratchpad.clone(), payment)
@@ -74,20 +77,28 @@ pub(super) async fn put(
             NetworkError::InternalError(format!("Failed to put scratchpad {}: {}", addr, e))
         })?;
 
+    println!("cost: {:#?}", cost);
+
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    let mut pad_info = pad_info.clone();
+    pad_info.address = addr;
+    pad_info.size = scratchpad.size();
+
     // if pad_info.receipt is None, fetch the receipt from the network.  use fetch_receipt from the adapter
     let receipt = if pad_info.receipt.is_none() {
-        adapter.fetch_receipt(pad_info).await?
+        adapter.fetch_receipt(&pad_info).await?
     } else {
         pad_info.receipt.clone().unwrap()
     };
 
     Ok(PutResult {
-        data: data.to_vec(),
         cost,
         address: addr,
         counter: scratchpad.counter(),
         data_encoding,
         receipt,
+        size_tmp: scratchpad.size(),
     })
 }
 

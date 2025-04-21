@@ -1,9 +1,11 @@
-use crate::pad_lifecycle::PadOrigin;
 use autonomi::client::payment::Receipt;
 use autonomi::ScratchpadAddress;
+use blsttc::SecretKey;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use crate::network::NetworkError;
 
 /// Default size for scratchpads in bytes (4 MiB minus one page for metadata).
 pub(crate) const DEFAULT_SCRATCHPAD_SIZE: usize = (4 * 1024 * 1024) - 4096;
@@ -53,6 +55,16 @@ pub struct PadInfo {
     /// Used for subsequent updates via PaymentOption::Receipt.
     #[serde(default)] // Default for compatibility with older index formats
     pub receipt: Option<Receipt>,
+}
+
+impl PadInfo {
+    pub fn secret_key(&self) -> SecretKey {
+        let mut secret_key_bytes: [u8; 32] = [0; 32];
+        secret_key_bytes.copy_from_slice(&self.sk_bytes);
+        SecretKey::from_bytes(secret_key_bytes)
+            .map_err(|e| NetworkError::InternalError(format!("Failed to reconstruct SK: {}", e)))
+            .unwrap()
+    }
 }
 
 /// Information about a specific key stored in the system.

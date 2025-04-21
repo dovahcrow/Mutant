@@ -7,11 +7,11 @@ pub mod wallet;
 use blsttc::SecretKey;
 pub use error::NetworkError;
 
+use self::client::create_client;
+use self::wallet::create_wallet;
 use crate::index::structure::PadInfo;
-use crate::network::client::create_client;
-use crate::network::wallet::create_wallet;
 
-use autonomi::client::payment::{PaymentOption, Receipt};
+use autonomi::client::payment::Receipt;
 use autonomi::{AttoTokens, Client, Scratchpad, ScratchpadAddress, Wallet};
 use log::{debug, info};
 use std::sync::Arc;
@@ -30,13 +30,14 @@ pub struct GetResult {
     pub data_encoding: u64,
 }
 
+#[derive(Debug, Clone)]
 pub struct PutResult {
-    pub data: Vec<u8>,
     pub cost: AttoTokens,
     pub address: ScratchpadAddress,
     pub counter: u64,
     pub data_encoding: u64,
     pub receipt: Receipt,
+    pub size_tmp: usize,
 }
 
 /// Provides an interface to interact with the Autonomi network.
@@ -86,15 +87,17 @@ impl AutonomiNetworkAdapter {
 
     /// Retrieves the raw content of a scratchpad from the network.
     /// Delegates to the `get` module.
-    pub async fn get_private(
-        &self,
-        address: &ScratchpadAddress,
-    ) -> Result<GetResult, NetworkError> {
-        get::get(self, address, false).await
+    /// Requires PadInfo to reconstruct the SecretKey for decryption.
+    pub async fn get_private(&self, pad_info: &PadInfo) -> Result<GetResult, NetworkError> {
+        // Reconstruct SecretKey from bytes stored in PadInfo
+        let owner_sk = pad_info.secret_key();
+        // Pass Some(secret_key) to get::get
+        get::get(self, &pad_info.address, Some(&owner_sk)).await
     }
 
     pub async fn get_public(&self, address: &ScratchpadAddress) -> Result<GetResult, NetworkError> {
-        get::get(self, address, true).await
+        // Pass None to get::get as no decryption is needed
+        get::get(self, address, None).await
     }
 
     pub async fn put_private(
@@ -112,6 +115,7 @@ impl AutonomiNetworkAdapter {
         data: &[u8],
         data_encoding: u64,
     ) -> Result<PutResult, NetworkError> {
+        println!("putting public");
         self.put(pad_info, data, data_encoding, true).await
     }
 
@@ -128,16 +132,24 @@ impl AutonomiNetworkAdapter {
     }
 
     pub async fn fetch_receipt(&self, pad_info: &PadInfo) -> Result<Receipt, NetworkError> {
+        println!(
+            "fetching receipt {:#?}, {:#?}",
+            pad_info.address, pad_info.size
+        );
         let client = self.get_or_init_client().await?;
         let quotes = client
             .get_store_quotes(
                 autonomi::client::quote::DataTypes::Scratchpad,
-                vec![(pad_info.address.xorname(), pad_info.size as usize)].into_iter(),
+                vec![(pad_info.address.xorname(), pad_info.size)].into_iter(),
             )
             .await
             .map_err(|e| NetworkError::InternalError(format!("Failed to fetch receipt: {}", e)))?;
 
+        println!("quotes: {:#?}", quotes.len());
+
         let receipt = autonomi::client::payment::receipt_from_store_quotes(quotes);
+
+        println!("receipt: {:#?}", receipt);
 
         Ok(receipt)
     }

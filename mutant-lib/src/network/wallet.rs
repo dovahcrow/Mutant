@@ -1,6 +1,6 @@
 use crate::index::structure::PadStatus;
 use crate::network::NetworkChoice;
-use crate::{index::PadInfo, network::error::NetworkError};
+use crate::{index::structure::PadInfo, network::error::NetworkError};
 use autonomi::client::payment::Receipt;
 use autonomi::{client::payment::PaymentOption, Network, SecretKey, Wallet};
 use hex;
