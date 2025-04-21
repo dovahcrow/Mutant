@@ -125,7 +125,6 @@ impl AutonomiNetworkAdapter {
         data: &[u8],
         data_encoding: u64,
     ) -> Result<PutResult, NetworkError> {
-        println!("putting public");
         self.put(pad_info, data, data_encoding, true).await
     }
 

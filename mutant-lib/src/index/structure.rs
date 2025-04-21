@@ -61,40 +61,11 @@ impl PadInfo {
     }
 }
 
-/// Information about a specific key stored in the system.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct KeyInfo {
-    /// List of pads associated with this key.
-    pub pads: Vec<PadInfo>,
-
-    /// The total size of the data associated with this key.
-    pub data_size: usize,
-
-    /// Timestamp of the last modification to this key's information.
-    pub modified: DateTime<Utc>,
-
-    /// Flag indicating if all pads for this key have been confirmed.
-    pub is_complete: bool,
-}
-
-/// Information about a publicly uploaded entry in the index.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PublicUploadInfo {
-    /// Details of the index scratchpad for this public upload.
-    pub index_pad: PadInfo,
-    /// The total size of the publicly uploaded data in bytes.
-    pub size: usize,
-    /// Timestamp indicating when the public upload was created or last modified.
-    pub modified: DateTime<Utc>,
-    /// Details of the data pads storing the actual chunks.
-    pub data_pads: Vec<PadInfo>,
-}
-
 /// Represents an entry in the master index, which can be either private key data or public upload data.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum IndexEntry {
-    PrivateKey(KeyInfo),
-    PublicUpload(PublicUploadInfo),
+    PrivateKey(Vec<PadInfo>),
+    PublicUpload(PadInfo, Vec<PadInfo>),
 }
 
 /// The central index managing all keys and scratchpads.
