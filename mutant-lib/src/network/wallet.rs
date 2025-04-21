@@ -1,8 +1,6 @@
-use crate::index::structure::PadStatus;
+use crate::network::error::NetworkError;
 use crate::network::NetworkChoice;
-use crate::{index::structure::PadInfo, network::error::NetworkError};
-use autonomi::client::payment::Receipt;
-use autonomi::{client::payment::PaymentOption, Network, SecretKey, Wallet};
+use autonomi::{Network, SecretKey, Wallet};
 use hex;
 use log::info;
 use sha2::{Digest, Sha256};
@@ -36,23 +34,4 @@ pub(crate) fn create_wallet(
         .map_err(|e| NetworkError::WalletError(format!("Failed to create wallet: {}", e)))?;
 
     Ok((wallet, secret_key))
-}
-
-pub(super) fn payment_option_for_pad(
-    pad_info: &PadInfo,
-    wallet: &Wallet,
-) -> Result<PaymentOption, NetworkError> {
-    match pad_info.status {
-        PadStatus::Generated => Ok(PaymentOption::Wallet(wallet.clone())),
-        _ => {
-            if let Some(receipt) = &pad_info.receipt {
-                Ok(PaymentOption::Receipt(receipt.clone()))
-            } else {
-                Err(NetworkError::InternalError(format!(
-                    "Pad status is {:?}, but no receipt found",
-                    pad_info.status
-                )))
-            }
-        }
-    }
 }

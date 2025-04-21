@@ -49,12 +49,6 @@ pub struct PadInfo {
     /// Added for unified pad management and potential reuse.
     #[serde(default)] // Default for compatibility with older index formats
     pub sk_bytes: Vec<u8>,
-
-    /// The payment receipt obtained when the pad was first paid for.
-    /// Stored when a pad is initially created via scratchpad_put or scratchpad_create.
-    /// Used for subsequent updates via PaymentOption::Receipt.
-    #[serde(default)] // Default for compatibility with older index formats
-    pub receipt: Option<Receipt>,
 }
 
 impl PadInfo {
