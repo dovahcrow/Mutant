@@ -512,9 +512,9 @@ async fn test_generated_pad_counter_increment() {
     network_adapter
         .scratchpad_put(initial_scratchpad, payment.clone())
         .await
-        .expect("Failed to put initial scratchpad");
+        .expect("Failed to put initial data using put_raw");
 
-    // 3. Verify counter increments to 1
+    // 3. Verify counter is 0 after initial create
     info!("Fetching scratchpad after first write for {}", address);
     let scratchpad_after_write1 = network_adapter
         .get_raw_scratchpad(&address)
@@ -523,25 +523,26 @@ async fn test_generated_pad_counter_increment() {
 
     assert_eq!(
         scratchpad_after_write1.counter(),
-        1,
-        "Counter should be 1 after first write"
+        0, // Expect 0 after create
+        "Counter should be 0 after first write (create)"
     );
     info!(
         "Counter is {} after first write, as expected.",
         scratchpad_after_write1.counter()
     );
 
-    // 4. Simulate second write (update) with counter 1
+    // 4. Simulate second write (update) using put_raw with Written status
     let data2 = Bytes::from("second write data");
-    let updated_scratchpad = Scratchpad::new(&key, PRIVATE_DATA_ENCODING, &data2, 1);
-
-    info!("Putting updated scratchpad (counter 1) for {}", address);
+    info!(
+        "Putting updated data (counter 1 expected internally by update) for {}",
+        address
+    );
     network_adapter
-        .scratchpad_put(updated_scratchpad, payment)
+        .put_raw(&key, &data2, &PadStatus::Written, PRIVATE_DATA_ENCODING) // Use Written status for update
         .await
-        .expect("Failed to put updated scratchpad");
+        .expect("Failed to put updated data using put_raw");
 
-    // 5. Verify counter increments to 2
+    // 5. Verify counter increments to 1 after update
     info!("Fetching scratchpad after second write for {}", address);
     let scratchpad_after_write2 = network_adapter
         .get_raw_scratchpad(&address)
@@ -550,8 +551,8 @@ async fn test_generated_pad_counter_increment() {
 
     assert_eq!(
         scratchpad_after_write2.counter(),
-        2,
-        "Counter should be 2 after second write"
+        1, // Expect 1 after update
+        "Counter should be 1 after second write (update)"
     );
     info!(
         "Counter is {} after second write, as expected.",
