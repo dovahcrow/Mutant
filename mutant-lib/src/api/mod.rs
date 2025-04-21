@@ -126,4 +126,21 @@ mod tests {
         let data = mutant.get(&user_key).await.unwrap();
         assert_eq!(data, data_bytes);
     }
+
+    #[tokio::test]
+    async fn test_store_resume() {
+        let mutant = setup_mutant().await;
+        let user_key = generate_random_string(10);
+        let data_bytes = generate_random_bytes(128);
+
+        let result = mutant.put(&user_key, &data_bytes).await;
+
+        assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
+
+        let data_bytes = generate_random_bytes(128);
+
+        let result = mutant.put(&user_key, &data_bytes).await;
+
+        assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
+    }
 }

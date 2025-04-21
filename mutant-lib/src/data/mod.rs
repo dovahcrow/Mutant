@@ -59,7 +59,7 @@ impl Data {
         if self.index.read().await.contains_key(&name) {
             if self.index.read().await.verify_checksum(&name, data_bytes) {
                 // it's a resume
-                return Ok(());
+                self.resume(name, data_bytes).await
             } else {
                 // it's an update
                 self.index.write().await.remove_key(&name).unwrap();
@@ -73,7 +73,23 @@ impl Data {
         }
     }
 
-    pub async fn first_store(&self, name: &str, data_bytes: &[u8]) -> Result<(), Error> {
+    async fn resume(&self, name: &str, data_bytes: &[u8]) -> Result<(), Error> {
+        // it's a resume
+        let pads = self.index.read().await.get_pads(name);
+
+        let context = Context {
+            index: self.index.clone(),
+            network: self.network.clone(),
+            name: Arc::new(name.to_string()),
+            data_bytes: Arc::new(data_bytes.to_vec()),
+        };
+
+        self.write_pipeline(context, pads).await;
+
+        Ok(())
+    }
+
+    async fn first_store(&self, name: &str, data_bytes: &[u8]) -> Result<(), Error> {
         // it's a first store
         let pads = self
             .index
@@ -109,6 +125,11 @@ impl Data {
         confirm_tx: Sender<PadInfo>,
     ) {
         for pad in pads {
+            if pad.status != PadStatus::Generated && pad.status != PadStatus::Free {
+                confirm_tx.send(pad).unwrap();
+                continue;
+            }
+
             let context = context.clone();
             let confirm_tx = confirm_tx.clone();
             tokio::task::spawn(async move {
@@ -141,6 +162,10 @@ impl Data {
         let mut tasks = Vec::new();
 
         while let Ok(pad) = confirm_rx.recv().await {
+            if pad.status != PadStatus::Written {
+                continue;
+            }
+
             let context = context.clone();
             tasks.push(tokio::task::spawn(async move {
                 println!("confirming pad {:#?}", pad);
