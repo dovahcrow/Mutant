@@ -304,58 +304,6 @@ impl AutonomiNetworkAdapter {
             })
     }
 
-    /// Updates an existing scratchpad on the network using its secret key.
-    ///
-    /// This assumes the scratchpad already exists and was paid for.
-    /// It uses the underlying `client.scratchpad_update` which is documented as free.
-    /// The client method handles fetching the current pad, updating content, incrementing counter, and re-signing.
-    ///
-    /// # Arguments
-    ///
-    /// * `owner_key` - The secret key of the scratchpad to update.
-    /// * `data_encoding` - The encoding type identifier for the data.
-    /// * `data` - The new unencrypted data to store.
-    ///
-    /// # Errors
-    ///
-    /// Returns `NetworkError` if the client cannot be initialized or if the update fails.
-    pub async fn scratchpad_update(
-        &self,
-        owner_key: &SecretKey,
-        data_encoding: u64,
-        data: &Bytes,
-    ) -> Result<(), NetworkError> {
-        let addr = ScratchpadAddress::new(owner_key.public_key());
-        trace!(
-            "AutonomiNetworkAdapter::scratchpad_update called for address: {} with encoding {}",
-            addr,
-            data_encoding
-        );
-        let client = self.get_or_init_client().await?;
-
-        client
-            .scratchpad_update(owner_key, data_encoding, data)
-            .await
-            .map_err(|e| {
-                error!("Failed to update scratchpad {}: {}", addr, e);
-                // Adjust error mapping based on available ScratchpadError variants
-                match e {
-                    // If the network layer itself returns an error, wrap it.
-                    ScratchpadError::Network(client_err) => NetworkError::InternalError(format!(
-                        "Network error during scratchpad_update for {}: {}",
-                        addr, client_err
-                    )),
-                    // Treat other specific scratchpad errors as internal network errors
-                    // as they likely indicate issues finding/accessing the pad on the network.
-                    _ => NetworkError::InternalError(format!(
-                        "Failed to update scratchpad {}: {}",
-                        addr, e
-                    )),
-                }
-            })
-    }
-
-    /// Fetches storage quotes for the given content addresses and sizes.
     /// Wraps the `Client::get_store_quotes` method.
     ///
     /// # Arguments

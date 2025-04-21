@@ -1,4 +1,5 @@
 use crate::network::NetworkError;
+use autonomi::ScratchpadAddress;
 use thiserror::Error;
 
 /// Errors that can occur within the index management module.
@@ -47,6 +48,26 @@ pub enum IndexError {
     /// Pad with address '{0}' not found for key '{1}'
     #[error("Pad with address '{0}' not found for key '{1}'")]
     PadNotFound(autonomi::ScratchpadAddress, String),
+
+    /// Public upload '{0}' not found
+    #[error("Public upload '{0}' not found")]
+    PublicUploadNotFound(String),
+
+    /// Entry '{0}' is not a public upload
+    #[error("Entry '{0}' is not a public upload")]
+    NotAPublicUpload(String),
+
+    /// Data pad with index {1} not found for public upload '{0}'
+    #[error("Data pad with index {1} not found for public upload '{0}'")]
+    DataPadNotFound(String, usize),
+
+    /// Could not acquire lock
+    #[error("Could not acquire lock")]
+    Lock,
+
+    /// Pad lifecycle error: {0}
+    #[error("Pad lifecycle error: {0}")]
+    PadLifecycle(String),
 }
 
 impl From<serde_cbor::Error> for IndexError {

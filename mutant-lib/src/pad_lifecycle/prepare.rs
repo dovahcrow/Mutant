@@ -172,7 +172,7 @@ pub(crate) async fn prepare_pads_for_store(
                     tasks_to_run.push(WriteTaskInput {
                         pad_info: pad_info.clone(),
                         secret_key: secret_key.clone(),
-                        chunk_data: chunk.clone(),
+                        chunk_data: chunk.clone().into(),
                     });
 
                     pad_info.status = PadStatus::Generated;
@@ -299,8 +299,8 @@ pub(crate) async fn prepare_pads_for_store(
                 );
                 tasks_to_run.push(WriteTaskInput {
                     pad_info: new_pad_info,
-                    secret_key,
-                    chunk_data: chunk.clone(),
+                    secret_key: secret_key.clone(),
+                    chunk_data: chunk.clone().into(),
                 });
             }
 

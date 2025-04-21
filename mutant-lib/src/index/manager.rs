@@ -5,6 +5,7 @@ use crate::index::structure::{
 };
 use crate::network::AutonomiNetworkAdapter;
 use crate::types::{KeyDetails, KeySummary, StorageStats};
+use autonomi::client::payment::Receipt;
 use autonomi::{ScratchpadAddress, SecretKey};
 use chrono::Utc;
 use log::{debug, error, info, trace, warn};
@@ -484,9 +485,23 @@ impl DefaultIndexManager {
         info: PublicUploadInfo,
     ) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
-        if state_guard.index.contains_key(&name) {
-            return Err(IndexError::KeyExists(name));
+        // Check if the key exists as a private key
+        if let Some(IndexEntry::PrivateKey(_)) = state_guard.index.get(&name) {
+            // It's generally okay to overwrite private with public IF NEEDED, but let's prevent it for now.
+            // Revisit if use case arises. For now, explicit delete is safer.
+            warn!(
+                "Attempted to insert public upload info for '{}', but it already exists as a private key. Operation aborted.",
+                name
+            );
+            return Err(IndexError::KeyExists(name)); // Prevent overwriting private with public
         }
+
+        // Check if it already exists as a public upload (potential resume/overwrite scenario)
+        if let Some(IndexEntry::PublicUpload(_)) = state_guard.index.get(&name) {
+            warn!("Overwriting existing public upload info for '{}'", name);
+            // Allow overwrite for public uploads
+        }
+
         state_guard
             .index
             .insert(name, IndexEntry::PublicUpload(info));
@@ -971,35 +986,149 @@ impl DefaultIndexManager {
         let state_guard = self.state.lock().await;
         Ok(state_guard.index.get(name).and_then(|entry| match entry {
             IndexEntry::PublicUpload(info) => Some(info.clone()),
-            IndexEntry::PrivateKey(_) => None, // Key exists, but is not a public upload
+            IndexEntry::PrivateKey(_) => None, // Name exists, but is not a public upload
         }))
     }
 
-    /// Replaces the `PublicUploadInfo` for an existing public upload entry.
-    /// Does nothing if the key does not exist or is a private key.
-    /// Logs warnings in those cases but returns Ok(()).
+    /// Replaces the entire `PublicUploadInfo` for a given name. Use with caution.
+    /// Primarily intended for recovery or complex update scenarios.
+    /// Consider using specific update methods (`update_public_data_pad_info`, `update_public_index_pad_info`) for standard updates.
     pub async fn replace_public_upload_info(
         &self,
         name: &str,
         new_info: PublicUploadInfo,
     ) -> Result<(), IndexError> {
         let mut state_guard = self.state.lock().await;
-        if let Some(entry) = state_guard.index.get_mut(name) {
-            if let IndexEntry::PublicUpload(_) = entry {
-                debug!("Replacing PublicUploadInfo for '{}'", name);
+        match state_guard.index.get_mut(name) {
+            Some(entry @ IndexEntry::PublicUpload(_)) => {
                 *entry = IndexEntry::PublicUpload(new_info);
-            } else {
-                warn!(
-                    "Attempted to replace PublicUploadInfo for '{}', but it is a private key.",
+                Ok(())
+            }
+            Some(IndexEntry::PrivateKey(_)) => {
+                error!(
+                    "Attempted to replace public upload info for '{}', but it is a private key",
                     name
                 );
+                Err(IndexError::NotAPublicUpload(name.to_string()))
             }
-        } else {
-            warn!(
-                "Attempted to replace PublicUploadInfo for non-existent upload '{}'",
-                name
-            );
+            None => {
+                error!("Public upload '{}' not found for replacement", name);
+                Err(IndexError::PublicUploadNotFound(name.to_string()))
+            }
         }
-        Ok(())
+    }
+
+    /// Updates the status and optionally the receipt of a specific data pad within a public upload entry.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name identifier of the public upload.
+    /// * `chunk_index` - The index of the data chunk/pad to update.
+    /// * `new_status` - The new status to set for the data pad.
+    /// * `receipt` - An optional receipt to store for the data pad.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError::PublicUploadNotFound` if no entry exists for `name`.
+    /// Returns `IndexError::NotAPublicUpload` if the entry for `name` is a private key.
+    /// Returns `IndexError::DataPadNotFound` if no data pad with `chunk_index` is found.
+    pub async fn update_public_data_pad_info(
+        &self,
+        name: &str,
+        chunk_index: usize,
+        new_status: PadStatus,
+        receipt: Option<Receipt>,
+    ) -> Result<(), IndexError> {
+        let mut state_guard = self.state.lock().await;
+        match state_guard.index.get_mut(name) {
+            Some(IndexEntry::PublicUpload(public_info)) => {
+                if let Some(data_pad) = public_info
+                    .data_pads
+                    .iter_mut()
+                    .find(|p| p.chunk_index == chunk_index)
+                {
+                    trace!(
+                        "Updating data pad {} for public upload '{}' to status {:?}, receipt: {}",
+                        chunk_index,
+                        name,
+                        new_status,
+                        receipt.is_some()
+                    );
+                    data_pad.status = new_status;
+                    if receipt.is_some() {
+                        data_pad.receipt = receipt;
+                    }
+                    // Potentially update modified time?
+                    // public_info.modified = Utc::now();
+                    Ok(())
+                } else {
+                    error!(
+                        "Data pad with index {} not found for public upload '{}'",
+                        chunk_index, name
+                    );
+                    Err(IndexError::DataPadNotFound(name.to_string(), chunk_index))
+                }
+            }
+            Some(IndexEntry::PrivateKey(_)) => {
+                error!(
+                    "Attempted to update public data pad for '{}', but it is a private key",
+                    name
+                );
+                Err(IndexError::NotAPublicUpload(name.to_string()))
+            }
+            None => {
+                error!("Public upload '{}' not found for data pad update", name);
+                Err(IndexError::PublicUploadNotFound(name.to_string()))
+            }
+        }
+    }
+
+    /// Updates the status and optionally the receipt of the index pad within a public upload entry.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name identifier of the public upload.
+    /// * `new_status` - The new status to set for the index pad.
+    /// * `receipt` - An optional receipt to store for the index pad.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IndexError::PublicUploadNotFound` if no entry exists for `name`.
+    /// Returns `IndexError::NotAPublicUpload` if the entry for `name` is a private key.
+    pub async fn update_public_index_pad_info(
+        &self,
+        name: &str,
+        new_status: PadStatus,
+        receipt: Option<Receipt>,
+    ) -> Result<(), IndexError> {
+        let mut state_guard = self.state.lock().await;
+        match state_guard.index.get_mut(name) {
+            Some(IndexEntry::PublicUpload(public_info)) => {
+                trace!(
+                    "Updating index pad for public upload '{}' to status {:?}, receipt: {}",
+                    name,
+                    new_status,
+                    receipt.is_some()
+                );
+                public_info.index_pad.status = new_status;
+                if receipt.is_some() {
+                    public_info.index_pad.receipt = receipt;
+                }
+                // Update modified time when the index pad (the main entry point) is confirmed
+                public_info.modified = Utc::now();
+                Ok(())
+            }
+            Some(IndexEntry::PrivateKey(_)) => {
+                error!(
+                    "Attempted to update public index pad for '{}', but it is a private key",
+                    name
+                );
+                Err(IndexError::NotAPublicUpload(name.to_string()))
+            }
+            None => {
+                error!("Public upload '{}' not found for index pad update", name);
+                Err(IndexError::PublicUploadNotFound(name.to_string()))
+            }
+        }
     }
 }
