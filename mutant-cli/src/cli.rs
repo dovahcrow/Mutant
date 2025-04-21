@@ -50,27 +50,26 @@ pub enum Commands {
         #[arg(short, long, default_value_t = false)]
         long: bool,
     },
+    // #[command(about = "Show storage statistics")]
+    // Stats,
 
-    #[command(about = "Show storage statistics")]
-    Stats,
+    // #[command(about = "Reset local cache and index")]
+    // Reset,
 
-    #[command(about = "Reset local cache and index")]
-    Reset,
+    // #[command(about = "Import a scratchpad private key")]
+    // Import { private_key: String },
 
-    #[command(about = "Import a scratchpad private key")]
-    Import { private_key: String },
+    // #[command(about = "Synchronize local index cache with remote storage")]
+    // Sync {
+    //     #[arg(long, default_value_t = false)]
+    //     push_force: bool,
+    // },
 
-    #[command(about = "Synchronize local index cache with remote storage")]
-    Sync {
-        #[arg(long, default_value_t = false)]
-        push_force: bool,
-    },
+    // #[command(
+    //     about = "Perform a check on scratchpads that should have been created but maybe not and clean them up"
+    // )]
+    // Purge,
 
-    #[command(
-        about = "Perform a check on scratchpads that should have been created but maybe not and clean them up"
-    )]
-    Purge,
-
-    #[command(about = "Reserve a key without storing a value")]
-    Reserve(crate::commands::reserve::Reserve),
+    // #[command(about = "Reserve a key without storing a value")]
+    // Reserve(crate::commands::reserve::Reserve),
 }

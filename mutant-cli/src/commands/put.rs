@@ -1,9 +1,9 @@
-use crate::callbacks::StyledProgressBar;
-use crate::callbacks::put::create_put_callback;
+// use crate::callbacks::StyledProgressBar;
+// use crate::callbacks::put::create_put_callback;
 use indicatif::MultiProgress;
 use log::{debug, info, warn};
 use mutant_lib::MutAnt;
-use mutant_lib::error::{DataError, Error as LibError};
+use mutant_lib::error::Error as LibError;
 use mutant_lib::storage::ScratchpadAddress;
 use std::io::{self, Read};
 use std::process::ExitCode;
@@ -46,244 +46,171 @@ pub async fn handle_put(
         }
     };
 
-    let (res_pb_opt, upload_pb_opt, confirm_pb_opt, callback) =
-        create_put_callback(multi_progress, quiet);
+    // let (res_pb_opt, upload_pb_opt, confirm_pb_opt, callback) =
+    //     create_put_callback(multi_progress, quiet);
 
     let result: Result<Option<ScratchpadAddress>, LibError> = if public {
-        if force {
-            debug!(
-                "CLI: Force flag is set for public store. Updating existing public key '{}'.",
-                key
-            );
-            match mutant
-                .update_public_with_progress(&key, &data_vec, Some(callback))
-                .await
-            {
-                Ok(()) => {
-                    debug!("Successfully updated existing public key '{}'.", key);
-                    Ok(None)
-                }
-                Err(LibError::Data(DataError::KeyNotFound(_))) => {
-                    eprintln!(
-                        "Error: Cannot force update public key '{}': Key not found.",
-                        key
-                    );
-                    let msg = format!("Cannot force update non-existent public key '{}'.", key);
-                    abandon_pb(&res_pb_opt, msg.clone());
-                    abandon_pb(&upload_pb_opt, msg.clone());
-                    abandon_pb(&confirm_pb_opt, msg);
-                    Err(LibError::Data(DataError::KeyNotFound(key.clone())))
-                }
-                Err(e) => {
-                    eprintln!("Error updating public key '{}': {}", key, e);
-                    let msg = format!("Error updating public key: {}", e);
-                    abandon_pb(&res_pb_opt, msg.clone());
-                    abandon_pb(&upload_pb_opt, msg.clone());
-                    abandon_pb(&confirm_pb_opt, msg);
-                    Err(e)
-                }
-            }
-        } else {
-            debug!(
-                "CLI: Checking status of public key '{}' before storing.",
-                key
-            );
-            match mutant.get_key_details(&key).await {
-                Ok(Some(details)) => {
-                    if details.public_address.is_some() {
-                        eprintln!(
-                            "Error: Public key '{}' already exists. Use --force to overwrite.",
-                            key
-                        );
-                        let msg = format!("Public key '{}' already exists.", key);
-                        abandon_pb(&res_pb_opt, msg.clone());
-                        abandon_pb(&upload_pb_opt, msg.clone());
-                        abandon_pb(&confirm_pb_opt, msg);
-                        Err(LibError::Data(DataError::KeyAlreadyExists(key.clone())))
-                    } else {
-                        eprintln!(
-                            "Error: Key '{}' exists but is a private key. Cannot overwrite with public using -p.",
-                            key
-                        );
-                        let msg = format!("Key '{}' exists but is private.", key);
-                        abandon_pb(&res_pb_opt, msg.clone());
-                        abandon_pb(&upload_pb_opt, msg.clone());
-                        abandon_pb(&confirm_pb_opt, msg);
-                        Err(LibError::Data(DataError::KeyAlreadyExists(key.clone())))
-                    }
-                }
-                Ok(None) => {
-                    debug!(
-                        "CLI: Public key '{}' does not exist. Proceeding with new upload.",
-                        key
-                    );
-                    mutant
-                        .store_public(key.clone(), &data_vec, Some(callback))
-                        .await
-                        .map(Some)
-                }
-                Err(e) => {
-                    eprintln!("Error checking status for public key '{}': {}", key, e);
-                    let msg = format!("Error checking public key status: {}", e);
-                    abandon_pb(&res_pb_opt, msg.clone());
-                    abandon_pb(&upload_pb_opt, msg.clone());
-                    abandon_pb(&confirm_pb_opt, msg);
-                    Err(e)
-                }
-            }
-        }
+        unimplemented!();
+        // if force {
+        //     debug!(
+        //         "CLI: Force flag is set for public store. Updating existing public key '{}'.",
+        //         key
+        //     );
+        //     match mutant
+        //         .update_public_with_progress(&key, &data_vec, Some(callback))
+        //         .await
+        //     {
+        //         Ok(()) => {
+        //             debug!("Successfully updated existing public key '{}'.", key);
+        //             Ok(None)
+        //         }
+        //         Err(LibError::Data(DataError::KeyNotFound(_))) => {
+        //             eprintln!(
+        //                 "Error: Cannot force update public key '{}': Key not found.",
+        //                 key
+        //             );
+        //             let msg = format!("Cannot force update non-existent public key '{}'.", key);
+        //             abandon_pb(&res_pb_opt, msg.clone());
+        //             abandon_pb(&upload_pb_opt, msg.clone());
+        //             abandon_pb(&confirm_pb_opt, msg);
+        //             Err(LibError::Data(DataError::KeyNotFound(key.clone())))
+        //         }
+        //         Err(e) => {
+        //             eprintln!("Error updating public key '{}': {}", key, e);
+        //             let msg = format!("Error updating public key: {}", e);
+        //             abandon_pb(&res_pb_opt, msg.clone());
+        //             abandon_pb(&upload_pb_opt, msg.clone());
+        //             abandon_pb(&confirm_pb_opt, msg);
+        //             Err(e)
+        //         }
+        //     }
+        // } else {
+        //     debug!(
+        //         "CLI: Checking status of public key '{}' before storing.",
+        //         key
+        //     );
+        //     match mutant.get_key_details(&key).await {
+        //         Ok(Some(details)) => {
+        //             if details.public_address.is_some() {
+        //                 eprintln!(
+        //                     "Error: Public key '{}' already exists. Use --force to overwrite.",
+        //                     key
+        //                 );
+        //                 let msg = format!("Public key '{}' already exists.", key);
+        //                 abandon_pb(&res_pb_opt, msg.clone());
+        //                 abandon_pb(&upload_pb_opt, msg.clone());
+        //                 abandon_pb(&confirm_pb_opt, msg);
+        //                 Err(LibError::Data(DataError::KeyAlreadyExists(key.clone())))
+        //             } else {
+        //                 eprintln!(
+        //                     "Error: Key '{}' exists but is a private key. Cannot overwrite with public using -p.",
+        //                     key
+        //                 );
+        //                 let msg = format!("Key '{}' exists but is private.", key);
+        //                 abandon_pb(&res_pb_opt, msg.clone());
+        //                 abandon_pb(&upload_pb_opt, msg.clone());
+        //                 abandon_pb(&confirm_pb_opt, msg);
+        //                 Err(LibError::Data(DataError::KeyAlreadyExists(key.clone())))
+        //             }
+        //         }
+        //         Ok(None) => {
+        //             debug!(
+        //                 "CLI: Public key '{}' does not exist. Proceeding with new upload.",
+        //                 key
+        //             );
+        //             mutant
+        //                 .store_public(key.clone(), &data_vec, Some(callback))
+        //                 .await
+        //                 .map(Some)
+        //         }
+        //         Err(e) => {
+        //             eprintln!("Error checking status for public key '{}': {}", key, e);
+        //             let msg = format!("Error checking public key status: {}", e);
+        //             abandon_pb(&res_pb_opt, msg.clone());
+        //             abandon_pb(&upload_pb_opt, msg.clone());
+        //             abandon_pb(&confirm_pb_opt, msg);
+        //             Err(e)
+        //         }
+        //     }
+        // }
     } else {
-        if force {
-            debug!(
-                "CLI: Force flag is set for private store. Removing existing key '{}' before storing.",
-                key
-            );
-            match mutant.remove(&key).await {
-                Ok(_) => {
-                    debug!(
-                        "Successfully removed existing key '{}' or it didn't exist.",
-                        key
-                    );
-                }
-                Err(LibError::Data(DataError::KeyNotFound(_))) => {
-                    debug!(
-                        "Key '{}' not found during remove, proceeding with store.",
-                        key
-                    );
-                }
-                Err(e) => {
-                    eprintln!("Error removing key '{}' before update: {}", key, e);
-                    let msg = format!("Error removing key before update: {}", e);
-                    abandon_pb(&res_pb_opt, msg.clone());
-                    abandon_pb(&upload_pb_opt, msg.clone());
-                    abandon_pb(&confirm_pb_opt, msg);
-                    return ExitCode::FAILURE;
-                }
-            }
-            debug!("Storing new private data for key '{}' after removal.", key);
-            mutant
-                .store_with_progress(key.clone(), &data_vec, Some(callback))
-                .await
-                .map(|_| None)
-        } else {
-            debug!(
-                "CLI: Checking status of private key '{}' before storing.",
-                key
-            );
-            match mutant.get_key_details(&key).await {
-                Ok(Some(details)) => {
-                    if details.is_finished {
-                        eprintln!(
-                            "Error: Private key '{}' already exists and is complete. Use --force to overwrite.",
-                            key
-                        );
-                        let msg = format!("Private key '{}' already exists and is complete.", key);
-                        abandon_pb(&res_pb_opt, msg.clone());
-                        abandon_pb(&upload_pb_opt, msg.clone());
-                        abandon_pb(&confirm_pb_opt, msg);
-                        return ExitCode::FAILURE;
-                    } else {
-                        if !quiet {
-                            eprintln!("Resuming incomplete private upload for key '{}'...", key);
-                        }
-                        debug!(
-                            "CLI: Private key '{}' exists but is incomplete. Resuming upload.",
-                            key
-                        );
-                        mutant
-                            .store_with_progress(key.clone(), &data_vec, Some(callback))
-                            .await
-                            .map(|_| None)
-                    }
-                }
-                Ok(None) => {
-                    debug!(
-                        "CLI: Private key '{}' does not exist. Proceeding with new upload.",
-                        key
-                    );
-                    mutant
-                        .store_with_progress(key.clone(), &data_vec, Some(callback))
-                        .await
-                        .map(|_| None)
-                }
-                Err(e) => {
-                    eprintln!("Error checking status for private key '{}': {}", key, e);
-                    let msg = format!("Error checking private key status: {}", e);
-                    abandon_pb(&res_pb_opt, msg.clone());
-                    abandon_pb(&upload_pb_opt, msg.clone());
-                    abandon_pb(&confirm_pb_opt, msg);
-                    return ExitCode::FAILURE;
-                }
+        match mutant.put(&key, &data_vec).await {
+            Ok(_) => Ok(None),
+            Err(e) => {
+                eprintln!("Error: {:?}", e);
+                return ExitCode::FAILURE;
             }
         }
     };
 
-    match result {
-        Ok(public_address_opt) => {
-            debug!(
-                "Put operation successful for key: {} (public={})",
-                key, public
-            );
+    // match result {
+    //     Ok(public_address_opt) => {
+    //         debug!(
+    //             "Put operation successful for key: {} (public={})",
+    //             key, public
+    //         );
 
-            clear_pb(&res_pb_opt);
-            clear_pb(&upload_pb_opt);
-            clear_pb(&confirm_pb_opt);
+    //         clear_pb(&res_pb_opt);
+    //         clear_pb(&upload_pb_opt);
+    //         clear_pb(&confirm_pb_opt);
 
-            if let Some(address) = public_address_opt {
-                if !quiet {
-                    println!("{}", address);
-                } else {
-                    info!("Public address for key '{}': {}", key, address);
-                }
-            }
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            let context = if public {
-                "public store"
-            } else {
-                if force {
-                    "private update"
-                } else {
-                    "private store"
-                }
-            };
-            let error_message = match e {
-                LibError::OperationCancelled => "Operation cancelled.".to_string(),
-                _ => format!("Error during {}: {}", context, e,),
-            };
+    //         if let Some(address) = public_address_opt {
+    //             if !quiet {
+    //                 println!("{}", address);
+    //             } else {
+    //                 info!("Public address for key '{}': {}", key, address);
+    //             }
+    //         }
+    //         ExitCode::SUCCESS
+    //     }
+    //     Err(e) => {
+    //         let context = if public {
+    //             "public store"
+    //         } else {
+    //             if force {
+    //                 "private update"
+    //             } else {
+    //                 "private store"
+    //             }
+    //         };
+    //         let error_message = match e {
+    //             LibError::OperationCancelled => "Operation cancelled.".to_string(),
+    //             _ => format!("Error during {}: {}", context, e,),
+    //         };
 
-            eprintln!("{}", error_message);
+    //         eprintln!("{}", error_message);
 
-            abandon_pb(&res_pb_opt, error_message.clone());
-            abandon_pb(&upload_pb_opt, error_message.clone());
-            abandon_pb(&confirm_pb_opt, error_message);
+    //         abandon_pb(&res_pb_opt, error_message.clone());
+    //         abandon_pb(&upload_pb_opt, error_message.clone());
+    //         abandon_pb(&confirm_pb_opt, error_message);
 
-            ExitCode::FAILURE
-        }
-    }
+    //         ExitCode::FAILURE
+    //     }
+    // }
+
+    ExitCode::SUCCESS
 }
 
-fn clear_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>) {
-    if let Ok(mut guard) = pb_opt.try_lock() {
-        if let Some(pb) = guard.take() {
-            if !pb.is_finished() {
-                pb.finish_and_clear();
-            }
-        }
-    } else {
-        warn!("clear_pb: Could not acquire lock to clear progress bar.");
-    }
-}
+// fn clear_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>) {
+//     if let Ok(mut guard) = pb_opt.try_lock() {
+//         if let Some(pb) = guard.take() {
+//             if !pb.is_finished() {
+//                 pb.finish_and_clear();
+//             }
+//         }
+//     } else {
+//         warn!("clear_pb: Could not acquire lock to clear progress bar.");
+//     }
+// }
 
-fn abandon_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>, message: String) {
-    if let Ok(mut guard) = pb_opt.try_lock() {
-        if let Some(pb) = guard.take() {
-            if !pb.is_finished() {
-                pb.abandon_with_message(message);
-            }
-        }
-    } else {
-        warn!("abandon_pb: Could not acquire lock to abandon progress bar.");
-    }
-}
+// fn abandon_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>, message: String) {
+//     if let Ok(mut guard) = pb_opt.try_lock() {
+//         if let Some(pb) = guard.take() {
+//             if !pb.is_finished() {
+//                 pb.abandon_with_message(message);
+//             }
+//         }
+//     } else {
+//         warn!("abandon_pb: Could not acquire lock to abandon progress bar.");
+//     }
+// }

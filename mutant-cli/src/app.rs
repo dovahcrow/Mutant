@@ -4,9 +4,9 @@ use directories::{BaseDirs, ProjectDirs};
 use indicatif::{MultiProgress, ProgressDrawTarget};
 use log::{debug, error, info, warn};
 
-use mutant_lib::config::MutAntConfig;
-use mutant_lib::error::Error as LibError;
-use mutant_lib::{MutAnt, config::NetworkChoice};
+// use mutant_lib::config::MutAntConfig;
+// use mutant_lib::error::Error as LibError;
+use mutant_lib::{MutAnt, config::NetworkChoice, error::Error as LibError};
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 
-use crate::callbacks::create_init_callback;
+// use crate::callbacks::create_init_callback;
 use crate::cli::{Cli, Commands};
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -286,15 +286,16 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
     let is_public_get = matches!(cli.command, Commands::Get { public: true, .. });
 
     let mutant = if is_public_get {
-        // Determine which public init function to call based on --local flag
-        let mutant_instance = if cli.local {
-            info!("Public local get command detected, using public_local initializer.");
-            MutAnt::init_public_local().await?
-        } else {
-            info!("Public get command detected, using public initializer (Mainnet).");
-            MutAnt::init_public().await?
-        };
-        mutant_instance
+        // // Determine which public init function to call based on --local flag
+        // let mutant_instance = if cli.local {
+        //     info!("Public local get command detected, using public_local initializer.");
+        //     MutAnt::init_public_local().await?
+        // } else {
+        //     info!("Public get command detected, using public initializer (Mainnet).");
+        //     MutAnt::init_public().await?
+        // };
+        // mutant_instance
+        unimplemented!()
     } else {
         // Proceed with wallet initialization for all other commands
         let private_key_hex = if cli.local {
@@ -310,63 +311,64 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
             NetworkChoice::Mainnet
         };
         // Create config using the default derived impl
-        let mut config = MutAntConfig::default();
-        config.network = network_choice;
+        // let mut config = MutAntConfig::default();
+        // config.network = network_choice;
 
-        let (init_pb_opt_arc, init_callback) = create_init_callback(&mp, cli.quiet);
+        // let (init_pb_opt_arc, init_callback) = create_init_callback(&mp, cli.quiet);
 
         // Use init_with_progress for regular initialization
-        let mutant_instance =
-            MutAnt::init_with_progress(private_key_hex.clone(), config, Some(init_callback))
-                .await?;
+        let mutant_instance = match network_choice {
+            NetworkChoice::Devnet => MutAnt::init_local().await?,
+            NetworkChoice::Mainnet => MutAnt::init(&private_key_hex).await?,
+        };
         let _mutant_clone_for_bg = mutant_instance.clone();
-        let init_pb_clone = Arc::clone(&init_pb_opt_arc); // Clone Arc for the task
+        // let init_pb_clone = Arc::clone(&init_pb_opt_arc); // Clone Arc for the task
 
-        let init_handle = tokio::spawn(async move {
-            info!("Starting background MutAnt/Storage initialization...");
-            // Initialize is implicitly called by init_with_progress, just monitor the progress bar
-            let mut pb_guard = init_pb_clone.lock().await;
-            if let Some(pb) = pb_guard.as_mut() {
-                // Create a future that resolves when the progress bar is finished.
-                // This might require a more sophisticated approach depending on how finish is signaled.
-                // For now, let's poll the is_finished status.
-                let pb_future = async {
-                    while !pb.is_finished() {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                };
+        // let init_handle = tokio::spawn(async move {
+        //     info!("Starting background MutAnt/Storage initialization...");
+        //     // Initialize is implicitly called by init_with_progress, just monitor the progress bar
+        //     // let mut pb_guard = init_pb_clone.lock().await;
+        //     if let Some(pb) = pb_guard.as_mut() {
+        //         // Create a future that resolves when the progress bar is finished.
+        //         // This might require a more sophisticated approach depending on how finish is signaled.
+        //         // For now, let's poll the is_finished status.
+        //         let pb_future = async {
+        //             while !pb.is_finished() {
+        //                 tokio::time::sleep(Duration::from_millis(100)).await;
+        //             }
+        //         };
 
-                // Wait for the progress bar to finish with a timeout
-                if tokio::time::timeout(Duration::from_secs(100), pb_future)
-                    .await
-                    .is_err()
-                {
-                    error!("Background init progress bar timed out");
-                    // Ensure pb is still valid before calling abandon
-                    if !pb.is_finished() {
-                        pb.abandon_with_message("Initialization timed out".to_string());
-                    }
-                }
-                // No need to call finish_and_clear here, it should happen when init completes
-            } else {
-                // Handle case where progress bar wasn't created (e.g., quiet mode)
-                debug!("No progress bar found for background init task.");
-                // We might need to await the actual init future if it doesn't drive the progress bar.
-                // Assuming init_with_progress handles this internally for now.
-            }
-            // Drop the guard explicitly
-            drop(pb_guard);
-            info!("Background MutAnt/Storage monitoring task finished.");
-        });
+        //         // Wait for the progress bar to finish with a timeout
+        //         if tokio::time::timeout(Duration::from_secs(100), pb_future)
+        //             .await
+        //             .is_err()
+        //         {
+        //             error!("Background init progress bar timed out");
+        //             // Ensure pb is still valid before calling abandon
+        //             if !pb.is_finished() {
+        //                 pb.abandon_with_message("Initialization timed out".to_string());
+        //             }
+        //         }
+        //         // No need to call finish_and_clear here, it should happen when init completes
+        //     } else {
+        //         // Handle case where progress bar wasn't created (e.g., quiet mode)
+        //         debug!("No progress bar found for background init task.");
+        //         // We might need to await the actual init future if it doesn't drive the progress bar.
+        //         // Assuming init_with_progress handles this internally for now.
+        //     }
+        //     // Drop the guard explicitly
+        //     drop(pb_guard);
+        //     info!("Background MutAnt/Storage monitoring task finished.");
+        // });
 
         // Clear the main thread's reference to the progress bar immediately after spawning the monitor
-        let mut pb_main_guard = init_pb_opt_arc.lock().await;
-        if let Some(_pb) = pb_main_guard.take() {
-            // Don't clear it here, let the initialization logic handle it
-        }
-        drop(pb_main_guard);
+        // let mut pb_main_guard = init_pb_opt_arc.lock().await;
+        // if let Some(_pb) = pb_main_guard.take() {
+        //     // Don't clear it here, let the initialization logic handle it
+        // }
+        // drop(pb_main_guard);
 
-        mutant_init_handle = Some(init_handle);
+        // mutant_init_handle = Some(init_handle);
         mutant_instance
     };
 
@@ -385,44 +387,44 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         }
         Commands::Rm { key } => crate::commands::remove::handle_rm(mutant, key).await,
         Commands::Ls { long } => crate::commands::ls::handle_ls(mutant, long).await,
-        Commands::Stats => crate::commands::stats::handle_stats(mutant).await,
-        Commands::Reset => crate::commands::reset::handle_reset(mutant).await,
-        Commands::Import { private_key } => {
-            // Import needs the live mutant instance now
-            crate::commands::import::handle_import(mutant, private_key).await
-        }
-        Commands::Sync { push_force } => {
-            match crate::commands::sync::handle_sync(mutant, push_force).await {
-                Ok(_) => ExitCode::SUCCESS,
-                Err(e) => {
-                    error!("Sync command failed: {}", e);
-                    ExitCode::FAILURE
-                }
-            }
-        }
-        Commands::Purge => {
-            match crate::commands::purge::run(
-                crate::commands::purge::PurgeArgs {},
-                mutant,
-                &mp,
-                cli.quiet,
-            )
-            .await
-            {
-                Ok(_) => ExitCode::SUCCESS,
-                Err(e) => {
-                    error!("Purge command failed: {}", e);
-                    ExitCode::FAILURE
-                }
-            }
-        }
-        Commands::Reserve(reserve_cmd) => match reserve_cmd.run(&mutant, &mp).await {
-            Ok(_) => ExitCode::SUCCESS,
-            Err(e) => {
-                error!("Reserve command failed: {}", e);
-                ExitCode::FAILURE
-            }
-        },
+        // Commands::Stats => crate::commands::stats::handle_stats(mutant).await,
+        // Commands::Reset => crate::commands::reset::handle_reset(mutant).await,
+        // Commands::Import { private_key } => {
+        //     // Import needs the live mutant instance now
+        //     crate::commands::import::handle_import(mutant, private_key).await
+        // }
+        // Commands::Sync { push_force } => {
+        //     match crate::commands::sync::handle_sync(mutant, push_force).await {
+        //         Ok(_) => ExitCode::SUCCESS,
+        //         Err(e) => {
+        //             error!("Sync command failed: {}", e);
+        //             ExitCode::FAILURE
+        //         }
+        //     }
+        // }
+        // Commands::Purge => {
+        //     match crate::commands::purge::run(
+        //         crate::commands::purge::PurgeArgs {},
+        //         mutant,
+        //         &mp,
+        //         cli.quiet,
+        //     )
+        //     .await
+        //     {
+        //         Ok(_) => ExitCode::SUCCESS,
+        //         Err(e) => {
+        //             error!("Purge command failed: {}", e);
+        //             ExitCode::FAILURE
+        //         }
+        //     }
+        // }
+        // Commands::Reserve(reserve_cmd) => match reserve_cmd.run(&mutant, &mp).await {
+        //     Ok(_) => ExitCode::SUCCESS,
+        //     Err(e) => {
+        //         error!("Reserve command failed: {}", e);
+        //         ExitCode::FAILURE
+        //     }
+        // },
     };
 
     cleanup_background_tasks(mp_join_handle, mutant_init_handle).await;

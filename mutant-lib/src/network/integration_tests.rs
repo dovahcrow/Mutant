@@ -6,9 +6,7 @@ use crate::network::{Network, NetworkChoice};
 use autonomi::{AttoTokens, ScratchpadAddress, SecretKey};
 use rand::RngCore;
 
-// Make this public so other test modules can use it
-pub const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
-    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+use super::DEV_TESTNET_PRIVATE_KEY_HEX;
 
 async fn setup_adapter() -> Network {
     Network::new(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet)

@@ -6,7 +6,7 @@ use crate::{
     data::Data,
     index::master_index::{KeysInfo, MasterIndex},
     internal_error::Error,
-    network::{Network, NetworkChoice},
+    network::{Network, NetworkChoice, DEV_TESTNET_PRIVATE_KEY_HEX},
 };
 
 /// The main entry point for interacting with the MutAnt distributed storage system.
@@ -22,9 +22,24 @@ pub struct MutAnt {
 
 impl MutAnt {
     pub async fn init(private_key_hex: &str) -> Result<Self, Error> {
-        let network = Arc::new(Network::new(private_key_hex, NetworkChoice::Devnet)?);
+        let network = Arc::new(Network::new(private_key_hex, NetworkChoice::Mainnet)?);
         let index = Arc::new(RwLock::new(MasterIndex::new()));
 
+        let data = Arc::new(Data::new(network.clone(), index.clone()));
+
+        Ok(Self {
+            network,
+            index,
+            data,
+        })
+    }
+
+    pub async fn init_local() -> Result<Self, Error> {
+        let network = Arc::new(Network::new(
+            DEV_TESTNET_PRIVATE_KEY_HEX,
+            NetworkChoice::Devnet,
+        )?);
+        let index = Arc::new(RwLock::new(MasterIndex::new()));
         let data = Arc::new(Data::new(network.clone(), index.clone()));
 
         Ok(Self {
@@ -46,7 +61,10 @@ impl MutAnt {
 
     // pub async fn get_public(&self, user_key: &[u8]) -> Result<Vec<u8>, Error> {}
 
-    // pub async fn remove(&self, user_key: &[u8]) -> Result<(), Error> {}
+    pub async fn rm(&self, user_key: &str) -> Result<(), Error> {
+        self.index.write().await.remove_key(user_key)?;
+        Ok(())
+    }
 
     // pub async fn reserve_pads(&self, count: usize) -> Result<usize, Error> {}
 
@@ -62,7 +80,7 @@ impl MutAnt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::integration_tests::DEV_TESTNET_PRIVATE_KEY_HEX;
+    use crate::network::DEV_TESTNET_PRIVATE_KEY_HEX;
     use rand::{distributions::Alphanumeric, Rng};
 
     fn generate_random_string(len: usize) -> String {
@@ -80,7 +98,7 @@ mod tests {
     }
 
     async fn setup_mutant() -> MutAnt {
-        MutAnt::init(DEV_TESTNET_PRIVATE_KEY_HEX)
+        MutAnt::init_local()
             .await
             .expect("Failed to initialize MutAnt for test")
     }
@@ -133,14 +151,19 @@ mod tests {
         let user_key = generate_random_string(10);
         let data_bytes = generate_random_bytes(128);
 
+        // Start the first put operation but do not await its completion
+        let first_put = mutant.put(&user_key, &data_bytes);
+
+        // Simulate an interruption by dropping the future before it completes
+        drop(first_put);
+
+        // Now attempt to resume the operation with the same data
         let result = mutant.put(&user_key, &data_bytes).await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
 
-        let data_bytes = generate_random_bytes(128);
-
-        let result = mutant.put(&user_key, &data_bytes).await;
-
-        assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
+        // Verify that the data is correctly stored
+        let data = mutant.get(&user_key).await.unwrap();
+        assert_eq!(data, data_bytes);
     }
 }

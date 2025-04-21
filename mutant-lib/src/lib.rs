@@ -105,22 +105,23 @@ mod internal_error;
 // Re-export dependency types needed by CLI
 pub use crate::api::MutAnt;
 
-// pub mod config {
-//     pub use crate::network::NetworkChoice;
-//     pub use crate::types::MutAntConfig;
-// }
+pub mod config {
+    pub use crate::network::NetworkChoice;
+
+    // pub use crate::types::MutAntConfig;
+}
 pub mod storage {
     // pub use crate::types::{KeyDetails, StorageStats};
     pub use super::network::{GetResult, PutResult};
     pub use autonomi::ScratchpadAddress;
 }
-// pub mod error {
-//     pub use crate::data::error::DataError;
-//     pub use crate::index::error::IndexError;
-//     pub use crate::internal_error::Error;
-//     pub use crate::network::error::NetworkError;
-//     pub use crate::pad_lifecycle::error::PadLifecycleError;
-// }
+pub mod error {
+    // pub use crate::data::error::DataError;
+    // pub use crate::index::error::IndexError;
+    pub use crate::internal_error::Error;
+    // pub use crate::network::error::NetworkError;
+    // pub use crate::pad_lifecycle::error::PadLifecycleError;
+}
 // pub mod events {
 //     pub use crate::api::{ReserveCallback, ReserveEvent};
 //     pub use crate::internal_events::{
