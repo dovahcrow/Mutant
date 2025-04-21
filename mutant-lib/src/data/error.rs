@@ -94,6 +94,18 @@ pub enum DataError {
     /// A required payment receipt was missing for scratchpad {0}
     #[error("A required payment receipt was missing for scratchpad {0}")]
     MissingReceipt(ScratchpadAddress),
+
+    /// Confirmation failed: Fetched data length did not match expected length for {address}.
+    #[error("Confirmation data mismatch for pad {address}: expected {expected}, got {actual}")]
+    ConfirmationDataMismatch {
+        address: ScratchpadAddress,
+        expected: usize,
+        actual: usize,
+    },
+
+    /// Confirmation failed: Timed out waiting for pad {0} to be retrievable.
+    #[error("Confirmation timed out for pad {0}")]
+    ConfirmationTimeout(ScratchpadAddress),
 }
 
 impl From<blsttc::Error> for DataError {

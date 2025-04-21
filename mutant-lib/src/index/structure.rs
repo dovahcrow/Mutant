@@ -33,15 +33,11 @@ pub struct PadInfo {
     /// The index of the chunk this pad represents within the original data.
     pub chunk_index: usize,
 
+    /// The size stored on the pad.
+    pub size: usize,
+
     /// The current status of this pad.
     pub status: PadStatus,
-
-    /// Where the pad originated from (e.g., new data, recovery).
-    pub origin: PadOrigin,
-
-    /// Flag indicating if the pad needs reverification.
-    #[serde(default)]
-    pub needs_reverification: bool,
 
     /// The last counter value read from the network for this pad during confirmation.
     #[serde(default)] // For compatibility with older index formats. Defaults to 0 if missing.

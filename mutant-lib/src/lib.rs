@@ -117,6 +117,7 @@ pub mod error {
     pub use crate::data::error::DataError;
     pub use crate::index::error::IndexError;
     pub use crate::internal_error::Error;
+    pub use crate::network::error::NetworkError;
     pub use crate::pad_lifecycle::error::PadLifecycleError;
 }
 pub mod events {

@@ -2,7 +2,7 @@ use crate::data::manager::DefaultDataManager;
 use crate::index::manager::DefaultIndexManager;
 use crate::internal_error::Error;
 use crate::internal_events::{invoke_init_callback, InitCallback, InitProgressEvent};
-use crate::network::adapter::AutonomiNetworkAdapter;
+use crate::network::AutonomiNetworkAdapter;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::types::MutAntConfig;
 use autonomi::{ScratchpadAddress, SecretKey};
