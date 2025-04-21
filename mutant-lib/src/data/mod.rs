@@ -15,6 +15,14 @@ mod error;
 
 pub use crate::internal_error::Error;
 
+#[derive(Clone)]
+struct Context {
+    index: Arc<RwLock<MasterIndex>>,
+    network: Arc<Network>,
+    name: Arc<String>,
+    data_bytes: Arc<Vec<u8>>,
+}
+
 pub struct Data {
     network: Arc<Network>,
     index: Arc<RwLock<MasterIndex>>,
@@ -61,28 +69,28 @@ impl Data {
 
             let (confirm_tx, mut confirm_rx) = channel(32);
 
-            let name = name.to_string();
-            let data_bytes = data_bytes.to_vec();
+            let context = Context {
+                index: self.index.clone(),
+                network: self.network.clone(),
+                name: Arc::new(name.to_string()),
+                data_bytes: Arc::new(data_bytes.to_vec()),
+            };
+
             for pad in pads {
-                let index = self.index.clone();
-                let network = self.network.clone();
-                let data_bytes2 = data_bytes.clone();
-                let name = name.clone();
+                let context = context.clone();
                 let confirm_tx = confirm_tx.clone();
                 tokio::task::spawn(async move {
-                    let index = index.clone();
-                    let network = network.clone();
-                    let data_bytes2 = data_bytes2.clone();
-                    let name = name.clone();
-                    network
-                        .put_private(&pad, &data_bytes2, DATA_ENCODING_PRIVATE_DATA)
+                    context
+                        .network
+                        .put_private(&pad, &context.data_bytes, DATA_ENCODING_PRIVATE_DATA)
                         .await
                         .unwrap();
 
-                    index
-                        .write()
-                        .await
-                        .update_pad_status(&name, &pad.address, PadStatus::Written);
+                    context.index.write().await.update_pad_status(
+                        &context.name,
+                        &pad.address,
+                        PadStatus::Written,
+                    );
 
                     confirm_tx.send(pad);
                 });
@@ -90,29 +98,24 @@ impl Data {
 
             let (finished_tx, mut finished_rx) = channel(32);
 
-            let index = self.index.clone();
-            let network = self.network.clone();
-
-            let name = name.to_string();
+            let context = context.clone();
 
             tokio::task::spawn(async move {
                 while let Ok(pad) = confirm_rx.recv().await {
-                    let index = index.clone();
-                    let network = network.clone();
-                    let name = name.clone();
+                    let context = context.clone();
                     let finished_tx = finished_tx.clone();
                     tokio::task::spawn(async move {
                         loop {
-                            let gotten_pad = network.get_private(&pad).await.unwrap();
+                            let gotten_pad = context.network.get_private(&pad).await.unwrap();
 
                             if pad.last_known_counter == gotten_pad.counter {
-                                index.write().await.update_pad_status(
-                                    &name.clone(),
+                                context.index.write().await.update_pad_status(
+                                    &context.name,
                                     &pad.address,
                                     PadStatus::Confirmed,
                                 );
 
-                                finished_tx.send(pad);
+                                finished_tx.send(pad).unwrap();
                                 break;
                             }
                         }
@@ -120,11 +123,7 @@ impl Data {
                 }
             });
 
-            while let Ok(pad) = finished_rx.recv().await {
-                println!("Pad confirmed: {:?}", pad);
-            }
-
-            println!("All pads confirmed");
+            while let Ok(pad) = finished_rx.recv().await {}
 
             Ok(())
         }

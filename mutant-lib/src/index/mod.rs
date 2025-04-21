@@ -1,10 +1,3 @@
-// /// Defines error types specific to index operations.
-// pub mod error;
-// /// Defines the `IndexManager` trait and its default implementation for managing the index.
-// pub mod manager;
-// /// Handles the persistence (loading and saving) of the index data.
-// pub mod persistence;
-// /// Defines the core data structures representing the index (`MasterIndex`, `KeyInfo`, `PadInfo`).
 pub mod error;
 pub mod master_index;
 pub mod pad_info;

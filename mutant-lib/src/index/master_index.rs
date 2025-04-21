@@ -186,7 +186,6 @@ impl MasterIndex {
                 }
             }
         } else {
-            println!("Key not found");
             false
         }
     }

@@ -103,7 +103,7 @@ mod internal_error;
 // mod types;
 
 // Re-export dependency types needed by CLI
-// pub use crate::api::MutAnt;
+pub use crate::api::MutAnt;
 
 // pub mod config {
 //     pub use crate::network::NetworkChoice;
@@ -111,6 +111,7 @@ mod internal_error;
 // }
 pub mod storage {
     // pub use crate::types::{KeyDetails, StorageStats};
+    pub use super::network::{GetResult, PutResult};
     pub use autonomi::ScratchpadAddress;
 }
 // pub mod error {

@@ -1,18 +1,3 @@
-// use crate::api::init::initialize_layers;
-// use crate::api::ReserveCallback;
-// use crate::data::manager::DefaultDataManager;
-// use crate::index::manager::DefaultIndexManager;
-// use crate::index::structure::{IndexEntry, MasterIndex};
-// use crate::internal_error::Error;
-// use crate::internal_events::{GetCallback, InitCallback, PurgeCallback, PutCallback};
-// use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
-// use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
-// use crate::types::{KeyDetails, KeySummary, MutAntConfig, StorageStats};
-// use autonomi::{Bytes, ScratchpadAddress, SecretKey};
-// use log::{debug, info, warn};
-// use std::collections::HashSet;
-// use std::sync::Arc;
-
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -30,10 +15,6 @@ use crate::{
 /// Instances are typically created using the `init` or `init_with_progress` associated functions.
 #[derive(Clone)]
 pub struct MutAnt {
-    // data_manager: Arc<DefaultDataManager>,
-    // pad_lifecycle_manager: Arc<DefaultPadLifecycleManager>,
-    // index_manager: Arc<DefaultIndexManager>,
-    // network: Network,
     network: Arc<Network>,
     index: Arc<RwLock<MasterIndex>>,
     data: Arc<Data>,
