@@ -1,9 +1,13 @@
 use crate::{
-    index::{master_index::MasterIndex, PadStatus},
+    index::{
+        master_index::{IndexEntry, MasterIndex},
+        PadInfo, PadStatus,
+    },
     network::Network,
 };
 use error::DataError;
 use std::sync::Arc;
+use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{broadcast::channel, RwLock};
 
 pub const DATA_ENCODING_MASTER_INDEX: u64 = 0;
@@ -23,6 +27,7 @@ struct Context {
     data_bytes: Arc<Vec<u8>>,
 }
 
+#[derive(Clone)]
 pub struct Data {
     network: Arc<Network>,
     index: Arc<RwLock<MasterIndex>>,
@@ -33,7 +38,7 @@ impl Data {
         Self { network, index }
     }
 
-    pub async fn store(&self, name: &str, data_bytes: &[u8]) -> Result<(), Error> {
+    pub async fn put(&self, name: &str, data_bytes: &[u8]) -> Result<(), Error> {
         // determine if this is
         // - A first store on that key
         //    - If so, we want to determine the number of pads needed by splitting the data
@@ -57,81 +62,141 @@ impl Data {
                 return Ok(());
             } else {
                 // it's an update
-                return Ok(());
+                self.index.write().await.remove_key(&name).unwrap();
+
+                println!("update: removing key {:#?}", name);
+
+                return self.first_store(name, data_bytes).await;
             }
         } else {
-            // it's a first store
-            let pads = self
-                .index
-                .write()
-                .await
-                .create_private_key(&name, data_bytes)?;
+            self.first_store(name, data_bytes).await
+        }
+    }
 
-            let (confirm_tx, mut confirm_rx) = channel(32);
+    pub async fn first_store(&self, name: &str, data_bytes: &[u8]) -> Result<(), Error> {
+        // it's a first store
+        let pads = self
+            .index
+            .write()
+            .await
+            .create_private_key(&name, data_bytes)?;
 
-            let context = Context {
-                index: self.index.clone(),
-                network: self.network.clone(),
-                name: Arc::new(name.to_string()),
-                data_bytes: Arc::new(data_bytes.to_vec()),
-            };
+        let context = Context {
+            index: self.index.clone(),
+            network: self.network.clone(),
+            name: Arc::new(name.to_string()),
+            data_bytes: Arc::new(data_bytes.to_vec()),
+        };
 
-            for pad in pads {
-                let context = context.clone();
-                let confirm_tx = confirm_tx.clone();
-                tokio::task::spawn(async move {
-                    context
-                        .network
-                        .put_private(&pad, &context.data_bytes, DATA_ENCODING_PRIVATE_DATA)
-                        .await
-                        .unwrap();
+        self.write_pipeline(context, pads).await;
 
-                    context.index.write().await.update_pad_status(
-                        &context.name,
-                        &pad.address,
-                        PadStatus::Written,
-                    );
+        println!("all pads confirmed");
 
-                    confirm_tx.send(pad);
-                });
-            }
+        Ok(())
+    }
 
-            let (finished_tx, mut finished_rx) = channel(32);
+    async fn write_pipeline(&self, context: Context, pads: Vec<PadInfo>) {
+        let (confirm_tx, confirm_rx) = channel(32);
+        self.put_private_pads(context.clone(), pads, confirm_tx)
+            .await;
+        self.confirm_private_pads(context, confirm_rx).await;
+    }
 
+    async fn put_private_pads(
+        &self,
+        context: Context,
+        pads: Vec<PadInfo>,
+        confirm_tx: Sender<PadInfo>,
+    ) {
+        for pad in pads {
             let context = context.clone();
-
+            let confirm_tx = confirm_tx.clone();
             tokio::task::spawn(async move {
-                while let Ok(pad) = confirm_rx.recv().await {
-                    let context = context.clone();
-                    let finished_tx = finished_tx.clone();
-                    tokio::task::spawn(async move {
-                        loop {
-                            let gotten_pad = context.network.get_private(&pad).await.unwrap();
+                println!("putting pad {:#?}", pad);
+                context
+                    .network
+                    .put_private(&pad, &context.data_bytes, DATA_ENCODING_PRIVATE_DATA)
+                    .await
+                    .unwrap();
 
-                            if pad.last_known_counter == gotten_pad.counter {
-                                context.index.write().await.update_pad_status(
-                                    &context.name,
-                                    &pad.address,
-                                    PadStatus::Confirmed,
-                                );
+                println!("pad written {:#?}", pad);
 
-                                finished_tx.send(pad).unwrap();
-                                break;
-                            }
-                        }
-                    });
-                }
+                let pad = context
+                    .index
+                    .write()
+                    .await
+                    .update_pad_status(&context.name, &pad.address, PadStatus::Written)
+                    .unwrap();
+
+                println!("pad status updated {:#?}", pad);
+
+                confirm_tx.send(pad).unwrap();
             });
+        }
 
-            while let Ok(pad) = finished_rx.recv().await {}
+        drop(confirm_tx); // Ensure the original sender is dropped
+    }
 
-            Ok(())
+    async fn confirm_private_pads(&self, context: Context, mut confirm_rx: Receiver<PadInfo>) {
+        let mut tasks = Vec::new();
+
+        while let Ok(pad) = confirm_rx.recv().await {
+            let context = context.clone();
+            tasks.push(tokio::task::spawn(async move {
+                println!("confirming pad {:#?}", pad);
+                loop {
+                    println!("getting pad {:#?}", pad);
+                    let gotten_pad = context.network.get_private(&pad).await.unwrap();
+                    println!("got pad {:#?}", gotten_pad);
+
+                    if pad.last_known_counter == gotten_pad.counter {
+                        println!("CONFIRMED: updating pad status {:#?}", pad);
+                        let pad = context
+                            .index
+                            .write()
+                            .await
+                            .update_pad_status(&context.name, &pad.address, PadStatus::Confirmed)
+                            .unwrap();
+
+                        println!("CONFIRMED: pad status updated {:#?}", pad);
+
+                        return pad;
+                    }
+
+                    println!("NOT CONFIRMED: waiting for pad {:#?}", pad);
+                }
+            }));
+        }
+
+        for task in tasks {
+            let pad = task.await.unwrap();
+            println!("finished pad {:#?}", pad);
         }
     }
 
     // pub async fn store_public(&self, name: &[u8], data_bytes: &[u8]) -> Result<(), Error> {}
 
-    // pub async fn get(&self, name: &[u8]) -> Result<Vec<u8>, Error> {}
+    pub async fn get(&self, name: &str) -> Result<Vec<u8>, Error> {
+        let mut data = Vec::new();
+
+        let pads = self.index.read().await.get_pads(name);
+
+        let mut tasks = Vec::new();
+        for pad in pads {
+            let network = self.network.clone();
+            tasks.push(tokio::spawn(async move {
+                network.get_private(&pad).await.unwrap().data
+            }));
+        }
+
+        let results = futures::future::join_all(tasks).await;
+        for result in results {
+            let pad_data = result.unwrap();
+            data.extend_from_slice(&pad_data);
+        }
+
+        Ok(data)
+    }
 
     // pub async fn get_public(&self, name: &[u8]) -> Result<Vec<u8>, Error> {}
 

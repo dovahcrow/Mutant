@@ -6,4 +6,7 @@ pub enum IndexError {
 
     #[error("Cannot remove public upload: {0}")]
     CannotRemovePublicUpload(String),
+
+    #[error("Key not found: {0}")]
+    KeyNotFound(String),
 }

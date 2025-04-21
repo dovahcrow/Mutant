@@ -66,28 +66,36 @@ impl MasterIndex {
         key_name: &str,
         pad_address: &ScratchpadAddress,
         status: PadStatus,
-    ) {
+    ) -> Result<PadInfo, Error> {
         if let Some(entry) = self.index.get_mut(key_name) {
             if let IndexEntry::PrivateKey(pads) = entry {
-                pads.iter_mut()
-                    .find(|p| p.address == *pad_address)
-                    .unwrap()
-                    .status = status;
+                let pad = pads.iter_mut().find(|p| p.address == *pad_address).unwrap();
+                pad.status = status;
+
+                Ok(pad.clone())
             } else if let IndexEntry::PublicUpload(index_pad, pads) = entry {
-                if index_pad.address == *pad_address {
-                    index_pad.status = status;
-                } else {
-                    pads.iter_mut()
-                        .find(|p| p.address == *pad_address)
-                        .unwrap()
-                        .status = status;
-                }
+                unimplemented!()
+            } else {
+                unimplemented!()
             }
+        } else {
+            Err(IndexError::KeyNotFound(key_name.to_string()).into())
         }
     }
 
     pub fn contains_key(&self, key_name: &str) -> bool {
         self.index.contains_key(key_name)
+    }
+
+    pub fn get_pads(&self, key_name: &str) -> Vec<PadInfo> {
+        if let Some(entry) = self.index.get(key_name) {
+            match entry {
+                IndexEntry::PrivateKey(pads) => pads.clone(),
+                IndexEntry::PublicUpload(_, pads) => pads.clone(), // TODO
+            }
+        } else {
+            Vec::new()
+        }
     }
 
     pub fn remove_key(&mut self, key_name: &str) -> Result<(), Error> {

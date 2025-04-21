@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Refactored pad preparation logic to use a single `match` statement for determining initial status and counter based on `PadOrigin`.
 - Optimized resume preparation: Removed upfront concurrent `check_existence` calls for `Generated` pads. `put_raw` now attempts creation and falls back to update if the pad already exists.
+- Refactored `mutant-lib::data::Data::put` method to extract private pad putting and confirmation logic into helper functions.
 
 ### Added
 - Added integration test (`test_generated_pad_counter_increment`) to verify scratchpad counter increments correctly on successive writes to generated pads.
