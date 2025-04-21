@@ -63,8 +63,8 @@ pub async fn handle_get(
     } else {
         match mutant.get(&key_or_address).await {
             Ok(data) => {
-                println!("{:#?}", data);
-                println!("{}", String::from_utf8(data.clone()).unwrap());
+                // print each byte as it is
+                io::stdout().write_all(&data).unwrap();
                 Ok(data)
             }
             Err(e) => {

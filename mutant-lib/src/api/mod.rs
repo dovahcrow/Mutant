@@ -22,8 +22,9 @@ pub struct MutAnt {
 
 impl MutAnt {
     pub async fn init(private_key_hex: &str) -> Result<Self, Error> {
-        let network = Arc::new(Network::new(private_key_hex, NetworkChoice::Mainnet)?);
-        let index = Arc::new(RwLock::new(MasterIndex::new()));
+        let network_choice = NetworkChoice::Mainnet;
+        let network = Arc::new(Network::new(private_key_hex, network_choice)?);
+        let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
 
         let data = Arc::new(Data::new(network.clone(), index.clone()));
 
@@ -39,7 +40,7 @@ impl MutAnt {
             DEV_TESTNET_PRIVATE_KEY_HEX,
             NetworkChoice::Devnet,
         )?);
-        let index = Arc::new(RwLock::new(MasterIndex::new()));
+        let index = Arc::new(RwLock::new(MasterIndex::new(NetworkChoice::Devnet)));
         let data = Arc::new(Data::new(network.clone(), index.clone()));
 
         Ok(Self {

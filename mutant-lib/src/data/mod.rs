@@ -64,8 +64,6 @@ impl Data {
                 // it's an update
                 self.index.write().await.remove_key(&name).unwrap();
 
-                println!("update: removing key {:#?}", name);
-
                 return self.first_store(name, data_bytes).await;
             }
         } else {
@@ -106,8 +104,6 @@ impl Data {
 
         self.write_pipeline(context, pads).await;
 
-        println!("all pads confirmed");
-
         Ok(())
     }
 
@@ -133,14 +129,11 @@ impl Data {
             let context = context.clone();
             let confirm_tx = confirm_tx.clone();
             tokio::task::spawn(async move {
-                println!("putting pad {:#?}", pad);
                 context
                     .network
                     .put_private(&pad, &context.data_bytes, DATA_ENCODING_PRIVATE_DATA)
                     .await
                     .unwrap();
-
-                println!("pad written {:#?}", pad);
 
                 let pad = context
                     .index
@@ -148,8 +141,6 @@ impl Data {
                     .await
                     .update_pad_status(&context.name, &pad.address, PadStatus::Written)
                     .unwrap();
-
-                println!("pad status updated {:#?}", pad);
 
                 confirm_tx.send(pad).unwrap();
             });
@@ -168,14 +159,10 @@ impl Data {
 
             let context = context.clone();
             tasks.push(tokio::task::spawn(async move {
-                println!("confirming pad {:#?}", pad);
                 loop {
-                    println!("getting pad {:#?}", pad);
                     let gotten_pad = context.network.get_private(&pad).await.unwrap();
-                    println!("got pad {:#?}", gotten_pad);
 
                     if pad.last_known_counter == gotten_pad.counter {
-                        println!("CONFIRMED: updating pad status {:#?}", pad);
                         let pad = context
                             .index
                             .write()
@@ -183,19 +170,14 @@ impl Data {
                             .update_pad_status(&context.name, &pad.address, PadStatus::Confirmed)
                             .unwrap();
 
-                        println!("CONFIRMED: pad status updated {:#?}", pad);
-
                         return pad;
                     }
-
-                    println!("NOT CONFIRMED: waiting for pad {:#?}", pad);
                 }
             }));
         }
 
         for task in tasks {
             let pad = task.await.unwrap();
-            println!("finished pad {:#?}", pad);
         }
     }
 

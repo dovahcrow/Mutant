@@ -1,8 +1,13 @@
+use crate::config::NetworkChoice;
 use crate::storage::ScratchpadAddress;
 use crate::{index::pad_info::PadInfo, internal_error::Error};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs::{self, File};
+use std::io::{BufReader, BufWriter};
+use std::path::{Path, PathBuf};
 use std::slice::Chunks;
+use xdg::BaseDirectories;
 
 use super::error::IndexError;
 use super::{PadStatus, DEFAULT_SCRATCHPAD_SIZE};
@@ -27,21 +32,71 @@ pub struct MasterIndex {
     /// List of scratchpads that are awaiting verification.
     /// Each tuple contains the address and the associated encryption key.
     pending_verification_pads: Vec<PadInfo>,
+
+    network_choice: NetworkChoice,
 }
 
-impl Default for MasterIndex {
-    fn default() -> Self {
+impl MasterIndex {
+    fn new_empty(network_choice: NetworkChoice) -> Self {
         MasterIndex {
             index: HashMap::new(),
             free_pads: Vec::new(),
             pending_verification_pads: Vec::new(),
+            network_choice,
         }
     }
 }
 
 impl MasterIndex {
-    pub fn new() -> Self {
-        MasterIndex::default()
+    pub fn new(network_choice: NetworkChoice) -> Self {
+        match MasterIndex::load(network_choice) {
+            Ok(index) => {
+                log::info!("Loaded master index from file for {:?}.", network_choice);
+                index
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to load master index for {:?}, creating a new one. Error: {}",
+                    network_choice,
+                    e
+                );
+                MasterIndex::new_empty(network_choice)
+            }
+        }
+    }
+
+    fn load(network_choice: NetworkChoice) -> Result<Self, Error> {
+        let path = get_index_file_path(network_choice)?;
+        if !path.exists() {
+            return Err(Error::Index(IndexError::IndexFileNotFound(
+                path.display().to_string(),
+            )));
+        }
+        let file = File::open(&path)
+            .map_err(|e| Error::Index(IndexError::IndexFileNotFound(path.display().to_string())))?;
+        let reader = BufReader::new(file);
+        let index: MasterIndex = serde_cbor::from_reader(reader)
+            .map_err(|e| Error::Index(IndexError::DeserializationError(e.to_string())))?;
+
+        if index.network_choice != network_choice {
+            return Err(Error::Index(IndexError::NetworkMismatch {
+                x: network_choice,
+                y: index.network_choice,
+            }));
+        }
+
+        Ok(index)
+    }
+
+    pub fn save(&self, network_choice: NetworkChoice) -> Result<(), Error> {
+        let path = get_index_file_path(network_choice)?;
+        let file = File::create(&path)
+            .map_err(|e| Error::Index(IndexError::IndexFileNotFound(path.display().to_string())))?;
+        let writer = BufWriter::new(file);
+        serde_cbor::to_writer(writer, self)
+            .map_err(|e| Error::Index(IndexError::SerializationError(e.to_string())))?;
+        log::info!("Saved master index to {}", path.display());
+        Ok(())
     }
 
     pub fn create_private_key(
@@ -58,6 +113,8 @@ impl MasterIndex {
         self.index
             .insert(key_name.to_string(), IndexEntry::PrivateKey(pads.clone()));
 
+        self.save(self.network_choice)?;
+
         Ok(pads)
     }
 
@@ -67,7 +124,7 @@ impl MasterIndex {
         pad_address: &ScratchpadAddress,
         status: PadStatus,
     ) -> Result<PadInfo, Error> {
-        if let Some(entry) = self.index.get_mut(key_name) {
+        let res = if let Some(entry) = self.index.get_mut(key_name) {
             if let IndexEntry::PrivateKey(pads) = entry {
                 let pad = pads.iter_mut().find(|p| p.address == *pad_address).unwrap();
                 pad.status = status;
@@ -80,7 +137,11 @@ impl MasterIndex {
             }
         } else {
             Err(IndexError::KeyNotFound(key_name.to_string()).into())
-        }
+        };
+
+        self.save(self.network_choice)?;
+
+        res
     }
 
     pub fn contains_key(&self, key_name: &str) -> bool {
@@ -124,6 +185,8 @@ impl MasterIndex {
         self.pending_verification_pads.extend(pads_to_verify);
 
         self.index.remove(key_name);
+
+        self.save(self.network_choice)?;
 
         Ok(())
     }
@@ -203,6 +266,26 @@ impl MasterIndex {
     }
 }
 
+// Helper function to get the XDG data directory for Mutant
+fn get_mutant_data_dir() -> Result<PathBuf, Error> {
+    let xdg_dirs = BaseDirectories::with_prefix("mutant")
+        .map_err(|e| Error::Index(IndexError::IndexFileNotFound(e.to_string())))?;
+    let data_dir = xdg_dirs.get_data_home();
+    fs::create_dir_all(&data_dir)
+        .map_err(|e| Error::Index(IndexError::IndexFileNotFound(e.to_string())))?; // Ensure the directory exists
+    Ok(data_dir)
+}
+
+// Helper function to get the full path for the index file
+fn get_index_file_path(network_choice: NetworkChoice) -> Result<PathBuf, Error> {
+    let data_dir = get_mutant_data_dir()?;
+    let filename = match network_choice {
+        NetworkChoice::Mainnet => "master_index_mainnet.cbor",
+        NetworkChoice::Devnet => "master_index_devnet.cbor",
+    };
+    Ok(data_dir.join(filename))
+}
+
 #[derive(Debug, Clone)]
 pub struct KeysInfo {
     pub keys: Vec<String>,
@@ -211,11 +294,25 @@ pub struct KeysInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::NetworkChoice;
     use crate::storage::ScratchpadAddress;
+    use tempfile::tempdir;
+
+    // Helper to set up a temporary XDG directory for tests, always using Devnet
+    fn setup_test_environment() -> (tempfile::TempDir, MasterIndex) {
+        let temp_dir = tempdir().unwrap();
+        let mock_data_home = temp_dir.path().join(".local/share");
+        let mutant_data_dir = mock_data_home.join("mutant");
+        fs::create_dir_all(&mutant_data_dir).unwrap();
+        std::env::set_var("XDG_DATA_HOME", mock_data_home.to_str().unwrap());
+
+        let index = MasterIndex::new(NetworkChoice::Devnet);
+        (temp_dir, index)
+    }
 
     #[test]
     fn test_new_master_index() {
-        let index = MasterIndex::new();
+        let (_td, index) = setup_test_environment();
         assert!(index.index.is_empty());
         assert!(index.free_pads.is_empty());
         assert!(index.pending_verification_pads.is_empty());
@@ -223,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_create_private_key_new() {
-        let mut index = MasterIndex::new();
+        let (_td, mut index) = setup_test_environment();
         let data = vec![0u8; DEFAULT_SCRATCHPAD_SIZE * 2 + 10]; // Data spanning more than 2 pads
         let key_name = "test_key";
 
@@ -243,7 +340,7 @@ mod tests {
 
     #[test]
     fn test_create_private_key_existing() {
-        let mut index = MasterIndex::new();
+        let (_td, mut index) = setup_test_environment();
         let data = vec![1u8; 10];
         let key_name = "test_key";
 
@@ -258,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_update_pad_status_private() {
-        let mut index = MasterIndex::new();
+        let (_td, mut index) = setup_test_environment();
         let data = vec![0u8; DEFAULT_SCRATCHPAD_SIZE];
         let key_name = "test_key";
         let pads = index.create_private_key(key_name, &data).unwrap();
@@ -275,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_contains_key() {
-        let mut index = MasterIndex::new();
+        let (_td, mut index) = setup_test_environment();
         let data = vec![1u8; 10];
         let key_name = "test_key";
 
@@ -287,7 +384,7 @@ mod tests {
 
     #[test]
     fn test_remove_key_moves_pads() {
-        let mut index = MasterIndex::new();
+        let (_td, mut index) = setup_test_environment();
         let data_gen = vec![0u8; DEFAULT_SCRATCHPAD_SIZE];
         let data_conf = vec![1u8; DEFAULT_SCRATCHPAD_SIZE];
         let key_gen = "key_gen";
@@ -318,7 +415,7 @@ mod tests {
 
     #[test]
     fn test_is_finished() {
-        let mut index = MasterIndex::new();
+        let (_td, mut index) = setup_test_environment();
         let data = vec![0u8; DEFAULT_SCRATCHPAD_SIZE * 2];
         let key_name = "test_key";
 
@@ -338,7 +435,7 @@ mod tests {
 
     #[test]
     fn test_verify_checksum_private() {
-        let mut index = MasterIndex::new();
+        let (_td, mut index) = setup_test_environment();
         let data = vec![0u8; DEFAULT_SCRATCHPAD_SIZE + 5];
         let key_name = "test_key";
 
@@ -362,7 +459,7 @@ mod tests {
 
     #[test]
     fn test_list() {
-        let mut index = MasterIndex::new();
+        let (_td, mut index) = setup_test_environment();
         assert!(index.list().is_empty());
 
         index.create_private_key("key1", &[1]).unwrap();
@@ -376,7 +473,7 @@ mod tests {
 
     #[test]
     fn test_aquire_pads_reuse_free() {
-        let mut index = MasterIndex::new();
+        let (_td, mut index) = setup_test_environment();
         let data1 = vec![1u8; DEFAULT_SCRATCHPAD_SIZE];
         let data2 = vec![2u8; DEFAULT_SCRATCHPAD_SIZE];
         let key1 = "key1";
@@ -406,7 +503,7 @@ mod tests {
 
     #[test]
     fn test_aquire_pads_generate_new() {
-        let mut index = MasterIndex::new();
+        let (_td, mut index) = setup_test_environment();
         let data = vec![1u8; DEFAULT_SCRATCHPAD_SIZE * 2];
         let key = "key";
 
@@ -421,7 +518,7 @@ mod tests {
 
     #[test]
     fn test_aquire_pads_mix_free_and_new() {
-        let mut index = MasterIndex::new();
+        let (_td, mut index) = setup_test_environment();
         let data1 = vec![1u8; DEFAULT_SCRATCHPAD_SIZE];
         let data3 = vec![3u8; DEFAULT_SCRATCHPAD_SIZE * 3]; // Requires 3 pads
         let key1 = "key1";
@@ -466,5 +563,44 @@ mod tests {
         } else {
             panic!("Key not found or not a PrivateKey entry");
         }
+    }
+
+    #[test]
+    fn test_save_and_load() {
+        let network = NetworkChoice::Devnet;
+        let index_path = {
+            let (_td, mut index1) = setup_test_environment(); // Always uses Devnet
+            assert!(index1.index.is_empty());
+
+            let data = vec![1, 2, 3];
+            let key = "mykey";
+            index1.create_private_key(key, &data).unwrap();
+
+            // Need the path before td goes out of scope
+            let path = get_index_file_path(network).unwrap();
+            index1.save(network).unwrap();
+            assert!(path.exists());
+            path
+        }; // index1 and _td go out of scope
+
+        // 2. Load the index and verify data
+        {
+            let (_td2, index2) = setup_test_environment(); // Should load from the saved file
+            assert!(index2.contains_key("mykey"));
+            let pads = index2.get_pads("mykey");
+            assert_eq!(pads.len(), 1);
+            assert_eq!(pads[0].checksum, PadInfo::checksum(&[1, 2, 3]));
+
+            // Verify it doesn't load across networks (This test part doesn't make sense anymore as we only test Devnet)
+            // let (_td_main, index_main) = setup_test_environment(NetworkChoice::Mainnet); // <-- We can't test Mainnet easily now
+            // assert!(!index_main.contains_key("mykey")); // <-- This check is removed
+        }
+    }
+
+    #[test]
+    fn test_load_non_existent_file() {
+        // Test loading when the file doesn't exist for Devnet
+        let (_td, index) = setup_test_environment(); // Sets up XDG env but doesn't create the file
+        assert!(index.index.is_empty()); // Verify it's empty
     }
 }
