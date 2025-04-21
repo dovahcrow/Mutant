@@ -1,7 +1,7 @@
 use crate::{
     index::{
         master_index::{IndexEntry, MasterIndex},
-        PadInfo, PadStatus,
+        PadInfo, PadStatus, DEFAULT_SCRATCHPAD_SIZE,
     },
     network::Network,
 };
@@ -24,7 +24,7 @@ struct Context {
     index: Arc<RwLock<MasterIndex>>,
     network: Arc<Network>,
     name: Arc<String>,
-    data_bytes: Arc<Vec<u8>>,
+    chunks: Vec<Vec<u8>>,
 }
 
 #[derive(Clone)]
@@ -79,7 +79,10 @@ impl Data {
             index: self.index.clone(),
             network: self.network.clone(),
             name: Arc::new(name.to_string()),
-            data_bytes: Arc::new(data_bytes.to_vec()),
+            chunks: data_bytes
+                .chunks(DEFAULT_SCRATCHPAD_SIZE)
+                .map(|chunk| chunk.to_vec())
+                .collect::<Vec<_>>(),
         };
 
         self.write_pipeline(context, pads).await;
@@ -99,7 +102,10 @@ impl Data {
             index: self.index.clone(),
             network: self.network.clone(),
             name: Arc::new(name.to_string()),
-            data_bytes: Arc::new(data_bytes.to_vec()),
+            chunks: data_bytes
+                .chunks(DEFAULT_SCRATCHPAD_SIZE)
+                .map(|chunk| chunk.to_vec())
+                .collect::<Vec<_>>(),
         };
 
         self.write_pipeline(context, pads).await;
@@ -120,7 +126,7 @@ impl Data {
         pads: Vec<PadInfo>,
         confirm_tx: Sender<PadInfo>,
     ) {
-        for pad in pads {
+        for (i, pad) in pads.into_iter().enumerate() {
             if pad.status != PadStatus::Generated && pad.status != PadStatus::Free {
                 confirm_tx.send(pad).unwrap();
                 continue;
@@ -131,7 +137,7 @@ impl Data {
             tokio::task::spawn(async move {
                 context
                     .network
-                    .put_private(&pad, &context.data_bytes, DATA_ENCODING_PRIVATE_DATA)
+                    .put_private(&pad, &context.chunks[i], DATA_ENCODING_PRIVATE_DATA)
                     .await
                     .unwrap();
 
