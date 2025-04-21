@@ -3,12 +3,15 @@
 use crate::data::PRIVATE_DATA_ENCODING;
 use crate::index::manager::DefaultIndexManager;
 use crate::index::structure::PadStatus;
-use crate::network::{AutonomiNetworkAdapter, NetworkChoice};
+use crate::network::{AutonomiNetworkAdapter, NetworkChoice, NetworkError};
+use crate::pad_lifecycle::error::PadLifecycleError;
 use crate::pad_lifecycle::manager::DefaultPadLifecycleManager;
 use crate::pad_lifecycle::PadOrigin;
-use autonomi::{ScratchpadAddress, SecretKey};
+use autonomi::client::payment::PaymentOption;
+use autonomi::{Bytes, Scratchpad, ScratchpadAddress, SecretKey};
+use log::info;
+use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::runtime::Runtime;
 
 // Re-define constant locally as test_utils module doesn't seem to exist at crate root
 const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
@@ -51,45 +54,42 @@ async fn setup_test_components_with_initialized_index() -> (
     )
 }
 
-#[test]
-fn test_acquire_new_pads() {
-    let rt = Runtime::new().unwrap();
-    rt.block_on(async {
-        let (_network_adapter, index_manager, pad_lifecycle_manager, _master_key, _master_addr) =
-            setup_test_components_with_initialized_index().await;
+#[tokio::test]
+async fn test_acquire_new_pads() {
+    let (_network_adapter, index_manager, pad_lifecycle_manager, _master_key, _master_addr) =
+        setup_test_components_with_initialized_index().await;
 
-        let mut callback = None;
-        let count = 1;
+    let mut callback = None;
+    let count = 1;
 
-        let result = pad_lifecycle_manager
-            .acquire_pads(count, &mut callback)
-            .await;
+    let result = pad_lifecycle_manager
+        .acquire_pads(count, &mut callback)
+        .await;
 
-        assert!(result.is_ok(), "acquire_pads failed: {:?}", result.err());
-        let acquired_pads = result.unwrap();
-        assert_eq!(
-            acquired_pads.len(),
-            count,
-            "Incorrect number of pads acquired"
-        );
+    assert!(result.is_ok(), "acquire_pads failed: {:?}", result.err());
+    let acquired_pads = result.unwrap();
+    assert_eq!(
+        acquired_pads.len(),
+        count,
+        "Incorrect number of pads acquired"
+    );
 
-        let (_pad_address, _pad_key, origin) = &acquired_pads[0];
-        assert_eq!(
-            *origin,
-            PadOrigin::Generated,
-            "Acquired pad should have Generated origin"
-        );
+    let (_pad_address, _pad_key, origin) = &acquired_pads[0];
+    assert_eq!(
+        *origin,
+        PadOrigin::Generated,
+        "Acquired pad should have Generated origin"
+    );
 
-        let index_state_after = index_manager.get_index_copy().await.unwrap();
-        assert!(
-            index_state_after.index.is_empty(),
-            "Index map should remain empty after acquire_pads"
-        );
-        assert!(
-            index_state_after.free_pads.is_empty(),
-            "Free pool should remain empty"
-        );
-    });
+    let index_state_after = index_manager.get_index_copy().await.unwrap();
+    assert!(
+        index_state_after.index.is_empty(),
+        "Index map should remain empty after acquire_pads"
+    );
+    assert!(
+        index_state_after.free_pads.is_empty(),
+        "Free pool should remain empty"
+    );
 }
 
 #[tokio::test]
@@ -478,5 +478,97 @@ async fn test_purge_empty_list() {
     assert!(
         index_state_after.free_pads.is_empty(),
         "Free list should remain empty after purging empty list"
+    );
+}
+
+#[tokio::test]
+async fn test_generated_pad_counter_increment() {
+    let (network_adapter, index_manager, pad_lifecycle_manager, _master_key, _master_addr) =
+        setup_test_components_with_initialized_index().await;
+
+    let user_key = "test_user";
+    let mut callback = None;
+    let acquired_pads = pad_lifecycle_manager
+        .acquire_pads(1, &mut callback)
+        .await
+        .expect("Failed to acquire pad for counter test");
+
+    assert_eq!(acquired_pads.len(), 1);
+    let (address, key, origin) = acquired_pads.into_iter().next().unwrap();
+
+    assert!(
+        matches!(origin, PadOrigin::Generated),
+        "Acquired pad should have Generated origin"
+    );
+    info!("Acquired generated pad: {}", address);
+
+    // 2. Simulate first write (counter 0)
+    let data1 = Bytes::from("first write data");
+    let initial_scratchpad = Scratchpad::new(&key, PRIVATE_DATA_ENCODING, &data1, 0);
+
+    info!("Putting initial scratchpad (counter 0) for {}", address);
+    let payment =
+        autonomi::client::payment::PaymentOption::Wallet(network_adapter.wallet().clone());
+    network_adapter
+        .scratchpad_put(initial_scratchpad, payment.clone())
+        .await
+        .expect("Failed to put initial scratchpad");
+
+    // 3. Verify counter increments to 1
+    info!("Fetching scratchpad after first write for {}", address);
+    let scratchpad_after_write1 = network_adapter
+        .get_raw_scratchpad(&address)
+        .await
+        .expect("Failed to get scratchpad after first write");
+
+    assert_eq!(
+        scratchpad_after_write1.counter(),
+        1,
+        "Counter should be 1 after first write"
+    );
+    info!(
+        "Counter is {} after first write, as expected.",
+        scratchpad_after_write1.counter()
+    );
+
+    // 4. Simulate second write (update) with counter 1
+    let data2 = Bytes::from("second write data");
+    let updated_scratchpad = Scratchpad::new(&key, PRIVATE_DATA_ENCODING, &data2, 1);
+
+    info!("Putting updated scratchpad (counter 1) for {}", address);
+    network_adapter
+        .scratchpad_put(updated_scratchpad, payment)
+        .await
+        .expect("Failed to put updated scratchpad");
+
+    // 5. Verify counter increments to 2
+    info!("Fetching scratchpad after second write for {}", address);
+    let scratchpad_after_write2 = network_adapter
+        .get_raw_scratchpad(&address)
+        .await
+        .expect("Failed to get scratchpad after second write");
+
+    assert_eq!(
+        scratchpad_after_write2.counter(),
+        2,
+        "Counter should be 2 after second write"
+    );
+    info!(
+        "Counter is {} after second write, as expected.",
+        scratchpad_after_write2.counter()
+    );
+
+    // Optional: Verify data and encoding of the final state
+    let decrypted_data = scratchpad_after_write2
+        .decrypt_data(&key)
+        .expect("Failed to decrypt final data");
+    assert_eq!(
+        decrypted_data, data2,
+        "Final data should match second write"
+    );
+    assert_eq!(
+        scratchpad_after_write2.data_encoding(),
+        PRIVATE_DATA_ENCODING,
+        "Final encoding should match the constant used"
     );
 }
