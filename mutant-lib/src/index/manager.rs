@@ -345,7 +345,7 @@ impl DefaultIndexManager {
         let mut public_index_count = 0;
         let mut public_data_actual_bytes: u64 = 0;
         let mut unique_public_pads = HashSet::new(); // Tracks unique index AND data pads
-        let mut unique_public_data_only_pads: HashSet<ScratchpadAddress> = HashSet::new(); // Tracks unique data pads only (for wasted space calc)
+        let unique_public_data_only_pads: HashSet<ScratchpadAddress> = HashSet::new(); // Tracks unique data pads only (for wasted space calc)
 
         // --- Iterating through all index entries ---
         for entry in state_guard.index.values() {

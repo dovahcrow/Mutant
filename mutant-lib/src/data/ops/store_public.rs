@@ -10,7 +10,8 @@ use crate::network::adapter::create_public_scratchpad;
 use crate::network::error::NetworkError;
 use crate::network::AutonomiNetworkAdapter;
 use crate::pad_lifecycle::PadOrigin;
-use autonomi::client::payment::{PaymentOption, Receipt};
+use autonomi::client::payment::PaymentOption;
+use autonomi::client::quote::DataTypes;
 use autonomi::{Bytes, ScratchpadAddress, SecretKey, XorName};
 use chrono::Utc;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -163,36 +164,69 @@ pub(crate) async fn upload_public_data_and_create_index(
                     .await
                 {
                     Ok((_cost, returned_addr)) => {
+                        // Original put result (cost, addr)
                         if returned_addr != chunk_addr {
                             warn!(
                                 "Address mismatch for chunk {}: expected {}, got {}",
                                 i, chunk_addr, returned_addr
                             );
+                            // Use returned_addr anyway
                         }
                         trace!(
-                            "Upload task successful for public chunk {} -> {}",
+                            "Put successful for public chunk {} -> {}. Fetching quote...",
                             i,
                             returned_addr
                         );
 
-                        let pad_info = PadInfo {
-                            address: returned_addr,
-                            chunk_index: i,
-                            status: PadStatus::Written,
-                            origin: PadOrigin::Generated,
-                            needs_reverification: false,
-                            last_known_counter: INITIAL_COUNTER,
-                            sk_bytes: chunk_sk_bytes,
-                            receipt: None,
-                        };
-                        Ok((i, pad_info))
+                        // --- Get Quote and Receipt ---
+                        let quote_result = adapter_clone
+                            .get_store_quotes(
+                                DataTypes::Scratchpad,
+                                std::iter::once((
+                                    XorName::from(returned_addr.xorname()), // Use returned address XorName
+                                    chunk_bytes.len(),                      // Use actual chunk size
+                                )),
+                            )
+                            .await;
+
+                        match quote_result {
+                            Ok(quotes) => {
+                                let receipt =
+                                    autonomi::client::payment::receipt_from_store_quotes(quotes);
+                                trace!(
+                                    "Quote/Receipt obtained successfully for chunk {} -> {}",
+                                    i,
+                                    returned_addr
+                                );
+                                let pad_info = PadInfo {
+                                    address: returned_addr,
+                                    chunk_index: i,
+                                    status: PadStatus::Written,
+                                    origin: PadOrigin::Generated,
+                                    needs_reverification: false,
+                                    last_known_counter: INITIAL_COUNTER,
+                                    sk_bytes: chunk_sk_bytes,
+                                    receipt: Some(receipt), // Store the generated receipt
+                                };
+                                Ok((i, pad_info))
+                            }
+                            Err(e) => {
+                                error!(
+                                    "Failed to get store quote for chunk {} -> {}: {}",
+                                    i, returned_addr, e
+                                );
+                                // Map CostError or other errors to DataError::Network or a new variant
+                                Err((i, DataError::Network(e.into())))
+                            }
+                        }
+                        // --- End Get Quote and Receipt ---
                     }
                     Err(e) => {
                         error!(
-                            "Upload task failed for public chunk {} (addr: {}): {}",
+                            "Put task failed for public chunk {} (addr: {}): {}",
                             i, chunk_addr, e
                         );
-                        Err((i, DataError::Network(e)))
+                        Err((i, DataError::Network(e))) // Keep original put error mapping
                     }
                 }
             });
@@ -287,7 +321,7 @@ pub(crate) async fn upload_public_data_and_create_index(
     let index_data_bytes = serde_cbor::to_vec(&index_content_addresses)
         .map(Bytes::from)
         .map_err(|e| DataError::Serialization(e.to_string()))?;
-    let index_data_size = index_data_bytes.len();
+    let _index_data_size = index_data_bytes.len();
 
     let index_scratchpad = create_public_scratchpad(
         &index_sk,
@@ -308,8 +342,9 @@ pub(crate) async fn upload_public_data_and_create_index(
         .await
     {
         Ok((_cost, returned_addr)) => {
+            // Original put result
             debug!(
-                "Successfully initiated upload for public index {} for {}",
+                "Successfully initiated upload for public index {} for {}. Fetching quote...",
                 returned_addr, name
             );
             if returned_addr != public_index_address {
@@ -319,6 +354,36 @@ pub(crate) async fn upload_public_data_and_create_index(
                 );
                 // Proceed with returned_addr
             }
+
+            // --- Get Quote and Receipt for Index ---
+            let index_quote_result = network_adapter
+                .get_store_quotes(
+                    DataTypes::Scratchpad,
+                    std::iter::once((
+                        XorName::from(returned_addr.xorname()), // Use returned address XorName
+                        index_data_bytes.len(),                 // Use actual index size
+                    )),
+                )
+                .await;
+
+            let index_receipt_result = match index_quote_result {
+                Ok(quotes) => Ok(autonomi::client::payment::receipt_from_store_quotes(quotes)),
+                Err(e) => {
+                    error!(
+                        "Failed to get store quote for index pad {}: {}",
+                        returned_addr, e
+                    );
+                    // Map CostError or other errors to DataError::Network or a new variant
+                    Err(DataError::Network(e.into()))
+                }
+            };
+
+            let index_receipt = index_receipt_result?; // Propagate error if quote/receipt failed
+            trace!(
+                "Quote/Receipt obtained successfully for index pad {}",
+                returned_addr
+            );
+            // --- End Get Quote and Receipt for Index ---
 
             // --- Verification Step ---
             let mut last_error: Option<DataError> = None;
@@ -410,7 +475,7 @@ pub(crate) async fn upload_public_data_and_create_index(
                     needs_reverification: false,
                     last_known_counter: INITIAL_COUNTER,
                     sk_bytes: index_sk_bytes,
-                    receipt: None,
+                    receipt: Some(index_receipt), // Store the generated receipt
                 })
             }
             // --- End Verification Step ---

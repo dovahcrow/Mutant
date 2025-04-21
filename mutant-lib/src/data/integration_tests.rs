@@ -469,13 +469,13 @@ mod public_op_tests {
             assert_eq!(pad_info.last_known_counter, 0);
             assert!(!pad_info.sk_bytes.is_empty());
             assert_eq!(pad_info.status, PadStatus::Written);
-            assert!(pad_info.receipt.is_none()); // Check receipt is None
+            assert!(pad_info.receipt.is_some()); // Check receipt is Some
         }
         // Check index pad
         assert_eq!(index_info.index_pad.last_known_counter, 0);
         assert!(!index_info.index_pad.sk_bytes.is_empty());
         assert_eq!(index_info.index_pad.status, PadStatus::Written);
-        assert!(index_info.index_pad.receipt.is_none()); // Check receipt is None
+        assert!(index_info.index_pad.receipt.is_some()); // Check receipt is Some
     }
 
     #[tokio::test]
@@ -507,7 +507,7 @@ mod public_op_tests {
         assert_eq!(index_info.index_pad.last_known_counter, 0);
         assert!(!index_info.index_pad.sk_bytes.is_empty());
         assert_eq!(index_info.index_pad.status, PadStatus::Written);
-        assert!(index_info.index_pad.receipt.is_none()); // Check receipt is None
+        assert!(index_info.index_pad.receipt.is_some()); // Check receipt is Some
     }
 
     #[tokio::test]
@@ -703,9 +703,9 @@ mod public_op_tests {
         );
         // Check other fields remain valid
         assert!(!updated_info.data_pads[0].sk_bytes.is_empty());
-        assert!(updated_info.data_pads[0].receipt.is_none());
+        assert!(updated_info.data_pads[0].receipt.is_some()); // Expect receipt after update
         assert!(!updated_info.index_pad.sk_bytes.is_empty());
-        assert!(updated_info.index_pad.receipt.is_none());
+        assert!(updated_info.index_pad.receipt.is_some()); // Expect receipt after update
 
         // 4. Fetch updated data
         let fetch_res = data_manager.fetch_public(public_index_addr, None).await;
@@ -726,9 +726,10 @@ mod public_op_tests {
     async fn test_update_public_op_chunk_count_change_fails() {
         let (_net_adapter, data_manager, _index_manager) = setup_public_test_env().await;
         let name = "test_public_update_chunk_change".to_string();
-        let chunk_size = 4 * 1024; // Assume default or get from index? Let's assume 4KB
-        let data1 = vec![1u8; chunk_size - 10]; // 1 chunk initially
-        let data2 = vec![2u8; chunk_size + 10]; // 2 chunks after update
+        // Use the actual default scratchpad size
+        let chunk_size = crate::index::structure::DEFAULT_SCRATCHPAD_SIZE;
+        let data1 = vec![1u8; chunk_size]; // Exactly 1 chunk
+        let data2 = vec![2u8; chunk_size + 1]; // Requires 2 chunks
 
         // Initial Store
         data_manager

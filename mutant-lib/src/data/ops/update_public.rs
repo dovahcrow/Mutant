@@ -2,7 +2,7 @@ use crate::data::chunking::chunk_data;
 use crate::data::error::DataError;
 use crate::data::manager::DefaultDataManager;
 use crate::data::{PUBLIC_DATA_ENCODING, PUBLIC_INDEX_ENCODING};
-use crate::index::structure::{PadInfo, PublicUploadInfo};
+use crate::index::structure::PadInfo;
 use crate::internal_events::{invoke_put_callback, PutCallback, PutEvent};
 use crate::network::adapter::create_public_scratchpad;
 use autonomi::client::payment::PaymentOption;
@@ -117,7 +117,7 @@ pub(crate) async fn update_public_op(
         {
             let network_adapter_clone = Arc::clone(&manager.network_adapter);
             let chunk_bytes = Bytes::from(new_chunk_data);
-            let callback_arc_clone = Arc::clone(&callback_arc); // Clone for async block
+            let _callback_arc_clone = Arc::clone(&callback_arc); // Clone for async block
 
             update_futures.push(async move {
                 let pad_address = existing_pad_info.address; // Store for error messages
@@ -165,14 +165,15 @@ pub(crate) async fn update_public_op(
                 );
 
 
-                // 3. Determine Payment Option (using receipt)
-                let payment_option = match existing_pad_info.receipt.clone() { // Clone receipt if needed
+                // 3. Determine Payment Option (using wallet)
+                let payment_option = PaymentOption::Wallet((*network_adapter_clone.wallet()).clone());
+                /* match existing_pad_info.receipt.clone() { // Clone receipt if needed
                     Some(receipt) => PaymentOption::Receipt(receipt),
                     None => {
                         error!("Missing payment receipt for existing data pad {} during update.", pad_address);
                         return Err((i, DataError::MissingReceipt(pad_address)));
                     }
-                };
+                }; */
 
                 // 4. Call scratchpad_put
                 trace!("Calling scratchpad_put for data chunk {} on pad {} with counter {}", i, pad_address, new_counter);
@@ -343,9 +344,9 @@ pub(crate) async fn update_public_op(
         new_counter, // Use the incremented counter
     );
 
-    // Determine Payment Option for Index Pad (using receipt)
-    let index_payment_option = match index_pad_info.receipt.clone() {
-        // Clone receipt if needed
+    // Determine Payment Option for Index Pad (using wallet)
+    let index_payment_option = PaymentOption::Wallet((*manager.network_adapter.wallet()).clone());
+    /* match index_pad_info.receipt.clone() { // Clone receipt if needed
         Some(receipt) => PaymentOption::Receipt(receipt),
         None => {
             error!(
@@ -354,7 +355,7 @@ pub(crate) async fn update_public_op(
             );
             return Err(DataError::MissingReceipt(index_pad_info.address));
         }
-    };
+    }; */
 
     // Call scratchpad_put to overwrite
     trace!(

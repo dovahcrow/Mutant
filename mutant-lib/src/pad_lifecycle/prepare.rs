@@ -7,7 +7,6 @@ use crate::pad_lifecycle::PadOrigin;
 use autonomi::SecretKey;
 use chrono::Utc;
 use log::{debug, error, info, warn};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -273,18 +272,18 @@ pub(crate) async fn prepare_pads_for_store(
             for (i, chunk) in chunks.iter().enumerate() {
                 let (pad_address, secret_key, pad_origin) = acquired_pads[i].clone();
 
-                // Combine matches on pad_origin
-                let (initial_status, initial_counter) = match pad_origin {
-                    PadOrigin::Generated => (PadStatus::Generated, 0),
+                // Determine initial status and counter based on origin
+                let (initial_status, _initial_counter) = match pad_origin {
+                    PadOrigin::Generated => (PadStatus::Generated, 0), // Generated pads start at counter 0
                     PadOrigin::FreePool { initial_counter } => {
-                        (PadStatus::Allocated, initial_counter)
+                        (PadStatus::Allocated, initial_counter) // FreePool pads retain their counter
                     }
                 };
 
                 let new_pad_info = PadInfo {
                     address: pad_address,
-                    chunk_index: i, // Use the loop index directly
-                    status: PadStatus::Generated,
+                    chunk_index: i,                 // Use the loop index directly
+                    status: initial_status.clone(), // Clone status here
                     origin: pad_origin,
                     needs_reverification: false,
                     last_known_counter: 0, // New pads start at 0

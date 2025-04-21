@@ -1,6 +1,6 @@
 use crate::pad_lifecycle::PadOrigin;
 use autonomi::client::payment::Receipt;
-use autonomi::{ScratchpadAddress, SecretKey};
+use autonomi::ScratchpadAddress;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
