@@ -1,10 +1,10 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use tokio::sync::RwLock;
 
 use crate::{
     data::Data,
-    index::master_index::{KeysInfo, MasterIndex},
+    index::master_index::{IndexEntry, MasterIndex},
     internal_error::Error,
     network::{Network, NetworkChoice, DEV_TESTNET_PRIVATE_KEY_HEX},
 };
@@ -71,10 +71,9 @@ impl MutAnt {
 
     // pub async fn sync(&self, force: bool) -> Result<(), Error> {}
 
-    pub async fn list(&self) -> Result<KeysInfo, Error> {
+    pub async fn list(&self) -> Result<BTreeMap<String, IndexEntry>, Error> {
         let keys = self.index.read().await.list();
-
-        Ok(KeysInfo { keys })
+        Ok(keys)
     }
 }
 
@@ -119,7 +118,7 @@ mod tests {
 
         // check of the index
         let keys = mutant.list().await.unwrap();
-        assert!(keys.keys.contains(&user_key));
+        assert!(keys.contains_key(&user_key));
 
         // check of the data
         let data = mutant.get(&user_key).await.unwrap();

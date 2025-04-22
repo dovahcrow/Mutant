@@ -3,7 +3,7 @@ use crate::storage::ScratchpadAddress;
 use crate::{index::pad_info::PadInfo, internal_error::Error};
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
@@ -24,7 +24,7 @@ pub enum IndexEntry {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct MasterIndex {
     /// Mapping from key names (e.g., file paths or public upload IDs) to their detailed information.
-    index: HashMap<String, IndexEntry>,
+    index: BTreeMap<String, IndexEntry>,
 
     /// List of scratchpads that are currently free and available for allocation.
     /// Each tuple contains the address, the associated encryption key, and the generation ID.
@@ -40,7 +40,7 @@ pub struct MasterIndex {
 impl MasterIndex {
     fn new_empty(network_choice: NetworkChoice) -> Self {
         MasterIndex {
-            index: HashMap::new(),
+            index: BTreeMap::new(),
             free_pads: Vec::new(),
             pending_verification_pads: Vec::new(),
             network_choice,
@@ -279,8 +279,15 @@ impl MasterIndex {
         }
     }
 
-    pub fn list(&self) -> Vec<String> {
-        self.index.keys().cloned().collect()
+    pub fn list(&self) -> BTreeMap<String, IndexEntry> {
+        let mut keys = self.index.clone();
+        // put all the secret keys in the entries to 0
+        keys.iter_mut().for_each(|(_, entry)| {
+            if let IndexEntry::PrivateKey(pads) = entry {
+                pads.iter_mut().for_each(|p| p.sk_bytes = vec![0; 32]);
+            }
+        });
+        keys
     }
 }
 
@@ -302,11 +309,6 @@ fn get_index_file_path(network_choice: NetworkChoice) -> Result<PathBuf, Error> 
         NetworkChoice::Devnet => "master_index_devnet.cbor",
     };
     Ok(data_dir.join(filename))
-}
-
-#[derive(Debug, Clone)]
-pub struct KeysInfo {
-    pub keys: Vec<String>,
 }
 
 #[cfg(test)]
@@ -483,10 +485,9 @@ mod tests {
         index.create_private_key("key1", &[1]).unwrap();
         index.create_private_key("key2", &[2]).unwrap();
 
-        let mut keys = index.list();
-        keys.sort(); // Sort for predictable order
+        let keys = index.list();
 
-        assert_eq!(keys, vec!["key1".to_string(), "key2".to_string()]);
+        assert_eq!(keys.keys().collect::<Vec<_>>(), vec!["key1", "key2"]);
     }
 
     #[test]

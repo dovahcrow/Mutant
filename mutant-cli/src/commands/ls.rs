@@ -1,7 +1,10 @@
 use crate::history::load_history;
 use humansize::{BINARY, format_size};
 use log::{debug, info};
-use mutant_lib::MutAnt;
+use mutant_lib::{
+    MutAnt,
+    storage::{IndexEntry, PadStatus},
+};
 use std::process::ExitCode;
 
 pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
@@ -109,7 +112,41 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
         //     }
         // }
     } else {
-        println!("Keys: {:?}", mutant.list().await);
+        let index = mutant.list().await.unwrap();
+
+        for (key, entry) in index {
+            match entry {
+                IndexEntry::PrivateKey(pads) => {
+                    let completion = pads
+                        .iter()
+                        .filter(|p| p.status == PadStatus::Confirmed)
+                        .count();
+
+                    let completion_str = if completion == pads.len() {
+                        "".to_string()
+                    } else {
+                        format!(
+                            " {}% complete ({}/{})",
+                            completion * 100 / pads.len(),
+                            completion,
+                            pads.len()
+                        )
+                    };
+
+                    println!(
+                        " {:<10} {:>3} pads {:>5} {}",
+                        key,
+                        pads.len(),
+                        format_size(pads.iter().map(|p| p.size).sum::<usize>(), BINARY),
+                        completion_str
+                    );
+                }
+                IndexEntry::PublicUpload(index_pad, pads) => {
+                    // println!(" {} ({} pads, {} bytes)", key, pads.len(), pads.iter().map(|p| p.size).sum::<usize>());
+                }
+            }
+        }
+
         // info!("Fetching key/upload summary...");
         // match mutant.list_keys().await {
         //     Ok(summaries) => {

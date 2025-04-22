@@ -12,7 +12,7 @@ pub(crate) async fn create_client(network_choice: NetworkChoice) -> Result<Clien
     );
 
     let mut config = ClientConfig::default();
-    config.strategy.scratchpad.verification_retry = RetryStrategy::Persistent;
+    // config.strategy.scratchpad.verification_retry = RetryStrategy::Persistent;
     config.strategy.scratchpad.put_retry = RetryStrategy::Persistent;
     // config.strategy.scratchpad.get_retry = RetryStrategy::Persistent;
 
@@ -21,7 +21,10 @@ pub(crate) async fn create_client(network_choice: NetworkChoice) -> Result<Clien
         NetworkChoice::Devnet => config.evm_network = autonomi::Network::new(true).unwrap(),
     };
 
-    let client = Client::init_with_config(config).await;
+    let client = match network_choice {
+        NetworkChoice::Mainnet => Client::init_with_config(config).await,
+        NetworkChoice::Devnet => Client::init_local().await,
+    };
 
     let client = client.map_err(|e| {
         NetworkError::ClientInitError(format!("Failed to initialize Autonomi client: {}", e))
@@ -32,8 +35,5 @@ pub(crate) async fn create_client(network_choice: NetworkChoice) -> Result<Clien
         network_choice
     );
 
-    debug!("Sleeping for 5 seconds until network is ready");
-    tokio::time::sleep(Duration::from_secs(5)).await;
-    debug!("Network is ready");
     Ok(client)
 }
