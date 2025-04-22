@@ -1,6 +1,6 @@
 use crate::network::error::NetworkError;
 use crate::network::NetworkChoice;
-use autonomi::Client;
+use autonomi::{Client, ClientConfig, RetryStrategy};
 use log::info;
 
 pub(crate) async fn create_client(network_choice: NetworkChoice) -> Result<Client, NetworkError> {
@@ -9,12 +9,19 @@ pub(crate) async fn create_client(network_choice: NetworkChoice) -> Result<Clien
         network_choice
     );
 
-    let client_result = match network_choice {
-        NetworkChoice::Mainnet => Client::init().await,
-        NetworkChoice::Devnet => Client::init_local().await,
+    let mut config = ClientConfig::default();
+    config.strategy.scratchpad.verification_retry = RetryStrategy::Persistent;
+    config.strategy.scratchpad.put_retry = RetryStrategy::Persistent;
+    config.strategy.scratchpad.get_retry = RetryStrategy::Persistent;
+
+    match network_choice {
+        NetworkChoice::Mainnet => config.evm_network = autonomi::Network::new(false).unwrap(),
+        NetworkChoice::Devnet => config.evm_network = autonomi::Network::new(true).unwrap(),
     };
 
-    let client = client_result.map_err(|e| {
+    let client = Client::init_with_config(config).await;
+
+    let client = client.map_err(|e| {
         NetworkError::ClientInitError(format!("Failed to initialize Autonomi client: {}", e))
     })?;
 

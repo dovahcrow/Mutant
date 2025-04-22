@@ -3,7 +3,7 @@ use crate::network::error::NetworkError;
 use crate::network::{Network, PutResult};
 use autonomi::client::payment::PaymentOption;
 use autonomi::{Bytes, Scratchpad, ScratchpadAddress, SecretKey};
-use log::{error, trace};
+use log::{debug, error, info, trace};
 
 /// Puts a pre-constructed scratchpad onto the network using `scratchpad_put`.
 ///
@@ -33,6 +33,11 @@ pub(super) async fn put(
     data_encoding: u64,
     is_public: bool,
 ) -> Result<PutResult, NetworkError> {
+    debug!(
+        "Starting put for pad {} with data length {}",
+        pad_info.address,
+        data.len()
+    );
     let client = adapter.get_or_init_client().await?;
 
     let owner_sk = pad_info.secret_key();
@@ -67,6 +72,8 @@ pub(super) async fn put(
             error!("Failed to put scratchpad {}: {}", addr, e);
             NetworkError::InternalError(format!("Failed to put scratchpad {}: {}", addr, e))
         })?;
+
+    info!("Put successful for scratchpad {} with cost {}", addr, cost);
 
     Ok(PutResult {
         cost,

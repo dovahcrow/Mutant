@@ -2,6 +2,7 @@ use crate::network::error::NetworkError;
 use crate::network::Network;
 use autonomi::ScratchpadAddress;
 use autonomi::SecretKey;
+use log::debug;
 use log::{error, trace};
 
 use super::GetResult;
@@ -37,6 +38,12 @@ pub(super) async fn get(
                         address, e
                     ))
                 })?;
+                debug!(
+                    "Get successful for scratchpad {} with counter {} and data length {}",
+                    address,
+                    scratchpad.counter(),
+                    data.len()
+                );
                 Ok(GetResult {
                     data: data.to_vec(),
                     counter: scratchpad.counter(),

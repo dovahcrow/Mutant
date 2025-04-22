@@ -1,6 +1,7 @@
 use crate::config::NetworkChoice;
 use crate::storage::ScratchpadAddress;
 use crate::{index::pad_info::PadInfo, internal_error::Error};
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -127,6 +128,10 @@ impl MasterIndex {
         let res = if let Some(entry) = self.index.get_mut(key_name) {
             if let IndexEntry::PrivateKey(pads) = entry {
                 let pad = pads.iter_mut().find(|p| p.address == *pad_address).unwrap();
+                debug!(
+                    "Updated pad status for {} from {:?} to {:?}",
+                    pad_address, pad.status, status
+                );
                 pad.status = status;
 
                 Ok(pad.clone())
@@ -181,12 +186,21 @@ impl MasterIndex {
             }
         }
 
+        debug!(
+            "Removing key {} with {} pads to free and {} pads to verify",
+            key_name,
+            pads_to_free.len(),
+            pads_to_verify.len()
+        );
+
         self.free_pads.extend(pads_to_free);
         self.pending_verification_pads.extend(pads_to_verify);
 
         self.index.remove(key_name);
 
         self.save(self.network_choice)?;
+
+        info!("Removed key {}", key_name);
 
         Ok(())
     }
@@ -203,9 +217,13 @@ impl MasterIndex {
                 .collect::<Vec<_>>(),
         );
 
+        debug!("Aquired {} pads from free_pads", pads.len());
+
         if pads.len() < total_length {
             pads.extend(self.generate_pads(chunks));
         }
+
+        debug!("Aquired {} pads in total", pads.len());
 
         pads
     }

@@ -6,7 +6,8 @@ use crate::{
     network::Network,
 };
 use error::DataError;
-use std::sync::Arc;
+use log::{debug, info};
+use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::sync::{broadcast::channel, RwLock};
 
@@ -59,14 +60,16 @@ impl Data {
         if self.index.read().await.contains_key(&name) {
             if self.index.read().await.verify_checksum(&name, data_bytes) {
                 // it's a resume
+                info!("Resume for {}", name);
                 self.resume(name, data_bytes).await
             } else {
+                info!("Update for {}", name);
                 // it's an update
                 self.index.write().await.remove_key(&name).unwrap();
-
                 return self.first_store(name, data_bytes).await;
             }
         } else {
+            info!("First store for {}", name);
             self.first_store(name, data_bytes).await
         }
     }
@@ -128,6 +131,10 @@ impl Data {
     ) {
         for (i, pad) in pads.into_iter().enumerate() {
             if pad.status != PadStatus::Generated && pad.status != PadStatus::Free {
+                debug!(
+                    "Skipping pad write for {} because it's not generated or free. It's {:?}",
+                    pad.address, pad.status
+                );
                 confirm_tx.send(pad).unwrap();
                 continue;
             }
@@ -166,6 +173,8 @@ impl Data {
             let context = context.clone();
             tasks.push(tokio::task::spawn(async move {
                 loop {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+
                     let gotten_pad = context.network.get_private(&pad).await.unwrap();
 
                     if pad.last_known_counter == gotten_pad.counter {
