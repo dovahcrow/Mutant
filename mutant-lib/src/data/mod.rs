@@ -16,6 +16,8 @@ pub const DATA_ENCODING_PRIVATE_DATA: u64 = 1;
 pub const DATA_ENCODING_PUBLIC_INDEX: u64 = 2;
 pub const DATA_ENCODING_PUBLIC_DATA: u64 = 3;
 
+pub const CHUNK_CONFIRMATION_QUEUE_SIZE: usize = 32;
+
 mod error;
 
 pub use crate::internal_error::Error;
@@ -117,7 +119,7 @@ impl Data {
     }
 
     async fn write_pipeline(&self, context: Context, pads: Vec<PadInfo>) {
-        let (confirm_tx, confirm_rx) = channel(32);
+        let (confirm_tx, confirm_rx) = channel(CHUNK_CONFIRMATION_QUEUE_SIZE);
         self.put_private_pads(context.clone(), pads, confirm_tx)
             .await;
         self.confirm_private_pads(context, confirm_rx).await;
@@ -183,7 +185,9 @@ impl Data {
                         }
                     };
 
-                    if pad.last_known_counter == gotten_pad.counter {
+                    if (pad.last_known_counter == 0 && gotten_pad.counter == 0)
+                        || pad.last_known_counter <= gotten_pad.counter
+                    {
                         let pad = context
                             .index
                             .write()
@@ -192,6 +196,13 @@ impl Data {
                             .unwrap();
 
                         return pad;
+                    }
+
+                    if pad.last_known_counter < gotten_pad.counter {
+                        log::error!(
+                            "Pad {} has a counter of {} but we got a counter of {} This is a bug and means that we won't track properly of that chunk on update",
+                            pad.address, pad.last_known_counter, gotten_pad.counter
+                        );
                     }
                 }
             }));
@@ -213,13 +224,29 @@ impl Data {
         for pad in pads {
             let network = self.network.clone();
             tasks.push(tokio::spawn(async move {
-                network.get_private(&pad).await.unwrap().data
+                let mut retries_left = 3;
+                let pad = loop {
+                    match network.get_private(&pad).await {
+                        Ok(pad) => break pad,
+                        Err(e) => {
+                            debug!("Error getting pad {}: {}", pad.address, e);
+                            retries_left -= 1;
+                            if retries_left == 0 {
+                                return Err(Error::Network(e));
+                            }
+                            continue;
+                        }
+                    };
+                };
+
+                Ok(pad.data)
             }));
         }
 
         let results = futures::future::join_all(tasks).await;
         for result in results {
             let pad_data = result.unwrap();
+            let pad_data = pad_data.unwrap();
             data.extend_from_slice(&pad_data);
         }
 

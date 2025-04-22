@@ -1,7 +1,9 @@
+use std::time::Duration;
+
 use crate::network::error::NetworkError;
 use crate::network::NetworkChoice;
 use autonomi::{Client, ClientConfig, RetryStrategy};
-use log::info;
+use log::{debug, info};
 
 pub(crate) async fn create_client(network_choice: NetworkChoice) -> Result<Client, NetworkError> {
     info!(
@@ -12,7 +14,7 @@ pub(crate) async fn create_client(network_choice: NetworkChoice) -> Result<Clien
     let mut config = ClientConfig::default();
     config.strategy.scratchpad.verification_retry = RetryStrategy::Persistent;
     config.strategy.scratchpad.put_retry = RetryStrategy::Persistent;
-    config.strategy.scratchpad.get_retry = RetryStrategy::Persistent;
+    // config.strategy.scratchpad.get_retry = RetryStrategy::Persistent;
 
     match network_choice {
         NetworkChoice::Mainnet => config.evm_network = autonomi::Network::new(false).unwrap(),
@@ -29,5 +31,9 @@ pub(crate) async fn create_client(network_choice: NetworkChoice) -> Result<Clien
         "Autonomi client initialized successfully for {:?}.",
         network_choice
     );
+
+    debug!("Sleeping for 5 seconds until network is ready");
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    debug!("Network is ready");
     Ok(client)
 }
