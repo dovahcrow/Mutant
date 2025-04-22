@@ -121,7 +121,7 @@ impl Network {
         data: &[u8],
         data_encoding: u64,
     ) -> Result<PutResult, NetworkError> {
-        self.put(pad_info, data, data_encoding, false).await
+        put::put(self, pad_info, data, data_encoding, false).await
     }
 
     pub(crate) async fn put_public(
@@ -130,19 +130,7 @@ impl Network {
         data: &[u8],
         data_encoding: u64,
     ) -> Result<PutResult, NetworkError> {
-        self.put(pad_info, data, data_encoding, true).await
-    }
-
-    /// Puts a scratchpad onto the network using `scratchpad_put`.
-    /// Delegates to the `put` module.
-    async fn put(
-        &self,
-        pad_info: &PadInfo,
-        data: &[u8],
-        data_encoding: u64,
-        is_public: bool,
-    ) -> Result<PutResult, NetworkError> {
-        put::put(self, pad_info, data, data_encoding, is_public).await
+        put::put(self, pad_info, data, data_encoding, true).await
     }
 }
 

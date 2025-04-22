@@ -175,7 +175,13 @@ impl Data {
                 loop {
                     tokio::time::sleep(Duration::from_secs(1)).await;
 
-                    let gotten_pad = context.network.get_private(&pad).await.unwrap();
+                    let gotten_pad = match context.network.get_private(&pad).await {
+                        Ok(pad) => pad,
+                        Err(e) => {
+                            debug!("Error getting pad {}: {}", pad.address, e);
+                            continue;
+                        }
+                    };
 
                     if pad.last_known_counter == gotten_pad.counter {
                         let pad = context
