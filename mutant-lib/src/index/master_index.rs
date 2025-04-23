@@ -158,9 +158,16 @@ impl MasterIndex {
                 IndexEntry::PublicUpload(index_pad.clone(), pads.clone()),
             );
 
-            pads.insert(0, index_pad);
+            // Prepend index_pad to the list of pads to be returned/processed
+            let mut final_pads = vec![index_pad];
+            final_pads.extend(pads);
 
-            pads
+            // Correct the chunk indices based on the final order
+            for (i, pad) in final_pads.iter_mut().enumerate() {
+                pad.chunk_index = i;
+            }
+
+            final_pads // Return the list with corrected chunk indices
         } else {
             let pads = self.aquire_pads(data_bytes, mode);
             self.index.insert(
