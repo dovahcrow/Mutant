@@ -12,14 +12,12 @@ pub(crate) async fn create_client(network_choice: NetworkChoice) -> Result<Clien
     );
 
     let mut config = ClientConfig::default();
-    // config.strategy.scratchpad.verification_retry = RetryStrategy::Persistent;
-    // config.strategy.scratchpad.put_retry = RetryStrategy::Persistent;
-    config.strategy.scratchpad.verification_retry = RetryStrategy::N(NonZero::new(1).unwrap());
-    config.strategy.scratchpad.verification_quorum = ResponseQuorum::One;
-    config.strategy.scratchpad.put_retry = RetryStrategy::N(NonZero::new(1).unwrap());
-    config.strategy.scratchpad.put_quorum = ResponseQuorum::One;
-    config.strategy.scratchpad.get_retry = RetryStrategy::N(NonZero::new(1).unwrap());
-    config.strategy.scratchpad.get_quorum = ResponseQuorum::One;
+    // config.strategy.scratchpad.verification_retry = RetryStrategy::N(NonZero::new(1).unwrap());
+    // config.strategy.scratchpad.verification_quorum = ResponseQuorum::One;
+    // config.strategy.scratchpad.put_retry = RetryStrategy::N(NonZero::new(1).unwrap());
+    // config.strategy.scratchpad.put_quorum = ResponseQuorum::One;
+    // config.strategy.scratchpad.get_retry = RetryStrategy::N(NonZero::new(1).unwrap());
+    // config.strategy.scratchpad.get_quorum = ResponseQuorum::One;
 
     match network_choice {
         NetworkChoice::Mainnet => config.evm_network = autonomi::Network::new(false).unwrap(),

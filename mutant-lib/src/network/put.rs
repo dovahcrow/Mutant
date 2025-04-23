@@ -6,7 +6,7 @@ use autonomi::{Bytes, Scratchpad, ScratchpadAddress, SecretKey};
 use log::{debug, error, info, trace};
 use tokio::time::{timeout, Duration};
 
-const PUT_TIMEOUT_SECS: u64 = 60 * 10;
+const PUT_TIMEOUT_SECS: u64 = 60 * 20;
 
 /// Puts a pre-constructed scratchpad onto the network using `scratchpad_put`.
 ///

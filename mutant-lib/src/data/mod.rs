@@ -26,7 +26,7 @@ pub const DATA_ENCODING_PUBLIC_DATA: u64 = 3;
 pub const CHUNK_PROCESSING_QUEUE_SIZE: usize = 256;
 pub const PAD_RECYCLING_RETRIES: usize = 3;
 
-const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 10);
+const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 20);
 
 mod error;
 pub mod storage_mode;
