@@ -26,4 +26,7 @@ pub enum NetworkError {
 
     #[error("Scratchpad not found: {0}")]
     NotFound(ScratchpadAddress),
+
+    #[error("Network operation timed out: {0}")]
+    Timeout(String),
 }

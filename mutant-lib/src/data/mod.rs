@@ -22,7 +22,9 @@ pub const DATA_ENCODING_PUBLIC_INDEX: u64 = 2;
 pub const DATA_ENCODING_PUBLIC_DATA: u64 = 3;
 
 pub const CHUNK_PROCESSING_QUEUE_SIZE: usize = 256;
-pub const PAD_RECYCLING_RETRIES: usize = 25;
+pub const PAD_RECYCLING_RETRIES: usize = 3;
+
+const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 10);
 
 mod error;
 pub mod storage_mode;
@@ -286,6 +288,7 @@ impl Data {
                             key_name,
                             &current_pad_address,
                             PadStatus::Written,
+                            None,
                         ) {
                             Ok(updated_pad) => {
                                 pad_for_confirm = Some(updated_pad);
@@ -319,8 +322,6 @@ impl Data {
         }
 
         if let Some(pad_to_confirm) = pad_for_confirm {
-            const MAX_CONFIRMATION_DURATION: Duration =
-                Duration::from_secs(PAD_RECYCLING_RETRIES as u64 * 5);
             let start_time = Instant::now();
 
             loop {
@@ -344,6 +345,7 @@ impl Data {
                                 key_name,
                                 &current_pad_address,
                                 PadStatus::Confirmed,
+                                Some(gotten_pad.counter),
                             ) {
                                 Ok(_) => {
                                     let previous_count =

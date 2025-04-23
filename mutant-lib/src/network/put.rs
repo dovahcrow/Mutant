@@ -4,6 +4,9 @@ use crate::network::{Network, PutResult};
 use autonomi::client::payment::PaymentOption;
 use autonomi::{Bytes, Scratchpad, ScratchpadAddress, SecretKey};
 use log::{debug, error, info, trace};
+use tokio::time::{timeout, Duration};
+
+const PUT_TIMEOUT_SECS: u64 = 60 * 10;
 
 /// Puts a pre-constructed scratchpad onto the network using `scratchpad_put`.
 ///
@@ -65,20 +68,37 @@ pub(super) async fn put(
 
     let payment = PaymentOption::Wallet(adapter.wallet.clone());
 
-    let (cost, addr) = client
-        .scratchpad_put(scratchpad.clone(), payment)
-        .await
-        .map_err(|e| {
+    let put_future = client.scratchpad_put(scratchpad.clone(), payment);
+
+    match timeout(Duration::from_secs(PUT_TIMEOUT_SECS), put_future).await {
+        Ok(Ok((cost, received_addr))) => {
+            if addr != received_addr {
+                error!(
+                    "Mismatch between expected addr {} and received addr {} during put",
+                    addr, received_addr
+                );
+            }
+            info!("Put successful for scratchpad {} with cost {}", addr, cost);
+            Ok(PutResult {
+                cost,
+                address: addr,
+            })
+        }
+        Ok(Err(e)) => {
             error!("Failed to put scratchpad {}: {}", addr, e);
-            NetworkError::InternalError(format!("Failed to put scratchpad {}: {}", addr, e))
-        })?;
-
-    info!("Put successful for scratchpad {} with cost {}", addr, cost);
-
-    Ok(PutResult {
-        cost,
-        address: addr,
-    })
+            Err(NetworkError::InternalError(format!(
+                "Failed to put scratchpad {}: {}",
+                addr, e
+            )))
+        }
+        Err(_) => {
+            error!("Timeout putting scratchpad {}", addr);
+            Err(NetworkError::Timeout(format!(
+                "Timeout after {} seconds putting scratchpad {}",
+                PUT_TIMEOUT_SECS, addr
+            )))
+        }
+    }
 }
 
 /// Creates a new public (unencrypted) Scratchpad instance with a valid signature.

@@ -5,8 +5,11 @@ use autonomi::ScratchpadAddress;
 use autonomi::SecretKey;
 use log::debug;
 use log::{error, trace};
+use tokio::time::{timeout, Duration};
 
 use super::GetResult;
+
+const GET_TIMEOUT_SECS: u64 = 60 * 10;
 
 /// Retrieves the raw content of a scratchpad from the network.
 ///
@@ -30,8 +33,10 @@ pub(super) async fn get(
     trace!("network::get called for address: {}", address);
     let client = adapter.get_or_init_client().await?;
 
-    match client.scratchpad_get(address).await {
-        Ok(scratchpad) => match owner_sk {
+    let get_future = client.scratchpad_get(address);
+
+    match timeout(Duration::from_secs(GET_TIMEOUT_SECS), get_future).await {
+        Ok(Ok(scratchpad)) => match owner_sk {
             Some(key) => {
                 let data = scratchpad.decrypt_data(key).map_err(|e| {
                     NetworkError::InternalError(format!(
@@ -57,7 +62,7 @@ pub(super) async fn get(
                 data_encoding: scratchpad.data_encoding(),
             }),
         },
-        Err(e) => {
+        Ok(Err(e)) => {
             error!("Failed to get scratchpad {}: {}", address, e);
             match e {
                 ScratchpadError::Missing => Err(NetworkError::NotFound(address.clone())),
@@ -66,6 +71,13 @@ pub(super) async fn get(
                     address, e
                 ))),
             }
+        }
+        Err(_) => {
+            error!("Timeout getting scratchpad {}", address);
+            Err(NetworkError::Timeout(format!(
+                "Timeout after {} seconds getting scratchpad {}",
+                GET_TIMEOUT_SECS, address
+            )))
         }
     }
 }
