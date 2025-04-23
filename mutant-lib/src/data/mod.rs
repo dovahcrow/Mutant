@@ -2,6 +2,7 @@ use crate::{
     index::{master_index::MasterIndex, PadInfo, PadStatus},
     network::{Network, NetworkError},
 };
+use ant_networking::GetRecordError;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
 use std::{
@@ -443,9 +444,7 @@ impl Data {
 
         debug!("Purging {} pads.", pads.len());
 
-        println!("Index: {:#?}", self.index.read().await);
-
-        let mut tasks = Vec::new();
+        let mut tasks = futures::stream::FuturesOrdered::new();
 
         for pad in pads {
             debug!("Verifying pad {}", pad.address);
@@ -454,30 +453,53 @@ impl Data {
             let network = self.network.clone();
             let index = self.index.clone();
 
-            tasks.push(tokio::spawn(async move {
+            tasks.push_back(tokio::spawn(async move {
                 match network.get_private(&pad).await {
                     Ok(_res) => {
                         debug!("Pad {} verified.", pad.address);
-                        index.write().await.verified_pending_pad(pad).unwrap();
+                        if let Ok(mut index_guard) = index.try_write() {
+                            index_guard.verified_pending_pad(pad).unwrap();
+                        } else {
+                            error!("Could not acquire write lock for verifying pad {}", pad.address);
+                        }
                     }
                     Err(e) => {
-                        if let NetworkError::NotFound(_address) = e {
+                        if let NetworkError::GetError(GetRecordError::RecordNotFound) = e {
                             debug!("Pad {} discarded.", pad.address);
-                            index.write().await.discard_pending_pad(pad).unwrap();
+                            if let Ok(mut index_guard) = index.try_write() {
+                                index_guard.discard_pending_pad(pad).unwrap();
+                            } else {
+                                error!("Could not acquire write lock for discarding pad {} (NotFound)", pad.address);
+                            }
+                        } else if let NetworkError::GetError(GetRecordError::NotEnoughCopies { .. }) = e {
+                            debug!("Pad {} verified but not enough copies.", pad.address);
+                            if let Ok(mut index_guard) = index.try_write() {
+                                index_guard.verified_pending_pad(pad).unwrap();
+                            } else {
+                                error!("Could not acquire write lock for discarding pad {} (NotEnoughCopies)", pad.address);
+                            }
                         } else if aggressive {
-                            debug!("Pad {} discarded.", pad.address);
-                            index.write().await.discard_pending_pad(pad).unwrap();
+                            debug!("Pad {} discarded (aggressive).", pad.address);
+                            if let Ok(mut index_guard) = index.try_write() {
+                                index_guard.discard_pending_pad(pad).unwrap();
+                            } else {
+                                error!("Could not acquire write lock for discarding pad {} (aggressive)", pad.address);
+                            }
                         } else {
-                            warn!("Pad was found but got an error. Leaving in pending until purge is run with aggressive flag");
+                            warn!("Pad {} was found but got an error ({}). Leaving in pending until purge is run with aggressive flag", pad.address, e);
                         }
                     }
                 }
             }));
         }
 
-        let results = futures::future::join_all(tasks).await;
-        for result in results {
-            result.unwrap();
+        while let Some(result) = tasks.next().await {
+            match result {
+                Ok(_) => { /* Task completed successfully (logic handled inside task) */ }
+                Err(e) => {
+                    error!("Purge task panicked: {:?}", e);
+                }
+            }
         }
         Ok(())
     }

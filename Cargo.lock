@@ -4259,6 +4259,7 @@ dependencies = [
 name = "mutant-lib"
 version = "0.4.1"
 dependencies = [
+ "ant-networking",
  "anyhow",
  "async-stream",
  "async-trait",

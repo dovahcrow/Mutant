@@ -1,3 +1,4 @@
+use ant_networking::GetRecordError;
 use autonomi::ScratchpadAddress;
 use thiserror::Error;
 
@@ -25,7 +26,7 @@ pub enum NetworkError {
     InconsistentState(String),
 
     #[error("Scratchpad not found: {0}")]
-    NotFound(ScratchpadAddress),
+    GetError(GetRecordError),
 
     #[error("Network operation timed out: {0}")]
     Timeout(String),

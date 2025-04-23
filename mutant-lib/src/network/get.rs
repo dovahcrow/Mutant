@@ -1,5 +1,7 @@
 use crate::network::error::NetworkError;
 use crate::network::Network;
+use ant_networking::GetRecordError;
+use ant_networking::NetworkError as AntNetworkError;
 use autonomi::scratchpad::ScratchpadError;
 use autonomi::ScratchpadAddress;
 use autonomi::SecretKey;
@@ -65,7 +67,18 @@ pub(super) async fn get(
         Ok(Err(e)) => {
             error!("Failed to get scratchpad {}: {}", address, e);
             match e {
-                ScratchpadError::Missing => Err(NetworkError::NotFound(address.clone())),
+                ScratchpadError::Missing => {
+                    Err(NetworkError::GetError(GetRecordError::RecordNotFound))
+                }
+                ScratchpadError::Network(e) => match e {
+                    AntNetworkError::GetRecordError(get_error) => {
+                        Err(NetworkError::GetError(get_error))
+                    }
+                    _ => Err(NetworkError::InternalError(format!(
+                        "Failed to get scratchpad {}: {}",
+                        address, e
+                    ))),
+                },
                 _ => Err(NetworkError::InternalError(format!(
                     "Failed to get scratchpad {}: {}",
                     address, e
