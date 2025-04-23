@@ -97,45 +97,16 @@ impl Data {
 
     async fn write_pipeline(&self, context: Context, pads: Vec<PadInfo>) {
         let (pad_tx, pad_rx) = channel(CHUNK_PROCESSING_QUEUE_SIZE);
-        let key = context.name.clone();
-        debug!(
-            "write_pipeline: Starting single-loop pipeline for key {}",
-            key
-        );
 
         let process_future = self.process_pads(context.clone(), pad_tx.clone(), pad_rx);
 
-        debug!(
-            "write_pipeline: Sending {} initial pads for key {}",
-            pads.len(),
-            key
-        );
         for pad in pads {
-            if pad_tx.send(pad.clone()).await.is_err() {
-                error!(
-                    "write_pipeline: failed to send initial pad {} to processing channel; receiver closed prematurely.",
-                    pad.address
-                );
-            }
+            let _ = pad_tx.send(pad.clone()).await;
         }
 
-        debug!(
-            "write_pipeline: Dropping initial pad sender for key {}",
-            key
-        );
         drop(pad_tx);
 
-        debug!(
-            "write_pipeline: Waiting for processing task for key {}",
-            key
-        );
-        if let Err(e) = process_future.await {
-            error!(
-                "write_pipeline: Processing task for key {} panicked: {:?}",
-                key, e
-            );
-        }
-        debug!("write_pipeline: Completed pipeline for key {}", key);
+        process_future.await.unwrap();
     }
 
     async fn process_pads(
@@ -145,7 +116,9 @@ impl Data {
         mut pad_rx: Receiver<PadInfo>,
     ) -> Result<(), tokio::task::JoinError> {
         let key_name = context.name.clone();
-        debug!("process_pads: Starting select loop for key {}", key_name);
+
+        let pad_tx_for_tasks = pad_tx.clone();
+        drop(pad_tx);
 
         let mut tasks = futures::stream::FuturesUnordered::new();
         let mut outstanding_tasks = 0u32;
@@ -156,19 +129,16 @@ impl Data {
                 res = pad_rx.recv(), if !channel_closed => {
                     match res {
                         Some(pad) => {
-                            debug!("process_pads: Received pad {} for processing.", pad.address);
                             outstanding_tasks += 1;
                             let task_context = context.clone();
-                            let task_pad_tx = pad_tx.clone();
+                            let task_pad_tx = pad_tx_for_tasks.clone();
                             tasks.push(tokio::spawn(async move {
                                 Self::process_pad_task(task_context, task_pad_tx, pad).await;
                             }));
                         },
                         None => {
-                            debug!("process_pads: pad_rx channel closed (returned None).");
                             channel_closed = true;
                             if outstanding_tasks == 0 {
-                                debug!("process_pads: Channel closed and no outstanding tasks. Breaking loop.");
                                 break;
                             }
                         }
@@ -180,25 +150,18 @@ impl Data {
                     if let Err(e) = result {
                          error!("process_pads: Sub-task panicked: {:?}", e);
                     }
-                    debug!("process_pads: A task finished for key {}. {} outstanding tasks remaining.", key_name, outstanding_tasks);
 
                     if channel_closed && outstanding_tasks == 0 {
-                         debug!("process_pads: Last task finished and channel was closed. Breaking loop.");
                          break;
                     }
                 },
 
                 else => {
-                     debug!("process_pads: else branch triggered (tasks empty, channel closed). Breaking loop.");
                      break;
                 }
             }
         }
 
-        debug!(
-            "process_pads: Exiting main loop for key {}. Final outstanding task count: {}",
-            key_name, outstanding_tasks
-        );
         Ok(())
     }
 
@@ -206,58 +169,24 @@ impl Data {
         let current_pad_address = pad.address;
         let key_name = &context.name;
         let mut pad_for_confirm: Option<PadInfo> = None;
-        debug!(
-            "process_pad_task: Started processing pad {} for key {}",
-            current_pad_address, key_name
-        );
 
         let recycle_and_resend = |index: Arc<RwLock<MasterIndex>>,
                                   pad_tx: Sender<PadInfo>,
-                                  reason: String,
                                   key_name: String,
                                   address: ScratchpadAddress| async move {
-            warn!(
-                "Recycling pad {} for key {} because of {}",
-                address, key_name, reason
-            );
-            match index.write().await.recycle_errored_pad(&key_name, &address) {
-                Ok(new_pad) => {
-                    debug!(
-                        "Sending recycled pad {} back to processing queue for key {}.",
-                        new_pad.address, key_name
-                    );
-                    if pad_tx.send(new_pad).await.is_err() {
-                        error!(
-                            "Failed to send recycled pad {} for key {} to channel; receiver closed.",
-                             address, key_name
-                        );
-                    }
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to recycle pad {} for key {}: {:?}",
-                        address, key_name, e
-                    );
-                }
+            if let Ok(new_pad) = index.write().await.recycle_errored_pad(&key_name, &address) {
+                let _ = pad_tx.send(new_pad).await;
             }
         };
 
         let initial_status = pad.status;
 
         if initial_status == PadStatus::Confirmed {
-            debug!(
-                "Skipping pad {} (key {}) as it's already confirmed.",
-                current_pad_address, key_name
-            );
             return;
         }
 
         let mut status_after_put = initial_status;
         if initial_status == PadStatus::Generated || initial_status == PadStatus::Free {
-            debug!(
-                "Attempting PUT for pad {} (key {}, status {:?})",
-                current_pad_address, key_name, initial_status
-            );
             let mut retries_left = 3;
             loop {
                 let put_result = context
@@ -271,10 +200,6 @@ impl Data {
 
                 match put_result {
                     Ok(_) => {
-                        debug!(
-                            "PUT successful for pad {} (key {}). Updating status to Written.",
-                            current_pad_address, key_name
-                        );
                         match context.index.write().await.update_pad_status(
                             key_name,
                             &current_pad_address,
@@ -286,25 +211,16 @@ impl Data {
                                 break;
                             }
                             Err(e) => {
-                                error!(
-                                    "Failed to update status to Written for pad {} (key {}): {:?}. Aborting task.",
-                                    current_pad_address, key_name, e
-                                );
                                 return;
                             }
                         }
                     }
                     Err(e) => {
-                        debug!(
-                            "Error putting pad {} (key {}): {}",
-                            current_pad_address, key_name, e
-                        );
                         retries_left -= 1;
                         if retries_left == 0 {
                             recycle_and_resend(
                                 context.index.clone(),
                                 pad_tx.clone(),
-                                "persistent PUT error".to_string(),
                                 key_name.to_string(),
                                 current_pad_address,
                             )
@@ -320,62 +236,23 @@ impl Data {
 
         if let Some(pad_to_confirm) = pad_for_confirm {
             if pad_to_confirm.status != PadStatus::Written {
-                debug!(
-                    "Pad {} (key {}) status changed to {:?} before confirmation check could run. Skipping confirm.",
-                    current_pad_address, key_name, pad_to_confirm.status
-                 );
                 return;
             }
 
-            debug!(
-                "Attempting GET/Confirm for pad {} (key {})",
-                current_pad_address, key_name
-            );
             let mut retries_left = 3;
             loop {
                 let get_result = context.network.get_private(&pad_to_confirm).await;
 
-                match get_result {
-                    Ok(gotten_pad) => {
-                        if (pad_to_confirm.last_known_counter == 0 && gotten_pad.counter == 0)
-                            || pad_to_confirm.last_known_counter <= gotten_pad.counter
-                        {
-                            debug!(
-                                "GET/Confirm successful for pad {} (key {}). Updating status to Confirmed.",
-                                current_pad_address, key_name
-                            );
-                            match context.index.write().await.update_pad_status(
-                                key_name,
-                                &current_pad_address,
-                                PadStatus::Confirmed,
-                            ) {
-                                Ok(_) => {
-                                    debug!(
-                                        "Pad {} (key {}) confirmed successfully.",
-                                        current_pad_address, key_name
-                                    );
-                                    return;
-                                }
-                                Err(e) => {
-                                    error!(
-                                        "Failed to update status to Confirmed for pad {} (key {}): {:?}. Aborting task.",
-                                        current_pad_address, key_name, e
-                                     );
-                                    return;
-                                }
-                            }
-                        } else {
-                            error!(
-                                "Pad {} (key {}) confirmation failed: Counter mismatch. Expected last_known={}, got current={}.",
-                                current_pad_address, key_name, pad_to_confirm.last_known_counter, gotten_pad.counter
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        debug!(
-                            "Error getting pad {} (key {}) for confirmation: {}",
-                            current_pad_address, key_name, e
+                if let Ok(gotten_pad) = get_result {
+                    if (pad_to_confirm.last_known_counter == 0 && gotten_pad.counter == 0)
+                        || pad_to_confirm.last_known_counter <= gotten_pad.counter
+                    {
+                        let _ = context.index.write().await.update_pad_status(
+                            key_name,
+                            &current_pad_address,
+                            PadStatus::Confirmed,
                         );
+                        return;
                     }
                 }
 
@@ -384,7 +261,6 @@ impl Data {
                     recycle_and_resend(
                         context.index.clone(),
                         pad_tx.clone(),
-                        "persistent GET/confirmation error or counter mismatch".to_string(),
                         key_name.to_string(),
                         current_pad_address,
                     )
@@ -394,21 +270,7 @@ impl Data {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             }
-        } else if status_after_put == PadStatus::Confirmed {
-            debug!(
-                "Pad {} (key {}) was already confirmed when checked before confirmation step.",
-                current_pad_address, key_name
-            );
-        } else if status_after_put != PadStatus::Generated && status_after_put != PadStatus::Free {
-            error!(
-                "Pad {} (key {}) reached confirmation stage unexpectedly with status {:?}. Aborting task.",
-                current_pad_address, key_name, status_after_put
-            );
         }
-        debug!(
-            "process_pad_task: Finished processing pad {} for key {}",
-            current_pad_address, key_name
-        );
     }
 
     pub async fn get(&self, name: &str) -> Result<Vec<u8>, Error> {
