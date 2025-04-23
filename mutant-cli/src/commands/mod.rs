@@ -6,7 +6,7 @@ pub mod put;
 pub mod remove;
 // pub mod reserve;
 // pub mod reset;
-// pub mod stats;
+pub mod stats;
 // pub mod sync;
 
 pub mod export;

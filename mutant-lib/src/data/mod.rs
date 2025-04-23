@@ -21,7 +21,7 @@ pub const DATA_ENCODING_PUBLIC_INDEX: u64 = 2;
 pub const DATA_ENCODING_PUBLIC_DATA: u64 = 3;
 
 pub const CHUNK_PROCESSING_QUEUE_SIZE: usize = 256;
-pub const PAD_RECYCLING_RETRIES: usize = 100;
+pub const PAD_RECYCLING_RETRIES: usize = 25;
 
 mod error;
 
@@ -228,7 +228,7 @@ impl Data {
             return;
         }
 
-        let recycle_pad = async |pad: PadInfo| match context
+        let recycle_pad = async || match context
             .index
             .write()
             .await
@@ -289,7 +289,7 @@ impl Data {
                                 "Failed to put pad {} (chunk {}) after multiple retries. Recycling.",
                                 current_pad_address, pad.chunk_index
                             );
-                            recycle_pad(pad).await;
+                            recycle_pad().await;
                             return;
                         }
                         continue;
@@ -336,7 +336,7 @@ impl Data {
                         "Failed to confirm pad {} (chunk {}) after multiple retries. Recycling.",
                         current_pad_address, pad.chunk_index
                     );
-                    recycle_pad(pad_to_confirm).await;
+                    recycle_pad().await;
                     return;
                 }
                 continue;

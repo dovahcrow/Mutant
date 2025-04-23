@@ -62,8 +62,8 @@ pub enum Commands {
         #[arg(default_value = "pads.hex")]
         input: String,
     },
-    // #[command(about = "Show storage statistics")]
-    // Stats,
+    #[command(about = "Show storage statistics")]
+    Stats,
 
     // #[command(about = "Reset local cache and index")]
     // Reset,

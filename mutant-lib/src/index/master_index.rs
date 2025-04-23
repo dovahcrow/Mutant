@@ -405,6 +405,36 @@ impl MasterIndex {
 
         Ok(())
     }
+
+    pub fn get_storage_stats(&self) -> StorageStats {
+        let mut stats = StorageStats::default();
+
+        stats.nb_keys = self.index.len() as u64;
+        stats.occupied_pads = self
+            .index
+            .iter()
+            .map(|(_, entry)| match entry {
+                IndexEntry::PrivateKey(pads) => pads.len() as u64,
+                IndexEntry::PublicUpload(_index, _pads) => unimplemented!(),
+            })
+            .sum();
+
+        stats.free_pads = self.free_pads.len() as u64;
+        stats.pending_verification_pads = self.pending_verification_pads.len() as u64;
+
+        stats.total_pads = stats.occupied_pads + stats.free_pads + stats.pending_verification_pads;
+
+        stats
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct StorageStats {
+    pub nb_keys: u64,
+    pub total_pads: u64,
+    pub occupied_pads: u64,
+    pub free_pads: u64,
+    pub pending_verification_pads: u64,
 }
 
 // Helper function to get the XDG data directory for Mutant

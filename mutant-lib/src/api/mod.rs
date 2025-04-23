@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 use crate::{
     data::Data,
     index::{
-        master_index::{IndexEntry, MasterIndex},
+        master_index::{IndexEntry, MasterIndex, StorageStats},
         PadInfo,
     },
     internal_error::Error,
@@ -98,6 +98,10 @@ impl MutAnt {
 
     pub async fn purge(&self) -> Result<(), Error> {
         self.data.purge().await
+    }
+
+    pub async fn get_storage_stats(&self) -> StorageStats {
+        self.index.read().await.get_storage_stats()
     }
 }
 
