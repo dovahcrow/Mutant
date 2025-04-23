@@ -102,8 +102,8 @@ impl MutAnt {
         Ok(())
     }
 
-    pub async fn purge(&self) -> Result<(), Error> {
-        self.data.purge().await
+    pub async fn purge(&self, aggressive: bool) -> Result<(), Error> {
+        self.data.purge(aggressive).await
     }
 
     pub async fn get_storage_stats(&self) -> StorageStats {

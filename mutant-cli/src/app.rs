@@ -422,15 +422,8 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         //         }
         //     }
         // }
-        Commands::Purge => {
-            match crate::commands::purge::run(
-                crate::commands::purge::PurgeArgs {},
-                mutant,
-                &mp,
-                cli.quiet,
-            )
-            .await
-            {
+        Commands::Purge { aggressive } => {
+            match crate::commands::purge::run(aggressive, mutant, &mp, cli.quiet).await {
                 Ok(_) => ExitCode::SUCCESS,
                 Err(e) => {
                     error!("Purge command failed: {}", e);

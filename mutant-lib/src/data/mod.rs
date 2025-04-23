@@ -1,6 +1,6 @@
 use crate::{
     index::{master_index::MasterIndex, PadInfo, PadStatus},
-    network::Network,
+    network::{Network, NetworkError},
     storage::ScratchpadAddress,
 };
 use futures::StreamExt;
@@ -418,7 +418,7 @@ impl Data {
 
     // pub async fn remove(&self, name: &[u8]) -> Result<(), Error> {}
 
-    pub async fn purge(&self) -> Result<(), Error> {
+    pub async fn purge(&self, aggressive: bool) -> Result<(), Error> {
         let pads = self.index.read().await.get_pending_pads();
 
         debug!("Purging {} pads.", pads.len());
@@ -441,8 +441,15 @@ impl Data {
                         index.write().await.verified_pending_pad(pad).unwrap();
                     }
                     Err(e) => {
-                        debug!("Pad {} discarded.", pad.address);
-                        index.write().await.discard_pending_pad(pad).unwrap();
+                        if let NetworkError::NotFound(_address) = e {
+                            debug!("Pad {} discarded.", pad.address);
+                            index.write().await.discard_pending_pad(pad).unwrap();
+                        } else if aggressive {
+                            debug!("Pad {} discarded.", pad.address);
+                            index.write().await.discard_pending_pad(pad).unwrap();
+                        } else {
+                            warn!("Pad was found but got an error. Leaving in pending until purge is run with aggressive flag");
+                        }
                     }
                 }
             }));

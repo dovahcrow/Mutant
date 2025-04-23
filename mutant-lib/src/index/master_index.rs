@@ -364,13 +364,14 @@ impl MasterIndex {
     }
 
     pub fn import_raw_pads_private_key(&mut self, pads_hex: Vec<PadInfo>) -> Result<(), Error> {
-        for pad in pads_hex {
+        for mut pad in pads_hex {
             if self.pad_exists(&pad.address) {
                 continue;
             }
             if pad.status == PadStatus::Generated {
                 self.pending_verification_pads.push(pad);
             } else {
+                pad.status = PadStatus::Free;
                 self.free_pads.push(pad);
             }
 

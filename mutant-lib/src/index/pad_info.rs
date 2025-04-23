@@ -34,6 +34,7 @@ pub struct PadInfo {
     pub size: usize,
 
     /// The chunk index of the pad.
+    #[serde(default)] // For compatibility with older index formats. Defaults to 0 if missing.
     pub chunk_index: usize,
 
     /// The current status of this pad.

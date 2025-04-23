@@ -8,16 +8,13 @@ use mutant_lib::error::Error as LibError;
 use std::error::Error as StdError;
 use std::sync::{Arc, Mutex as StdMutex};
 
-#[derive(Args, Debug)]
-pub struct PurgeArgs {}
-
 #[derive(Clone, Default)]
 struct PurgeState {
     pb: Option<Arc<StdMutex<ProgressBar>>>,
 }
 
 pub async fn run(
-    _args: PurgeArgs,
+    aggressive: bool,
     mutant: MutAnt,
     mp: &MultiProgress,
     quiet: bool,
@@ -115,7 +112,7 @@ pub async fn run(
     //     })
     // });
 
-    match mutant.purge().await {
+    match mutant.purge(aggressive).await {
         Ok(_) => Ok(()),
         Err(e) => {
             if matches!(e, LibError::OperationCancelled) {

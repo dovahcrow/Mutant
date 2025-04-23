@@ -1,3 +1,4 @@
+use autonomi::ScratchpadAddress;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -22,4 +23,7 @@ pub enum NetworkError {
 
     #[error("State inconsistency detected: {0}")]
     InconsistentState(String),
+
+    #[error("Scratchpad not found: {0}")]
+    NotFound(ScratchpadAddress),
 }

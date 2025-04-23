@@ -108,7 +108,10 @@ pub enum Commands {
     #[command(
         about = "Perform a check on scratchpads that should have been created but maybe not and clean them up"
     )]
-    Purge,
+    Purge {
+        #[arg(short, long, default_value_t = false)]
+        aggressive: bool,
+    },
     // #[command(about = "Reserve a key without storing a value")]
     // Reserve(crate::commands::reserve::Reserve),
 }
