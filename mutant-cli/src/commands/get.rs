@@ -27,7 +27,13 @@ pub async fn handle_get(
     // let (download_pb_opt, callback) = create_get_callback(multi_progress, quiet);
 
     let result: Result<Vec<u8>, LibError> = if public {
-        unimplemented!();
+        match mutant
+            .get_public(&ScratchpadAddress::from_hex(&key_or_address).unwrap())
+            .await
+        {
+            Ok(data) => Ok(data),
+            Err(e) => Err(e),
+        }
         // debug!(
         //     "CLI: Fetching public data using address '{}'",
         //     key_or_address

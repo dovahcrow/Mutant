@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
+use autonomi::ScratchpadAddress;
 use tokio::sync::RwLock;
 
 use crate::{
@@ -59,14 +60,19 @@ impl MutAnt {
         user_key: &str,
         data_bytes: &[u8],
         mode: StorageMode,
+        public: bool,
     ) -> Result<(), Error> {
-        self.data.put(user_key, data_bytes, mode).await
+        self.data.put(user_key, data_bytes, mode, public).await
     }
 
     // pub async fn store_public(&self, user_key: &[u8], data_bytes: &[u8]) -> Result<(), Error> {}
 
     pub async fn get(&self, user_key: &str) -> Result<Vec<u8>, Error> {
         self.data.get(user_key).await
+    }
+
+    pub async fn get_public(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, Error> {
+        self.data.get_public(address).await
     }
 
     // pub async fn get_public(&self, user_key: &[u8]) -> Result<Vec<u8>, Error> {}
@@ -144,7 +150,7 @@ mod tests {
         let data_bytes = generate_random_bytes(128);
 
         let result = mutant
-            .put(&user_key, &data_bytes, StorageMode::Medium)
+            .put(&user_key, &data_bytes, StorageMode::Medium, false)
             .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
@@ -168,7 +174,7 @@ mod tests {
         let data_bytes = generate_random_bytes(128);
 
         let result = mutant
-            .put(&user_key, &data_bytes, StorageMode::Medium)
+            .put(&user_key, &data_bytes, StorageMode::Medium, false)
             .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
@@ -176,7 +182,7 @@ mod tests {
         let data_bytes = generate_random_bytes(128);
 
         let result = mutant
-            .put(&user_key, &data_bytes, StorageMode::Medium)
+            .put(&user_key, &data_bytes, StorageMode::Medium, false)
             .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
@@ -192,14 +198,14 @@ mod tests {
         let data_bytes = generate_random_bytes(128);
 
         // Start the first put operation but do not await its completion
-        let first_put = mutant.put(&user_key, &data_bytes, StorageMode::Medium);
+        let first_put = mutant.put(&user_key, &data_bytes, StorageMode::Medium, false);
 
         // Simulate an interruption by dropping the future before it completes
         drop(first_put);
 
         // Now attempt to resume the operation with the same data
         let result = mutant
-            .put(&user_key, &data_bytes, StorageMode::Medium)
+            .put(&user_key, &data_bytes, StorageMode::Medium, false)
             .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());

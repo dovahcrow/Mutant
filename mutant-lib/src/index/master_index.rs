@@ -2,6 +2,7 @@ use crate::config::NetworkChoice;
 use crate::data::storage_mode::StorageMode;
 use crate::storage::ScratchpadAddress;
 use crate::{index::pad_info::PadInfo, internal_error::Error};
+use autonomi::data::public;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -67,6 +68,18 @@ impl MasterIndex {
         }
     }
 
+    pub fn get_index_pad_if_public(&self, key_name: &str) -> Option<PadInfo> {
+        if let Some(entry) = self.index.get(key_name) {
+            if let IndexEntry::PublicUpload(index, _) = entry {
+                Some(index.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     fn load(network_choice: NetworkChoice) -> Result<Self, Error> {
         let path = get_index_file_path(network_choice)?;
         if !path.exists() {
@@ -111,10 +124,48 @@ impl MasterIndex {
             return Err(IndexError::KeyAlreadyExists(key_name.to_string()).into());
         }
 
-        let pads = self.aquire_pads(data_bytes, mode);
+        let pads = self.aquire_pads(data_bytes, mode, false);
 
         self.index
             .insert(key_name.to_string(), IndexEntry::PrivateKey(pads.clone()));
+
+        self.save(self.network_choice)?;
+
+        Ok(pads)
+    }
+
+    pub fn create_public_key(
+        &mut self,
+        key_name: &str,
+        data_bytes: &[u8],
+        mode: StorageMode,
+    ) -> Result<Vec<PadInfo>, Error> {
+        if self.index.contains_key(key_name) {
+            return Err(IndexError::KeyAlreadyExists(key_name.to_string()).into());
+        }
+
+        let mut pads = self.aquire_pads(data_bytes, mode, true);
+
+        // prepare the first pad as an index pad if data_bytes is longer than a scratchpad
+        if data_bytes.len() > mode.scratchpad_size() {
+            // serialize index to determine the size and checksum of the index pad
+            let index_pad_serialized = serde_cbor::to_vec(&pads[1..].to_vec()).unwrap();
+
+            let index_pad = pads.get_mut(0).unwrap();
+            index_pad.size = index_pad_serialized.len();
+            index_pad.checksum = PadInfo::checksum(&index_pad_serialized);
+            index_pad.chunk_index = 0;
+
+            self.index.insert(
+                key_name.to_string(),
+                IndexEntry::PublicUpload(index_pad.clone(), pads[1..].to_vec()),
+            );
+        } else {
+            self.index.insert(
+                key_name.to_string(),
+                IndexEntry::PublicUpload(pads[0].clone(), Vec::new()),
+            );
+        };
 
         self.save(self.network_choice)?;
 
@@ -193,7 +244,10 @@ impl MasterIndex {
         if let Some(entry) = self.index.get(key_name) {
             match entry {
                 IndexEntry::PrivateKey(pads) => pads.clone(),
-                IndexEntry::PublicUpload(_, pads) => pads.clone(), // TODO
+                IndexEntry::PublicUpload(index, pads) => vec![index.clone()]
+                    .into_iter()
+                    .chain(pads.clone())
+                    .collect(),
             }
         } else {
             Vec::new()
@@ -241,9 +295,18 @@ impl MasterIndex {
         Ok(())
     }
 
-    fn aquire_pads(&mut self, data_bytes: &[u8], mode: StorageMode) -> Vec<PadInfo> {
+    fn aquire_pads(&mut self, data_bytes: &[u8], mode: StorageMode, public: bool) -> Vec<PadInfo> {
         let mut chunks = data_bytes.chunks(mode.scratchpad_size());
-        let total_length = chunks.clone().count();
+        let total_length = chunks.clone().count()
+            + if public {
+                if data_bytes.len() > mode.scratchpad_size() {
+                    1
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
 
         let mut pads = Vec::new();
 

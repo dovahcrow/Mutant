@@ -104,34 +104,22 @@ impl Network {
     /// Retrieves the raw content of a scratchpad from the network.
     /// Delegates to the `get` module.
     /// Requires PadInfo to reconstruct the SecretKey for decryption.
-    pub(crate) async fn get_private(&self, pad_info: &PadInfo) -> Result<GetResult, NetworkError> {
-        let owner_sk = pad_info.secret_key();
-        get::get(self, &pad_info.address, Some(&owner_sk)).await
-    }
-
-    pub(crate) async fn get_public(
+    pub(crate) async fn get(
         &self,
         address: &ScratchpadAddress,
+        owner_sk: Option<&SecretKey>,
     ) -> Result<GetResult, NetworkError> {
-        get::get(self, address, None).await
+        get::get(self, address, owner_sk).await
     }
 
-    pub(crate) async fn put_private(
+    pub(crate) async fn put(
         &self,
         pad_info: &PadInfo,
         data: &[u8],
         data_encoding: u64,
+        is_public: bool,
     ) -> Result<PutResult, NetworkError> {
-        put::put(self, pad_info, data, data_encoding, false).await
-    }
-
-    pub(crate) async fn put_public(
-        &self,
-        pad_info: &PadInfo,
-        data: &[u8],
-        data_encoding: u64,
-    ) -> Result<PutResult, NetworkError> {
-        put::put(self, pad_info, data, data_encoding, true).await
+        put::put(self, pad_info, data, data_encoding, is_public).await
     }
 }
 

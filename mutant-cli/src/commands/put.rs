@@ -54,7 +54,7 @@ pub async fn handle_put(
 
     debug!("handle_put: Calling mutant.put(&key, &data_vec).await...");
     let result: Result<(), LibError> = if public {
-        unimplemented!();
+        mutant.put(&key, &data_vec, mode.into(), true).await
         // if force {
         //     debug!(
         //         "CLI: Force flag is set for public store. Updating existing public key '{}'.",
@@ -138,7 +138,7 @@ pub async fn handle_put(
         //     }
         // }
     } else {
-        mutant.put(&key, &data_vec, mode.into()).await
+        mutant.put(&key, &data_vec, mode.into(), false).await
     };
     debug!("handle_put: mutant.put returned: {:?}", result);
 

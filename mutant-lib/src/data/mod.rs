@@ -3,6 +3,7 @@ use crate::{
     network::{Network, NetworkError},
 };
 use ant_networking::GetRecordError;
+use autonomi::ScratchpadAddress;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
 use std::{
@@ -51,7 +52,13 @@ impl Data {
         Self { network, index }
     }
 
-    pub async fn put(&self, name: &str, data_bytes: &[u8], mode: StorageMode) -> Result<(), Error> {
+    pub async fn put(
+        &self,
+        name: &str,
+        data_bytes: &[u8],
+        mode: StorageMode,
+        public: bool,
+    ) -> Result<(), Error> {
         if self.index.read().await.contains_key(&name) {
             if self
                 .index
@@ -60,25 +67,31 @@ impl Data {
                 .verify_checksum(&name, data_bytes, mode)
             {
                 info!("Resume for {}", name);
-                self.resume(name, data_bytes, mode).await
+                self.resume(name, data_bytes, mode, public).await
             } else {
                 info!("Update for {}", name);
                 self.index.write().await.remove_key(&name).unwrap();
-                return self.first_store(name, data_bytes, mode).await;
+                return self.first_store(name, data_bytes, mode, public).await;
             }
         } else {
             info!("First store for {}", name);
-            self.first_store(name, data_bytes, mode).await
+            self.first_store(name, data_bytes, mode, public).await
         }
     }
 
-    async fn resume(&self, name: &str, data_bytes: &[u8], mode: StorageMode) -> Result<(), Error> {
+    async fn resume(
+        &self,
+        name: &str,
+        data_bytes: &[u8],
+        mode: StorageMode,
+        public: bool,
+    ) -> Result<(), Error> {
         let pads = self.index.read().await.get_pads(name);
 
         // check pads are in the correct mode or remove key and start over
         if pads.iter().any(|p| p.size > mode.scratchpad_size()) {
             self.index.write().await.remove_key(name).unwrap();
-            return self.first_store(name, data_bytes, mode).await;
+            return self.first_store(name, data_bytes, mode, public).await;
         }
 
         let context = Context {
@@ -91,7 +104,7 @@ impl Data {
                 .collect::<Vec<_>>(),
         };
 
-        self.write_pipeline(context, pads).await;
+        self.write_pipeline(context, pads, public).await;
 
         Ok(())
     }
@@ -101,29 +114,55 @@ impl Data {
         name: &str,
         data_bytes: &[u8],
         mode: StorageMode,
+        public: bool,
     ) -> Result<(), Error> {
-        let pads = self
-            .index
-            .write()
-            .await
-            .create_private_key(&name, data_bytes, mode)?;
+        let (context, pads) = if public {
+            let pads = self
+                .index
+                .write()
+                .await
+                .create_public_key(name, data_bytes, mode)?;
 
-        let context = Context {
-            index: self.index.clone(),
-            network: self.network.clone(),
-            name: Arc::new(name.to_string()),
-            chunks: data_bytes
-                .chunks(mode.scratchpad_size())
-                .map(|chunk| chunk.to_vec())
-                .collect::<Vec<_>>(),
+            let index_data = serde_cbor::to_vec(&pads[1..].to_vec()).unwrap();
+
+            let context = Context {
+                index: self.index.clone(),
+                network: self.network.clone(),
+                name: Arc::new(name.to_string()),
+                chunks: vec![index_data.as_slice()]
+                    .into_iter()
+                    .chain(data_bytes.chunks(mode.scratchpad_size()))
+                    .map(|chunk| chunk.to_vec())
+                    .collect::<Vec<_>>(),
+            };
+
+            (context, pads)
+        } else {
+            let pads = self
+                .index
+                .write()
+                .await
+                .create_private_key(name, data_bytes, mode)?;
+
+            let context = Context {
+                index: self.index.clone(),
+                network: self.network.clone(),
+                name: Arc::new(name.to_string()),
+                chunks: data_bytes
+                    .chunks(mode.scratchpad_size())
+                    .map(|chunk| chunk.to_vec())
+                    .collect::<Vec<_>>(),
+            };
+
+            (context, pads)
         };
 
-        self.write_pipeline(context, pads).await;
+        self.write_pipeline(context, pads, public).await;
 
         Ok(())
     }
 
-    async fn write_pipeline(&self, context: Context, pads: Vec<PadInfo>) {
+    async fn write_pipeline(&self, context: Context, pads: Vec<PadInfo>, public: bool) {
         let (pad_tx, pad_rx) = channel(CHUNK_PROCESSING_QUEUE_SIZE);
 
         let initial_confirmed_count = pads
@@ -136,6 +175,7 @@ impl Data {
             pad_tx.clone(),
             pad_rx,
             initial_confirmed_count,
+            public,
         );
 
         for pad in pads {
@@ -153,6 +193,7 @@ impl Data {
         pad_tx: Sender<PadInfo>,
         mut pad_rx: Receiver<PadInfo>,
         initial_confirmed_count: usize,
+        public: bool,
     ) -> Result<(), tokio::task::JoinError> {
         let key_name = context.name.clone();
         let total_pads = context.chunks.len();
@@ -187,8 +228,14 @@ impl Data {
                                 Self::process_pad_task(
                                     task_context,
                                     task_confirmed_counter,
-                                    pad,
+                                    pad.clone(),
                                     task_pad_tx,
+                                    public,
+                                    if public && pad.chunk_index == 0 && total_pads > 1 {
+                                        true
+                                    } else {
+                                        false
+                                    },
                                 ).await;
                             }));
                         },
@@ -234,6 +281,8 @@ impl Data {
         confirmed_counter: Arc<AtomicUsize>,
         pad: PadInfo,
         pad_tx: Sender<PadInfo>,
+        public: bool,
+        is_index: bool,
     ) {
         let current_pad_address = pad.address;
         let key_name = &context.name;
@@ -271,16 +320,22 @@ impl Data {
             }
         };
 
+        let encoding = if is_index {
+            DATA_ENCODING_PUBLIC_INDEX
+        } else {
+            if public {
+                DATA_ENCODING_PUBLIC_DATA
+            } else {
+                DATA_ENCODING_PRIVATE_DATA
+            }
+        };
+
         if initial_status == PadStatus::Generated || initial_status == PadStatus::Free {
             let mut retries_left = PAD_RECYCLING_RETRIES;
             loop {
                 let put_result = context
                     .network
-                    .put_private(
-                        &pad,
-                        &context.chunks[pad.chunk_index],
-                        DATA_ENCODING_PRIVATE_DATA,
-                    )
+                    .put(&pad, &context.chunks[pad.chunk_index], encoding, public)
                     .await;
 
                 match put_result {
@@ -335,7 +390,10 @@ impl Data {
                     return;
                 }
 
-                let get_result = context.network.get_private(&pad_to_confirm).await;
+                let get_result = context
+                    .network
+                    .get(&pad_to_confirm.address, Some(&pad_to_confirm.secret_key()))
+                    .await;
 
                 match get_result {
                     Ok(gotten_pad) => {
@@ -386,18 +444,41 @@ impl Data {
         }
     }
 
+    pub async fn get_public(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, Error> {
+        let mut data = Vec::new();
+
+        let index = self.network.get(address, None).await?;
+
+        if index.data_encoding == DATA_ENCODING_PUBLIC_INDEX {
+            let index: Vec<PadInfo> = serde_cbor::from_slice(&index.data).unwrap();
+            for pad in index {
+                let pad_data = self.network.get(&pad.address, None).await?;
+                data.extend_from_slice(&pad_data.data);
+            }
+        } else if index.data_encoding == DATA_ENCODING_PUBLIC_DATA {
+            data.extend_from_slice(&index.data);
+        }
+
+        Ok(data)
+    }
+
     pub async fn get(&self, name: &str) -> Result<Vec<u8>, Error> {
+        if let Some(index_pad) = self.index.read().await.get_index_pad_if_public(name) {
+            return self.get_public(&index_pad.address).await;
+        }
+
         let mut data = Vec::new();
 
         let pads = self.index.read().await.get_pads(name);
 
         let mut tasks = Vec::new();
+
         for pad in pads {
             let network = self.network.clone();
             tasks.push(tokio::spawn(async move {
                 let mut retries_left = PAD_RECYCLING_RETRIES;
                 let pad = loop {
-                    match network.get_private(&pad).await {
+                    match network.get(&pad.address, Some(&pad.secret_key())).await {
                         Ok(pad) => break pad,
                         Err(e) => {
                             debug!("Error getting pad {}: {}", pad.address, e);
@@ -454,7 +535,7 @@ impl Data {
             let index = self.index.clone();
 
             tasks.push_back(tokio::spawn(async move {
-                match network.get_private(&pad).await {
+                match network.get(&pad.address, None).await {
                     Ok(_res) => {
                         debug!("Pad {} verified.", pad.address);
                         if let Ok(mut index_guard) = index.try_write() {
