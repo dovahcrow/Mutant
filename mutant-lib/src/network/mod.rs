@@ -87,6 +87,7 @@ impl Network {
 
     /// Retrieves the underlying Autonomi network client, initializing it if necessary.
     async fn get_or_init_client(&self) -> Result<Arc<Client>, NetworkError> {
+        // create_client(self.network_choice).await.map(Arc::new)
         self.client
             .get_or_try_init(|| async {
                 let network_choice_clone = self.network_choice;

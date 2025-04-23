@@ -97,19 +97,21 @@ pub enum Commands {
     // #[command(about = "Reset local cache and index")]
     // Reset,
 
-    // #[command(about = "Import a scratchpad private key")]
-    // Import { private_key: String },
-
     // #[command(about = "Synchronize local index cache with remote storage")]
     // Sync {
     //     #[arg(long, default_value_t = false)]
     //     push_force: bool,
     // },
     #[command(
-        about = "Perform a check on scratchpads that should have been created but maybe not and clean them up"
+        about = "Perform a get check on scratchpads that should have been created but failed at some point. Removes the pads that are not found."
     )]
     Purge {
-        #[arg(short, long, default_value_t = false)]
+        #[arg(
+            short,
+            long,
+            default_value_t = false,
+            help = "Remove also the pads that got any other error"
+        )]
         aggressive: bool,
     },
     // #[command(about = "Reserve a key without storing a value")]
