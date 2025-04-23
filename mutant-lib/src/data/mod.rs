@@ -104,7 +104,17 @@ impl Data {
     async fn write_pipeline(&self, context: Context, pads: Vec<PadInfo>) {
         let (pad_tx, pad_rx) = channel(CHUNK_PROCESSING_QUEUE_SIZE);
 
-        let process_future = self.process_pads(context.clone(), pad_tx.clone(), pad_rx);
+        let initial_confirmed_count = pads
+            .iter()
+            .filter(|p| p.status == PadStatus::Confirmed)
+            .count();
+
+        let process_future = self.process_pads(
+            context.clone(),
+            pad_tx.clone(),
+            pad_rx,
+            initial_confirmed_count,
+        );
 
         for pad in pads {
             let _ = pad_tx.send(pad.clone()).await;
@@ -120,17 +130,26 @@ impl Data {
         context: Context,
         pad_tx: Sender<PadInfo>,
         mut pad_rx: Receiver<PadInfo>,
+        initial_confirmed_count: usize,
     ) -> Result<(), tokio::task::JoinError> {
         let key_name = context.name.clone();
         let total_pads = context.chunks.len();
-        let confirmed_pads = Arc::new(AtomicUsize::new(0));
+        let confirmed_pads = Arc::new(AtomicUsize::new(initial_confirmed_count));
+
+        if initial_confirmed_count == total_pads {
+            info!(
+                "All {} pads for key {} were already confirmed. Skipping pipeline.",
+                total_pads, key_name
+            );
+            return Ok(());
+        }
 
         let mut tasks = futures::stream::FuturesUnordered::new();
         let mut outstanding_tasks = 0u32;
         let mut channel_closed = false;
         info!(
-            "Starting pad processing pipeline for {} with {} pads",
-            key_name, total_pads
+            "Starting pad processing pipeline for {} with {} pads ({} initially confirmed)",
+            key_name, total_pads, initial_confirmed_count
         );
 
         loop {
