@@ -393,9 +393,12 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
             value,
             force,
             public,
+            mode,
         } => {
-            crate::commands::put::handle_put(mutant, key, value, force, public, &mp, cli.quiet)
-                .await
+            crate::commands::put::handle_put(
+                mutant, key, value, force, public, mode, &mp, cli.quiet,
+            )
+            .await
         }
         Commands::Get { key, public } => {
             crate::commands::get::handle_get(mutant, key, public, &mp, cli.quiet).await

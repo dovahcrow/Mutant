@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::{
+    data::storage_mode::StorageMode,
     data::Data,
     index::{
         master_index::{IndexEntry, MasterIndex, StorageStats},
@@ -53,8 +54,13 @@ impl MutAnt {
         })
     }
 
-    pub async fn put(&self, user_key: &str, data_bytes: &[u8]) -> Result<(), Error> {
-        self.data.put(user_key, data_bytes).await
+    pub async fn put(
+        &self,
+        user_key: &str,
+        data_bytes: &[u8],
+        mode: StorageMode,
+    ) -> Result<(), Error> {
+        self.data.put(user_key, data_bytes, mode).await
     }
 
     // pub async fn store_public(&self, user_key: &[u8], data_bytes: &[u8]) -> Result<(), Error> {}
@@ -137,7 +143,9 @@ mod tests {
         let user_key = generate_random_string(10);
         let data_bytes = generate_random_bytes(128);
 
-        let result = mutant.put(&user_key, &data_bytes).await;
+        let result = mutant
+            .put(&user_key, &data_bytes, StorageMode::Medium)
+            .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
         // Ideally, we'd also check if the data is retrievable here,
@@ -159,13 +167,17 @@ mod tests {
         let user_key = generate_random_string(10);
         let data_bytes = generate_random_bytes(128);
 
-        let result = mutant.put(&user_key, &data_bytes).await;
+        let result = mutant
+            .put(&user_key, &data_bytes, StorageMode::Medium)
+            .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
 
         let data_bytes = generate_random_bytes(128);
 
-        let result = mutant.put(&user_key, &data_bytes).await;
+        let result = mutant
+            .put(&user_key, &data_bytes, StorageMode::Medium)
+            .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
 
@@ -180,13 +192,15 @@ mod tests {
         let data_bytes = generate_random_bytes(128);
 
         // Start the first put operation but do not await its completion
-        let first_put = mutant.put(&user_key, &data_bytes);
+        let first_put = mutant.put(&user_key, &data_bytes, StorageMode::Medium);
 
         // Simulate an interruption by dropping the future before it completes
         drop(first_put);
 
         // Now attempt to resume the operation with the same data
-        let result = mutant.put(&user_key, &data_bytes).await;
+        let result = mutant
+            .put(&user_key, &data_bytes, StorageMode::Medium)
+            .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
 

@@ -1,5 +1,5 @@
 use crate::{
-    index::{master_index::MasterIndex, PadInfo, PadStatus, DEFAULT_SCRATCHPAD_SIZE},
+    index::{master_index::MasterIndex, PadInfo, PadStatus},
     network::Network,
     storage::ScratchpadAddress,
 };
@@ -12,6 +12,7 @@ use std::{
     },
     time::Duration,
 };
+use storage_mode::StorageMode;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::RwLock;
 
@@ -24,6 +25,7 @@ pub const CHUNK_PROCESSING_QUEUE_SIZE: usize = 256;
 pub const PAD_RECYCLING_RETRIES: usize = 25;
 
 mod error;
+pub mod storage_mode;
 
 pub use crate::internal_error::Error;
 
@@ -46,23 +48,28 @@ impl Data {
         Self { network, index }
     }
 
-    pub async fn put(&self, name: &str, data_bytes: &[u8]) -> Result<(), Error> {
+    pub async fn put(&self, name: &str, data_bytes: &[u8], mode: StorageMode) -> Result<(), Error> {
         if self.index.read().await.contains_key(&name) {
-            if self.index.read().await.verify_checksum(&name, data_bytes) {
+            if self
+                .index
+                .read()
+                .await
+                .verify_checksum(&name, data_bytes, mode)
+            {
                 info!("Resume for {}", name);
-                self.resume(name, data_bytes).await
+                self.resume(name, data_bytes, mode).await
             } else {
                 info!("Update for {}", name);
                 self.index.write().await.remove_key(&name).unwrap();
-                return self.first_store(name, data_bytes).await;
+                return self.first_store(name, data_bytes, mode).await;
             }
         } else {
             info!("First store for {}", name);
-            self.first_store(name, data_bytes).await
+            self.first_store(name, data_bytes, mode).await
         }
     }
 
-    async fn resume(&self, name: &str, data_bytes: &[u8]) -> Result<(), Error> {
+    async fn resume(&self, name: &str, data_bytes: &[u8], mode: StorageMode) -> Result<(), Error> {
         let pads = self.index.read().await.get_pads(name);
 
         let context = Context {
@@ -70,7 +77,7 @@ impl Data {
             network: self.network.clone(),
             name: Arc::new(name.to_string()),
             chunks: data_bytes
-                .chunks(DEFAULT_SCRATCHPAD_SIZE)
+                .chunks(mode.scratchpad_size())
                 .map(|chunk| chunk.to_vec())
                 .collect::<Vec<_>>(),
         };
@@ -80,19 +87,24 @@ impl Data {
         Ok(())
     }
 
-    async fn first_store(&self, name: &str, data_bytes: &[u8]) -> Result<(), Error> {
+    async fn first_store(
+        &self,
+        name: &str,
+        data_bytes: &[u8],
+        mode: StorageMode,
+    ) -> Result<(), Error> {
         let pads = self
             .index
             .write()
             .await
-            .create_private_key(&name, data_bytes)?;
+            .create_private_key(&name, data_bytes, mode)?;
 
         let context = Context {
             index: self.index.clone(),
             network: self.network.clone(),
             name: Arc::new(name.to_string()),
             chunks: data_bytes
-                .chunks(DEFAULT_SCRATCHPAD_SIZE)
+                .chunks(mode.scratchpad_size())
                 .map(|chunk| chunk.to_vec())
                 .collect::<Vec<_>>(),
         };

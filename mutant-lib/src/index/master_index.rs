@@ -1,4 +1,5 @@
 use crate::config::NetworkChoice;
+use crate::data::storage_mode::StorageMode;
 use crate::storage::ScratchpadAddress;
 use crate::{index::pad_info::PadInfo, internal_error::Error};
 use log::{debug, info};
@@ -11,7 +12,7 @@ use std::slice::Chunks;
 use xdg::BaseDirectories;
 
 use super::error::IndexError;
-use super::{PadStatus, DEFAULT_SCRATCHPAD_SIZE};
+use super::PadStatus;
 
 /// Represents an entry in the master index, which can be either private key data or public upload data.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -104,12 +105,13 @@ impl MasterIndex {
         &mut self,
         key_name: &str,
         data_bytes: &[u8],
+        mode: StorageMode,
     ) -> Result<Vec<PadInfo>, Error> {
         if self.index.contains_key(key_name) {
             return Err(IndexError::KeyAlreadyExists(key_name.to_string()).into());
         }
 
-        let pads = self.aquire_pads(data_bytes);
+        let pads = self.aquire_pads(data_bytes, mode);
 
         self.index
             .insert(key_name.to_string(), IndexEntry::PrivateKey(pads.clone()));
@@ -234,11 +236,9 @@ impl MasterIndex {
         Ok(())
     }
 
-    fn aquire_pads(&mut self, data_bytes: &[u8]) -> Vec<PadInfo> {
-        let mut chunks = data_bytes.chunks(DEFAULT_SCRATCHPAD_SIZE);
+    fn aquire_pads(&mut self, data_bytes: &[u8], mode: StorageMode) -> Vec<PadInfo> {
+        let mut chunks = data_bytes.chunks(mode.scratchpad_size());
         let total_length = chunks.clone().count();
-
-        println!("total_length: {}", total_length);
 
         let mut pads = Vec::new();
 
@@ -291,9 +291,9 @@ impl MasterIndex {
         }
     }
 
-    pub fn verify_checksum(&self, key_name: &str, data_bytes: &[u8]) -> bool {
+    pub fn verify_checksum(&self, key_name: &str, data_bytes: &[u8], mode: StorageMode) -> bool {
         let new_checksums = data_bytes
-            .chunks(DEFAULT_SCRATCHPAD_SIZE)
+            .chunks(mode.scratchpad_size())
             .map(|chunk| PadInfo::checksum(chunk))
             .collect::<Vec<_>>();
 
@@ -461,8 +461,11 @@ fn get_index_file_path(network_choice: NetworkChoice) -> Result<PathBuf, Error> 
 mod tests {
     use super::*;
     use crate::config::NetworkChoice;
+    use crate::data::storage_mode::MEDIUM_SCRATCHPAD_SIZE;
     use crate::storage::ScratchpadAddress;
     use tempfile::tempdir;
+
+    const DEFAULT_SCRATCHPAD_SIZE: usize = MEDIUM_SCRATCHPAD_SIZE;
 
     // Helper to set up a temporary XDG directory for tests, always using Devnet
     fn setup_test_environment() -> (tempfile::TempDir, MasterIndex) {
@@ -490,7 +493,9 @@ mod tests {
         let data = vec![0u8; DEFAULT_SCRATCHPAD_SIZE * 2 + 10]; // Data spanning more than 2 pads
         let key_name = "test_key";
 
-        let pads = index.create_private_key(key_name, &data).unwrap();
+        let pads = index
+            .create_private_key(key_name, &data, StorageMode::Medium)
+            .unwrap();
 
         assert_eq!(pads.len(), 3); // Should create 3 pads
         assert!(index.contains_key(key_name));
@@ -510,8 +515,10 @@ mod tests {
         let data = vec![1u8; 10];
         let key_name = "test_key";
 
-        index.create_private_key(key_name, &data).unwrap();
-        let result = index.create_private_key(key_name, &data);
+        index
+            .create_private_key(key_name, &data, StorageMode::Medium)
+            .unwrap();
+        let result = index.create_private_key(key_name, &data, StorageMode::Medium);
 
         assert!(matches!(
             result,
@@ -524,7 +531,9 @@ mod tests {
         let (_td, mut index) = setup_test_environment();
         let data = vec![0u8; DEFAULT_SCRATCHPAD_SIZE];
         let key_name = "test_key";
-        let pads = index.create_private_key(key_name, &data).unwrap();
+        let pads = index
+            .create_private_key(key_name, &data, StorageMode::Medium)
+            .unwrap();
         let pad_address = pads[0].address;
 
         index.update_pad_status(key_name, &pad_address, PadStatus::Confirmed);
@@ -543,7 +552,9 @@ mod tests {
         let key_name = "test_key";
 
         assert!(!index.contains_key(key_name));
-        index.create_private_key(key_name, &data).unwrap();
+        index
+            .create_private_key(key_name, &data, StorageMode::Medium)
+            .unwrap();
         assert!(index.contains_key(key_name));
         assert!(!index.contains_key("other_key"));
     }
@@ -556,10 +567,14 @@ mod tests {
         let key_gen = "key_gen";
         let key_conf = "key_conf";
 
-        let pads_gen = index.create_private_key(key_gen, &data_gen).unwrap();
+        let pads_gen = index
+            .create_private_key(key_gen, &data_gen, StorageMode::Medium)
+            .unwrap();
         let pad_gen_addr = pads_gen[0].address;
 
-        let pads_conf = index.create_private_key(key_conf, &data_conf).unwrap();
+        let pads_conf = index
+            .create_private_key(key_conf, &data_conf, StorageMode::Medium)
+            .unwrap();
         let pad_conf_addr = pads_conf[0].address;
         index.update_pad_status(key_conf, &pad_conf_addr, PadStatus::Confirmed); // Mark as non-generated
 
@@ -585,7 +600,9 @@ mod tests {
         let data = vec![0u8; DEFAULT_SCRATCHPAD_SIZE * 2];
         let key_name = "test_key";
 
-        let pads = index.create_private_key(key_name, &data).unwrap();
+        let pads = index
+            .create_private_key(key_name, &data, StorageMode::Medium)
+            .unwrap();
         assert!(!index.is_finished(key_name)); // Not finished initially
 
         // Update one pad
@@ -605,22 +622,24 @@ mod tests {
         let data = vec![0u8; DEFAULT_SCRATCHPAD_SIZE + 5];
         let key_name = "test_key";
 
-        index.create_private_key(key_name, &data).unwrap();
+        index
+            .create_private_key(key_name, &data, StorageMode::Medium)
+            .unwrap();
 
         // Verify with correct data
-        assert!(index.verify_checksum(key_name, &data));
+        assert!(index.verify_checksum(key_name, &data, StorageMode::Medium));
 
         // Verify with incorrect data (different length)
         let wrong_data_len = vec![0u8; DEFAULT_SCRATCHPAD_SIZE];
-        assert!(!index.verify_checksum(key_name, &wrong_data_len));
+        assert!(!index.verify_checksum(key_name, &wrong_data_len, StorageMode::Medium));
 
         // Verify with incorrect data (same length, different content)
         let mut wrong_data_content = data.clone();
         wrong_data_content[0] = 1; // Change one byte
-        assert!(!index.verify_checksum(key_name, &wrong_data_content));
+        assert!(!index.verify_checksum(key_name, &wrong_data_content, StorageMode::Medium));
 
         // Verify non-existent key
-        assert!(!index.verify_checksum("non_existent_key", &data));
+        assert!(!index.verify_checksum("non_existent_key", &data, StorageMode::Medium));
     }
 
     #[test]
@@ -628,8 +647,12 @@ mod tests {
         let (_td, mut index) = setup_test_environment();
         assert!(index.list().is_empty());
 
-        index.create_private_key("key1", &[1]).unwrap();
-        index.create_private_key("key2", &[2]).unwrap();
+        index
+            .create_private_key("key1", &[1], StorageMode::Medium)
+            .unwrap();
+        index
+            .create_private_key("key2", &[2], StorageMode::Medium)
+            .unwrap();
 
         let keys = index.list();
 
@@ -645,7 +668,9 @@ mod tests {
         let key2 = "key2";
 
         // Create first key, its pad gets generated
-        let pads1 = index.create_private_key(key1, &data1).unwrap();
+        let pads1 = index
+            .create_private_key(key1, &data1, StorageMode::Medium)
+            .unwrap();
         assert_eq!(pads1.len(), 1);
         let pad1_addr = pads1[0].address;
         index.update_pad_status(key1, &pad1_addr, PadStatus::Confirmed); // Mark as used
@@ -658,7 +683,9 @@ mod tests {
         assert_eq!(index.free_pads[0].status, PadStatus::Free); // Status updated
 
         // Create second key, should reuse the free pad
-        let pads2 = index.create_private_key(key2, &data2).unwrap();
+        let pads2 = index
+            .create_private_key(key2, &data2, StorageMode::Medium)
+            .unwrap();
         assert_eq!(pads2.len(), 1);
         assert_eq!(pads2[0].address, pad1_addr); // Reused the same address
         assert_eq!(pads2[0].status, PadStatus::Free); // Status reset
@@ -675,7 +702,9 @@ mod tests {
         // No free pads initially
         assert!(index.free_pads.is_empty());
 
-        let pads = index.create_private_key(key, &data).unwrap();
+        let pads = index
+            .create_private_key(key, &data, StorageMode::Medium)
+            .unwrap();
         assert_eq!(pads.len(), 2);
         assert_ne!(pads[0].address, pads[1].address); // Ensure different addresses for generated pads
         assert!(index.free_pads.is_empty()); // Still no free pads
@@ -690,14 +719,18 @@ mod tests {
         let key3 = "key3";
 
         // Create key1, mark pad as used, remove key -> pad goes to free_pads
-        let pads1 = index.create_private_key(key1, &data1).unwrap();
+        let pads1 = index
+            .create_private_key(key1, &data1, StorageMode::Medium)
+            .unwrap();
         let pad1_addr = pads1[0].address;
         index.update_pad_status(key1, &pad1_addr, PadStatus::Confirmed);
         index.remove_key(key1).unwrap();
         assert_eq!(index.free_pads.len(), 1);
 
         // Create key3, requires 3 pads. Should use 1 free pad and generate 2 new ones.
-        let pads3 = index.create_private_key(key3, &data3).unwrap();
+        let pads3 = index
+            .create_private_key(key3, &data3, StorageMode::Medium)
+            .unwrap();
         assert_eq!(pads3.len(), 3);
         assert!(index.free_pads.is_empty()); // Free pad was used
 
@@ -739,7 +772,9 @@ mod tests {
 
             let data = vec![1, 2, 3];
             let key = "mykey";
-            index1.create_private_key(key, &data).unwrap();
+            index1
+                .create_private_key(key, &data, StorageMode::Medium)
+                .unwrap();
 
             // Need the path before td goes out of scope
             let path = get_index_file_path(network).unwrap();

@@ -1,4 +1,5 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use mutant_lib::storage::StorageMode;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -23,6 +24,32 @@ pub struct Cli {
     pub command: Commands,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+pub enum StorageModeCli {
+    /// 0.5 MB per scratchpad
+    Lightest,
+    /// 1 MB per scratchpad
+    Light,
+    /// 2 MB per scratchpad
+    Medium,
+    /// 3 MB per scratchpad
+    Heavy,
+    /// 4 MB per scratchpad
+    Heaviest,
+}
+
+impl From<StorageModeCli> for StorageMode {
+    fn from(mode: StorageModeCli) -> Self {
+        match mode {
+            StorageModeCli::Lightest => StorageMode::Lightest,
+            StorageModeCli::Light => StorageMode::Light,
+            StorageModeCli::Medium => StorageMode::Medium,
+            StorageModeCli::Heavy => StorageMode::Heavy,
+            StorageModeCli::Heaviest => StorageMode::Heaviest,
+        }
+    }
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
     #[command(about = "Store a value associated with a key")]
@@ -33,6 +60,8 @@ pub enum Commands {
         force: bool,
         #[arg(short, long, default_value_t = false)]
         public: bool,
+        #[arg(value_enum, short, long, default_value_t = StorageModeCli::Medium)]
+        mode: StorageModeCli,
     },
 
     #[command(about = "Retrieve a value associated with a key")]

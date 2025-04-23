@@ -10,12 +10,15 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::cli::StorageModeCli;
+
 pub async fn handle_put(
     mutant: MutAnt,
     key: String,
     value: Option<String>,
     force: bool,
     public: bool,
+    mode: StorageModeCli,
     multi_progress: &MultiProgress,
     quiet: bool,
 ) -> ExitCode {
@@ -135,7 +138,7 @@ pub async fn handle_put(
         //     }
         // }
     } else {
-        mutant.put(&key, &data_vec).await
+        mutant.put(&key, &data_vec, mode.into()).await
     };
     debug!("handle_put: mutant.put returned: {:?}", result);
 
