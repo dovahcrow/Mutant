@@ -5,7 +5,7 @@ mod commands;
 mod history;
 
 use env_logger::{Builder, Env};
-use log::{error, info};
+use log::{debug, error, info};
 use std::process::ExitCode;
 
 use crate::app::run_cli;
@@ -17,8 +17,10 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    debug!("Entering main, calling run_cli...");
     match run_cli().await {
         Ok(exit_code) => {
+            debug!("run_cli returned successfully with code: {:?}", exit_code);
             if exit_code == ExitCode::SUCCESS {
                 info!("MutAnt CLI finished successfully.");
             } else {
@@ -27,6 +29,7 @@ async fn main() -> ExitCode {
             exit_code
         }
         Err(e) => {
+            debug!("run_cli returned error: {}", e);
             error!("MutAnt CLI Error: {}", e);
             eprintln!("Error: {}", e);
             ExitCode::FAILURE

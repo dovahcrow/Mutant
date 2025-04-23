@@ -12,9 +12,9 @@ pub(crate) async fn create_client(network_choice: NetworkChoice) -> Result<Clien
     );
 
     let mut config = ClientConfig::default();
-    config.strategy.scratchpad.verification_retry = RetryStrategy::Persistent;
-    config.strategy.scratchpad.put_retry = RetryStrategy::Persistent;
-    config.strategy.scratchpad.get_retry = RetryStrategy::Persistent;
+    // config.strategy.scratchpad.verification_retry = RetryStrategy::Persistent;
+    // config.strategy.scratchpad.put_retry = RetryStrategy::Persistent;
+    // config.strategy.scratchpad.get_retry = RetryStrategy::Persistent;
 
     match network_choice {
         NetworkChoice::Mainnet => config.evm_network = autonomi::Network::new(false).unwrap(),

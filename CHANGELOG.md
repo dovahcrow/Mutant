@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fix process hang by ensuring concurrent write/confirm tasks terminate using MPSC channels.
 - Adapt to `scratchpad_put` SDK changes where it no longer returns a `Receipt`. Code now correctly destructures the `(AttoTokens, ScratchpadAddress)` tuple and avoids updating the `PadInfo.receipt` field, resolving compilation errors.
 - Correctly fetch and store network counter for harvested pads added to the free list, ensuring accurate `initial_counter` for `PadOrigin::FreePool`.
 - Initialize `PadInfo.last_known_counter` using the `initial_counter` from `PadOrigin` when preparing pads, ensuring accurate initial counter tracking for pads from the free pool.
@@ -20,7 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Added integration test (`test_generated_pad_counter_increment`) to verify scratchpad counter increments correctly on successive writes to generated pads.
 
-## [0.4.1] - 2024-07-26
+## [0.4.2] - UNRELEASED
+
+### Fixed
+- Fix process hang caused by non-terminating background tasks during data write operations.
+
+## [0.4.1] - 2024-04-23
 
 ### Added
 - **Fetch History:** Keep track of fetched public data addresses for easy re-fetching. This history is displayed with `mutant ls -l`.

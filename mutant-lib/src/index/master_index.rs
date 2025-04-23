@@ -119,6 +119,35 @@ impl MasterIndex {
         Ok(pads)
     }
 
+    pub fn recycle_errored_pad(
+        &mut self,
+        key_name: &str,
+        pad_address: &ScratchpadAddress,
+    ) -> Result<PadInfo, Error> {
+        let mut new_pad = PadInfo::new(&[0u8; 1], 0);
+
+        if let Some(entry) = self.index.get_mut(key_name) {
+            if let IndexEntry::PrivateKey(pads) = entry {
+                let pad_index = pads.iter().position(|p| p.address == *pad_address).unwrap();
+                let old_pad = pads[pad_index].clone();
+
+                new_pad.checksum = old_pad.checksum;
+                new_pad.size = old_pad.size;
+                new_pad.chunk_index = old_pad.chunk_index;
+
+                pads[pad_index] = new_pad.clone();
+
+                self.pending_verification_pads.push(old_pad);
+            } else {
+                unimplemented!()
+            }
+        } else {
+            return Err(IndexError::KeyNotFound(key_name.to_string()).into());
+        }
+
+        Ok(new_pad)
+    }
+
     pub fn update_pad_status(
         &mut self,
         key_name: &str,
@@ -209,18 +238,23 @@ impl MasterIndex {
         let mut chunks = data_bytes.chunks(DEFAULT_SCRATCHPAD_SIZE);
         let total_length = chunks.clone().count();
 
+        println!("total_length: {}", total_length);
+
         let mut pads = Vec::new();
-        pads.extend(
-            self.free_pads
-                .drain(0..total_length)
-                .map(|p| p.update_data(chunks.next().unwrap()))
-                .collect::<Vec<_>>(),
-        );
+
+        if !self.free_pads.is_empty() {
+            pads.extend(
+                self.free_pads
+                    .drain(0..total_length)
+                    .map(|p| p.update_data(chunks.next().unwrap()))
+                    .collect::<Vec<_>>(),
+            );
+        }
 
         debug!("Aquired {} pads from free_pads", pads.len());
 
         if pads.len() < total_length {
-            pads.extend(self.generate_pads(chunks));
+            pads.extend(self.generate_pads(pads.len(), chunks));
         }
 
         debug!("Aquired {} pads in total", pads.len());
@@ -228,8 +262,15 @@ impl MasterIndex {
         pads
     }
 
-    fn generate_pads(&mut self, chunks: Chunks<u8>) -> Vec<PadInfo> {
-        chunks.map(|chunk| PadInfo::new(chunk)).collect::<Vec<_>>()
+    fn generate_pads(&mut self, starting_chunk_index: usize, chunks: Chunks<u8>) -> Vec<PadInfo> {
+        let mut chunk_index = starting_chunk_index;
+        chunks
+            .map(|chunk| {
+                let pad = PadInfo::new(chunk, chunk_index);
+                chunk_index += 1;
+                pad
+            })
+            .collect::<Vec<_>>()
     }
 
     pub fn is_finished(&self, key_name: &str) -> bool {

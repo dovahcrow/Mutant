@@ -49,7 +49,8 @@ pub async fn handle_put(
     // let (res_pb_opt, upload_pb_opt, confirm_pb_opt, callback) =
     //     create_put_callback(multi_progress, quiet);
 
-    let result: Result<Option<ScratchpadAddress>, LibError> = if public {
+    debug!("handle_put: Calling mutant.put(&key, &data_vec).await...");
+    let result: Result<(), LibError> = if public {
         unimplemented!();
         // if force {
         //     debug!(
@@ -134,61 +135,28 @@ pub async fn handle_put(
         //     }
         // }
     } else {
-        match mutant.put(&key, &data_vec).await {
-            Ok(_) => Ok(None),
-            Err(e) => {
-                eprintln!("Error: {:?}", e);
-                return ExitCode::FAILURE;
-            }
-        }
+        mutant.put(&key, &data_vec).await
     };
+    debug!("handle_put: mutant.put returned: {:?}", result);
 
-    // match result {
-    //     Ok(public_address_opt) => {
-    //         debug!(
-    //             "Put operation successful for key: {} (public={})",
-    //             key, public
-    //         );
+    // Explicitly drop mutant to see if drop causes the hang
+    debug!("handle_put: Explicitly dropping mutant instance...");
+    drop(mutant);
+    debug!("handle_put: Mutant instance dropped.");
 
-    //         clear_pb(&res_pb_opt);
-    //         clear_pb(&upload_pb_opt);
-    //         clear_pb(&confirm_pb_opt);
-
-    //         if let Some(address) = public_address_opt {
-    //             if !quiet {
-    //                 println!("{}", address);
-    //             } else {
-    //                 info!("Public address for key '{}': {}", key, address);
-    //             }
-    //         }
-    //         ExitCode::SUCCESS
-    //     }
-    //     Err(e) => {
-    //         let context = if public {
-    //             "public store"
-    //         } else {
-    //             if force {
-    //                 "private update"
-    //             } else {
-    //                 "private store"
-    //             }
-    //         };
-    //         let error_message = match e {
-    //             LibError::OperationCancelled => "Operation cancelled.".to_string(),
-    //             _ => format!("Error during {}: {}", context, e,),
-    //         };
-
-    //         eprintln!("{}", error_message);
-
-    //         abandon_pb(&res_pb_opt, error_message.clone());
-    //         abandon_pb(&upload_pb_opt, error_message.clone());
-    //         abandon_pb(&confirm_pb_opt, error_message);
-
-    //         ExitCode::FAILURE
-    //     }
-    // }
-
-    ExitCode::SUCCESS
+    // Handle the result (Ok or Err)
+    debug!("handle_put: Matching result...");
+    match result {
+        Ok(_) => {
+            debug!("handle_put: Result is Ok. Returning SUCCESS.");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            debug!("handle_put: Result is Err({:?}). Returning FAILURE.", e);
+            eprintln!("Error: {:?}", e);
+            ExitCode::FAILURE
+        }
+    }
 }
 
 // fn clear_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>) {

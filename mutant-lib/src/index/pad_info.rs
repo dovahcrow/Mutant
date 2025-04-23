@@ -19,6 +19,9 @@ pub enum PadStatus {
 
     /// The pad's content has been verified against the original data.
     Confirmed,
+
+    /// The pad has encountered repeated error during upload or download and must be recycled..
+    Errored,
 }
 
 /// Information about a single pad associated with a key.
@@ -29,6 +32,9 @@ pub struct PadInfo {
 
     /// The size stored on the pad.
     pub size: usize,
+
+    /// The chunk index of the pad.
+    pub chunk_index: usize,
 
     /// The current status of this pad.
     pub status: PadStatus,
@@ -55,7 +61,7 @@ impl PadInfo {
 }
 
 impl PadInfo {
-    pub fn new(data: &[u8]) -> Self {
+    pub fn new(data: &[u8], chunk_index: usize) -> Self {
         let secret_key = SecretKey::random();
         let sk_bytes = secret_key.to_bytes().to_vec();
         let address = ScratchpadAddress::new(secret_key.public_key());
@@ -65,6 +71,7 @@ impl PadInfo {
             size: data.len(),
             status: PadStatus::Generated,
             last_known_counter: 0,
+            chunk_index,
             checksum: Self::checksum(data),
         }
     }

@@ -231,34 +231,49 @@ async fn cleanup_background_tasks(
     mp_join_handle: JoinHandle<()>,
     mutant_init_handle: Option<JoinHandle<()>>,
 ) {
-    if !mp_join_handle.is_finished() {
-        debug!("Aborting and awaiting MultiProgress drawing task...");
-        mp_join_handle.abort();
-        if let Err(e) = mp_join_handle.await {
-            if !e.is_cancelled() {
-                error!("MultiProgress join handle error after abort: {}", e);
-            }
-        }
-        debug!("MultiProgress drawing task finished.");
-    }
+    debug!("cleanup_background_tasks: Starting cleanup...");
+    // Abort the MultiProgress background task
+    debug!("cleanup_background_tasks: Aborting MultiProgress background task...");
+    mp_join_handle.abort();
+    // Do not await the handle, as it's intentionally pending and await might hang.
+    // match mp_join_handle.await {
+    //     Ok(_) => debug!("MultiProgress task exited normally after abort."),
+    //     Err(e) if e.is_cancelled() => debug!("MultiProgress task successfully cancelled."),
+    //     Err(e) => error!("MultiProgress task panicked or failed: {:?}", e),
+    // }
+    debug!("MultiProgress task abort signal sent.");
 
+    debug!("cleanup_background_tasks: Checking for mutant_init_handle...");
     if let Some(handle) = mutant_init_handle {
-        info!("Waiting for background MutAnt/Storage task to complete...");
+        info!("cleanup_background_tasks: Waiting for background MutAnt/Storage task...");
         match handle.await {
             Ok(_) => {
-                info!("Background MutAnt/Storage task finished successfully.");
+                info!(
+                    "cleanup_background_tasks: Background MutAnt/Storage task finished successfully."
+                );
             }
             Err(e) => {
                 if e.is_panic() {
-                    error!("Background MutAnt/Storage task panicked: {}", e);
+                    error!(
+                        "cleanup_background_tasks: Background MutAnt/Storage task panicked: {}",
+                        e
+                    );
                 } else if e.is_cancelled() {
-                    info!("Background MutAnt/Storage task was cancelled.");
+                    info!(
+                        "cleanup_background_tasks: Background MutAnt/Storage task was cancelled."
+                    );
                 } else {
-                    error!("Background MutAnt/Storage task failed to join: {}", e);
+                    error!(
+                        "cleanup_background_tasks: Background MutAnt/Storage task failed to join: {}",
+                        e
+                    );
                 }
             }
         }
+    } else {
+        debug!("cleanup_background_tasks: No mutant_init_handle found.");
     }
+    debug!("cleanup_background_tasks: Finished cleanup.");
 }
 
 pub async fn run_cli() -> Result<ExitCode, CliError> {
@@ -428,9 +443,15 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         //     }
         // },
     };
+    debug!(
+        "run_cli: Command handler finished with result: {:?}",
+        result
+    );
 
+    debug!("run_cli: Calling cleanup_background_tasks...");
     cleanup_background_tasks(mp_join_handle, mutant_init_handle).await;
+    debug!("run_cli: Returned from cleanup_background_tasks.");
 
-    debug!("CLI exiting with code: {:?}", result);
+    debug!("run_cli: Exiting with code: {:?}", result);
     Ok(result)
 }
