@@ -142,11 +142,41 @@ pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
                     );
                 }
                 IndexEntry::PublicUpload(index_pad, pads) => {
-                    // println!(" {} ({} pads, {} bytes)", key, pads.len(), pads.iter().map(|p| p.size).sum::<usize>());
+                    let completion = pads
+                        .iter()
+                        .filter(|p| p.status == PadStatus::Confirmed)
+                        .count()
+                        + if index_pad.status == PadStatus::Confirmed {
+                            1
+                        } else {
+                            0
+                        };
+
+                    let completion_str = if completion == pads.len() + 1 {
+                        "".to_string()
+                    } else {
+                        format!(
+                            " {}% complete ({}/{})",
+                            completion * 100 / (pads.len() + 1),
+                            completion,
+                            pads.len() + 1
+                        )
+                    };
+
+                    println!(
+                        " {:<10} {:>3} pads {:>5} {} (public @ {})",
+                        key,
+                        pads.len() + 1,
+                        format_size(
+                            pads.iter().map(|p| p.size).sum::<usize>() + index_pad.size,
+                            BINARY
+                        ),
+                        completion_str,
+                        index_pad.address
+                    );
                 }
             }
         }
-
         // info!("Fetching key/upload summary...");
         // match mutant.list_keys().await {
         //     Ok(summaries) => {

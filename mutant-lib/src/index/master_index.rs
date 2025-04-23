@@ -184,22 +184,30 @@ impl MasterIndex {
         let mut new_pad = PadInfo::new(&[0u8; 1], 0);
 
         if let Some(entry) = self.index.get_mut(key_name) {
-            if let IndexEntry::PrivateKey(pads) = entry {
-                let pad_index = pads.iter().position(|p| p.address == *pad_address).unwrap();
-                let old_pad = pads[pad_index].clone();
+            let pad = match entry {
+                IndexEntry::PrivateKey(pads) => {
+                    pads.iter_mut().find(|p| p.address == *pad_address).unwrap()
+                }
+                IndexEntry::PublicUpload(index_pad, pads) => {
+                    if *pad_address == index_pad.address {
+                        index_pad
+                    } else {
+                        pads.iter_mut().find(|p| p.address == *pad_address).unwrap()
+                    }
+                }
+            };
 
-                new_pad.checksum = old_pad.checksum;
-                new_pad.size = old_pad.size;
-                new_pad.chunk_index = old_pad.chunk_index;
+            let old_pad = pad.clone();
 
-                pads[pad_index] = new_pad.clone();
+            new_pad.checksum = old_pad.checksum;
+            new_pad.size = old_pad.size;
+            new_pad.chunk_index = old_pad.chunk_index;
 
-                self.pending_verification_pads.push(old_pad);
+            *pad = new_pad.clone();
 
-                self.save(self.network_choice)?;
-            } else {
-                unimplemented!()
-            }
+            self.pending_verification_pads.push(old_pad);
+
+            self.save(self.network_choice)?;
         } else {
             return Err(IndexError::KeyNotFound(key_name.to_string()).into());
         }
@@ -234,13 +242,12 @@ impl MasterIndex {
                     }
                     index_pad.clone()
                 } else {
-                    let pad_index = pads.iter().position(|p| p.address == *pad_address).unwrap();
-                    let mut pad = pads[pad_index].clone();
+                    let pad = pads.iter_mut().find(|p| p.address == *pad_address).unwrap();
                     pad.status = status;
                     if let Some(counter) = counter {
                         pad.last_known_counter = counter;
                     }
-                    pad
+                    pad.clone()
                 };
                 Ok(pad)
             } else {
@@ -290,8 +297,23 @@ impl MasterIndex {
                     p.checksum = 0;
                     p.size = 0;
                 });
-            } else if let IndexEntry::PublicUpload(_, _) = entry {
-                return Err(IndexError::CannotRemovePublicUpload(key_name.to_string()).into());
+            } else if let IndexEntry::PublicUpload(index, pads) = entry {
+                if index.status != PadStatus::Generated {
+                    index.status = PadStatus::Free;
+                    pads_to_free.push(index.clone());
+                } else {
+                    pads_to_verify.push(index.clone());
+                }
+                pads.iter_mut().for_each(|p| {
+                    if p.status != PadStatus::Generated {
+                        p.status = PadStatus::Free;
+                        pads_to_free.push(p.clone());
+                    } else {
+                        pads_to_verify.push(p.clone());
+                    }
+                    p.checksum = 0;
+                    p.size = 0;
+                });
             }
         }
 
@@ -407,6 +429,9 @@ impl MasterIndex {
         keys.iter_mut().for_each(|(_, entry)| {
             if let IndexEntry::PrivateKey(pads) = entry {
                 pads.iter_mut().for_each(|p| p.sk_bytes = vec![0; 32]);
+            } else if let IndexEntry::PublicUpload(index, pads) = entry {
+                pads.iter_mut().for_each(|p| p.sk_bytes = vec![0; 32]);
+                index.sk_bytes = vec![0; 32];
             }
         });
         keys
@@ -495,7 +520,7 @@ impl MasterIndex {
             .iter()
             .map(|(_, entry)| match entry {
                 IndexEntry::PrivateKey(pads) => pads.len() as u64,
-                IndexEntry::PublicUpload(_index, _pads) => unimplemented!(),
+                IndexEntry::PublicUpload(_index, pads) => pads.len() as u64 + 1,
             })
             .sum();
 
