@@ -1,7 +1,6 @@
 use crate::{
     index::{master_index::MasterIndex, PadInfo, PadStatus},
     network::{Network, NetworkError},
-    storage::ScratchpadAddress,
 };
 use futures::StreamExt;
 use log::{debug, error, info, warn};
@@ -15,6 +14,7 @@ use std::{
 use storage_mode::StorageMode;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::RwLock;
+use tokio::time::Instant;
 
 pub const DATA_ENCODING_MASTER_INDEX: u64 = 0;
 pub const DATA_ENCODING_PRIVATE_DATA: u64 = 1;
@@ -319,47 +319,65 @@ impl Data {
         }
 
         if let Some(pad_to_confirm) = pad_for_confirm {
-            let mut retries_left = PAD_RECYCLING_RETRIES;
+            const MAX_CONFIRMATION_DURATION: Duration =
+                Duration::from_secs(PAD_RECYCLING_RETRIES as u64 * 5);
+            let start_time = Instant::now();
+
             loop {
-                let get_result = context.network.get_private(&pad_to_confirm).await;
-
-                if let Ok(gotten_pad) = get_result {
-                    if (pad_to_confirm.last_known_counter == 0 && gotten_pad.counter == 0)
-                        || pad_to_confirm.last_known_counter <= gotten_pad.counter
-                    {
-                        match context.index.write().await.update_pad_status(
-                            key_name,
-                            &current_pad_address,
-                            PadStatus::Confirmed,
-                        ) {
-                            Ok(_) => {
-                                let previous_count =
-                                    confirmed_counter.fetch_add(1, Ordering::SeqCst);
-                                debug!(
-                                    "Pad {} confirmed. Confirmed count: {}",
-                                    current_pad_address,
-                                    previous_count + 1
-                                );
-                            }
-                            Err(e) => error!(
-                                "Failed to update pad {} status to Confirmed: {}",
-                                current_pad_address, e
-                            ),
-                        };
-                        return;
-                    }
-                }
-
-                retries_left -= 1;
-                if retries_left == 0 {
+                if start_time.elapsed() >= MAX_CONFIRMATION_DURATION {
                     warn!(
-                        "Failed to confirm pad {} (chunk {}) after multiple retries. Recycling.",
-                        current_pad_address, pad.chunk_index
+                        "Failed to confirm pad {} (chunk {}) within time budget ({:?}). Recycling.",
+                        current_pad_address, pad.chunk_index, MAX_CONFIRMATION_DURATION
                     );
                     recycle_pad().await;
                     return;
                 }
-                tokio::time::sleep(Duration::from_secs(5)).await;
+
+                let get_result = context.network.get_private(&pad_to_confirm).await;
+
+                match get_result {
+                    Ok(gotten_pad) => {
+                        if (pad_to_confirm.last_known_counter == 0 && gotten_pad.counter == 0)
+                            || pad_to_confirm.last_known_counter <= gotten_pad.counter
+                        {
+                            match context.index.write().await.update_pad_status(
+                                key_name,
+                                &current_pad_address,
+                                PadStatus::Confirmed,
+                            ) {
+                                Ok(_) => {
+                                    let previous_count =
+                                        confirmed_counter.fetch_add(1, Ordering::SeqCst);
+                                    debug!(
+                                        "Pad {} confirmed. Confirmed count: {}",
+                                        current_pad_address,
+                                        previous_count + 1
+                                    );
+                                }
+                                Err(e) => error!(
+                                    "Failed to update pad {} status to Confirmed: {}",
+                                    current_pad_address, e
+                                ),
+                            };
+                            return;
+                        } else {
+                            // Counter condition not met, log and retry immediately
+                            debug!(
+                                "Pad {} counter check failed (last_known: {}, gotten: {}). Retrying.",
+                                current_pad_address, pad_to_confirm.last_known_counter, gotten_pad.counter
+                             );
+                        }
+                    }
+                    Err(e) => {
+                        // get_private failed, log and retry immediately
+                        debug!(
+                            "Error getting pad {} for confirmation: {}. Retrying.",
+                            current_pad_address, e
+                        );
+                    }
+                }
+
+                // No sleep here, loop immediately to retry if not confirmed or error occurred
                 continue;
             }
         }
