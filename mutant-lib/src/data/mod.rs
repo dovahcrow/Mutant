@@ -58,7 +58,7 @@ impl Data {
         data_bytes: &[u8],
         mode: StorageMode,
         public: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<ScratchpadAddress, Error> {
         if self.index.read().await.contains_key(&name) {
             if self
                 .index
@@ -85,7 +85,7 @@ impl Data {
         data_bytes: &[u8],
         mode: StorageMode,
         public: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<ScratchpadAddress, Error> {
         let pads = self.index.read().await.get_pads(name);
 
         // check pads are in the correct mode or remove key and start over
@@ -104,9 +104,9 @@ impl Data {
                 .collect::<Vec<_>>(),
         };
 
-        self.write_pipeline(context, pads, public).await;
+        self.write_pipeline(context, pads.clone(), public).await;
 
-        Ok(())
+        Ok(pads[0].address)
     }
 
     async fn first_store(
@@ -115,7 +115,7 @@ impl Data {
         data_bytes: &[u8],
         mode: StorageMode,
         public: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<ScratchpadAddress, Error> {
         let (context, pads) = if public {
             let pads = self
                 .index
@@ -166,9 +166,9 @@ impl Data {
             (context, pads)
         };
 
-        self.write_pipeline(context, pads, public).await;
+        self.write_pipeline(context, pads.clone(), public).await;
 
-        Ok(())
+        Ok(pads[0].address)
     }
 
     async fn write_pipeline(&self, context: Context, pads: Vec<PadInfo>, public: bool) {

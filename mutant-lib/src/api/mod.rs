@@ -89,7 +89,7 @@ impl MutAnt {
         data_bytes: &[u8],
         mode: StorageMode,
         public: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<ScratchpadAddress, Error> {
         self.data.put(user_key, data_bytes, mode, public).await
     }
 

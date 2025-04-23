@@ -53,7 +53,7 @@ pub async fn handle_put(
     //     create_put_callback(multi_progress, quiet);
 
     debug!("handle_put: Calling mutant.put(&key, &data_vec).await...");
-    let result: Result<(), LibError> = if public {
+    let result: Result<ScratchpadAddress, LibError> = if public {
         mutant.put(&key, &data_vec, mode.into(), true).await
         // if force {
         //     debug!(
@@ -150,8 +150,11 @@ pub async fn handle_put(
     // Handle the result (Ok or Err)
     debug!("handle_put: Matching result...");
     match result {
-        Ok(_) => {
+        Ok(address) => {
             debug!("handle_put: Result is Ok. Returning SUCCESS.");
+            if public {
+                println!("{}", address);
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {
