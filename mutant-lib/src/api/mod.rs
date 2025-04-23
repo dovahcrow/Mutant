@@ -95,6 +95,10 @@ impl MutAnt {
 
         Ok(())
     }
+
+    pub async fn purge(&self) -> Result<(), Error> {
+        self.data.purge().await
+    }
 }
 
 #[cfg(test)]

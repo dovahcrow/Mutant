@@ -21,6 +21,7 @@ pub const DATA_ENCODING_PUBLIC_INDEX: u64 = 2;
 pub const DATA_ENCODING_PUBLIC_DATA: u64 = 3;
 
 pub const CHUNK_PROCESSING_QUEUE_SIZE: usize = 256;
+pub const PAD_RECYCLING_RETRIES: usize = 100;
 
 mod error;
 
@@ -250,7 +251,7 @@ impl Data {
         };
 
         if initial_status == PadStatus::Generated || initial_status == PadStatus::Free {
-            let mut retries_left = 3;
+            let mut retries_left = PAD_RECYCLING_RETRIES;
             loop {
                 let put_result = context
                     .network
@@ -298,7 +299,7 @@ impl Data {
         }
 
         if let Some(pad_to_confirm) = pad_for_confirm {
-            let mut retries_left = 3;
+            let mut retries_left = PAD_RECYCLING_RETRIES;
             loop {
                 let get_result = context.network.get_private(&pad_to_confirm).await;
 
@@ -352,7 +353,7 @@ impl Data {
         for pad in pads {
             let network = self.network.clone();
             tasks.push(tokio::spawn(async move {
-                let mut retries_left = 3;
+                let mut retries_left = PAD_RECYCLING_RETRIES;
                 let pad = loop {
                     match network.get_private(&pad).await {
                         Ok(pad) => break pad,
@@ -394,4 +395,41 @@ impl Data {
     // pub async fn get_public(&self, name: &[u8]) -> Result<Vec<u8>, Error> {}
 
     // pub async fn remove(&self, name: &[u8]) -> Result<(), Error> {}
+
+    pub async fn purge(&self) -> Result<(), Error> {
+        let pads = self.index.read().await.get_pending_pads();
+
+        debug!("Purging {} pads.", pads.len());
+
+        println!("Index: {:#?}", self.index.read().await);
+
+        let mut tasks = Vec::new();
+
+        for pad in pads {
+            debug!("Verifying pad {}", pad.address);
+
+            let pad = pad.clone();
+            let network = self.network.clone();
+            let index = self.index.clone();
+
+            tasks.push(tokio::spawn(async move {
+                match network.get_private(&pad).await {
+                    Ok(_res) => {
+                        debug!("Pad {} verified.", pad.address);
+                        index.write().await.verified_pending_pad(pad).unwrap();
+                    }
+                    Err(e) => {
+                        debug!("Pad {} discarded.", pad.address);
+                        index.write().await.discard_pending_pad(pad).unwrap();
+                    }
+                }
+            }));
+        }
+
+        let results = futures::future::join_all(tasks).await;
+        for result in results {
+            result.unwrap();
+        }
+        Ok(())
+    }
 }

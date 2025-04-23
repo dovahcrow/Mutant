@@ -242,10 +242,12 @@ impl MasterIndex {
 
         let mut pads = Vec::new();
 
+        let to_drain_max = self.free_pads.len().min(total_length);
+
         if !self.free_pads.is_empty() {
             pads.extend(
                 self.free_pads
-                    .drain(0..total_length)
+                    .drain(0..to_drain_max)
                     .map(|p| p.update_data(chunks.next().unwrap()))
                     .collect::<Vec<_>>(),
             );
@@ -373,6 +375,33 @@ impl MasterIndex {
 
             self.save(self.network_choice)?;
         }
+
+        Ok(())
+    }
+
+    pub fn get_pending_pads(&self) -> Vec<PadInfo> {
+        self.pending_verification_pads.clone()
+    }
+
+    pub fn verified_pending_pad(&mut self, mut pad: PadInfo) -> Result<(), Error> {
+        self.discard_pending_pad(pad.clone())?;
+
+        pad.status = PadStatus::Free;
+
+        self.free_pads.push(pad.clone());
+
+        self.save(self.network_choice)?;
+
+        Ok(())
+    }
+
+    pub fn discard_pending_pad(&mut self, pad: PadInfo) -> Result<(), Error> {
+        self.pending_verification_pads
+            .iter()
+            .position(|p| p.address == pad.address)
+            .map(|i| self.pending_verification_pads.remove(i));
+
+        self.save(self.network_choice)?;
 
         Ok(())
     }
