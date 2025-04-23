@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initialize `PadInfo.last_known_counter` using the `initial_counter` from `PadOrigin` when preparing pads, ensuring accurate initial counter tracking for pads from the free pool.
 
 ### Changed
+- Refactor write pipeline: Replaced two-stage put/confirm tasks with a single processing loop (`process_pads`) using `tokio::select!` and `FuturesUnordered` to manage concurrent `process_pad_task` operations (put -> confirm cycle) for each pad, improving deadlock resilience.
 - Refactored pad preparation logic to use a single `match` statement for determining initial status and counter based on `PadOrigin`.
 - Optimized resume preparation: Removed upfront concurrent `check_existence` calls for `Generated` pads. `put_raw` now attempts creation and falls back to update if the pad already exists.
 - Refactored `mutant-lib::data::Data::put` method to extract private pad putting and confirmation logic into helper functions.

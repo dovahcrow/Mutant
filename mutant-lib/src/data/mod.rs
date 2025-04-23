@@ -3,6 +3,7 @@ use crate::{
     network::Network,
     storage::ScratchpadAddress,
 };
+use futures::StreamExt;
 use log::{debug, error, info, warn};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -144,35 +145,60 @@ impl Data {
         mut pad_rx: Receiver<PadInfo>,
     ) -> Result<(), tokio::task::JoinError> {
         let key_name = context.name.clone();
-        debug!(
-            "process_pads: Starting main receiver loop for key {}",
-            key_name
-        );
-        let mut tasks = Vec::new();
+        debug!("process_pads: Starting select loop for key {}", key_name);
 
-        while let Some(pad) = pad_rx.recv().await {
-            debug!("process_pads: Received pad {} for processing.", pad.address);
-            let task_context = context.clone();
-            let task_pad_tx = pad_tx.clone();
-            tasks.push(tokio::spawn(async move {
-                Self::process_pad_task(task_context, task_pad_tx, pad).await;
-            }));
-        }
+        let mut tasks = futures::stream::FuturesUnordered::new();
+        let mut outstanding_tasks = 0u32;
+        let mut channel_closed = false;
 
-        debug!("process_pads: Main receiver loop finished for key {}. Waiting for {} outstanding tasks.", key_name, tasks.len());
-        drop(pad_tx);
+        loop {
+            tokio::select! {
+                res = pad_rx.recv(), if !channel_closed => {
+                    match res {
+                        Some(pad) => {
+                            debug!("process_pads: Received pad {} for processing.", pad.address);
+                            outstanding_tasks += 1;
+                            let task_context = context.clone();
+                            let task_pad_tx = pad_tx.clone();
+                            tasks.push(tokio::spawn(async move {
+                                Self::process_pad_task(task_context, task_pad_tx, pad).await;
+                            }));
+                        },
+                        None => {
+                            debug!("process_pads: pad_rx channel closed (returned None).");
+                            channel_closed = true;
+                            if outstanding_tasks == 0 {
+                                debug!("process_pads: Channel closed and no outstanding tasks. Breaking loop.");
+                                break;
+                            }
+                        }
+                    }
+                },
 
-        let results = futures::future::join_all(tasks).await;
-        debug!(
-            "process_pads: Finished joining sub-tasks for key {}.",
-            key_name
-        );
-        for result in results {
-            if let Err(e) = result {
-                error!("process_pads: Sub-task panicked: {:?}", e);
+                Some(result) = tasks.next() => {
+                    outstanding_tasks -= 1;
+                    if let Err(e) = result {
+                         error!("process_pads: Sub-task panicked: {:?}", e);
+                    }
+                    debug!("process_pads: A task finished for key {}. {} outstanding tasks remaining.", key_name, outstanding_tasks);
+
+                    if channel_closed && outstanding_tasks == 0 {
+                         debug!("process_pads: Last task finished and channel was closed. Breaking loop.");
+                         break;
+                    }
+                },
+
+                else => {
+                     debug!("process_pads: else branch triggered (tasks empty, channel closed). Breaking loop.");
+                     break;
+                }
             }
         }
-        debug!("process_pads: All sub-tasks joined for key {}.", key_name);
+
+        debug!(
+            "process_pads: Exiting main loop for key {}. Final outstanding task count: {}",
+            key_name, outstanding_tasks
+        );
         Ok(())
     }
 
