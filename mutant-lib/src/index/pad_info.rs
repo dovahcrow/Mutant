@@ -6,7 +6,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 /// Status of an individual pad within a key.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Copy)]
 pub enum PadStatus {
     /// The pad has been generated but not yet allocated on a device.
     Generated,
