@@ -369,8 +369,6 @@ impl Data {
 
                 Ok(pad.data)
             }));
-
-            tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         let results = futures::future::join_all(tasks).await;
