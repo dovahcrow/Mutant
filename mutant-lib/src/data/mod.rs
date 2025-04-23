@@ -457,42 +457,25 @@ impl Data {
         }
     }
 
-    pub async fn get_public(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, Error> {
+    async fn fetch_pads_data(&self, pads: Vec<PadInfo>, public: bool) -> Result<Vec<u8>, Error> {
         let mut data = Vec::new();
-
-        let index = self.network.get(address, None).await?;
-
-        if index.data_encoding == DATA_ENCODING_PUBLIC_INDEX {
-            let index: Vec<PadInfo> = serde_cbor::from_slice(&index.data).unwrap();
-            for pad in index {
-                let pad_data = self.network.get(&pad.address, None).await?;
-                data.extend_from_slice(&pad_data.data);
-            }
-        } else if index.data_encoding == DATA_ENCODING_PUBLIC_DATA {
-            data.extend_from_slice(&index.data);
-        }
-
-        Ok(data)
-    }
-
-    pub async fn get(&self, name: &str) -> Result<Vec<u8>, Error> {
-        if let Some(index_pad) = self.index.read().await.get_index_pad_if_public(name) {
-            return self.get_public(&index_pad.address).await;
-        }
-
-        let mut data = Vec::new();
-
-        let pads = self.index.read().await.get_pads(name);
-
         let mut tasks = Vec::new();
 
         for pad in pads {
             let network = self.network.clone();
             tasks.push(tokio::spawn(async move {
                 let mut retries_left = PAD_RECYCLING_RETRIES;
-                let pad = loop {
-                    match network.get(&pad.address, Some(&pad.secret_key())).await {
-                        Ok(pad) => break pad,
+                let owned_key;
+                let secret_key_ref = if public {
+                    None
+                } else {
+                    owned_key = pad.secret_key();
+                    Some(&owned_key)
+                };
+
+                let pad_data = loop {
+                    match network.get(&pad.address, secret_key_ref).await {
+                        Ok(pad_result) => break pad_result.data,
                         Err(e) => {
                             debug!("Error getting pad {}: {}", pad.address, e);
                             retries_left -= 1;
@@ -505,7 +488,7 @@ impl Data {
                     };
                 };
 
-                Ok(pad.data)
+                Ok(pad_data)
             }));
         }
 
@@ -525,8 +508,49 @@ impl Data {
                 }
             }
         }
-
         Ok(data)
+    }
+
+    pub async fn get_public(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, Error> {
+        let index_pad_data = self.network.get(address, None).await?;
+
+        match index_pad_data.data_encoding {
+            DATA_ENCODING_PUBLIC_INDEX => {
+                let index: Vec<PadInfo> =
+                    serde_cbor::from_slice(&index_pad_data.data).map_err(|e| {
+                        Error::Internal(format!("Failed to decode public index: {}", e))
+                    })?;
+                self.fetch_pads_data(index, true).await
+            }
+            DATA_ENCODING_PUBLIC_DATA => Ok(index_pad_data.data),
+            _ => Err(Error::Internal(format!(
+                "Unexpected data encoding {} found for public address {}",
+                index_pad_data.data_encoding, address
+            ))),
+        }
+    }
+
+    pub async fn get(&self, name: &str) -> Result<Vec<u8>, Error> {
+        let pads = self.index.read().await.get_pads(name);
+
+        if pads.is_empty() {
+            return Err(Error::Internal(format!("No pads found for key {}", name)));
+        }
+
+        let is_public = self
+            .index
+            .read()
+            .await
+            .get_index_pad_if_public(name)
+            .is_some();
+
+        let pads = if is_public && pads.len() > 1 {
+            pads[1..].to_vec()
+        } else {
+            pads
+        };
+
+        self.fetch_pads_data(pads, false).await
     }
 
     // pub async fn get_public(&self, name: &[u8]) -> Result<Vec<u8>, Error> {}
