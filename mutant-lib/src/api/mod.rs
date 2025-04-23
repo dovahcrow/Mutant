@@ -40,7 +40,35 @@ impl MutAnt {
         })
     }
 
+    pub async fn init_public() -> Result<Self, Error> {
+        let network_choice = NetworkChoice::Mainnet;
+        let network = Arc::new(Network::new(DEV_TESTNET_PRIVATE_KEY_HEX, network_choice)?);
+        let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
+        let data = Arc::new(Data::new(network.clone(), index.clone()));
+
+        Ok(Self {
+            network,
+            index,
+            data,
+        })
+    }
+
     pub async fn init_local() -> Result<Self, Error> {
+        let network = Arc::new(Network::new(
+            DEV_TESTNET_PRIVATE_KEY_HEX,
+            NetworkChoice::Devnet,
+        )?);
+        let index = Arc::new(RwLock::new(MasterIndex::new(NetworkChoice::Devnet)));
+        let data = Arc::new(Data::new(network.clone(), index.clone()));
+
+        Ok(Self {
+            network,
+            index,
+            data,
+        })
+    }
+
+    pub async fn init_public_local() -> Result<Self, Error> {
         let network = Arc::new(Network::new(
             DEV_TESTNET_PRIVATE_KEY_HEX,
             NetworkChoice::Devnet,

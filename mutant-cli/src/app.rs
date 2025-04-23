@@ -310,7 +310,11 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         //     MutAnt::init_public().await?
         // };
         // mutant_instance
-        unimplemented!()
+        if cli.local {
+            MutAnt::init_public_local().await?
+        } else {
+            MutAnt::init_public().await?
+        }
     } else {
         // Proceed with wallet initialization for all other commands
         let private_key_hex = if cli.local {

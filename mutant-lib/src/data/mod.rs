@@ -123,17 +123,26 @@ impl Data {
                 .await
                 .create_public_key(name, data_bytes, mode)?;
 
-            let index_data = serde_cbor::to_vec(&pads[1..].to_vec()).unwrap();
+            let context = if pads.len() == 1 {
+                Context {
+                    index: self.index.clone(),
+                    network: self.network.clone(),
+                    name: Arc::new(name.to_string()),
+                    chunks: vec![data_bytes.to_vec()],
+                }
+            } else {
+                let index_data = serde_cbor::to_vec(&pads[1..].to_vec()).unwrap();
 
-            let context = Context {
-                index: self.index.clone(),
-                network: self.network.clone(),
-                name: Arc::new(name.to_string()),
-                chunks: vec![index_data.as_slice()]
-                    .into_iter()
-                    .chain(data_bytes.chunks(mode.scratchpad_size()))
-                    .map(|chunk| chunk.to_vec())
-                    .collect::<Vec<_>>(),
+                Context {
+                    index: self.index.clone(),
+                    network: self.network.clone(),
+                    name: Arc::new(name.to_string()),
+                    chunks: vec![index_data.as_slice()]
+                        .into_iter()
+                        .chain(data_bytes.chunks(mode.scratchpad_size()))
+                        .map(|chunk| chunk.to_vec())
+                        .collect::<Vec<_>>(),
+                }
             };
 
             (context, pads)
@@ -390,9 +399,13 @@ impl Data {
                     return;
                 }
 
+                let secret_key = pad_to_confirm.secret_key();
+
+                let secret_key = if public { None } else { Some(&secret_key) };
+
                 let get_result = context
                     .network
-                    .get(&pad_to_confirm.address, Some(&pad_to_confirm.secret_key()))
+                    .get(&pad_to_confirm.address, secret_key)
                     .await;
 
                 match get_result {

@@ -31,8 +31,15 @@ pub async fn handle_get(
             .get_public(&ScratchpadAddress::from_hex(&key_or_address).unwrap())
             .await
         {
-            Ok(data) => Ok(data),
-            Err(e) => Err(e),
+            Ok(data) => {
+                // print each byte as it is
+                io::stdout().write_all(&data).unwrap();
+                Ok(data)
+            }
+            Err(e) => {
+                eprintln!("Error: {:?}", e);
+                return ExitCode::FAILURE;
+            }
         }
         // debug!(
         //     "CLI: Fetching public data using address '{}'",

@@ -223,7 +223,22 @@ impl MasterIndex {
                 }
                 Ok(pad.clone())
             } else if let IndexEntry::PublicUpload(index_pad, pads) = entry {
-                unimplemented!()
+                let pad = if pad_address == &index_pad.address {
+                    index_pad.status = status;
+                    if let Some(counter) = counter {
+                        index_pad.last_known_counter = counter;
+                    }
+                    index_pad.clone()
+                } else {
+                    let pad_index = pads.iter().position(|p| p.address == *pad_address).unwrap();
+                    let mut pad = pads[pad_index].clone();
+                    pad.status = status;
+                    if let Some(counter) = counter {
+                        pad.last_known_counter = counter;
+                    }
+                    pad
+                };
+                Ok(pad)
             } else {
                 unimplemented!()
             }
