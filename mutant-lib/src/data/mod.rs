@@ -5,7 +5,13 @@ use crate::{
 };
 use futures::StreamExt;
 use log::{debug, error, info, warn};
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::RwLock;
 
@@ -116,13 +122,18 @@ impl Data {
         mut pad_rx: Receiver<PadInfo>,
     ) -> Result<(), tokio::task::JoinError> {
         let key_name = context.name.clone();
+        let total_pads = context.chunks.len();
+        let confirmed_pads = Arc::new(AtomicUsize::new(0));
 
-        let pad_tx_for_tasks = pad_tx.clone();
         drop(pad_tx);
 
         let mut tasks = futures::stream::FuturesUnordered::new();
         let mut outstanding_tasks = 0u32;
         let mut channel_closed = false;
+        info!(
+            "Starting pad processing pipeline for {} with {} pads",
+            key_name, total_pads
+        );
 
         loop {
             tokio::select! {
@@ -131,9 +142,13 @@ impl Data {
                         Some(pad) => {
                             outstanding_tasks += 1;
                             let task_context = context.clone();
-                            let task_pad_tx = pad_tx_for_tasks.clone();
+                            let task_confirmed_counter = confirmed_pads.clone();
                             tasks.push(tokio::spawn(async move {
-                                Self::process_pad_task(task_context, task_pad_tx, pad).await;
+                                Self::process_pad_task(
+                                    task_context,
+                                    task_confirmed_counter,
+                                    pad
+                                ).await;
                             }));
                         },
                         None => {
@@ -145,47 +160,49 @@ impl Data {
                     }
                 },
 
-                Some(result) = tasks.next() => {
+                Some(result) = tasks.next(), if outstanding_tasks > 0 => {
                     outstanding_tasks -= 1;
                     if let Err(e) = result {
                          error!("process_pads: Sub-task panicked: {:?}", e);
                     }
 
+                    if confirmed_pads.load(Ordering::SeqCst) == total_pads {
+                        info!("All {} pads confirmed for key {}", total_pads, key_name);
+                        break;
+                    }
+
                     if channel_closed && outstanding_tasks == 0 {
+                         warn!("Pad processing channel closed but not all pads confirmed ({} / {}) for key {}. Exiting loop.", confirmed_pads.load(Ordering::SeqCst), total_pads, key_name);
                          break;
                     }
                 },
 
                 else => {
+                     info!("Pad processing loop exiting for key {}", key_name);
                      break;
                 }
             }
         }
+        info!("Finished pad processing pipeline for {}", key_name);
 
         Ok(())
     }
 
-    async fn process_pad_task(context: Context, pad_tx: Sender<PadInfo>, pad: PadInfo) {
+    async fn process_pad_task(context: Context, confirmed_counter: Arc<AtomicUsize>, pad: PadInfo) {
         let current_pad_address = pad.address;
         let key_name = &context.name;
         let mut pad_for_confirm: Option<PadInfo> = None;
 
-        let recycle_and_resend = |index: Arc<RwLock<MasterIndex>>,
-                                  pad_tx: Sender<PadInfo>,
-                                  key_name: String,
-                                  address: ScratchpadAddress| async move {
-            if let Ok(new_pad) = index.write().await.recycle_errored_pad(&key_name, &address) {
-                let _ = pad_tx.send(new_pad).await;
-            }
-        };
-
         let initial_status = pad.status;
 
         if initial_status == PadStatus::Confirmed {
+            debug!(
+                "Pad {} already confirmed, skipping processing.",
+                current_pad_address
+            );
             return;
         }
 
-        let mut status_after_put = initial_status;
         if initial_status == PadStatus::Generated || initial_status == PadStatus::Free {
             let mut retries_left = 3;
             loop {
@@ -206,25 +223,38 @@ impl Data {
                             PadStatus::Written,
                         ) {
                             Ok(updated_pad) => {
-                                status_after_put = updated_pad.status;
                                 pad_for_confirm = Some(updated_pad);
                                 break;
                             }
                             Err(e) => {
-                                return;
+                                error!(
+                                    "Error putting pad {} (chunk {}): {}. Retries left: {}",
+                                    current_pad_address, pad.chunk_index, e, retries_left
+                                );
+                                retries_left -= 1;
+                                if retries_left == 0 {
+                                    warn!(
+                                        "Failed to put pad {} (chunk {}) after multiple retries.",
+                                        current_pad_address, pad.chunk_index
+                                    );
+                                    return;
+                                }
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                continue;
                             }
                         }
                     }
                     Err(e) => {
+                        error!(
+                            "Error putting pad {} (chunk {}): {}. Retries left: {}",
+                            current_pad_address, pad.chunk_index, e, retries_left
+                        );
                         retries_left -= 1;
                         if retries_left == 0 {
-                            recycle_and_resend(
-                                context.index.clone(),
-                                pad_tx.clone(),
-                                key_name.to_string(),
-                                current_pad_address,
-                            )
-                            .await;
+                            warn!(
+                                "Failed to put pad {} (chunk {}) after multiple retries.",
+                                current_pad_address, pad.chunk_index
+                            );
                             return;
                         }
                         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -235,10 +265,6 @@ impl Data {
         }
 
         if let Some(pad_to_confirm) = pad_for_confirm {
-            if pad_to_confirm.status != PadStatus::Written {
-                return;
-            }
-
             let mut retries_left = 3;
             loop {
                 let get_result = context.network.get_private(&pad_to_confirm).await;
@@ -247,24 +273,35 @@ impl Data {
                     if (pad_to_confirm.last_known_counter == 0 && gotten_pad.counter == 0)
                         || pad_to_confirm.last_known_counter <= gotten_pad.counter
                     {
-                        let _ = context.index.write().await.update_pad_status(
+                        match context.index.write().await.update_pad_status(
                             key_name,
                             &current_pad_address,
                             PadStatus::Confirmed,
-                        );
+                        ) {
+                            Ok(_) => {
+                                let previous_count =
+                                    confirmed_counter.fetch_add(1, Ordering::SeqCst);
+                                debug!(
+                                    "Pad {} confirmed. Confirmed count: {}",
+                                    current_pad_address,
+                                    previous_count + 1
+                                );
+                            }
+                            Err(e) => error!(
+                                "Failed to update pad {} status to Confirmed: {}",
+                                current_pad_address, e
+                            ),
+                        };
                         return;
                     }
                 }
 
                 retries_left -= 1;
                 if retries_left == 0 {
-                    recycle_and_resend(
-                        context.index.clone(),
-                        pad_tx.clone(),
-                        key_name.to_string(),
-                        current_pad_address,
-                    )
-                    .await;
+                    warn!(
+                        "Failed to confirm pad {} (chunk {}) after multiple retries.",
+                        current_pad_address, pad.chunk_index
+                    );
                     return;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
