@@ -248,7 +248,8 @@ impl MasterIndex {
             pads.extend(
                 self.free_pads
                     .drain(0..to_drain_max)
-                    .map(|p| p.update_data(chunks.next().unwrap()))
+                    .enumerate()
+                    .map(|(i, p)| p.update_data(chunks.next().unwrap(), i))
                     .collect::<Vec<_>>(),
             );
         }

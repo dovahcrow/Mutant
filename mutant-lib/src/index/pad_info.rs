@@ -76,10 +76,11 @@ impl PadInfo {
         }
     }
 
-    pub fn update_data(mut self, data: &[u8]) -> Self {
+    pub fn update_data(mut self, data: &[u8], chunk_index: usize) -> Self {
         self.size = data.len();
         self.checksum = Self::checksum(data);
         self.last_known_counter += 1;
+        self.chunk_index = chunk_index;
         self
     }
 

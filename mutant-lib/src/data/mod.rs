@@ -72,6 +72,12 @@ impl Data {
     async fn resume(&self, name: &str, data_bytes: &[u8], mode: StorageMode) -> Result<(), Error> {
         let pads = self.index.read().await.get_pads(name);
 
+        // check pads are in the correct mode or remove key and start over
+        if pads.iter().any(|p| p.size > mode.scratchpad_size()) {
+            self.index.write().await.remove_key(name).unwrap();
+            return self.first_store(name, data_bytes, mode).await;
+        }
+
         let context = Context {
             index: self.index.clone(),
             network: self.network.clone(),
@@ -308,6 +314,8 @@ impl Data {
                     }
                 }
             }
+        } else if initial_status == PadStatus::Written {
+            pad_for_confirm = Some(pad.clone());
         }
 
         if let Some(pad_to_confirm) = pad_for_confirm {
@@ -351,6 +359,7 @@ impl Data {
                     recycle_pad().await;
                     return;
                 }
+                tokio::time::sleep(Duration::from_secs(5)).await;
                 continue;
             }
         }
@@ -375,6 +384,7 @@ impl Data {
                             if retries_left == 0 {
                                 return Err(Error::Network(e));
                             }
+                            tokio::time::sleep(Duration::from_secs(1)).await;
                             continue;
                         }
                     };
