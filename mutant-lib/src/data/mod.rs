@@ -125,8 +125,6 @@ impl Data {
         let total_pads = context.chunks.len();
         let confirmed_pads = Arc::new(AtomicUsize::new(0));
 
-        drop(pad_tx);
-
         let mut tasks = futures::stream::FuturesUnordered::new();
         let mut outstanding_tasks = 0u32;
         let mut channel_closed = false;
@@ -143,11 +141,13 @@ impl Data {
                             outstanding_tasks += 1;
                             let task_context = context.clone();
                             let task_confirmed_counter = confirmed_pads.clone();
+                            let task_pad_tx = pad_tx.clone();
                             tasks.push(tokio::spawn(async move {
                                 Self::process_pad_task(
                                     task_context,
                                     task_confirmed_counter,
-                                    pad
+                                    pad,
+                                    task_pad_tx,
                                 ).await;
                             }));
                         },
@@ -188,7 +188,12 @@ impl Data {
         Ok(())
     }
 
-    async fn process_pad_task(context: Context, confirmed_counter: Arc<AtomicUsize>, pad: PadInfo) {
+    async fn process_pad_task(
+        context: Context,
+        confirmed_counter: Arc<AtomicUsize>,
+        pad: PadInfo,
+        pad_tx: Sender<PadInfo>,
+    ) {
         let current_pad_address = pad.address;
         let key_name = &context.name;
         let mut pad_for_confirm: Option<PadInfo> = None;
@@ -234,9 +239,31 @@ impl Data {
                                 retries_left -= 1;
                                 if retries_left == 0 {
                                     warn!(
-                                        "Failed to put pad {} (chunk {}) after multiple retries.",
+                                        "Failed to put pad {} (chunk {}) after multiple retries. Recycling.",
                                         current_pad_address, pad.chunk_index
                                     );
+                                    match context
+                                        .index
+                                        .write()
+                                        .await
+                                        .recycle_errored_pad(key_name, &current_pad_address)
+                                    {
+                                        Ok(new_pad) => {
+                                            info!(
+                                                "Recycled pad {} to new pad {}. Resubmitting.",
+                                                current_pad_address, new_pad.address
+                                            );
+                                            if let Err(e) = pad_tx.send(new_pad).await {
+                                                error!("Failed to send recycled pad back to queue for key {}: {}", key_name, e);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "Failed to recycle pad {} for key {}: {}",
+                                                current_pad_address, key_name, e
+                                            );
+                                        }
+                                    }
                                     return;
                                 }
                                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -252,9 +279,31 @@ impl Data {
                         retries_left -= 1;
                         if retries_left == 0 {
                             warn!(
-                                "Failed to put pad {} (chunk {}) after multiple retries.",
+                                "Failed to put pad {} (chunk {}) after multiple retries. Recycling.",
                                 current_pad_address, pad.chunk_index
                             );
+                            match context
+                                .index
+                                .write()
+                                .await
+                                .recycle_errored_pad(key_name, &current_pad_address)
+                            {
+                                Ok(new_pad) => {
+                                    info!(
+                                        "Recycled pad {} to new pad {}. Resubmitting.",
+                                        current_pad_address, new_pad.address
+                                    );
+                                    if let Err(e) = pad_tx.send(new_pad).await {
+                                        error!("Failed to send recycled pad back to queue for key {}: {}", key_name, e);
+                                    }
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "Failed to recycle pad {} for key {}: {}",
+                                        current_pad_address, key_name, e
+                                    );
+                                }
+                            }
                             return;
                         }
                         tokio::time::sleep(Duration::from_millis(100)).await;
