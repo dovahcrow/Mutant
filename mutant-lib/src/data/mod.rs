@@ -16,7 +16,7 @@ pub const DATA_ENCODING_PRIVATE_DATA: u64 = 1;
 pub const DATA_ENCODING_PUBLIC_INDEX: u64 = 2;
 pub const DATA_ENCODING_PUBLIC_DATA: u64 = 3;
 
-pub const CHUNK_CONFIRMATION_QUEUE_SIZE: usize = 32;
+pub const CHUNK_CONFIRMATION_QUEUE_SIZE: usize = 256;
 
 mod error;
 
@@ -143,6 +143,7 @@ impl Data {
 
             let context = context.clone();
             let confirm_tx = confirm_tx.clone();
+
             tokio::task::spawn(async move {
                 context
                     .network
@@ -159,6 +160,8 @@ impl Data {
 
                 confirm_tx.send(pad).unwrap();
             });
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         drop(confirm_tx); // Ensure the original sender is dropped
@@ -206,6 +209,8 @@ impl Data {
                     }
                 }
             }));
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         for task in tasks {
@@ -241,6 +246,8 @@ impl Data {
 
                 Ok(pad.data)
             }));
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         let results = futures::future::join_all(tasks).await;

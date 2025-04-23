@@ -387,6 +387,8 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         }
         Commands::Rm { key } => crate::commands::remove::handle_rm(mutant, key).await,
         Commands::Ls { long } => crate::commands::ls::handle_ls(mutant, long).await,
+        Commands::Export { output } => crate::commands::export::handle_export(mutant, output).await,
+        Commands::Import { input } => crate::commands::import::handle_import(mutant, input).await,
         // Commands::Stats => crate::commands::stats::handle_stats(mutant).await,
         // Commands::Reset => crate::commands::reset::handle_reset(mutant).await,
         // Commands::Import { private_key } => {

@@ -4,7 +4,10 @@ use tokio::sync::RwLock;
 
 use crate::{
     data::Data,
-    index::master_index::{IndexEntry, MasterIndex},
+    index::{
+        master_index::{IndexEntry, MasterIndex},
+        PadInfo,
+    },
     internal_error::Error,
     network::{Network, NetworkChoice, DEV_TESTNET_PRIVATE_KEY_HEX},
 };
@@ -74,6 +77,23 @@ impl MutAnt {
     pub async fn list(&self) -> Result<BTreeMap<String, IndexEntry>, Error> {
         let keys = self.index.read().await.list();
         Ok(keys)
+    }
+
+    pub async fn export_raw_pads_private_key(&self) -> Result<Vec<PadInfo>, Error> {
+        let pads_hex = self.index.read().await.export_raw_pads_private_key()?;
+        Ok(pads_hex)
+    }
+
+    pub async fn import_raw_pads_private_key(
+        &mut self,
+        pads_hex: Vec<PadInfo>,
+    ) -> Result<(), Error> {
+        self.index
+            .write()
+            .await
+            .import_raw_pads_private_key(pads_hex)?;
+
+        Ok(())
     }
 }
 

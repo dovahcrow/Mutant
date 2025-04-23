@@ -212,7 +212,7 @@ impl MasterIndex {
         let mut pads = Vec::new();
         pads.extend(
             self.free_pads
-                .drain(0..)
+                .drain(0..total_length)
                 .map(|p| p.update_data(chunks.next().unwrap()))
                 .collect::<Vec<_>>(),
         );
@@ -288,6 +288,52 @@ impl MasterIndex {
             }
         });
         keys
+    }
+
+    pub fn export_raw_pads_private_key(&self) -> Result<Vec<PadInfo>, Error> {
+        let mut pads_hex = Vec::new();
+        for (_key, entry) in self.index.iter() {
+            if let IndexEntry::PrivateKey(pads) = entry {
+                for pad in pads {
+                    pads_hex.push(pad.clone());
+                }
+            }
+        }
+        Ok(pads_hex)
+    }
+
+    pub fn pad_exists(&self, pad_address: &ScratchpadAddress) -> bool {
+        let address_exists = self
+            .free_pads
+            .iter()
+            .chain(self.pending_verification_pads.iter())
+            .any(|p| p.address == *pad_address);
+
+        let index_exists = self.index.iter().any(|(_, entry)| match entry {
+            IndexEntry::PrivateKey(pads) => pads.iter().any(|p| p.address == *pad_address),
+            IndexEntry::PublicUpload(index_pad, pads) => {
+                index_pad.address == *pad_address || pads.iter().any(|p| p.address == *pad_address)
+            }
+        });
+
+        address_exists || index_exists
+    }
+
+    pub fn import_raw_pads_private_key(&mut self, pads_hex: Vec<PadInfo>) -> Result<(), Error> {
+        for pad in pads_hex {
+            if self.pad_exists(&pad.address) {
+                continue;
+            }
+            if pad.status == PadStatus::Generated {
+                self.pending_verification_pads.push(pad);
+            } else {
+                self.free_pads.push(pad);
+            }
+
+            self.save(self.network_choice)?;
+        }
+
+        Ok(())
     }
 }
 

@@ -50,6 +50,18 @@ pub enum Commands {
         #[arg(short, long, default_value_t = false)]
         long: bool,
     },
+
+    #[command(about = "Export all scratchpad private key to a file")]
+    Export {
+        #[arg(default_value = "pads.hex")]
+        output: String,
+    },
+
+    #[command(about = "Import scratchpad private key from a file")]
+    Import {
+        #[arg(default_value = "pads.hex")]
+        input: String,
+    },
     // #[command(about = "Show storage statistics")]
     // Stats,
 

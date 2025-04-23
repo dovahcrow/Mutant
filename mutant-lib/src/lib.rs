@@ -114,7 +114,7 @@ pub mod storage {
     // pub use crate::types::{KeyDetails, StorageStats};
     pub use super::network::{GetResult, PutResult};
     pub use crate::index::master_index::IndexEntry;
-    pub use crate::index::pad_info::PadStatus;
+    pub use crate::index::pad_info::{PadInfo, PadStatus};
     pub use autonomi::ScratchpadAddress;
 }
 pub mod error {
