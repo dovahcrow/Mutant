@@ -6,7 +6,6 @@ const DEFAULT_TEMPLATE: &str = "{spinner:.green} [{elapsed_precise}] [{bar:40.cy
 const DEFAULT_PROGRESS_CHARS: &str = "#>-";
 const DEFAULT_STEP_TEMPLATE: &str =
     "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] [{pos}/{len}] (ETA: {eta}) {msg}";
-const DEFAULT_SPINNER_TEMPLATE: &str = "{spinner:.green} [{elapsed_precise}] {msg}";
 
 pub fn get_default_bytes_style() -> ProgressStyle {
     ProgressStyle::default_bar()
@@ -20,12 +19,6 @@ pub fn get_default_steps_style() -> ProgressStyle {
         .template(DEFAULT_STEP_TEMPLATE)
         .expect("Invalid step progress template")
         .progress_chars(DEFAULT_PROGRESS_CHARS)
-}
-
-pub fn get_default_spinner_style() -> ProgressStyle {
-    ProgressStyle::default_spinner()
-        .template(DEFAULT_SPINNER_TEMPLATE)
-        .expect("Invalid spinner progress template")
 }
 
 #[derive(Clone)]
@@ -44,13 +37,6 @@ impl StyledProgressBar {
     pub fn new_for_steps(multi_progress: &MultiProgress) -> Self {
         let pb = Arc::new(multi_progress.add(ProgressBar::new(0)));
         pb.set_style(get_default_steps_style());
-        pb.enable_steady_tick(StdDuration::from_millis(500));
-        StyledProgressBar { pb }
-    }
-
-    pub fn new_with_style(multi_progress: &MultiProgress, style: ProgressStyle) -> Self {
-        let pb = Arc::new(multi_progress.add(ProgressBar::new(0)));
-        pb.set_style(style);
         pb.enable_steady_tick(StdDuration::from_millis(500));
         StyledProgressBar { pb }
     }
@@ -83,12 +69,6 @@ impl StyledProgressBar {
     #[allow(dead_code)]
     pub fn set_message(&self, msg: String) {
         self.pb.set_message(msg);
-    }
-
-    pub fn finish_with_message(&self, msg: impl Into<std::borrow::Cow<'static, str>>) {
-        if !self.pb.is_finished() {
-            self.pb.finish_with_message(msg);
-        }
     }
 
     pub fn finish_and_clear(&self) {

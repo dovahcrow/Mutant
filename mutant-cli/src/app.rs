@@ -4,8 +4,6 @@ use directories::{BaseDirs, ProjectDirs};
 use indicatif::{MultiProgress, ProgressDrawTarget};
 use log::{debug, error, info, warn};
 
-// use mutant_lib::config::MutAntConfig;
-// use mutant_lib::error::Error as LibError;
 use mutant_lib::{MutAnt, config::NetworkChoice, error::Error as LibError};
 
 use serde::{Deserialize, Serialize};
@@ -13,11 +11,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
-use std::time::Duration;
 use tokio::task::JoinHandle;
 
-// use crate::callbacks::create_init_callback;
 use crate::cli::{Cli, Commands};
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -38,7 +33,6 @@ pub enum CliError {
     NoWalletsFound(PathBuf),
     UserSelectionFailed(dialoguer::Error),
     WalletNotSet,
-    UserInputAborted(String),
 }
 
 impl std::fmt::Display for CliError {
@@ -67,7 +61,6 @@ impl std::fmt::Display for CliError {
                 write!(f, "Failed to get user wallet selection: {}", e)
             }
             CliError::WalletNotSet => write!(f, "No wallet configured or selected."),
-            CliError::UserInputAborted(msg) => write!(f, "Operation aborted by user: {}", msg),
         }
     }
 }
@@ -227,52 +220,9 @@ async fn initialize_wallet() -> Result<String, CliError> {
     Ok(private_key_hex)
 }
 
-async fn cleanup_background_tasks(
-    mp_join_handle: JoinHandle<()>,
-    mutant_init_handle: Option<JoinHandle<()>>,
-) {
+async fn cleanup_background_tasks(mp_join_handle: JoinHandle<()>) {
     debug!("cleanup_background_tasks: Starting cleanup...");
-    // Abort the MultiProgress background task
-    debug!("cleanup_background_tasks: Aborting MultiProgress background task...");
     mp_join_handle.abort();
-    // Do not await the handle, as it's intentionally pending and await might hang.
-    // match mp_join_handle.await {
-    //     Ok(_) => debug!("MultiProgress task exited normally after abort."),
-    //     Err(e) if e.is_cancelled() => debug!("MultiProgress task successfully cancelled."),
-    //     Err(e) => error!("MultiProgress task panicked or failed: {:?}", e),
-    // }
-    debug!("MultiProgress task abort signal sent.");
-
-    debug!("cleanup_background_tasks: Checking for mutant_init_handle...");
-    if let Some(handle) = mutant_init_handle {
-        info!("cleanup_background_tasks: Waiting for background MutAnt/Storage task...");
-        match handle.await {
-            Ok(_) => {
-                info!(
-                    "cleanup_background_tasks: Background MutAnt/Storage task finished successfully."
-                );
-            }
-            Err(e) => {
-                if e.is_panic() {
-                    error!(
-                        "cleanup_background_tasks: Background MutAnt/Storage task panicked: {}",
-                        e
-                    );
-                } else if e.is_cancelled() {
-                    info!(
-                        "cleanup_background_tasks: Background MutAnt/Storage task was cancelled."
-                    );
-                } else {
-                    error!(
-                        "cleanup_background_tasks: Background MutAnt/Storage task failed to join: {}",
-                        e
-                    );
-                }
-            }
-        }
-    } else {
-        debug!("cleanup_background_tasks: No mutant_init_handle found.");
-    }
     debug!("cleanup_background_tasks: Finished cleanup.");
 }
 
@@ -295,21 +245,10 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         std::future::pending::<()>().await;
     });
 
-    let mut mutant_init_handle: Option<JoinHandle<()>> = None;
-
     // Determine if this is a 'get -p' command BEFORE initializing wallet
     let is_public_get = matches!(cli.command, Commands::Get { public: true, .. });
 
     let mutant = if is_public_get {
-        // // Determine which public init function to call based on --local flag
-        // let mutant_instance = if cli.local {
-        //     info!("Public local get command detected, using public_local initializer.");
-        //     MutAnt::init_public_local().await?
-        // } else {
-        //     info!("Public get command detected, using public initializer (Mainnet).");
-        //     MutAnt::init_public().await?
-        // };
-        // mutant_instance
         if cli.local {
             MutAnt::init_public_local().await?
         } else {
@@ -329,11 +268,6 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         } else {
             NetworkChoice::Mainnet
         };
-        // Create config using the default derived impl
-        // let mut config = MutAntConfig::default();
-        // config.network = network_choice;
-
-        // let (init_pb_opt_arc, init_callback) = create_init_callback(&mp, cli.quiet);
 
         // Use init_with_progress for regular initialization
         let mutant_instance = match network_choice {
@@ -341,53 +275,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
             NetworkChoice::Mainnet => MutAnt::init(&private_key_hex).await?,
         };
         let _mutant_clone_for_bg = mutant_instance.clone();
-        // let init_pb_clone = Arc::clone(&init_pb_opt_arc); // Clone Arc for the task
 
-        // let init_handle = tokio::spawn(async move {
-        //     info!("Starting background MutAnt/Storage initialization...");
-        //     // Initialize is implicitly called by init_with_progress, just monitor the progress bar
-        //     // let mut pb_guard = init_pb_clone.lock().await;
-        //     if let Some(pb) = pb_guard.as_mut() {
-        //         // Create a future that resolves when the progress bar is finished.
-        //         // This might require a more sophisticated approach depending on how finish is signaled.
-        //         // For now, let's poll the is_finished status.
-        //         let pb_future = async {
-        //             while !pb.is_finished() {
-        //                 tokio::time::sleep(Duration::from_millis(100)).await;
-        //             }
-        //         };
-
-        //         // Wait for the progress bar to finish with a timeout
-        //         if tokio::time::timeout(Duration::from_secs(100), pb_future)
-        //             .await
-        //             .is_err()
-        //         {
-        //             error!("Background init progress bar timed out");
-        //             // Ensure pb is still valid before calling abandon
-        //             if !pb.is_finished() {
-        //                 pb.abandon_with_message("Initialization timed out".to_string());
-        //             }
-        //         }
-        //         // No need to call finish_and_clear here, it should happen when init completes
-        //     } else {
-        //         // Handle case where progress bar wasn't created (e.g., quiet mode)
-        //         debug!("No progress bar found for background init task.");
-        //         // We might need to await the actual init future if it doesn't drive the progress bar.
-        //         // Assuming init_with_progress handles this internally for now.
-        //     }
-        //     // Drop the guard explicitly
-        //     drop(pb_guard);
-        //     info!("Background MutAnt/Storage monitoring task finished.");
-        // });
-
-        // Clear the main thread's reference to the progress bar immediately after spawning the monitor
-        // let mut pb_main_guard = init_pb_opt_arc.lock().await;
-        // if let Some(_pb) = pb_main_guard.take() {
-        //     // Don't clear it here, let the initialization logic handle it
-        // }
-        // drop(pb_main_guard);
-
-        // mutant_init_handle = Some(init_handle);
         mutant_instance
     };
 
@@ -412,20 +300,6 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
         Commands::Export { output } => crate::commands::export::handle_export(mutant, output).await,
         Commands::Import { input } => crate::commands::import::handle_import(mutant, input).await,
         Commands::Stats => crate::commands::stats::handle_stats(mutant).await,
-        // Commands::Reset => crate::commands::reset::handle_reset(mutant).await,
-        // Commands::Import { private_key } => {
-        //     // Import needs the live mutant instance now
-        //     crate::commands::import::handle_import(mutant, private_key).await
-        // }
-        // Commands::Sync { push_force } => {
-        //     match crate::commands::sync::handle_sync(mutant, push_force).await {
-        //         Ok(_) => ExitCode::SUCCESS,
-        //         Err(e) => {
-        //             error!("Sync command failed: {}", e);
-        //             ExitCode::FAILURE
-        //         }
-        //     }
-        // }
         Commands::Purge { aggressive } => {
             match crate::commands::purge::run(aggressive, mutant, &mp, cli.quiet).await {
                 Ok(_) => ExitCode::SUCCESS,
@@ -443,13 +317,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
                     ExitCode::FAILURE
                 }
             }
-        } // Commands::Reserve(reserve_cmd) => match reserve_cmd.run(&mutant, &mp).await {
-          //     Ok(_) => ExitCode::SUCCESS,
-          //     Err(e) => {
-          //         error!("Reserve command failed: {}", e);
-          //         ExitCode::FAILURE
-          //     }
-          // },
+        }
     };
     debug!(
         "run_cli: Command handler finished with result: {:?}",
@@ -457,7 +325,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
     );
 
     debug!("run_cli: Calling cleanup_background_tasks...");
-    cleanup_background_tasks(mp_join_handle, mutant_init_handle).await;
+    cleanup_background_tasks(mp_join_handle).await;
     debug!("run_cli: Returned from cleanup_background_tasks.");
 
     debug!("run_cli: Exiting with code: {:?}", result);

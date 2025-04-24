@@ -1,5 +1,3 @@
-use crate::callbacks::progress::get_default_bytes_style;
-
 use super::progress::StyledProgressBar;
 use indicatif::MultiProgress;
 use log::{debug, warn};

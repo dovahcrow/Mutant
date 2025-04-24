@@ -1,5 +1,5 @@
 use crate::{
-    events::{GetCallback, GetEvent},
+    events::{GetCallback, GetEvent, PurgeCallback},
     index::{master_index::MasterIndex, PadInfo, PadStatus},
     internal_events::{invoke_get_callback, invoke_put_callback, PutCallback, PutEvent},
     network::{Network, NetworkError},
@@ -49,6 +49,7 @@ pub struct Data {
     index: Arc<RwLock<MasterIndex>>,
     put_callback: Option<PutCallback>,
     get_callback: Option<GetCallback>,
+    purge_callback: Option<PurgeCallback>,
 }
 
 impl Data {
@@ -57,12 +58,14 @@ impl Data {
         index: Arc<RwLock<MasterIndex>>,
         put_callback: Option<PutCallback>,
         get_callback: Option<GetCallback>,
+        purge_callback: Option<PurgeCallback>,
     ) -> Self {
         Self {
             network,
             index,
             put_callback,
             get_callback,
+            purge_callback,
         }
     }
 
@@ -72,6 +75,10 @@ impl Data {
 
     pub fn set_get_callback(&mut self, callback: GetCallback) {
         self.get_callback = Some(callback);
+    }
+
+    pub fn set_purge_callback(&mut self, callback: PurgeCallback) {
+        self.purge_callback = Some(callback);
     }
 
     pub async fn put(

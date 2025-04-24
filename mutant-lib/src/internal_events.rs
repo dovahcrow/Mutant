@@ -48,7 +48,7 @@ pub type InitCallback = Box<
 /// - `Ok(true)`: Continue the operation.
 /// - `Ok(false)`: Cancel the operation (results in `Error::OperationCancelled`).
 /// - `Err(e)`: Propagate an error from the callback.
-pub type PurgeCallback = Box<
+pub type PurgeCallback = Arc<
     dyn Fn(PurgeEvent) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + Send + Sync>>
         + Send
         + Sync,

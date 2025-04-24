@@ -1,8 +1,7 @@
-// use crate::callbacks::StyledProgressBar;
 use crate::callbacks::StyledProgressBar;
 use crate::callbacks::put::create_put_callback;
 use indicatif::MultiProgress;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use mutant_lib::MutAnt;
 use mutant_lib::error::Error as LibError;
 use mutant_lib::storage::ScratchpadAddress;

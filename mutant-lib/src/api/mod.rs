@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     data::{storage_mode::StorageMode, Data},
-    events::GetCallback,
+    events::{GetCallback, PurgeCallback},
     index::{
         master_index::{IndexEntry, MasterIndex, StorageStats},
         PadInfo,
@@ -37,6 +37,7 @@ impl MutAnt {
             index.clone(),
             None,
             None,
+            None,
         )));
 
         Ok(Self {
@@ -53,6 +54,7 @@ impl MutAnt {
         let data = Arc::new(RwLock::new(Data::new(
             network.clone(),
             index.clone(),
+            None,
             None,
             None,
         )));
@@ -75,6 +77,7 @@ impl MutAnt {
             index.clone(),
             None,
             None,
+            None,
         )));
 
         Ok(Self {
@@ -95,6 +98,7 @@ impl MutAnt {
             index.clone(),
             None,
             None,
+            None,
         )));
 
         Ok(Self {
@@ -110,6 +114,10 @@ impl MutAnt {
 
     pub async fn set_get_callback(&mut self, callback: GetCallback) {
         self.data.write().await.set_get_callback(callback);
+    }
+
+    pub async fn set_purge_callback(&mut self, callback: PurgeCallback) {
+        self.data.write().await.set_purge_callback(callback);
     }
 
     pub async fn put(
