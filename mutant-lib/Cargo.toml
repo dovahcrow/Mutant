@@ -1,6 +1,6 @@
 [package]
 name = "mutant-lib"
-version = "0.4.1"
+version = "0.5.0-dev"
 edition = "2021"
 license = " LGPL-3.0-only"
 description = "Core library for MutAnt distributed mutable key value storage over Autonomi network"
