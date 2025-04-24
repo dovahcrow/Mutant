@@ -65,15 +65,17 @@ pub fn create_put_callback(
                     *ctx.total_chunks.lock().await = total_chunks;
                     let total_u64 = total_chunks as u64;
 
-                    let mut res_pb_guard = ctx.res_pb_opt.lock().await;
-                    let res_pb = res_pb_guard.get_or_insert_with(|| {
-                        let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
-                        pb.set_message("Acquiring pads...".to_string());
-                        pb
-                    });
-                    res_pb.set_length(chunks_to_reserve as u64);
-                    res_pb.set_position(0);
-                    drop(res_pb_guard);
+                    if chunks_to_reserve > 0 {
+                        let mut res_pb_guard = ctx.res_pb_opt.lock().await;
+                        let res_pb = res_pb_guard.get_or_insert_with(|| {
+                            let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
+                            pb.set_message("Acquiring pads...".to_string());
+                            pb
+                        });
+                        res_pb.set_length(chunks_to_reserve as u64);
+                        res_pb.set_position(0);
+                        drop(res_pb_guard);
+                    }
 
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
                     let upload_pb = upload_pb_guard.get_or_insert_with(|| {
