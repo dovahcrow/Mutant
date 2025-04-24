@@ -30,6 +30,7 @@ fn create_initial_pad_info(data_size: usize) -> (PadInfo, ScratchpadAddress) {
         status: PadStatus::Generated,
         last_known_counter: 0,
         checksum: 0,
+        chunk_index: 0,
         sk_bytes,
     };
     (pad_info, address)
@@ -42,7 +43,7 @@ async fn test_put_public_create() {
     let (pad_info, address) = create_initial_pad_info(data.len());
 
     let result = adapter
-        .put_public(&pad_info, &data, DATA_ENCODING_PUBLIC_DATA)
+        .put(&pad_info, &data, DATA_ENCODING_PUBLIC_DATA, true)
         .await;
 
     assert!(
@@ -57,7 +58,7 @@ async fn test_put_public_create() {
         put_result.cost > AttoTokens::zero(),
         "Initial put should have a cost > 0"
     );
-    let get_result = adapter.get_public(&address).await;
+    let get_result = adapter.get(&address, None).await;
     assert!(
         get_result.is_ok(),
         "Get public failed: {:?}",
@@ -80,7 +81,7 @@ async fn test_put_public_update() {
     let (mut pad_info, address) = create_initial_pad_info(initial_data.len());
 
     let create_result = adapter
-        .put_public(&pad_info, &initial_data, DATA_ENCODING_PUBLIC_DATA)
+        .put(&pad_info, &initial_data, DATA_ENCODING_PUBLIC_DATA, true)
         .await;
     assert!(
         create_result.is_ok(),
@@ -101,7 +102,7 @@ async fn test_put_public_update() {
     pad_info.last_known_counter = initial_counter + 1;
 
     let update_result = adapter
-        .put_public(&pad_info, &updated_data, DATA_ENCODING_PUBLIC_DATA)
+        .put(&pad_info, &updated_data, DATA_ENCODING_PUBLIC_DATA, true)
         .await;
     assert!(
         update_result.is_ok(),
@@ -119,7 +120,7 @@ async fn test_put_public_update() {
         put_update_result.address, address,
         "Update address mismatch"
     );
-    let get_result = adapter.get_public(&address).await;
+    let get_result = adapter.get(&address, None).await;
     assert!(
         get_result.is_ok(),
         "Get public after update failed: {:?}",
@@ -141,7 +142,7 @@ async fn test_put_private_create() {
     let (pad_info, address) = create_initial_pad_info(data.len());
 
     let result = adapter
-        .put_private(&pad_info, &data, DATA_ENCODING_PRIVATE_DATA)
+        .put(&pad_info, &data, DATA_ENCODING_PRIVATE_DATA, false)
         .await;
 
     assert!(
@@ -158,7 +159,7 @@ async fn test_put_private_create() {
 
     assert_eq!(put_result.address, address, "Private address mismatch");
 
-    let get_result = adapter.get_private(&pad_info).await;
+    let get_result = adapter.get(&address, Some(&pad_info.secret_key())).await;
     assert!(
         get_result.is_ok(),
         "Get private failed: {:?}",
@@ -181,7 +182,7 @@ async fn test_put_private_update() {
     let (mut pad_info, address) = create_initial_pad_info(initial_data.len());
 
     let create_result = adapter
-        .put_private(&pad_info, &initial_data, DATA_ENCODING_PRIVATE_DATA)
+        .put(&pad_info, &initial_data, DATA_ENCODING_PRIVATE_DATA, false)
         .await;
     assert!(
         create_result.is_ok(),
@@ -199,7 +200,7 @@ async fn test_put_private_update() {
     pad_info.last_known_counter = 1;
 
     let update_result = adapter
-        .put_private(&pad_info, &updated_data, DATA_ENCODING_PRIVATE_DATA)
+        .put(&pad_info, &updated_data, DATA_ENCODING_PRIVATE_DATA, false)
         .await;
     assert!(
         update_result.is_ok(),
@@ -218,7 +219,7 @@ async fn test_put_private_update() {
         "Update put should have a cost == 0"
     );
 
-    let get_result = adapter.get_private(&pad_info).await;
+    let get_result = adapter.get(&address, Some(&pad_info.secret_key())).await;
     assert!(
         get_result.is_ok(),
         "Get private after update failed: {:?}",

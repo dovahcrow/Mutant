@@ -680,7 +680,9 @@ mod tests {
             .unwrap();
         let pad_address = pads[0].address;
 
-        index.update_pad_status(key_name, &pad_address, PadStatus::Confirmed, None);
+        index
+            .update_pad_status(key_name, &pad_address, PadStatus::Confirmed, None)
+            .unwrap();
 
         if let Some(IndexEntry::PrivateKey(updated_pads)) = index.index.get(key_name) {
             assert_eq!(updated_pads[0].status, PadStatus::Confirmed);
@@ -720,7 +722,9 @@ mod tests {
             .create_private_key(key_conf, &data_conf, StorageMode::Medium)
             .unwrap();
         let pad_conf_addr = pads_conf[0].address;
-        index.update_pad_status(key_conf, &pad_conf_addr, PadStatus::Confirmed, None); // Mark as non-generated
+        index
+            .update_pad_status(key_conf, &pad_conf_addr, PadStatus::Confirmed, None)
+            .unwrap(); // Mark as non-generated
 
         // Remove the key with the 'Generated' pad
         index.remove_key(key_gen).unwrap();
@@ -750,11 +754,15 @@ mod tests {
         assert!(!index.is_finished(key_name)); // Not finished initially
 
         // Update one pad
-        index.update_pad_status(key_name, &pads[0].address, PadStatus::Confirmed, None);
+        index
+            .update_pad_status(key_name, &pads[0].address, PadStatus::Confirmed, None)
+            .unwrap();
         assert!(!index.is_finished(key_name)); // Still not finished
 
         // Update the second pad
-        index.update_pad_status(key_name, &pads[1].address, PadStatus::Confirmed, None);
+        index
+            .update_pad_status(key_name, &pads[1].address, PadStatus::Confirmed, None)
+            .unwrap();
         assert!(index.is_finished(key_name)); // Now finished
 
         assert!(!index.is_finished("non_existent_key")); // Test non-existent key
@@ -817,7 +825,9 @@ mod tests {
             .unwrap();
         assert_eq!(pads1.len(), 1);
         let pad1_addr = pads1[0].address;
-        index.update_pad_status(key1, &pad1_addr, PadStatus::Confirmed, None); // Mark as used
+        index
+            .update_pad_status(key1, &pad1_addr, PadStatus::Confirmed, None)
+            .unwrap(); // Mark as used
 
         // Remove first key, pad should go to free_pads
         index.remove_key(key1).unwrap();
@@ -867,7 +877,9 @@ mod tests {
             .create_private_key(key1, &data1, StorageMode::Medium)
             .unwrap();
         let pad1_addr = pads1[0].address;
-        index.update_pad_status(key1, &pad1_addr, PadStatus::Confirmed, None);
+        index
+            .update_pad_status(key1, &pad1_addr, PadStatus::Confirmed, None)
+            .unwrap();
         index.remove_key(key1).unwrap();
         assert_eq!(index.free_pads.len(), 1);
 
