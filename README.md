@@ -116,13 +116,11 @@ $> cargo install mutant
 
 ## Quick start demo
 
-You can fetch a public data that I update in a loop at this address to try mutant yourself:
+You can fetch the daily meme of the day with the following command:
 
 ```bash
-$> mutant get -p 9429076971abe17b485fd30dd3065d27fc36362ba164529e530722bdd693f6cb8904fc177bf657d29774eb42403ac980
-# Output: Hello Autonomi ! Sat, 19 Apr 2025 18:06:41 +0000
+$> mutant get -p 80a9296e666d9f6d0dad8672e8a17fe15d00bae67e35ae4a471aabc2351ac85c4af654be0ea4c2ababf9a788b751ceac > daily_meme.jpg
 ```
-
 
 ## Command-Line Interface (CLI)
 
