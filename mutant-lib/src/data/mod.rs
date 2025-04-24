@@ -9,8 +9,10 @@ use crate::{
 };
 use ant_networking::GetRecordError;
 use autonomi::ScratchpadAddress;
+use blsttc::SecretKey;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
+use sha2::{Digest, Sha256};
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -903,9 +905,10 @@ impl Data {
             .await
             .unwrap();
 
+        // we need to hash the secret key to avoid overriding the vault that exists at the original secret key location
         let owner_secret_key = self.network.secret_key();
-        let owner_address = owner_secret_key.public_key().to_hex();
-        let owner_address = ScratchpadAddress::from_hex(&owner_address).unwrap();
+        let (owner_address, owner_secret_key) =
+            derive_master_index_info(&owner_secret_key.to_hex())?;
 
         let (remote_index, remote_index_counter) = match self
             .network
@@ -1035,6 +1038,30 @@ impl Data {
 
         Ok(sync_result)
     }
+}
+
+fn derive_master_index_info(
+    private_key_hex: &str,
+) -> Result<(ScratchpadAddress, SecretKey), Error> {
+    debug!("Deriving master index key and address...");
+    let hex_to_decode = private_key_hex
+        .strip_prefix("0x")
+        .unwrap_or(private_key_hex);
+
+    let input_key_bytes = hex::decode(hex_to_decode)
+        .map_err(|e| Error::Config(format!("Failed to decode private key hex: {}", e)))?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&input_key_bytes);
+    let hash_result = hasher.finalize();
+    let key_array: [u8; 32] = hash_result.into();
+
+    let derived_key = SecretKey::from_bytes(key_array)
+        .map_err(|e| Error::Internal(format!("Failed to create SecretKey from HASH: {:?}", e)))?;
+    let derived_public_key = derived_key.public_key();
+    let address = ScratchpadAddress::new(derived_public_key);
+    info!("Derived Master Index Address: {}", address);
+    Ok((address, derived_key))
 }
 
 pub struct SyncResult {

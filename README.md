@@ -49,9 +49,13 @@
 *   **Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `rm`).
 *   **Public/Private Uploads:** Store data publicly to share with others (no encryption) or store privately (encrypted with your private key).
 *   **Resumable Uploads:** Automatic resume of interrupted uploads; pick up right where you left off.
+*   **Configurable Upload Size:** Split the data into smaller of bigger chunks to optimize the upload speed and storage costs (default is 2MiB).
 *   **Fetch History:** Keep track of the public data you've fetched to re-fetch it later.
 *   **Efficient Space Reuse:** Frees and reuses storage pads, minimizing storage costs.
 *   **Local Cache Index:** Fast local lookups and seamless remote synchronization.
+*   **Sync:** Synchronize your local index with the remote storage.
+*   **Recycling Bad Pads:** Automatically recycle bad pads to stay performant.
+*   **Health Check:** Perform a health check on keys and reupload pads that give an error.
 *   **Async-first Design:** Built on `tokio` for high-performance non-blocking operations.
 *   **Dual Interface:** Use as a Rust library (`mutant-lib`) or via the `mutant` CLI.
 
@@ -129,23 +133,24 @@ MutAnt includes the `mutant` command for convenient command-line access.
 ```bash
 $> mutant --help
 ```
+
 ```text
 Distributed mutable key value storage over the Autonomi network
 
 Usage: mutant [OPTIONS] <COMMAND>
 
 Commands:
-  put      Store a value associated with a key
-  get      Retrieve a value associated with a key
-  rm       Remove a key-value pair
-  ls       List stored keys
-  stats    Show storage statistics
-  reset    Reset local cache and index
-  import   Import a scratchpad private key
-  sync     Synchronize local index cache with remote storage
-  purge    Perform a check on scratchpads that should have been created but maybe not and clean them up
-  reserve  Reserve a key without storing a value
-  help     Print this message or the help of the given subcommand(s)
+  put           Store a value associated with a key
+  get           Retrieve a value associated with a key
+  rm            Remove a key-value pair
+  ls            List stored keys
+  export        Export all scratchpad private key to a file
+  import        Import scratchpad private key from a file
+  stats         Show storage statistics
+  sync          Synchronize local index cache with remote storage
+  purge         Perform a get check on scratchpads that should have been created but failed at some point. Removes the pads that are not found.
+  health-check  Perform a health check on scratchpads that should have been created but cannot be retrieved. Recycles the pads that are not found.
+  help          Print this message or the help of the given subcommand(s)
 
 Options:
   -l, --local    Use local network (Devnet)
@@ -207,45 +212,15 @@ $> mutant get mykey2 > fetched_data.txt
 ```bash
 # List stored keys
 $> mutant ls
-# mykey
-# mykey2
-# public_data @ 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
-
-
-# List keys with details (size, last modified)
-$> mutant ls -l
-# SIZE TYPE    MODIFIED     KEY/NAME
-# 3 B  Private Apr 19 00:51 mykey
-# 5 B  Private Apr 19 00:51 mykey2
-# 11 B Public  Apr 19 00:51 public_data @ 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
-#
-# --- Fetch History ---
-# SIZE TYPE     FETCHED      ADDRESS
-# 48 B Fetched  Apr 19 16:33 9429076971abe17b485fd30dd3065d27fc36362ba164529e530722bdd693f6cb8904fc177bf657d29774eb42403ac980
+# test         57 pads 55.80 MiB  (public @ 858105ad390518c26a75e48fdfe87358a76fb24a06b1fb04b634af317ab39efcf8faf95b0d4c5eaac01a3a3fe3f8f6d5)
+# mykey        1 pad   1.00 KiB  
 
 # Sync local index with remote storage
 $> mutant sync
 
-# Pre-allocate 5 scratchpads
-$> mutant reserve 5
-
 # View storage statistics
 $> mutant stats
 ```
-
-### Screenshots
-
-```bash
-$> cat big_file | mutant put my_big_file
-```
-
-![Put Progress Screenshot](docs/screenshots/put_screenshot1.png)
-
-```bash
-$> mutant stats
-```
-
-![Stats Screenshot](docs/screenshots/stats_screenshot1.png)
 
 
 ## Library Usage
@@ -254,13 +229,13 @@ Add `mutant-lib` and its dependencies to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mutant-lib = "0.4.1" # Or the version you need
+mutant-lib = "0.5.0" # Or the version you need
 tokio = { version = "1", features = ["full"] }
 ```
 
 **Library Example:**
 
-This example demonstrates initializing the necessary components and performing basic store/fetch operations. It assumes you have an `ant` wallet setup.
+This example demonstrates initializing the necessary components and performing basic private store/fetch operations. It assumes you have an `ant` wallet setup.
 
 ```rust
 use mutant_lib::{MutAnt, MutAntConfig, Error};
@@ -268,17 +243,17 @@ use mutant_lib::{MutAnt, MutAntConfig, Error};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Replace with your actual private key (hex format, with or without 0x prefix)
-    let private_key_hex = "0xYOUR_PRIVATE_KEY_HEX".to_string();
+    let private_key_hex = "0xYOUR_PRIVATE_KEY_HEX";
 
     let mut mutant = MutAnt::init(private_key_hex).await?;
 
-    mutant.store("greeting", b"hello world").await?;
+    mutant.put("greeting", b"hello world", StorageMode::Medium, false).await?;
 
-    let fetched_value = mutant.fetch("greeting").await?;
+    let fetched_value = mutant.get("greeting").await?;
 
     println!("Fetched value: {}", String::from_utf8_lossy(&fetched_value));
 
-    mutant.remove("greeting").await?;
+    mutant.rm("greeting").await?;
 
     Ok(())
 }
@@ -303,7 +278,7 @@ async fn main() -> Result<()> {
     let public_address = ScratchpadAddress::from_hex(address_hex)?;
 
     // Fetch the public data
-    match public_fetcher.fetch_public(public_address, None).await {
+    match public_fetcher.get_public(public_address).await {
         Ok(data) => println!("Fetched public data: {} bytes", data.len()),
         Err(e) => eprintln!("Failed to fetch public data: {}", e),
     }
