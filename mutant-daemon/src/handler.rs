@@ -1,0 +1,377 @@
+use std::sync::Arc;
+
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use futures_util::{
+    sink::SinkExt,
+    stream::{SplitSink, StreamExt},
+};
+use mutant_lib::{MutAnt, storage::StorageMode};
+use tokio::sync::mpsc;
+use uuid::Uuid;
+use warp::ws::{Message, WebSocket};
+
+use crate::{
+    Task, TaskMap, TaskProgress, TaskResult, TaskStatus, TaskType,
+    error::DaemonError,
+    protocol::{
+        GetRequest, ListTasksRequest, PutRequest, QueryTaskRequest, Request, Response,
+        TaskCreatedResponse, TaskListEntry, TaskListResponse, TaskResultResponse,
+        TaskUpdateResponse,
+    },
+};
+
+// Helper function to send JSON responses
+async fn send_response(
+    sender: &mut SplitSink<WebSocket, Message>,
+    response: Response,
+) -> Result<(), DaemonError> {
+    let json = serde_json::to_string(&response)?;
+    sender.send(Message::text(json)).await?;
+    Ok(())
+}
+
+pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap) {
+    let (mut ws_sender, mut ws_receiver) = ws.split();
+    let (update_tx, mut update_rx) = mpsc::unbounded_channel::<Response>();
+
+    tracing::info!("WebSocket client connected");
+
+    // Task to listen for updates from spawned tasks and send them to the client
+    let update_forwarder = tokio::spawn(async move {
+        while let Some(response) = update_rx.recv().await {
+            if let Err(e) = send_response(&mut ws_sender, response).await {
+                tracing::error!("Failed to send task update via WebSocket: {}", e);
+                // If sending fails, the client might be disconnected, so we stop.
+                break;
+            }
+        }
+        // Ensure the sender is closed if the loop exits
+        let _ = ws_sender.close().await;
+        tracing::debug!("Update forwarder task finished.");
+    });
+
+    while let Some(result) = ws_receiver.next().await {
+        let msg = match result {
+            Ok(msg) => msg,
+            Err(e) => {
+                tracing::error!("WebSocket receive error: {}", e);
+                // Don't need to send error here, forwarder handles closure
+                break;
+            }
+        };
+
+        if msg.is_close() {
+            tracing::info!("WebSocket client disconnected explicitly");
+            break;
+        }
+
+        if let Ok(text) = msg.to_str() {
+            let original_request = text.to_string(); // Keep for error reporting
+            match serde_json::from_str::<Request>(text) {
+                Ok(request) => {
+                    if let Err(e) = handle_request(
+                        request,
+                        update_tx.clone(), // Pass the update channel sender
+                        mutant.clone(),
+                        tasks.clone(),
+                    )
+                    .await
+                    {
+                        tracing::error!("Error handling request: {}", e);
+                        let _ =
+                            update_tx.send(Response::error(e.to_string(), Some(original_request)));
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to deserialize request: {}", e);
+                    let _ = update_tx.send(Response::error(
+                        format!("Invalid JSON request: {}", e),
+                        Some(original_request),
+                    ));
+                }
+            }
+        } else if msg.is_binary() {
+            tracing::warn!("Received binary message, ignoring.");
+            let _ = update_tx.send(Response::error(
+                "Binary messages are not supported".to_string(),
+                None,
+            ));
+        } else if msg.is_ping() {
+            tracing::trace!("Received Ping");
+        } else if msg.is_pong() {
+            tracing::trace!("Received Pong");
+        }
+    }
+
+    // Ensure the forwarder task is cleaned up when the receive loop ends
+    update_forwarder.abort();
+    tracing::debug!("WebSocket connection handler finished.");
+}
+
+async fn handle_request(
+    request: Request,
+    update_tx: mpsc::UnboundedSender<Response>,
+    mutant: Arc<MutAnt>,
+    tasks: TaskMap,
+) -> Result<(), DaemonError> {
+    match request {
+        Request::Put(put_req) => handle_put(put_req, update_tx, mutant, tasks).await?,
+        Request::Get(get_req) => handle_get(get_req, update_tx, mutant, tasks).await?,
+        Request::QueryTask(query_req) => handle_query_task(query_req, update_tx, tasks).await?,
+        Request::ListTasks(list_req) => handle_list_tasks(list_req, update_tx, tasks).await?,
+    }
+    Ok(())
+}
+
+async fn handle_put(
+    req: PutRequest,
+    update_tx: mpsc::UnboundedSender<Response>,
+    mutant: Arc<MutAnt>,
+    tasks: TaskMap,
+) -> Result<(), DaemonError> {
+    let task_id = Uuid::new_v4();
+    let user_key = req.user_key.clone();
+
+    let data_bytes = BASE64_STANDARD
+        .decode(&req.data_b64)
+        .map_err(DaemonError::Base64Decode)?;
+
+    let task = Task::new(task_id, TaskType::Put);
+    {
+        tasks.write().await.insert(task_id, task.clone());
+    }
+
+    update_tx
+        .send(Response::TaskCreated(TaskCreatedResponse { task_id }))
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    tokio::spawn(async move {
+        tracing::info!(task_id = %task_id, user_key = %user_key, "Starting PUT task");
+        let start_update_res = {
+            let mut tasks_guard = tasks.write().await;
+            if let Some(task) = tasks_guard.get_mut(&task_id) {
+                task.status = TaskStatus::InProgress;
+                let progress = TaskProgress {
+                    message: "Starting PUT operation".to_string(),
+                };
+                task.progress = Some(progress.clone());
+                Some(Response::TaskUpdate(TaskUpdateResponse {
+                    task_id,
+                    status: TaskStatus::InProgress,
+                    progress: Some(progress),
+                }))
+            } else {
+                None
+            }
+        };
+        if let Some(update) = start_update_res {
+            if update_tx.send(update).is_err() {
+                tracing::warn!(task_id = %task_id, "Client disconnected before task started");
+                return; // Exit if client disconnected
+            }
+        }
+
+        let result = mutant
+            .put(&user_key, &data_bytes, StorageMode::Medium, false)
+            .await;
+
+        let final_response = {
+            let mut tasks_guard = tasks.write().await;
+            if let Some(task) = tasks_guard.get_mut(&task_id) {
+                match result {
+                    Ok(_addr) => {
+                        task.status = TaskStatus::Completed;
+                        task.result = Some(TaskResult {
+                            data: None,
+                            error: None,
+                        });
+                        tracing::info!(task_id = %task_id, user_key = %user_key, "PUT task completed successfully");
+                        Some(Response::TaskResult(TaskResultResponse {
+                            task_id,
+                            status: TaskStatus::Completed,
+                            result: task.result.clone(),
+                        }))
+                    }
+                    Err(e) => {
+                        let error_msg = e.to_string();
+                        task.status = TaskStatus::Failed;
+                        task.result = Some(TaskResult {
+                            data: None,
+                            error: Some(error_msg.clone()),
+                        });
+                        tracing::error!(task_id = %task_id, user_key = %user_key, "PUT task failed: {}", error_msg);
+                        Some(Response::TaskResult(TaskResultResponse {
+                            task_id,
+                            status: TaskStatus::Failed,
+                            result: task.result.clone(),
+                        }))
+                    }
+                }
+            } else {
+                tracing::warn!(task_id = %task_id, "Task removed before PUT completion?");
+                None
+            }
+        };
+
+        if let Some(response) = final_response {
+            if update_tx.send(response).is_err() {
+                tracing::debug!(task_id = %task_id, "Client disconnected before final PUT result sent");
+            }
+        }
+    });
+
+    Ok(())
+}
+
+async fn handle_get(
+    req: GetRequest,
+    update_tx: mpsc::UnboundedSender<Response>,
+    mutant: Arc<MutAnt>,
+    tasks: TaskMap,
+) -> Result<(), DaemonError> {
+    let task_id = Uuid::new_v4();
+    let user_key = req.user_key.clone();
+
+    let task = Task::new(task_id, TaskType::Get);
+    {
+        tasks.write().await.insert(task_id, task.clone());
+    }
+
+    update_tx
+        .send(Response::TaskCreated(TaskCreatedResponse { task_id }))
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    tokio::spawn(async move {
+        tracing::info!(task_id = %task_id, user_key = %user_key, "Starting GET task");
+        let start_update_res = {
+            let mut tasks_guard = tasks.write().await;
+            if let Some(task) = tasks_guard.get_mut(&task_id) {
+                task.status = TaskStatus::InProgress;
+                let progress = TaskProgress {
+                    message: "Starting GET operation".to_string(),
+                };
+                task.progress = Some(progress.clone());
+                Some(Response::TaskUpdate(TaskUpdateResponse {
+                    task_id,
+                    status: TaskStatus::InProgress,
+                    progress: Some(progress),
+                }))
+            } else {
+                None
+            }
+        };
+        if let Some(update) = start_update_res {
+            if update_tx.send(update).is_err() {
+                tracing::warn!(task_id = %task_id, "Client disconnected before GET task started");
+                return; // Exit if client disconnected
+            }
+        }
+
+        let result = mutant.get(&user_key).await;
+
+        let final_response = {
+            let mut tasks_guard = tasks.write().await;
+            if let Some(task) = tasks_guard.get_mut(&task_id) {
+                match result {
+                    Ok(data_bytes) => {
+                        let data_b64 = BASE64_STANDARD.encode(&data_bytes);
+                        task.status = TaskStatus::Completed;
+                        task.result = Some(TaskResult {
+                            data: Some(data_b64),
+                            error: None,
+                        });
+                        tracing::info!(task_id = %task_id, user_key = %user_key, "GET task completed successfully");
+                        Some(Response::TaskResult(TaskResultResponse {
+                            task_id,
+                            status: TaskStatus::Completed,
+                            result: task.result.clone(),
+                        }))
+                    }
+                    Err(e) => {
+                        let error_msg = e.to_string();
+                        task.status = TaskStatus::Failed;
+                        task.result = Some(TaskResult {
+                            data: None,
+                            error: Some(error_msg.clone()),
+                        });
+                        tracing::error!(task_id = %task_id, user_key = %user_key, "GET task failed: {}", error_msg);
+                        Some(Response::TaskResult(TaskResultResponse {
+                            task_id,
+                            status: TaskStatus::Failed,
+                            result: task.result.clone(),
+                        }))
+                    }
+                }
+            } else {
+                tracing::warn!(task_id = %task_id, "Task removed before GET completion?");
+                None
+            }
+        };
+        if let Some(response) = final_response {
+            if update_tx.send(response).is_err() {
+                tracing::debug!(task_id = %task_id, "Client disconnected before final GET result sent");
+            }
+        }
+    });
+
+    Ok(())
+}
+
+async fn handle_query_task(
+    req: QueryTaskRequest,
+    update_tx: mpsc::UnboundedSender<Response>,
+    tasks: TaskMap,
+) -> Result<(), DaemonError> {
+    let task_id = req.task_id;
+    let tasks_guard = tasks.read().await;
+
+    let response = if let Some(task) = tasks_guard.get(&task_id) {
+        tracing::debug!(task_id = %task_id, "Queried task status");
+        match task.status {
+            TaskStatus::Completed | TaskStatus::Failed => {
+                Response::TaskResult(TaskResultResponse {
+                    task_id: task.id,
+                    status: task.status.clone(),
+                    result: task.result.clone(),
+                })
+            }
+            _ => Response::TaskUpdate(TaskUpdateResponse {
+                task_id: task.id,
+                status: task.status.clone(),
+                progress: task.progress.clone(),
+            }),
+        }
+    } else {
+        tracing::warn!(task_id = %task_id, "Query for unknown task");
+        Response::error(format!("Task not found: {}", task_id), None)
+    };
+
+    update_tx
+        .send(response)
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    Ok(())
+}
+
+async fn handle_list_tasks(
+    _req: ListTasksRequest,
+    update_tx: mpsc::UnboundedSender<Response>,
+    tasks: TaskMap,
+) -> Result<(), DaemonError> {
+    let tasks_guard = tasks.read().await;
+    let task_list: Vec<TaskListEntry> = tasks_guard
+        .values()
+        .map(|task| TaskListEntry {
+            task_id: task.id,
+            task_type: task.task_type.clone(),
+            status: task.status.clone(),
+        })
+        .collect();
+
+    update_tx
+        .send(Response::TaskList(TaskListResponse { tasks: task_list }))
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    tracing::debug!("Listed all tasks");
+    Ok(())
+}

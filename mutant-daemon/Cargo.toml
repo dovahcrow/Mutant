@@ -1,0 +1,17 @@
+[package]
+name = "mutant-daemon"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mutant-lib = { path = "../mutant-lib" }
+tokio = { version = "1", features = ["full"] }
+warp = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+uuid = { version = "1.6", features = ["v4", "serde"] }
+base64 = "0.21"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures-util = { version = "0.3", features = ["sink"] }
