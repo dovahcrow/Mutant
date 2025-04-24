@@ -1,5 +1,4 @@
 use ant_networking::GetRecordError;
-use autonomi::ScratchpadAddress;
 use thiserror::Error;
 
 #[derive(Error, Debug)]

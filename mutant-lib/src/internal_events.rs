@@ -187,22 +187,6 @@ pub(crate) async fn invoke_get_callback(
     }
 }
 
-pub(crate) async fn invoke_init_callback(
-    callback: &mut Option<InitCallback>,
-    event: InitProgressEvent,
-) -> Result<Option<bool>, Error> {
-    if let Some(cb) = callback {
-        match cb(event).await {
-            Ok(response) => Ok(response),
-            Err(e) => Err(e),
-        }
-    } else if matches!(event, InitProgressEvent::PromptCreateRemoteIndex) {
-        Ok(Some(false))
-    } else {
-        Ok(None)
-    }
-}
-
 pub(crate) async fn invoke_purge_callback(
     callback: &mut Option<PurgeCallback>,
     event: PurgeEvent,

@@ -1,8 +1,8 @@
-pub(crate) const LIGHTEST_SCRATCHPAD_SIZE: usize = (512 * 1024);
-pub(crate) const LIGHT_SCRATCHPAD_SIZE: usize = (1 * 1024 * 1024);
-pub(crate) const MEDIUM_SCRATCHPAD_SIZE: usize = (2 * 1024 * 1024);
-pub(crate) const HEAVY_SCRATCHPAD_SIZE: usize = (3 * 1024 * 1024);
-pub(crate) const HEAVIEST_SCRATCHPAD_SIZE: usize = (4 * 1024 * 1024);
+pub(crate) const LIGHTEST_SCRATCHPAD_SIZE: usize = 512 * 1024;
+pub(crate) const LIGHT_SCRATCHPAD_SIZE: usize = 1 * 1024 * 1024;
+pub(crate) const MEDIUM_SCRATCHPAD_SIZE: usize = 2 * 1024 * 1024;
+pub(crate) const HEAVY_SCRATCHPAD_SIZE: usize = 3 * 1024 * 1024;
+pub(crate) const HEAVIEST_SCRATCHPAD_SIZE: usize = 4 * 1024 * 1024;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum StorageMode {

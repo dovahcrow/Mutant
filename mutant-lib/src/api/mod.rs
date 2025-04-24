@@ -21,7 +21,6 @@ use crate::{
 /// Instances are typically created using the `init` or `init_with_progress` associated functions.
 #[derive(Clone)]
 pub struct MutAnt {
-    network: Arc<Network>,
     index: Arc<RwLock<MasterIndex>>,
     data: Arc<RwLock<Data>>,
 }
@@ -40,11 +39,7 @@ impl MutAnt {
             None,
         )));
 
-        Ok(Self {
-            network,
-            index,
-            data,
-        })
+        Ok(Self { index, data })
     }
 
     pub async fn init_public() -> Result<Self, Error> {
@@ -59,11 +54,7 @@ impl MutAnt {
             None,
         )));
 
-        Ok(Self {
-            network,
-            index,
-            data,
-        })
+        Ok(Self { index, data })
     }
 
     pub async fn init_local() -> Result<Self, Error> {
@@ -80,11 +71,7 @@ impl MutAnt {
             None,
         )));
 
-        Ok(Self {
-            network,
-            index,
-            data,
-        })
+        Ok(Self { index, data })
     }
 
     pub async fn init_public_local() -> Result<Self, Error> {
@@ -101,11 +88,7 @@ impl MutAnt {
             None,
         )));
 
-        Ok(Self {
-            network,
-            index,
-            data,
-        })
+        Ok(Self { index, data })
     }
 
     pub async fn set_put_callback(&mut self, callback: PutCallback) {
@@ -134,8 +117,6 @@ impl MutAnt {
             .await
     }
 
-    // pub async fn store_public(&self, user_key: &[u8], data_bytes: &[u8]) -> Result<(), Error> {}
-
     pub async fn get(&self, user_key: &str) -> Result<Vec<u8>, Error> {
         self.data.write().await.get(user_key).await
     }
@@ -144,14 +125,10 @@ impl MutAnt {
         self.data.write().await.get_public(address).await
     }
 
-    // pub async fn get_public(&self, user_key: &[u8]) -> Result<Vec<u8>, Error> {}
-
     pub async fn rm(&self, user_key: &str) -> Result<(), Error> {
         self.index.write().await.remove_key(user_key)?;
         Ok(())
     }
-
-    // pub async fn reserve_pads(&self, count: usize) -> Result<usize, Error> {}
 
     // pub async fn sync(&self, force: bool) -> Result<(), Error> {}
 
@@ -197,7 +174,6 @@ impl MutAnt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::DEV_TESTNET_PRIVATE_KEY_HEX;
     use rand::{distributions::Alphanumeric, Rng};
 
     fn generate_random_string(len: usize) -> String {

@@ -1,9 +1,7 @@
-use std::{num::NonZero, time::Duration};
-
 use crate::network::error::NetworkError;
 use crate::network::NetworkChoice;
 use autonomi::{Client, ClientConfig, ResponseQuorum, RetryStrategy};
-use log::{debug, info};
+use log::info;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Config {

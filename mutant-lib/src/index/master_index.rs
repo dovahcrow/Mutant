@@ -2,15 +2,12 @@ use crate::config::NetworkChoice;
 use crate::data::storage_mode::StorageMode;
 use crate::storage::ScratchpadAddress;
 use crate::{index::pad_info::PadInfo, internal_error::Error};
-use autonomi::data::public;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
-use std::path::{Path, PathBuf};
-use std::slice::Chunks;
-use std::vec::IntoIter;
+use std::path::PathBuf;
 use xdg::BaseDirectories;
 
 use super::error::IndexError;
@@ -76,18 +73,6 @@ impl MasterIndex {
         })
     }
 
-    pub fn get_index_pad_if_public(&self, key_name: &str) -> Option<PadInfo> {
-        if let Some(entry) = self.index.get(key_name) {
-            if let IndexEntry::PublicUpload(index, _) = entry {
-                Some(index.clone())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
     fn load(network_choice: NetworkChoice) -> Result<Self, Error> {
         let path = get_index_file_path(network_choice)?;
         if !path.exists() {
@@ -95,8 +80,9 @@ impl MasterIndex {
                 path.display().to_string(),
             )));
         }
-        let file = File::open(&path)
-            .map_err(|e| Error::Index(IndexError::IndexFileNotFound(path.display().to_string())))?;
+        let file = File::open(&path).map_err(|_e| {
+            Error::Index(IndexError::IndexFileNotFound(path.display().to_string()))
+        })?;
         let reader = BufReader::new(file);
         let index: MasterIndex = serde_cbor::from_reader(reader)
             .map_err(|e| Error::Index(IndexError::DeserializationError(e.to_string())))?;
@@ -113,8 +99,9 @@ impl MasterIndex {
 
     pub fn save(&self, network_choice: NetworkChoice) -> Result<(), Error> {
         let path = get_index_file_path(network_choice)?;
-        let file = File::create(&path)
-            .map_err(|e| Error::Index(IndexError::IndexFileNotFound(path.display().to_string())))?;
+        let file = File::create(&path).map_err(|_e| {
+            Error::Index(IndexError::IndexFileNotFound(path.display().to_string()))
+        })?;
         let writer = BufWriter::new(file);
         serde_cbor::to_writer(writer, self)
             .map_err(|e| Error::Index(IndexError::SerializationError(e.to_string())))?;
@@ -620,7 +607,6 @@ mod tests {
     use super::*;
     use crate::config::NetworkChoice;
     use crate::data::storage_mode::MEDIUM_SCRATCHPAD_SIZE;
-    use crate::storage::ScratchpadAddress;
     use tempfile::tempdir;
 
     const DEFAULT_SCRATCHPAD_SIZE: usize = MEDIUM_SCRATCHPAD_SIZE;
@@ -924,7 +910,7 @@ mod tests {
     #[test]
     fn test_save_and_load() {
         let network = NetworkChoice::Devnet;
-        let index_path = {
+        let _index_path = {
             let (_td, mut index1) = setup_test_environment(); // Always uses Devnet
             assert!(index1.index.is_empty());
 

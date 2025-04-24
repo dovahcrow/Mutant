@@ -1,7 +1,9 @@
 use crate::{
-    events::{GetCallback, GetEvent, PurgeCallback},
+    events::{GetCallback, GetEvent, PurgeCallback, PurgeEvent},
     index::{master_index::MasterIndex, PadInfo, PadStatus},
-    internal_events::{invoke_get_callback, invoke_put_callback, PutCallback, PutEvent},
+    internal_events::{
+        invoke_get_callback, invoke_purge_callback, invoke_put_callback, PutCallback, PutEvent,
+    },
     network::{Network, NetworkError},
 };
 use ant_networking::GetRecordError;
@@ -30,7 +32,6 @@ pub const PAD_RECYCLING_RETRIES: usize = 3;
 
 const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 10);
 
-mod error;
 pub mod storage_mode;
 
 pub use crate::internal_error::Error;
@@ -172,11 +173,6 @@ impl Data {
             .filter(|p| p.status == PadStatus::Confirmed)
             .count();
 
-        let initial_written_count = pads
-            .iter()
-            .filter(|p| p.status == PadStatus::Written)
-            .count();
-
         let initial_chunks_to_reserve = pads
             .iter()
             .filter(|p| p.status == PadStatus::Generated)
@@ -186,7 +182,6 @@ impl Data {
             context.clone(),
             pad_tx.clone(),
             pad_rx,
-            initial_written_count,
             initial_confirmed_count,
             initial_chunks_to_reserve,
             public,
@@ -207,7 +202,6 @@ impl Data {
         pad_tx: Sender<PadInfo>,
         mut pad_rx: Receiver<PadInfo>,
         initial_confirmed_count: usize,
-        initial_written_count: usize,
         initial_chunks_to_reserve: usize,
         public: bool,
     ) -> Result<(), tokio::task::JoinError> {
@@ -624,6 +618,13 @@ impl Data {
     }
 
     pub async fn get(&mut self, name: &str) -> Result<Vec<u8>, Error> {
+        if !self.index.read().await.is_finished(name) {
+            return Err(Error::Internal(format!(
+                "Key {} upload is not finished, cannot get data",
+                name
+            )));
+        }
+
         let pads = self.index.read().await.get_pads(name);
 
         if pads.is_empty() {
@@ -650,14 +651,22 @@ impl Data {
         self.fetch_pads_data(pads, is_public).await
     }
 
-    // pub async fn get_public(&self, name: &[u8]) -> Result<Vec<u8>, Error> {}
-
-    // pub async fn remove(&self, name: &[u8]) -> Result<(), Error> {}
-
-    pub async fn purge(&self, aggressive: bool) -> Result<(), Error> {
+    pub async fn purge(&mut self, aggressive: bool) -> Result<(), Error> {
         let pads = self.index.read().await.get_pending_pads();
 
+        let nb_verified = Arc::new(AtomicUsize::new(0));
+        let nb_failed = Arc::new(AtomicUsize::new(0));
+
         debug!("Purging {} pads.", pads.len());
+
+        invoke_purge_callback(
+            &mut self.purge_callback,
+            PurgeEvent::Starting {
+                total_count: pads.len(),
+            },
+        )
+        .await
+        .unwrap();
 
         let mut tasks = futures::stream::FuturesOrdered::new();
 
@@ -667,6 +676,9 @@ impl Data {
             let pad = pad.clone();
             let network = self.network.clone();
             let index = self.index.clone();
+            let nb_verified = nb_verified.clone();
+            let nb_failed = nb_failed.clone();
+            let mut purge_callback = self.purge_callback.clone();
 
             tasks.push_back(tokio::spawn(async move {
                 match network.get(&pad.address, None).await {
@@ -677,6 +689,8 @@ impl Data {
                         } else {
                             error!("Could not acquire write lock for verifying pad {}", pad.address);
                         }
+
+                        nb_verified.fetch_add(1, Ordering::Relaxed);
                     }
                     Err(e) => {
                         if let NetworkError::GetError(GetRecordError::RecordNotFound) = e {
@@ -703,8 +717,14 @@ impl Data {
                         } else {
                             warn!("Pad {} was found but got an error ({}). Leaving in pending until purge is run with aggressive flag", pad.address, e);
                         }
+
+                        nb_failed.fetch_add(1, Ordering::Relaxed);
                     }
                 }
+
+                invoke_purge_callback(&mut purge_callback, PurgeEvent::PadProcessed)
+                    .await
+                    .unwrap();
             }));
         }
 
@@ -716,6 +736,17 @@ impl Data {
                 }
             }
         }
+
+        invoke_purge_callback(
+            &mut self.purge_callback,
+            PurgeEvent::Complete {
+                verified_count: nb_verified.load(Ordering::Relaxed),
+                failed_count: nb_failed.load(Ordering::Relaxed),
+            },
+        )
+        .await
+        .unwrap();
+
         Ok(())
     }
 
