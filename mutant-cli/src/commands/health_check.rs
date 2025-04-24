@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 pub async fn run(
     mut mutant: MutAnt,
     key_name: String,
+    recycle: bool,
     multi_progress: &MultiProgress,
     quiet: bool,
 ) -> Result<(), LibError> {
@@ -24,7 +25,7 @@ pub async fn run(
 
     mutant.set_get_callback(callback).await;
 
-    let result: Result<(), LibError> = match mutant.health_check(&key_name).await {
+    let result: Result<(), LibError> = match mutant.health_check(&key_name, recycle).await {
         Ok(_) => Ok(()),
         Err(e) => {
             eprintln!("Error: {:?}", e);

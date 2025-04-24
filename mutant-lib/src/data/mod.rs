@@ -712,7 +712,7 @@ impl Data {
         Ok(())
     }
 
-    pub async fn health_check(&mut self, key_name: &str) -> Result<(), Error> {
+    pub async fn health_check(&mut self, key_name: &str, recycle: bool) -> Result<(), Error> {
         let pads = self.index.read().await.get_pads(key_name);
         let nb_recycled = Arc::new(AtomicUsize::new(0));
 
@@ -760,10 +760,13 @@ impl Data {
                             pad.address, e
                         );
 
-                        let mut index_guard = index.write().await;
-                        index_guard
-                            .recycle_errored_pad(&key_name, &pad.address)
-                            .unwrap();
+                        if recycle {
+                            let mut index_guard = index.write().await;
+
+                            index_guard
+                                .recycle_errored_pad(&key_name, &pad.address)
+                                .unwrap();
+                        }
 
                         invoke_get_callback(&mut get_callback, GetEvent::PadsFetched)
                             .await
@@ -789,13 +792,21 @@ impl Data {
             .await
             .unwrap();
 
-        println!(
-            "Health check completed. {} pads recycled.",
-            nb_recycled.load(Ordering::Relaxed)
-        );
+        if recycle {
+            println!(
+                "Health check completed. {} pads recycled.",
+                nb_recycled.load(Ordering::Relaxed)
+            );
 
-        if nb_recycled.load(Ordering::Relaxed) > 0 {
-            println!("Please re-run the same put command you used before to resume the upload of the missing pads to the network.");
+            if nb_recycled.load(Ordering::Relaxed) > 0 {
+                println!("Please re-run the same put command you used before to resume the upload of the missing pads to the network.");
+            }
+        } else {
+            println!(
+                "Health check completed. {} pads in bad health.",
+                nb_recycled.load(Ordering::Relaxed)
+            );
+            println!("You can recycle those bad pads by re-running the health-check with the --recycle flag.");
         }
 
         Ok(())

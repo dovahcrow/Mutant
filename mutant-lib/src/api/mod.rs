@@ -177,8 +177,12 @@ impl MutAnt {
         self.index.read().await.get_storage_stats()
     }
 
-    pub async fn health_check(&self, key_name: &str) -> Result<(), Error> {
-        self.data.write().await.health_check(key_name).await
+    pub async fn health_check(&self, key_name: &str, recycle: bool) -> Result<(), Error> {
+        self.data
+            .write()
+            .await
+            .health_check(key_name, recycle)
+            .await
     }
 }
 

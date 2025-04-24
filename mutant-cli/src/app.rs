@@ -435,8 +435,8 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
                 }
             }
         }
-        Commands::HealthCheck { key } => {
-            match crate::commands::health_check::run(mutant, key, &mp, cli.quiet).await {
+        Commands::HealthCheck { key, recycle } => {
+            match crate::commands::health_check::run(mutant, key, recycle, &mp, cli.quiet).await {
                 Ok(_) => ExitCode::SUCCESS,
                 Err(e) => {
                     error!("Health check command failed: {}", e);

@@ -115,7 +115,11 @@ pub enum Commands {
     #[command(
         about = "Perform a health check on scratchpads that should have been created but cannot be retrieved. Recycles the pads that are not found."
     )]
-    HealthCheck { key: String },
+    HealthCheck {
+        key: String,
+        #[arg(short, long, default_value_t = false)]
+        recycle: bool,
+    },
     // #[command(about = "Reserve a key without storing a value")]
     // Reserve(crate::commands::reserve::Reserve),
 }
