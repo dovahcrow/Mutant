@@ -1,5 +1,6 @@
 use crate::{
     index::{master_index::MasterIndex, PadInfo, PadStatus},
+    internal_events::{invoke_put_callback, PutCallback, PutEvent},
     network::{Network, NetworkError},
 };
 use ant_networking::GetRecordError;
@@ -39,17 +40,30 @@ struct Context {
     network: Arc<Network>,
     name: Arc<String>,
     chunks: Vec<Vec<u8>>,
+    put_callback: Option<PutCallback>,
 }
 
-#[derive(Clone)]
 pub struct Data {
     network: Arc<Network>,
     index: Arc<RwLock<MasterIndex>>,
+    put_callback: Option<PutCallback>,
 }
 
 impl Data {
-    pub fn new(network: Arc<Network>, index: Arc<RwLock<MasterIndex>>) -> Self {
-        Self { network, index }
+    pub fn new(
+        network: Arc<Network>,
+        index: Arc<RwLock<MasterIndex>>,
+        put_callback: Option<PutCallback>,
+    ) -> Self {
+        Self {
+            network,
+            index,
+            put_callback,
+        }
+    }
+
+    pub fn set_put_callback(&mut self, callback: PutCallback) {
+        self.put_callback = Some(callback);
     }
 
     pub async fn put(
@@ -101,6 +115,7 @@ impl Data {
             network: self.network.clone(),
             name: Arc::new(name.to_string()),
             chunks,
+            put_callback: self.put_callback.clone(),
         };
 
         self.write_pipeline(context, pads.clone(), public).await;
@@ -126,6 +141,7 @@ impl Data {
             network: self.network.clone(),
             name: Arc::new(name.to_string()),
             chunks,
+            put_callback: self.put_callback.clone(),
         };
 
         self.write_pipeline(context, pads.clone(), public).await;
@@ -160,7 +176,7 @@ impl Data {
 
     async fn process_pads(
         &self,
-        context: Context,
+        mut context: Context,
         pad_tx: Sender<PadInfo>,
         mut pad_rx: Receiver<PadInfo>,
         initial_confirmed_count: usize,
@@ -244,11 +260,13 @@ impl Data {
         }
         info!("Finished pad processing pipeline for {}", key_name);
 
+        invoke_put_callback(&mut context.put_callback, PutEvent::Complete).await;
+
         Ok(())
     }
 
     async fn process_pad_task(
-        context: Context,
+        mut context: Context,
         confirmed_counter: Arc<AtomicUsize>,
         pad: PadInfo,
         pad_tx: Sender<PadInfo>,
@@ -318,7 +336,22 @@ impl Data {
                             None,
                         ) {
                             Ok(updated_pad) => {
+                                invoke_put_callback(
+                                    &mut context.put_callback,
+                                    PutEvent::ChunkWritten,
+                                )
+                                .await;
+
+                                if initial_status == PadStatus::Generated {
+                                    invoke_put_callback(
+                                        &mut context.put_callback,
+                                        PutEvent::PadReserved,
+                                    )
+                                    .await;
+                                }
+
                                 pad_for_confirm = Some(updated_pad);
+
                                 break;
                             }
                             Err(e) => {
@@ -387,6 +420,11 @@ impl Data {
                                 Ok(_) => {
                                     let previous_count =
                                         confirmed_counter.fetch_add(1, Ordering::SeqCst);
+                                    invoke_put_callback(
+                                        &mut context.put_callback,
+                                        PutEvent::ChunkConfirmed,
+                                    )
+                                    .await;
                                     debug!(
                                         "Pad {} confirmed. Confirmed count: {}",
                                         current_pad_address,

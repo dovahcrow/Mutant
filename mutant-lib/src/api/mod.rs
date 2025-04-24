@@ -4,13 +4,13 @@ use autonomi::ScratchpadAddress;
 use tokio::sync::RwLock;
 
 use crate::{
-    data::storage_mode::StorageMode,
-    data::Data,
+    data::{storage_mode::StorageMode, Data},
     index::{
         master_index::{IndexEntry, MasterIndex, StorageStats},
         PadInfo,
     },
     internal_error::Error,
+    internal_events::PutCallback,
     network::{Network, NetworkChoice, DEV_TESTNET_PRIVATE_KEY_HEX},
 };
 
@@ -22,7 +22,7 @@ use crate::{
 pub struct MutAnt {
     network: Arc<Network>,
     index: Arc<RwLock<MasterIndex>>,
-    data: Arc<Data>,
+    data: Arc<RwLock<Data>>,
 }
 
 impl MutAnt {
@@ -31,7 +31,7 @@ impl MutAnt {
         let network = Arc::new(Network::new(private_key_hex, network_choice)?);
         let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
 
-        let data = Arc::new(Data::new(network.clone(), index.clone()));
+        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone(), None)));
 
         Ok(Self {
             network,
@@ -44,7 +44,7 @@ impl MutAnt {
         let network_choice = NetworkChoice::Mainnet;
         let network = Arc::new(Network::new(DEV_TESTNET_PRIVATE_KEY_HEX, network_choice)?);
         let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
-        let data = Arc::new(Data::new(network.clone(), index.clone()));
+        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone(), None)));
 
         Ok(Self {
             network,
@@ -59,7 +59,7 @@ impl MutAnt {
             NetworkChoice::Devnet,
         )?);
         let index = Arc::new(RwLock::new(MasterIndex::new(NetworkChoice::Devnet)));
-        let data = Arc::new(Data::new(network.clone(), index.clone()));
+        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone(), None)));
 
         Ok(Self {
             network,
@@ -74,13 +74,17 @@ impl MutAnt {
             NetworkChoice::Devnet,
         )?);
         let index = Arc::new(RwLock::new(MasterIndex::new(NetworkChoice::Devnet)));
-        let data = Arc::new(Data::new(network.clone(), index.clone()));
+        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone(), None)));
 
         Ok(Self {
             network,
             index,
             data,
         })
+    }
+
+    pub async fn set_put_callback(&mut self, callback: PutCallback) {
+        self.data.write().await.set_put_callback(callback);
     }
 
     pub async fn put(
@@ -90,17 +94,21 @@ impl MutAnt {
         mode: StorageMode,
         public: bool,
     ) -> Result<ScratchpadAddress, Error> {
-        self.data.put(user_key, data_bytes, mode, public).await
+        self.data
+            .write()
+            .await
+            .put(user_key, data_bytes, mode, public)
+            .await
     }
 
     // pub async fn store_public(&self, user_key: &[u8], data_bytes: &[u8]) -> Result<(), Error> {}
 
     pub async fn get(&self, user_key: &str) -> Result<Vec<u8>, Error> {
-        self.data.get(user_key).await
+        self.data.read().await.get(user_key).await
     }
 
     pub async fn get_public(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, Error> {
-        self.data.get_public(address).await
+        self.data.read().await.get_public(address).await
     }
 
     // pub async fn get_public(&self, user_key: &[u8]) -> Result<Vec<u8>, Error> {}
@@ -137,7 +145,7 @@ impl MutAnt {
     }
 
     pub async fn purge(&self, aggressive: bool) -> Result<(), Error> {
-        self.data.purge(aggressive).await
+        self.data.write().await.purge(aggressive).await
     }
 
     pub async fn get_storage_stats(&self) -> StorageStats {

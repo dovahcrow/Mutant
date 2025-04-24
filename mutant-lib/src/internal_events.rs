@@ -1,14 +1,14 @@
 use crate::internal_error::Error;
 use std::future::Future;
 use std::pin::Pin;
-
+use std::sync::Arc;
 /// Callback type used during `put` operations to report progress and allow cancellation.
 ///
 /// The callback receives `PutEvent` variants and returns a `Future` that resolves to:
 /// - `Ok(true)`: Continue the operation.
 /// - `Ok(false)`: Cancel the operation (results in `Error::OperationCancelled`).
 /// - `Err(e)`: Propagate an error from the callback.
-pub type PutCallback = Box<
+pub type PutCallback = Arc<
     dyn Fn(PutEvent) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + Send + Sync>>
         + Send
         + Sync,
@@ -65,28 +65,18 @@ pub enum PutEvent {
         initial_written_count: usize,
         /// Number of chunks already found confirmed in storage from a previous attempt.
         initial_confirmed_count: usize,
+        /// Number of chunks to reserve
+        chunks_to_reserve: usize,
     },
 
     /// Indicates that a batch of storage pads has been reserved.
-    PadReserved {
-        /// The number of pads reserved in this batch.
-        count: usize,
-    },
+    PadReserved,
 
     /// Indicates that a specific data chunk has been written to storage.
-    ChunkWritten {
-        /// The index of the chunk that was written.
-        chunk_index: usize,
-    },
+    ChunkWritten,
 
     /// Indicates that a specific data chunk has been confirmed (e.g., replicated).
-    ChunkConfirmed {
-        /// The index of the chunk that was confirmed.
-        chunk_index: usize,
-    },
-
-    /// Indicates that the operation is now saving the index information.
-    SavingIndex,
+    ChunkConfirmed,
 
     /// Indicates that the `put` operation has completed successfully.
     Complete,

@@ -97,8 +97,8 @@ mod network;
 
 /// Defines custom error types used throughout the `mutant-lib`.
 mod internal_error;
-// /// Defines events and callbacks used for asynchronous operations and progress reporting.
-// mod internal_events;
+/// Defines events and callbacks used for asynchronous operations and progress reporting.
+mod internal_events;
 // /// Contains core data types and configuration structures used by MutAnt.
 // mod types;
 
