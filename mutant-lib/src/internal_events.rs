@@ -177,6 +177,9 @@ pub enum SyncEvent {
     /// Indicates that the remote index is being pushed to the network.
     PushingRemoteIndex,
 
+    /// Indicates that the remote index is being Verified.
+    VerifyingRemoteIndex,
+
     /// Indicates that the `sync` operation has completed successfully.
     Complete,
 }

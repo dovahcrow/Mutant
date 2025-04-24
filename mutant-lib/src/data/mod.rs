@@ -907,13 +907,16 @@ impl Data {
         let owner_address = owner_secret_key.public_key().to_hex();
         let owner_address = ScratchpadAddress::from_hex(&owner_address).unwrap();
 
-        let remote_index = match self
+        let (remote_index, remote_index_counter) = match self
             .network
             .get(&owner_address, Some(&owner_secret_key))
             .await
         {
-            Ok(get_result) => serde_cbor::from_slice(&get_result.data).unwrap(),
-            Err(_e) => MasterIndex::new(self.network.network_choice()),
+            Ok(get_result) => {
+                let remote_index: MasterIndex = serde_cbor::from_slice(&get_result.data).unwrap();
+                (remote_index, get_result.counter)
+            }
+            Err(_e) => (MasterIndex::new(self.network.network_choice()), 0),
         };
 
         invoke_sync_callback(&mut self.sync_callback, SyncEvent::Merging)
@@ -932,8 +935,9 @@ impl Data {
                     sync_result.nb_keys_added += 1;
                 } else {
                     // Key exists in local index, update it if the remote entry is newer
-                    local_index.update_entry(&key, remote_entry)?;
-                    sync_result.nb_keys_updated += 1;
+                    if local_index.update_entry(&key, remote_entry)? {
+                        sync_result.nb_keys_updated += 1;
+                    }
                 }
             }
 
@@ -974,7 +978,7 @@ impl Data {
             status: PadStatus::Confirmed,
             chunk_index: 0,
             size: serialized_index.len(),
-            last_known_counter: 0,
+            last_known_counter: remote_index_counter + 1,
             sk_bytes: owner_secret_key.to_bytes().to_vec(),
             checksum: 0,
         };
@@ -985,9 +989,40 @@ impl Data {
                 &pad_info,
                 &serialized_index,
                 DATA_ENCODING_MASTER_INDEX,
-                true,
+                false,
             )
             .await?;
+
+        invoke_sync_callback(&mut self.sync_callback, SyncEvent::VerifyingRemoteIndex)
+            .await
+            .unwrap();
+
+        let mut retries = 10;
+
+        loop {
+            match self
+                .network
+                .get(&owner_address, Some(&owner_secret_key))
+                .await
+            {
+                Ok(get_result) => {
+                    if get_result.data != serialized_index {
+                    } else if get_result.counter != remote_index_counter + 1 {
+                    } else {
+                        break Ok(());
+                    }
+                }
+                Err(_e) => {}
+            };
+
+            if retries == 0 {
+                break Err(Error::Network(
+                    NetworkError::GetError(GetRecordError::RecordNotFound).into(),
+                ));
+            }
+
+            retries -= 1;
+        }?;
 
         invoke_sync_callback(&mut self.sync_callback, SyncEvent::Complete)
             .await

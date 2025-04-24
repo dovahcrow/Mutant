@@ -36,7 +36,7 @@ pub fn create_sync_callback(
                         let pb = StyledProgressBar::new(&multi_progress);
                         pb.set_style(get_default_steps_style());
                         pb.set_message("Fetching remote index...".to_string());
-                        pb.set_length(3);
+                        pb.set_length(4);
                         pb.set_position(0);
                         pb
                     });
@@ -47,6 +47,7 @@ pub fn create_sync_callback(
                     let mut pb_guard = pb_arc.lock().await;
                     if let Some(pb) = pb_guard.as_mut() {
                         if !pb.is_finished() {
+                            pb.set_message("Merging remote index...".to_string());
                             pb.inc(1);
                         }
                     } else {
@@ -60,11 +61,25 @@ pub fn create_sync_callback(
                     let mut pb_guard = pb_arc.lock().await;
                     if let Some(pb) = pb_guard.as_mut() {
                         if !pb.is_finished() {
+                            pb.set_message("Pushing remote index...".to_string());
                             pb.inc(1);
                         }
                     } else {
                         error!(
                             "Sync Callback: PushingRemoteIndex event received but progress bar does not exist."
+                        );
+                    }
+                }
+                SyncEvent::VerifyingRemoteIndex => {
+                    let mut pb_guard = pb_arc.lock().await;
+                    if let Some(pb) = pb_guard.as_mut() {
+                        if !pb.is_finished() {
+                            pb.set_message("Verifying remote index...".to_string());
+                            pb.inc(1);
+                        }
+                    } else {
+                        error!(
+                            "Sync Callback: VerifyingRemoteIndex event received but progress bar does not exist."
                         );
                     }
                 }
