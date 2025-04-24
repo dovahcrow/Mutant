@@ -913,7 +913,12 @@ impl Data {
             .await
         {
             Ok(get_result) => {
-                let remote_index: MasterIndex = serde_cbor::from_slice(&get_result.data).unwrap();
+                let remote_index = if force {
+                    MasterIndex::new(self.network.network_choice())
+                } else {
+                    serde_cbor::from_slice(&get_result.data).unwrap()
+                };
+
                 (remote_index, get_result.counter)
             }
             Err(_e) => (MasterIndex::new(self.network.network_choice()), 0),
