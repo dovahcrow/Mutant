@@ -1,3 +1,4 @@
+use crate::network::client::Config;
 use crate::network::error::NetworkError;
 use crate::network::Network;
 use ant_networking::GetRecordError;
@@ -33,7 +34,7 @@ pub(super) async fn get(
     owner_sk: Option<&SecretKey>,
 ) -> Result<GetResult, NetworkError> {
     trace!("network::get called for address: {}", address);
-    let client = adapter.get_or_init_client().await?;
+    let client = adapter.get_or_init_client(Config::Get).await?;
 
     let get_future = client.scratchpad_get(address);
 
@@ -58,27 +59,39 @@ pub(super) async fn get(
                     data_encoding: scratchpad.data_encoding(),
                 })
             }
-            None => Ok(GetResult {
-                data: scratchpad.encrypted_data().as_ref().to_vec(),
-                counter: scratchpad.counter(),
-                data_encoding: scratchpad.data_encoding(),
-            }),
+            None => {
+                debug!(
+                    "Get successful for scratchpad {} with counter {} and data length {}",
+                    address,
+                    scratchpad.counter(),
+                    scratchpad.encrypted_data().as_ref().len()
+                );
+                Ok(GetResult {
+                    data: scratchpad.encrypted_data().as_ref().to_vec(),
+                    counter: scratchpad.counter(),
+                    data_encoding: scratchpad.data_encoding(),
+                })
+            }
         },
         Ok(Err(e)) => {
             error!("Failed to get scratchpad {}: {}", address, e);
             match e {
                 ScratchpadError::Missing => {
+                    error!("Scratchpad {} not found", address);
                     Err(NetworkError::GetError(GetRecordError::RecordNotFound))
                 }
-                ScratchpadError::Network(e) => match e {
-                    AntNetworkError::GetRecordError(get_error) => {
-                        Err(NetworkError::GetError(get_error))
+                ScratchpadError::Network(e) => {
+                    error!("Scratchpad error: {}", e);
+                    match e {
+                        AntNetworkError::GetRecordError(get_error) => {
+                            Err(NetworkError::GetError(get_error))
+                        }
+                        _ => Err(NetworkError::InternalError(format!(
+                            "Failed to get scratchpad {}: {}",
+                            address, e
+                        ))),
                     }
-                    _ => Err(NetworkError::InternalError(format!(
-                        "Failed to get scratchpad {}: {}",
-                        address, e
-                    ))),
-                },
+                }
                 _ => Err(NetworkError::InternalError(format!(
                     "Failed to get scratchpad {}: {}",
                     address, e

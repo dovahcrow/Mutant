@@ -1,4 +1,5 @@
 use crate::index::PadInfo;
+use crate::network::client::Config;
 use crate::network::error::NetworkError;
 use crate::network::{Network, PutResult};
 use autonomi::client::payment::PaymentOption;
@@ -6,7 +7,7 @@ use autonomi::{Bytes, Scratchpad, ScratchpadAddress, SecretKey};
 use log::{debug, error, info, trace};
 use tokio::time::{timeout, Duration};
 
-const PUT_TIMEOUT_SECS: u64 = 60 * 20;
+const PUT_TIMEOUT_SECS: u64 = 60 * 10;
 
 /// Puts a pre-constructed scratchpad onto the network using `scratchpad_put`.
 ///
@@ -41,7 +42,7 @@ pub(super) async fn put(
         pad_info.address,
         data.len()
     );
-    let client = adapter.get_or_init_client().await?;
+    let client = adapter.get_or_init_client(Config::Put).await?;
 
     let owner_sk = pad_info.secret_key();
 

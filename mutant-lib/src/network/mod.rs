@@ -5,6 +5,7 @@ pub mod put;
 pub mod wallet;
 
 use blsttc::SecretKey;
+use client::Config;
 pub use error::NetworkError;
 
 use self::client::create_client;
@@ -86,7 +87,7 @@ impl Network {
     }
 
     /// Retrieves the underlying Autonomi network client, initializing it if necessary.
-    async fn get_or_init_client(&self) -> Result<Arc<Client>, NetworkError> {
+    async fn get_or_init_client(&self, config: Config) -> Result<Arc<Client>, NetworkError> {
         // create_client(self.network_choice).await.map(Arc::new)
         self.client
             .get_or_try_init(|| async {
@@ -95,7 +96,9 @@ impl Network {
                     "Initializing network client for {:?}...",
                     network_choice_clone
                 );
-                create_client(network_choice_clone).await.map(Arc::new)
+                create_client(network_choice_clone, config)
+                    .await
+                    .map(Arc::new)
             })
             .await
             .map(Arc::clone)

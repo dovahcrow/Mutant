@@ -26,7 +26,7 @@ pub const DATA_ENCODING_PUBLIC_DATA: u64 = 3;
 pub const CHUNK_PROCESSING_QUEUE_SIZE: usize = 256;
 pub const PAD_RECYCLING_RETRIES: usize = 3;
 
-const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 6);
+const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 10);
 
 mod error;
 pub mod storage_mode;
@@ -329,7 +329,10 @@ impl Data {
                     Err(e) => {
                         error!(
                             "Error putting pad {} (chunk {}): {}. Retries left: {}",
-                            current_pad_address, pad.chunk_index, e, retries_left
+                            current_pad_address,
+                            pad.chunk_index,
+                            e,
+                            retries_left - 1
                         );
                         retries_left -= 1;
                         if retries_left == 0 {
@@ -437,7 +440,17 @@ impl Data {
 
                 let pad_data = loop {
                     match network.get(&pad.address, secret_key_ref).await {
-                        Ok(pad_result) => break pad_result.data,
+                        Ok(pad_result) => {
+                            if pad_result.data.len() != pad.size {
+                                return Err(Error::Internal(format!(
+                                    "Pad size mismatch for pad {}: expected {}, got {}",
+                                    pad.address,
+                                    pad.size,
+                                    pad_result.data.len()
+                                )));
+                            }
+                            break pad_result.data;
+                        }
                         Err(e) => {
                             debug!("Error getting pad {}: {}", pad.address, e);
                             retries_left -= 1;
