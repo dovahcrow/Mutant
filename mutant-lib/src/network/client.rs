@@ -15,16 +15,16 @@ fn get_config(config: Config) -> ClientConfig {
     let mut client_config = ClientConfig::default();
 
     if config == Config::Get {
-        client_config.strategy.scratchpad.get_retry = RetryStrategy::N(NonZero::new(1).unwrap());
-        client_config.strategy.scratchpad.get_quorum = ResponseQuorum::One;
+        // client_config.strategy.scratchpad.get_retry = RetryStrategy::N(NonZero::new(1).unwrap());
+        // client_config.strategy.scratchpad.get_quorum = ResponseQuorum::One;
     } else {
-        // client_config.strategy.scratchpad.get_retry = RetryStrategy::Quick;
-        // client_config.strategy.scratchpad.get_quorum = ResponseQuorum::Majority;
+        client_config.strategy.scratchpad.get_retry = RetryStrategy::Balanced;
+        client_config.strategy.scratchpad.get_quorum = ResponseQuorum::Majority;
 
-        // config.strategy.scratchpad.verification_retry = RetryStrategy::N(NonZero::new(1).unwrap());
-        // config.strategy.scratchpad.verification_quorum = ResponseQuorum::One;
-        // config.strategy.scratchpad.put_retry = RetryStrategy::N(NonZero::new(1).unwrap());
-        // config.strategy.scratchpad.put_quorum = ResponseQuorum::One;
+        client_config.strategy.scratchpad.verification_retry = RetryStrategy::Balanced;
+        client_config.strategy.scratchpad.verification_quorum = ResponseQuorum::Majority;
+        client_config.strategy.scratchpad.put_retry = RetryStrategy::Persistent;
+        client_config.strategy.scratchpad.put_quorum = ResponseQuorum::All;
     }
 
     client_config

@@ -323,12 +323,13 @@ impl Data {
 
             confirmed_counter.fetch_add(1, Ordering::Relaxed);
 
-            invoke_put_callback(&mut context.put_callback, PutEvent::ChunkWritten)
+            invoke_put_callback(&mut context.put_callback, PutEvent::PadsWritten)
                 .await
                 .unwrap();
-            invoke_put_callback(&mut context.put_callback, PutEvent::ChunkConfirmed)
+            invoke_put_callback(&mut context.put_callback, PutEvent::PadsConfirmed)
                 .await
                 .unwrap();
+
             return;
         }
 
@@ -383,7 +384,7 @@ impl Data {
                             Ok(updated_pad) => {
                                 invoke_put_callback(
                                     &mut context.put_callback,
-                                    PutEvent::ChunkWritten,
+                                    PutEvent::PadsWritten,
                                 )
                                 .await
                                 .unwrap();
@@ -430,7 +431,7 @@ impl Data {
         } else if initial_status == PadStatus::Written {
             pad_for_confirm = Some(pad.clone());
 
-            invoke_put_callback(&mut context.put_callback, PutEvent::ChunkWritten)
+            invoke_put_callback(&mut context.put_callback, PutEvent::PadsWritten)
                 .await
                 .unwrap();
         }
@@ -473,7 +474,7 @@ impl Data {
                                         confirmed_counter.fetch_add(1, Ordering::Relaxed);
                                     invoke_put_callback(
                                         &mut context.put_callback,
-                                        PutEvent::ChunkConfirmed,
+                                        PutEvent::PadsConfirmed,
                                     )
                                     .await
                                     .unwrap();
@@ -545,7 +546,7 @@ impl Data {
                                 )));
                             }
 
-                            invoke_get_callback(&mut get_callback, GetEvent::ChunkFetched)
+                            invoke_get_callback(&mut get_callback, GetEvent::PadsFetched)
                                 .await
                                 .unwrap();
 
@@ -601,7 +602,7 @@ impl Data {
                         Error::Internal(format!("Failed to decode public index: {}", e))
                     })?;
 
-                invoke_get_callback(&mut self.get_callback, GetEvent::ChunkFetched)
+                invoke_get_callback(&mut self.get_callback, GetEvent::PadsFetched)
                     .await
                     .unwrap();
 

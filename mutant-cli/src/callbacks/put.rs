@@ -1,3 +1,5 @@
+use crate::callbacks::progress::get_default_bytes_style;
+
 use super::progress::StyledProgressBar;
 use indicatif::MultiProgress;
 use log::{debug, warn};
@@ -59,7 +61,7 @@ pub fn create_put_callback(
                     chunks_to_reserve,
                 } => {
                     debug!(
-                        "Put Callback: Starting - Total chunks: {}, Initial Written: {}, Initial Confirmed: {}",
+                        "Put Callback: Starting - Total pads: {}, Initial Written: {}, Initial Confirmed: {}",
                         total_chunks, initial_written_count, initial_confirmed_count
                     );
                     *ctx.total_chunks.lock().await = total_chunks;
@@ -80,7 +82,7 @@ pub fn create_put_callback(
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
                     let upload_pb = upload_pb_guard.get_or_insert_with(|| {
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
-                        pb.set_message("Writing chunks...".to_string());
+                        pb.set_message("Writing pads...".to_string());
                         pb
                     });
                     upload_pb.set_length(total_u64);
@@ -116,7 +118,7 @@ pub fn create_put_callback(
                     drop(res_pb_guard);
                     Ok::<bool, LibError>(true)
                 }
-                PutEvent::ChunkWritten => {
+                PutEvent::PadsWritten => {
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
                     if let Some(pb) = upload_pb_guard.as_mut() {
                         if !pb.is_finished() {
@@ -128,7 +130,7 @@ pub fn create_put_callback(
                     drop(upload_pb_guard);
                     Ok::<bool, LibError>(true)
                 }
-                PutEvent::ChunkConfirmed => {
+                PutEvent::PadsConfirmed => {
                     let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
                     if let Some(pb) = confirm_pb_guard.as_mut() {
                         if !pb.is_finished() {

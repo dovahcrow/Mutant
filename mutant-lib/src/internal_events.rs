@@ -73,10 +73,10 @@ pub enum PutEvent {
     PadReserved,
 
     /// Indicates that a specific data chunk has been written to storage.
-    ChunkWritten,
+    PadsWritten,
 
     /// Indicates that a specific data chunk has been confirmed (e.g., replicated).
-    ChunkConfirmed,
+    PadsConfirmed,
 
     /// Indicates that the `put` operation has completed successfully.
     Complete,
@@ -92,7 +92,7 @@ pub enum GetEvent {
     },
 
     /// Indicates that a specific data chunk has been fetched from storage.
-    ChunkFetched,
+    PadsFetched,
 
     /// Indicates that the `get` operation has completed successfully.
     Complete,

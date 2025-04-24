@@ -32,38 +32,18 @@ pub fn create_get_callback(
             match event {
                 GetEvent::Starting { total_chunks } => {
                     let mut pb_guard = pb_arc.lock().await;
-                    if let Some(pb) = pb_guard.as_mut() {
-                        // Switch to determinate style now that we have the total
+                    let _ = pb_guard.get_or_insert_with(|| {
+                        let pb = StyledProgressBar::new(&multi_progress);
                         pb.set_style(get_default_steps_style());
+                        pb.set_message("Fetching pads...".to_string());
                         pb.set_length(total_chunks as u64);
                         pb.set_position(0);
-                        pb.set_message("Fetching chunks...".to_string());
-                        trace!(
-                            "Get Callback: Starting - Switched to determinate, length {}, position 0",
-                            total_chunks
-                        );
-                    } else {
-                        // Should ideally not happen if IndexLookup was called first, but handle defensively
-                        error!(
-                            "Get Callback: Starting event received but progress bar does not exist."
-                        );
-                        // Attempt to create it now (though it missed the IndexLookup state)
-                        let _ = pb_guard.get_or_insert_with(|| {
-                            let pb = StyledProgressBar::new(&multi_progress);
-                            pb.set_style(get_default_steps_style());
-                            pb.set_message("Fetching chunks...".to_string());
-                            pb.set_length(total_chunks as u64);
-                            pb.set_position(0);
-                            pb
-                        });
-                        trace!(
-                            "Get Callback: Starting - Created progress bar directly, length {}, position 0",
-                            total_chunks
-                        );
-                    }
+                        pb
+                    });
+
                     drop(pb_guard);
                 }
-                GetEvent::ChunkFetched => {
+                GetEvent::PadsFetched => {
                     let mut pb_guard = pb_arc.lock().await;
                     if let Some(pb) = pb_guard.as_mut() {
                         if !pb.is_finished() {

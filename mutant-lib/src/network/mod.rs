@@ -88,20 +88,22 @@ impl Network {
 
     /// Retrieves the underlying Autonomi network client, initializing it if necessary.
     async fn get_or_init_client(&self, config: Config) -> Result<Arc<Client>, NetworkError> {
-        // create_client(self.network_choice).await.map(Arc::new)
-        self.client
-            .get_or_try_init(|| async {
-                let network_choice_clone = self.network_choice;
-                info!(
-                    "Initializing network client for {:?}...",
-                    network_choice_clone
-                );
-                create_client(network_choice_clone, config)
-                    .await
-                    .map(Arc::new)
-            })
+        create_client(self.network_choice, config)
             .await
-            .map(Arc::clone)
+            .map(Arc::new)
+        // self.client
+        //     .get_or_try_init(|| async {
+        //         let network_choice_clone = self.network_choice;
+        //         info!(
+        //             "Initializing network client for {:?}...",
+        //             network_choice_clone
+        //         );
+        //         create_client(network_choice_clone, config)
+        //             .await
+        //             .map(Arc::new)
+        //     })
+        //     .await
+        //     .map(Arc::clone)
     }
 
     /// Retrieves the raw content of a scratchpad from the network.
