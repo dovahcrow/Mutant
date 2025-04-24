@@ -34,6 +34,14 @@ pub async fn handle_get(
             .await
         {
             Ok(data) => {
+                info!("Recording fetch history for {}", key_or_address);
+                let history_entry = FetchHistoryEntry {
+                    address: ScratchpadAddress::from_hex(&key_or_address).unwrap(),
+                    size: data.len(),
+                    fetched_at: Utc::now(),
+                };
+                append_history_entry(history_entry);
+
                 // print each byte as it is
                 io::stdout().write_all(&data).unwrap();
                 Ok(data)

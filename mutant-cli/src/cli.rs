@@ -75,10 +75,7 @@ pub enum Commands {
     Rm { key: String },
 
     #[command(about = "List stored keys")]
-    Ls {
-        #[arg(short, long, default_value_t = false)]
-        long: bool,
-    },
+    Ls,
 
     #[command(about = "Export all scratchpad private key to a file")]
     Export {
@@ -114,6 +111,11 @@ pub enum Commands {
         )]
         aggressive: bool,
     },
+
+    #[command(
+        about = "Perform a health check on scratchpads that should have been created but cannot be retrieved. Recycles the pads that are not found."
+    )]
+    HealthCheck { key: String },
     // #[command(about = "Reserve a key without storing a value")]
     // Reserve(crate::commands::reserve::Reserve),
 }

@@ -711,4 +711,93 @@ impl Data {
         }
         Ok(())
     }
+
+    pub async fn health_check(&mut self, key_name: &str) -> Result<(), Error> {
+        let pads = self.index.read().await.get_pads(key_name);
+        let nb_recycled = Arc::new(AtomicUsize::new(0));
+
+        invoke_get_callback(
+            &mut self.get_callback,
+            GetEvent::Starting {
+                total_chunks: pads.len(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let is_public = self.index.read().await.is_public(key_name);
+
+        let mut tasks = Vec::new();
+
+        for pad in pads {
+            let pad = pad.clone();
+            let nb_recycled = nb_recycled.clone();
+            let key_name = key_name.to_string();
+            let network = self.network.clone();
+            let mut get_callback = self.get_callback.clone();
+            let index = self.index.clone();
+            let secret_key = if is_public {
+                None
+            } else {
+                Some(pad.secret_key())
+            };
+
+            tasks.push(tokio::spawn(async move {
+                if pad.status != PadStatus::Confirmed {
+                    return;
+                }
+
+                match network.get(&pad.address, secret_key.as_ref()).await {
+                    Ok(_) => {
+                        invoke_get_callback(&mut get_callback, GetEvent::PadsFetched)
+                            .await
+                            .unwrap();
+                        return;
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Error getting pad {} during health check: {}",
+                            pad.address, e
+                        );
+
+                        let mut index_guard = index.write().await;
+                        index_guard
+                            .recycle_errored_pad(&key_name, &pad.address)
+                            .unwrap();
+
+                        invoke_get_callback(&mut get_callback, GetEvent::PadsFetched)
+                            .await
+                            .unwrap();
+
+                        nb_recycled.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }));
+        }
+
+        let results = futures::future::join_all(tasks).await;
+
+        for result in results {
+            match result {
+                Ok(_) => {}
+                Err(e) => {
+                    error!("Health check task panicked: {:?}", e);
+                }
+            }
+        }
+        invoke_get_callback(&mut self.get_callback, GetEvent::Complete)
+            .await
+            .unwrap();
+
+        println!(
+            "Health check completed. {} pads recycled.",
+            nb_recycled.load(Ordering::Relaxed)
+        );
+
+        if nb_recycled.load(Ordering::Relaxed) > 0 {
+            println!("Please re-run the same put command you used before to resume the upload of the missing pads to the network.");
+        }
+
+        Ok(())
+    }
 }

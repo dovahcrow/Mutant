@@ -176,6 +176,10 @@ impl MutAnt {
     pub async fn get_storage_stats(&self) -> StorageStats {
         self.index.read().await.get_storage_stats()
     }
+
+    pub async fn health_check(&self, key_name: &str) -> Result<(), Error> {
+        self.data.write().await.health_check(key_name).await
+    }
 }
 
 #[cfg(test)]

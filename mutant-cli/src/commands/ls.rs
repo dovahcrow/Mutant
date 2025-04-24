@@ -7,176 +7,112 @@ use mutant_lib::{
 };
 use std::process::ExitCode;
 
-pub async fn handle_ls(mutant: MutAnt, long: bool) -> ExitCode {
-    debug!("CLI: Handling Ls command, long={}", long);
+pub async fn handle_ls(mutant: MutAnt) -> ExitCode {
+    debug!("CLI: Handling Ls command");
 
-    if long {
-        unimplemented!();
-        // info!("Fetching detailed key/upload information...");
-        // match mutant.list_key_details().await {
-        //     Ok(details) => {
-        //         let mut max_size_width = 8;
+    let index = mutant.list().await.unwrap();
 
-        //         if details.is_empty() {
-        //             println!("No keys or public uploads stored.");
-        //         } else {
-        //             let mut details = details;
-        //             details.sort_by(|a, b| a.key.cmp(&b.key));
+    for (key, entry) in index {
+        match entry {
+            IndexEntry::PrivateKey(pads) => {
+                let completion = pads
+                    .iter()
+                    .filter(|p| p.status == PadStatus::Confirmed)
+                    .count();
 
-        //             max_size_width = details
-        //                 .iter()
-        //                 .map(|d| format_size(d.size, BINARY).len())
-        //                 .max()
-        //                 .unwrap_or(8);
-        //             let max_type_width = 7;
+                let completion_str = if completion == pads.len() {
+                    "".to_string()
+                } else {
+                    format!(
+                        " {}% complete ({}/{})",
+                        completion * 100 / pads.len(),
+                        completion,
+                        pads.len()
+                    )
+                };
 
-        //             println!(
-        //                 "{:<width$} {:<type_width$} {:<12} KEY/NAME",
-        //                 "SIZE",
-        //                 "TYPE",
-        //                 "MODIFIED",
-        //                 width = max_size_width,
-        //                 type_width = max_type_width
-        //             );
-
-        //             for detail in details {
-        //                 let size_str = format_size(detail.size, BINARY);
-        //                 let date_str = detail.modified.format("%b %d %H:%M").to_string();
-
-        //                 let (type_str, key_display) = if let Some(addr) = detail.public_address {
-        //                     ("Public", format!("{} @ {}", detail.key, addr))
-        //                 } else {
-        //                     let display = if detail.is_finished {
-        //                         detail.key.clone()
-        //                     } else if let Some(percentage) = detail.completion_percentage {
-        //                         format!("*{} ({:.1}%)", detail.key, percentage)
-        //                     } else {
-        //                         format!("*{}?", detail.key)
-        //                     };
-        //                     ("Private", display)
-        //                 };
-
-        //                 println!(
-        //                     "{:<width$} {:<type_width$} {:<12} {}",
-        //                     size_str,
-        //                     type_str,
-        //                     date_str,
-        //                     key_display,
-        //                     width = max_size_width + 1,
-        //                     type_width = max_type_width
-        //                 );
-        //             }
-        //         }
-
-        //         info!("Loading fetch history from file...");
-        //         let mut history = load_history();
-        //         if !history.is_empty() {
-        //             println!("\n--- Fetch History ---");
-        //             history.sort_by(|a, b| b.fetched_at.cmp(&a.fetched_at));
-
-        //             let max_hist_size_width = history
-        //                 .iter()
-        //                 .map(|h| format_size(h.size, BINARY).len())
-        //                 .max()
-        //                 .unwrap_or(max_size_width);
-        //             let max_hist_type_width = 8;
-
-        //             println!(
-        //                 "{:<width$} {:<type_width$} {:<12} ADDRESS",
-        //                 "SIZE",
-        //                 "TYPE",
-        //                 "FETCHED",
-        //                 width = max_hist_size_width,
-        //                 type_width = max_hist_type_width
-        //             );
-        //             for entry in history {
-        //                 let size_str = format_size(entry.size, BINARY);
-        //                 let date_str = entry.fetched_at.format("%b %d %H:%M").to_string();
-        //                 println!(
-        //                     "{:<width$} {:<type_width$} {:<12} {}",
-        //                     size_str,
-        //                     "Fetched",
-        //                     date_str,
-        //                     entry.address,
-        //                     width = max_hist_size_width,
-        //                     type_width = max_hist_type_width
-        //                 );
-        //             }
-        //         }
-
-        //         ExitCode::SUCCESS
-        //     }
-        //     Err(e) => {
-        //         eprintln!("Error fetching details: {}", e);
-        //         ExitCode::FAILURE
-        //     }
-        // }
-    } else {
-        let index = mutant.list().await.unwrap();
-
-        for (key, entry) in index {
-            match entry {
-                IndexEntry::PrivateKey(pads) => {
-                    let completion = pads
-                        .iter()
-                        .filter(|p| p.status == PadStatus::Confirmed)
-                        .count();
-
-                    let completion_str = if completion == pads.len() {
-                        "".to_string()
+                println!(
+                    " {:<10} {:>3} pads {:>5} {}",
+                    key,
+                    pads.len(),
+                    format_size(pads.iter().map(|p| p.size).sum::<usize>(), BINARY),
+                    completion_str
+                );
+            }
+            IndexEntry::PublicUpload(index_pad, pads) => {
+                let completion = pads
+                    .iter()
+                    .filter(|p| p.status == PadStatus::Confirmed)
+                    .count()
+                    + if index_pad.status == PadStatus::Confirmed {
+                        1
                     } else {
-                        format!(
-                            " {}% complete ({}/{})",
-                            completion * 100 / pads.len(),
-                            completion,
-                            pads.len()
-                        )
+                        0
                     };
 
-                    println!(
-                        " {:<10} {:>3} pads {:>5} {}",
-                        key,
-                        pads.len(),
-                        format_size(pads.iter().map(|p| p.size).sum::<usize>(), BINARY),
-                        completion_str
-                    );
-                }
-                IndexEntry::PublicUpload(index_pad, pads) => {
-                    let completion = pads
-                        .iter()
-                        .filter(|p| p.status == PadStatus::Confirmed)
-                        .count()
-                        + if index_pad.status == PadStatus::Confirmed {
-                            1
-                        } else {
-                            0
-                        };
+                let completion_str = if completion == pads.len() + 1 {
+                    "".to_string()
+                } else {
+                    format!(
+                        " {}% complete ({}/{})",
+                        completion * 100 / (pads.len() + 1),
+                        completion,
+                        pads.len() + 1
+                    )
+                };
 
-                    let completion_str = if completion == pads.len() + 1 {
-                        "".to_string()
-                    } else {
-                        format!(
-                            " {}% complete ({}/{})",
-                            completion * 100 / (pads.len() + 1),
-                            completion,
-                            pads.len() + 1
-                        )
-                    };
-
-                    println!(
-                        " {:<10} {:>3} pads {:>5} {} (public @ {})",
-                        key,
-                        pads.len() + 1,
-                        format_size(
-                            pads.iter().map(|p| p.size).sum::<usize>() + index_pad.size,
-                            BINARY
-                        ),
-                        completion_str,
-                        index_pad.address
-                    );
-                }
+                println!(
+                    " {:<10} {:>3} pads {:>5} {} (public @ {})",
+                    key,
+                    pads.len() + 1,
+                    format_size(
+                        pads.iter().map(|p| p.size).sum::<usize>() + index_pad.size,
+                        BINARY
+                    ),
+                    completion_str,
+                    index_pad.address
+                );
             }
         }
+
+        let max_size_width = 8;
+
+        info!("Loading fetch history from file...");
+        let mut history = load_history();
+        if !history.is_empty() {
+            println!("\n--- Fetch History ---");
+            history.sort_by(|a, b| b.fetched_at.cmp(&a.fetched_at));
+
+            let max_hist_size_width = history
+                .iter()
+                .map(|h| format_size(h.size, BINARY).len())
+                .max()
+                .unwrap_or(max_size_width);
+            let max_hist_type_width = 8;
+
+            println!(
+                "{:<width$} {:<type_width$} {:<12} ADDRESS",
+                "SIZE",
+                "TYPE",
+                "FETCHED",
+                width = max_hist_size_width,
+                type_width = max_hist_type_width
+            );
+            for entry in history {
+                let size_str = format_size(entry.size, BINARY);
+                let date_str = entry.fetched_at.format("%b %d %H:%M").to_string();
+                println!(
+                    "{:<width$} {:<type_width$} {:<12} {}",
+                    size_str,
+                    "Fetched",
+                    date_str,
+                    entry.address,
+                    width = max_hist_size_width,
+                    type_width = max_hist_type_width
+                );
+            }
+        }
+
         // info!("Fetching key/upload summary...");
         // match mutant.list_keys().await {
         //     Ok(summaries) => {

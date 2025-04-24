@@ -408,7 +408,7 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
             crate::commands::get::handle_get(mutant, key, public, &mp, cli.quiet).await
         }
         Commands::Rm { key } => crate::commands::remove::handle_rm(mutant, key).await,
-        Commands::Ls { long } => crate::commands::ls::handle_ls(mutant, long).await,
+        Commands::Ls => crate::commands::ls::handle_ls(mutant).await,
         Commands::Export { output } => crate::commands::export::handle_export(mutant, output).await,
         Commands::Import { input } => crate::commands::import::handle_import(mutant, input).await,
         Commands::Stats => crate::commands::stats::handle_stats(mutant).await,
@@ -431,6 +431,15 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
                 Ok(_) => ExitCode::SUCCESS,
                 Err(e) => {
                     error!("Purge command failed: {}", e);
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Commands::HealthCheck { key } => {
+            match crate::commands::health_check::run(mutant, key, &mp, cli.quiet).await {
+                Ok(_) => ExitCode::SUCCESS,
+                Err(e) => {
+                    error!("Health check command failed: {}", e);
                     ExitCode::FAILURE
                 }
             }

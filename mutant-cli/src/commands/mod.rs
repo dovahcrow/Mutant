@@ -8,6 +8,7 @@ pub mod remove;
 // pub mod reset;
 pub mod stats;
 // pub mod sync;
+pub mod health_check;
 
 pub mod export;
 pub mod import;
