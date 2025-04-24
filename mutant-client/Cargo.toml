@@ -1,0 +1,43 @@
+[package]
+name = "mutant-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mutant-protocol = { path = "../mutant-protocol" }
+
+# Common dependencies
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.6", features = ["v4", "serde"] } # uuid needs getrandom for v4
+base64 = { version = "0.21", features = ["alloc"] } # Use alloc feature for potential no_std
+futures-util = { version = "0.3", default-features = false, features = ["sink", "alloc"] } # Minimal features
+url = "2.5"
+thiserror = "1.0"
+tracing = "0.1"
+
+# WASM-specific dependencies
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+getrandom = { version = "0.2", features = ["js"] }
+tracing-wasm = "0.2"
+log = "0.4" # Required by tracing-wasm/console_log
+console_error_panic_hook = "0.1"
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+  'WebSocket',
+  'MessageEvent',
+  'ErrorEvent',
+  'CloseEvent',
+  'BinaryType',
+  'Blob',
+  'FileReader',
+  'Location', # To potentially get default URL origin
+  'console', # For logging via web console
+]
+
+# Removed CLI specific dependencies and [[bin]] section
+

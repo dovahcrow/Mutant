@@ -9,61 +9,12 @@ use warp::Filter;
 
 mod error;
 mod handler;
-mod protocol;
+// mod protocol; // Will be removed later
 
-// --- Task Management System ---
-type TaskId = Uuid;
+// Task definitions moved to mutant-protocol crate
+use mutant_protocol::{Task, TaskId}; // Import necessary types
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TaskType {
-    Put,
-    Get,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TaskStatus {
-    Pending,    // Task created but not yet started
-    InProgress, // Task is currently running
-    Completed,  // Task finished successfully
-    Failed,     // Task failed
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskProgress {
-    // Example: Could include bytes transferred, percentage, etc.
-    // For now, keep it simple.
-    message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskResult {
-    // Using Option<String> to hold potential base64 encoded data for Get
-    // or error messages.
-    data: Option<String>,  // Base64 encoded for Get, None for Put/Error
-    error: Option<String>, // Error message if TaskStatus is Failed
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)] // Add Serialize/Deserialize here
-pub struct Task {
-    id: TaskId,
-    task_type: TaskType,
-    status: TaskStatus,
-    progress: Option<TaskProgress>, // Progress updates
-    result: Option<TaskResult>,     // Final result or error
-}
-
-impl Task {
-    fn new(id: TaskId, task_type: TaskType) -> Self {
-        Task {
-            id,
-            task_type,
-            status: TaskStatus::Pending,
-            progress: None,
-            result: None,
-        }
-    }
-}
-
+// --- Task Management System (Daemon Specific) ---
 type TaskMap = Arc<RwLock<HashMap<TaskId, Task>>>;
 // --- End Task Management System ---
 

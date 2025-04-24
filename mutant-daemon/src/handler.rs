@@ -10,14 +10,11 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 use warp::ws::{Message, WebSocket};
 
-use crate::{
-    Task, TaskMap, TaskProgress, TaskResult, TaskStatus, TaskType,
-    error::DaemonError,
-    protocol::{
-        GetRequest, ListTasksRequest, PutRequest, QueryTaskRequest, Request, Response,
-        TaskCreatedResponse, TaskListEntry, TaskListResponse, TaskResultResponse,
-        TaskUpdateResponse,
-    },
+use crate::{TaskMap, error::DaemonError};
+use mutant_protocol::{
+    ErrorResponse, GetRequest, ListTasksRequest, PutRequest, QueryTaskRequest, Request, Response,
+    Task, TaskCreatedResponse, TaskListEntry, TaskListResponse, TaskProgress, TaskResult,
+    TaskResultResponse, TaskStatus, TaskType, TaskUpdateResponse,
 };
 
 // Helper function to send JSON responses
@@ -25,8 +22,11 @@ async fn send_response(
     sender: &mut SplitSink<WebSocket, Message>,
     response: Response,
 ) -> Result<(), DaemonError> {
-    let json = serde_json::to_string(&response)?;
-    sender.send(Message::text(json)).await?;
+    let json = serde_json::to_string(&response).map_err(DaemonError::SerdeJson)?;
+    sender
+        .send(Message::text(json))
+        .await
+        .map_err(DaemonError::WebSocket)?;
     Ok(())
 }
 
@@ -78,24 +78,26 @@ pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap) {
                     .await
                     {
                         tracing::error!("Error handling request: {}", e);
-                        let _ =
-                            update_tx.send(Response::error(e.to_string(), Some(original_request)));
+                        let _ = update_tx.send(Response::Error(ErrorResponse {
+                            error: e.to_string(),
+                            original_request: Some(original_request),
+                        }));
                     }
                 }
                 Err(e) => {
                     tracing::warn!("Failed to deserialize request: {}", e);
-                    let _ = update_tx.send(Response::error(
-                        format!("Invalid JSON request: {}", e),
-                        Some(original_request),
-                    ));
+                    let _ = update_tx.send(Response::Error(ErrorResponse {
+                        error: format!("Invalid JSON request: {}", e),
+                        original_request: Some(original_request),
+                    }));
                 }
             }
         } else if msg.is_binary() {
             tracing::warn!("Received binary message, ignoring.");
-            let _ = update_tx.send(Response::error(
-                "Binary messages are not supported".to_string(),
-                None,
-            ));
+            let _ = update_tx.send(Response::Error(ErrorResponse {
+                error: "Binary messages are not supported".to_string(),
+                original_request: None,
+            }));
         } else if msg.is_ping() {
             tracing::trace!("Received Ping");
         } else if msg.is_pong() {
@@ -136,7 +138,13 @@ async fn handle_put(
         .decode(&req.data_b64)
         .map_err(DaemonError::Base64Decode)?;
 
-    let task = Task::new(task_id, TaskType::Put);
+    let task = Task {
+        id: task_id,
+        task_type: TaskType::Put,
+        status: TaskStatus::Pending,
+        progress: None,
+        result: None,
+    };
     {
         tasks.write().await.insert(task_id, task.clone());
     }
@@ -232,7 +240,13 @@ async fn handle_get(
     let task_id = Uuid::new_v4();
     let user_key = req.user_key.clone();
 
-    let task = Task::new(task_id, TaskType::Get);
+    let task = Task {
+        id: task_id,
+        task_type: TaskType::Get,
+        status: TaskStatus::Pending,
+        progress: None,
+        result: None,
+    };
     {
         tasks.write().await.insert(task_id, task.clone());
     }
@@ -343,7 +357,10 @@ async fn handle_query_task(
         }
     } else {
         tracing::warn!(task_id = %task_id, "Query for unknown task");
-        Response::error(format!("Task not found: {}", task_id), None)
+        Response::Error(ErrorResponse {
+            error: format!("Task not found: {}", task_id),
+            original_request: None,
+        })
     };
 
     update_tx

@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Added integration test (`test_generated_pad_counter_increment`) to verify scratchpad counter increments correctly on successive writes to generated pads.
+- Initial implementation of `mutant-daemon`:
+    - WebSocket server on `/ws`.
+    - JSON-based request/response protocol.
+    - Background task management system (UUID based).
+    - Handles `Put` and `Get` requests (private, Medium mode only).
+    - Handles `QueryTask` and `ListTasks` requests.
+    - Basic error handling and reporting via WebSocket.
 
 ## [0.4.2] - UNRELEASED
 
@@ -224,3 +231,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - "Confirming pads...": Increments on `ChunkConfirmed` (network check success).
 - Modified the `purge` command logic to only discard pending pads if the network explicitly returns a "Record Not Found" status. Pads encountering other network errors during verification are now returned to the pending list for future retries.
 - Store confirmation (`
+
+## [0.5.1] - 2024-08-06
+
+### Fixed
+- Panic in index persistence when file doesn't exist #57 @Champii
