@@ -157,11 +157,23 @@ impl Data {
             .filter(|p| p.status == PadStatus::Confirmed)
             .count();
 
+        let initial_written_count = pads
+            .iter()
+            .filter(|p| p.status == PadStatus::Written)
+            .count();
+
+        let initial_chunks_to_reserve = pads
+            .iter()
+            .filter(|p| p.status == PadStatus::Generated)
+            .count();
+
         let process_future = self.process_pads(
             context.clone(),
             pad_tx.clone(),
             pad_rx,
+            initial_written_count,
             initial_confirmed_count,
+            initial_chunks_to_reserve,
             public,
         );
 
@@ -180,6 +192,8 @@ impl Data {
         pad_tx: Sender<PadInfo>,
         mut pad_rx: Receiver<PadInfo>,
         initial_confirmed_count: usize,
+        initial_written_count: usize,
+        initial_chunks_to_reserve: usize,
         public: bool,
     ) -> Result<(), tokio::task::JoinError> {
         let key_name = context.name.clone();
@@ -201,6 +215,18 @@ impl Data {
             "Starting pad processing pipeline for {} with {} pads ({} initially confirmed)",
             key_name, total_pads, initial_confirmed_count
         );
+
+        invoke_put_callback(
+            &mut context.put_callback,
+            PutEvent::Starting {
+                total_chunks: total_pads,
+                initial_written_count,
+                initial_confirmed_count,
+                chunks_to_reserve: initial_chunks_to_reserve,
+            },
+        )
+        .await
+        .unwrap();
 
         loop {
             tokio::select! {
@@ -260,7 +286,9 @@ impl Data {
         }
         info!("Finished pad processing pipeline for {}", key_name);
 
-        invoke_put_callback(&mut context.put_callback, PutEvent::Complete).await;
+        invoke_put_callback(&mut context.put_callback, PutEvent::Complete)
+            .await
+            .unwrap();
 
         Ok(())
     }
@@ -340,14 +368,16 @@ impl Data {
                                     &mut context.put_callback,
                                     PutEvent::ChunkWritten,
                                 )
-                                .await;
+                                .await
+                                .unwrap();
 
                                 if initial_status == PadStatus::Generated {
                                     invoke_put_callback(
                                         &mut context.put_callback,
                                         PutEvent::PadReserved,
                                     )
-                                    .await;
+                                    .await
+                                    .unwrap();
                                 }
 
                                 pad_for_confirm = Some(updated_pad);
@@ -424,7 +454,8 @@ impl Data {
                                         &mut context.put_callback,
                                         PutEvent::ChunkConfirmed,
                                     )
-                                    .await;
+                                    .await
+                                    .unwrap();
                                     debug!(
                                         "Pad {} confirmed. Confirmed count: {}",
                                         current_pad_address,

@@ -125,10 +125,10 @@ pub mod error {
     // pub use crate::network::error::NetworkError;
     // pub use crate::pad_lifecycle::error::PadLifecycleError;
 }
-// pub mod events {
-//     pub use crate::api::{ReserveCallback, ReserveEvent};
-//     pub use crate::internal_events::{
-//         GetCallback, GetEvent, InitCallback, InitProgressEvent, PurgeCallback, PurgeEvent,
-//         PutCallback, PutEvent,
-//     };
-// }
+pub mod events {
+    // pub use crate::api::{ReserveCallback, ReserveEvent};
+    pub use crate::internal_events::{
+        GetCallback, GetEvent, InitCallback, InitProgressEvent, PurgeCallback, PurgeEvent,
+        PutCallback, PutEvent,
+    };
+}

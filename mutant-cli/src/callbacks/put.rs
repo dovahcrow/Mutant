@@ -32,7 +32,7 @@ pub fn create_put_callback(
 
     if quiet {
         let noop_callback: PutCallback =
-            Box::new(move |_event: PutEvent| Box::pin(async move { Ok::<bool, LibError>(true) }));
+            Arc::new(move |_event: PutEvent| Box::pin(async move { Ok::<bool, LibError>(true) }));
 
         return (res_pb_opt, upload_pb_opt, confirm_pb_opt, noop_callback);
     }
@@ -47,7 +47,7 @@ pub fn create_put_callback(
 
     let ctx_clone = context.clone();
 
-    let callback: PutCallback = Box::new(move |event: PutEvent| {
+    let callback: PutCallback = Arc::new(move |event: PutEvent| {
         let ctx = ctx_clone.clone();
 
         Box::pin(async move {
@@ -56,6 +56,7 @@ pub fn create_put_callback(
                     total_chunks,
                     initial_written_count,
                     initial_confirmed_count,
+                    chunks_to_reserve,
                 } => {
                     debug!(
                         "Put Callback: Starting - Total chunks: {}, Initial Written: {}, Initial Confirmed: {}",
@@ -70,8 +71,8 @@ pub fn create_put_callback(
                         pb.set_message("Acquiring pads...".to_string());
                         pb
                     });
-                    res_pb.set_length(total_u64);
-                    res_pb.set_position(initial_written_count as u64);
+                    res_pb.set_length(chunks_to_reserve as u64);
+                    res_pb.set_position(0);
                     drop(res_pb_guard);
 
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
@@ -96,15 +97,12 @@ pub fn create_put_callback(
 
                     Ok::<bool, LibError>(true)
                 }
-                PutEvent::PadReserved { count } => {
-                    debug!(
-                        "Put Callback: Received PadReserved, incrementing acquisition bar by {}",
-                        count
-                    );
+                PutEvent::PadReserved => {
+                    debug!("Put Callback: Received PadReserved");
                     let mut res_pb_guard = ctx.res_pb_opt.lock().await;
                     if let Some(pb) = res_pb_guard.as_mut() {
                         if !pb.is_finished() {
-                            pb.inc(count as u64);
+                            pb.inc(1);
 
                             if pb.position() >= pb.length().unwrap_or(0) {
                                 pb.set_message("Pads acquired.".to_string());
@@ -116,7 +114,7 @@ pub fn create_put_callback(
                     drop(res_pb_guard);
                     Ok::<bool, LibError>(true)
                 }
-                PutEvent::ChunkWritten { chunk_index: _ } => {
+                PutEvent::ChunkWritten => {
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
                     if let Some(pb) = upload_pb_guard.as_mut() {
                         if !pb.is_finished() {
@@ -128,7 +126,7 @@ pub fn create_put_callback(
                     drop(upload_pb_guard);
                     Ok::<bool, LibError>(true)
                 }
-                PutEvent::ChunkConfirmed { chunk_index: _ } => {
+                PutEvent::ChunkConfirmed => {
                     let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
                     if let Some(pb) = confirm_pb_guard.as_mut() {
                         if !pb.is_finished() {
@@ -140,10 +138,6 @@ pub fn create_put_callback(
                         );
                     }
                     drop(confirm_pb_guard);
-                    Ok::<bool, LibError>(true)
-                }
-                PutEvent::SavingIndex => {
-                    warn!("Put Callback: Received unexpected SavingIndex event.");
                     Ok::<bool, LibError>(true)
                 }
                 PutEvent::Complete => {

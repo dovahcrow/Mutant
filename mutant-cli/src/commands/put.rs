@@ -1,5 +1,6 @@
 // use crate::callbacks::StyledProgressBar;
-// use crate::callbacks::put::create_put_callback;
+use crate::callbacks::StyledProgressBar;
+use crate::callbacks::put::create_put_callback;
 use indicatif::MultiProgress;
 use log::{debug, info, warn};
 use mutant_lib::MutAnt;
@@ -13,7 +14,7 @@ use tokio::sync::Mutex;
 use crate::cli::StorageModeCli;
 
 pub async fn handle_put(
-    mutant: MutAnt,
+    mut mutant: MutAnt,
     key: String,
     value: Option<String>,
     force: bool,
@@ -49,8 +50,10 @@ pub async fn handle_put(
         }
     };
 
-    // let (res_pb_opt, upload_pb_opt, confirm_pb_opt, callback) =
-    //     create_put_callback(multi_progress, quiet);
+    let (res_pb_opt, upload_pb_opt, confirm_pb_opt, callback) =
+        create_put_callback(multi_progress, quiet);
+
+    mutant.set_put_callback(callback).await;
 
     debug!("handle_put: Calling mutant.put(&key, &data_vec).await...");
     let result: Result<ScratchpadAddress, LibError> = if public {
@@ -155,36 +158,45 @@ pub async fn handle_put(
             if public {
                 println!("{}", address);
             }
+            clear_pb(&res_pb_opt);
+            clear_pb(&upload_pb_opt);
+            clear_pb(&confirm_pb_opt);
             ExitCode::SUCCESS
         }
         Err(e) => {
             debug!("handle_put: Result is Err({:?}). Returning FAILURE.", e);
             eprintln!("Error: {:?}", e);
+            abandon_pb(&res_pb_opt, e.to_string());
+            abandon_pb(&upload_pb_opt, e.to_string());
+            abandon_pb(&confirm_pb_opt, e.to_string());
+            clear_pb(&res_pb_opt);
+            clear_pb(&upload_pb_opt);
+            clear_pb(&confirm_pb_opt);
             ExitCode::FAILURE
         }
     }
 }
 
-// fn clear_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>) {
-//     if let Ok(mut guard) = pb_opt.try_lock() {
-//         if let Some(pb) = guard.take() {
-//             if !pb.is_finished() {
-//                 pb.finish_and_clear();
-//             }
-//         }
-//     } else {
-//         warn!("clear_pb: Could not acquire lock to clear progress bar.");
-//     }
-// }
+fn clear_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>) {
+    if let Ok(mut guard) = pb_opt.try_lock() {
+        if let Some(pb) = guard.take() {
+            if !pb.is_finished() {
+                pb.finish_and_clear();
+            }
+        }
+    } else {
+        warn!("clear_pb: Could not acquire lock to clear progress bar.");
+    }
+}
 
-// fn abandon_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>, message: String) {
-//     if let Ok(mut guard) = pb_opt.try_lock() {
-//         if let Some(pb) = guard.take() {
-//             if !pb.is_finished() {
-//                 pb.abandon_with_message(message);
-//             }
-//         }
-//     } else {
-//         warn!("abandon_pb: Could not acquire lock to abandon progress bar.");
-//     }
-// }
+fn abandon_pb(pb_opt: &Arc<Mutex<Option<StyledProgressBar>>>, message: String) {
+    if let Ok(mut guard) = pb_opt.try_lock() {
+        if let Some(pb) = guard.take() {
+            if !pb.is_finished() {
+                pb.abandon_with_message(message);
+            }
+        }
+    } else {
+        warn!("abandon_pb: Could not acquire lock to abandon progress bar.");
+    }
+}
