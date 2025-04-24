@@ -12,6 +12,7 @@ serde_json = "1.0"
 uuid = { version = "1.6", features = ["v4", "serde"] } # uuid needs getrandom for v4
 base64 = { version = "0.21", features = ["alloc"] } # Use alloc feature for potential no_std
 futures-util = { version = "0.3", default-features = false, features = ["sink", "alloc"] } # Minimal features
+futures = { version = "0.3", default-features = false, features = ["channel"] } # Add for oneshot
 url = "2.5"
 thiserror = "1.0"
 tracing = "0.1"
