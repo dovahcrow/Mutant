@@ -715,7 +715,7 @@ impl Data {
     pub async fn health_check(&mut self, key_name: &str, recycle: bool) -> Result<(), Error> {
         let pads = self.index.read().await.get_pads(key_name);
         let nb_recycled = Arc::new(AtomicUsize::new(0));
-
+        let nb_reset = Arc::new(AtomicUsize::new(0));
         invoke_get_callback(
             &mut self.get_callback,
             GetEvent::Starting {
@@ -732,6 +732,7 @@ impl Data {
         for pad in pads {
             let pad = pad.clone();
             let nb_recycled = nb_recycled.clone();
+            let nb_reset = nb_reset.clone();
             let key_name = key_name.to_string();
             let network = self.network.clone();
             let mut get_callback = self.get_callback.clone();
@@ -760,19 +761,36 @@ impl Data {
                             pad.address, e
                         );
 
-                        if recycle {
-                            let mut index_guard = index.write().await;
+                        match e {
+                            NetworkError::GetError(GetRecordError::RecordNotFound)
+                            | NetworkError::GetError(GetRecordError::NotEnoughCopies { .. }) => {
+                                let mut index_guard = index.write().await;
+                                index_guard
+                                    .update_pad_status(
+                                        &key_name,
+                                        &pad.address,
+                                        PadStatus::Free,
+                                        None,
+                                    )
+                                    .unwrap();
 
-                            index_guard
-                                .recycle_errored_pad(&key_name, &pad.address)
-                                .unwrap();
+                                nb_reset.fetch_add(1, Ordering::Relaxed);
+                            }
+                            _ => {
+                                if recycle {
+                                    let mut index_guard = index.write().await;
+                                    index_guard
+                                        .recycle_errored_pad(&key_name, &pad.address)
+                                        .unwrap();
+                                }
+
+                                nb_recycled.fetch_add(1, Ordering::Relaxed);
+                            }
                         }
 
                         invoke_get_callback(&mut get_callback, GetEvent::PadsFetched)
                             .await
                             .unwrap();
-
-                        nb_recycled.fetch_add(1, Ordering::Relaxed);
                     }
                 }
             }));
@@ -788,25 +806,35 @@ impl Data {
                 }
             }
         }
+
         invoke_get_callback(&mut self.get_callback, GetEvent::Complete)
             .await
             .unwrap();
 
-        if recycle {
-            println!(
-                "Health check completed. {} pads recycled.",
-                nb_recycled.load(Ordering::Relaxed)
-            );
+        println!(
+            "Health check completed. {} pads reset.",
+            nb_reset.load(Ordering::Relaxed)
+        );
 
-            if nb_recycled.load(Ordering::Relaxed) > 0 {
-                println!("Please re-run the same put command you used before to resume the upload of the missing pads to the network.");
+        if nb_recycled.load(Ordering::Relaxed) > 0 {
+            if recycle {
+                println!(
+                    "{} pads got errored and have been recycled.",
+                    nb_recycled.load(Ordering::Relaxed)
+                );
+            } else {
+                println!(
+                    "{} pads got errored and should be recycled.",
+                    nb_recycled.load(Ordering::Relaxed)
+                );
+                println!("You can re-run the health-check command with the --recycle flag to recycle them.");
             }
-        } else {
-            println!(
-                "Health check completed. {} pads in bad health.",
-                nb_recycled.load(Ordering::Relaxed)
-            );
-            println!("You can recycle those bad pads by re-running the health-check with the --recycle flag.");
+        }
+
+        if nb_reset.load(Ordering::Relaxed) > 0
+            || (nb_recycled.load(Ordering::Relaxed) > 0 && recycle)
+        {
+            println!("Please re-run the same put command you used before to resume the upload of the missing pads to the network.");
         }
 
         Ok(())

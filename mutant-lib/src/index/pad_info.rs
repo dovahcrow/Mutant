@@ -19,9 +19,6 @@ pub enum PadStatus {
 
     /// The pad's content has been verified against the original data.
     Confirmed,
-
-    /// The pad has encountered repeated error during upload or download and must be recycled..
-    Errored,
 }
 
 /// Information about a single pad associated with a key.

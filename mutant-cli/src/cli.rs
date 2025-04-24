@@ -91,9 +91,6 @@ pub enum Commands {
     #[command(about = "Show storage statistics")]
     Stats,
 
-    // #[command(about = "Reset local cache and index")]
-    // Reset,
-
     // #[command(about = "Synchronize local index cache with remote storage")]
     // Sync {
     //     #[arg(long, default_value_t = false)]
@@ -120,6 +117,4 @@ pub enum Commands {
         #[arg(short, long, default_value_t = false)]
         recycle: bool,
     },
-    // #[command(about = "Reserve a key without storing a value")]
-    // Reserve(crate::commands::reserve::Reserve),
 }
