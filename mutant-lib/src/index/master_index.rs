@@ -161,13 +161,19 @@ impl MasterIndex {
             return Err(IndexError::KeyAlreadyExists(key_name.to_string()).into());
         }
 
-        let chunks = self.chunk_data(data_bytes, mode, true); // TODO: dont collect
+        let mut chunks = self.chunk_data(data_bytes, mode, true); // TODO: dont collect
 
         let all_pads = self.aquire_pads(chunks.clone()); // TODO: dont clone here
 
         let mut pads = all_pads.clone();
 
         let index_pad = pads.remove(0);
+
+        if pads.len() > 0 {
+            let index_data = serde_cbor::to_vec(&pads).unwrap();
+
+            chunks[0] = index_data;
+        }
 
         self.index.insert(
             key_name.to_string(),
