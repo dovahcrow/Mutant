@@ -26,7 +26,7 @@ pub const DATA_ENCODING_PUBLIC_DATA: u64 = 3;
 pub const CHUNK_PROCESSING_QUEUE_SIZE: usize = 256;
 pub const PAD_RECYCLING_RETRIES: usize = 3;
 
-const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 20);
+const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 6);
 
 mod error;
 pub mod storage_mode;
@@ -499,12 +499,7 @@ impl Data {
             return Err(Error::Internal(format!("No pads found for key {}", name)));
         }
 
-        let is_public = self
-            .index
-            .read()
-            .await
-            .get_index_pad_if_public(name)
-            .is_some();
+        let is_public = self.index.read().await.is_public(name);
 
         let pads = if is_public && pads.len() > 1 {
             pads[1..].to_vec()
@@ -512,7 +507,7 @@ impl Data {
             pads
         };
 
-        self.fetch_pads_data(pads, false).await
+        self.fetch_pads_data(pads, is_public).await
     }
 
     // pub async fn get_public(&self, name: &[u8]) -> Result<Vec<u8>, Error> {}

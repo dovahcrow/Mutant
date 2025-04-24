@@ -69,6 +69,13 @@ impl MasterIndex {
         }
     }
 
+    pub fn is_public(&self, key_name: &str) -> bool {
+        self.index.get(key_name).map_or(false, |entry| match entry {
+            IndexEntry::PublicUpload(_, _) => true,
+            IndexEntry::PrivateKey(_) => false,
+        })
+    }
+
     pub fn get_index_pad_if_public(&self, key_name: &str) -> Option<PadInfo> {
         if let Some(entry) = self.index.get(key_name) {
             if let IndexEntry::PublicUpload(index, _) = entry {
@@ -454,14 +461,14 @@ impl MasterIndex {
                         .zip(new_checksums.iter())
                         .all(|(p, c)| p.checksum == *c)
                 }
-                IndexEntry::PublicUpload(index_pad, pads) => {
+                IndexEntry::PublicUpload(_index_pad, pads) => {
                     if pads.len() != new_checksums.len() {
                         return false;
                     }
+
                     pads.iter()
                         .zip(new_checksums.iter())
                         .all(|(p, c)| p.checksum == *c)
-                        && index_pad.checksum == new_checksums[0]
                 }
             }
         } else {
