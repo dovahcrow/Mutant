@@ -94,14 +94,39 @@ impl Data {
             return self.first_store(name, data_bytes, mode, public).await;
         }
 
-        let context = Context {
-            index: self.index.clone(),
-            network: self.network.clone(),
-            name: Arc::new(name.to_string()),
-            chunks: data_bytes
-                .chunks(mode.scratchpad_size())
-                .map(|chunk| chunk.to_vec())
-                .collect::<Vec<_>>(),
+        let context = if public {
+            if pads.len() == 1 {
+                Context {
+                    index: self.index.clone(),
+                    network: self.network.clone(),
+                    name: Arc::new(name.to_string()),
+                    chunks: vec![data_bytes.to_vec()],
+                }
+            } else {
+                // Regenerate the index data for consistency check or potential updates if needed
+                // Note: We assume the existing pads[1..] are correct for resume.
+                let index_data = serde_cbor::to_vec(&pads[1..].to_vec()).unwrap();
+                Context {
+                    index: self.index.clone(),
+                    network: self.network.clone(),
+                    name: Arc::new(name.to_string()),
+                    chunks: vec![index_data.as_slice()]
+                        .into_iter()
+                        .chain(data_bytes.chunks(mode.scratchpad_size()))
+                        .map(|chunk| chunk.to_vec())
+                        .collect::<Vec<_>>(),
+                }
+            }
+        } else {
+            Context {
+                index: self.index.clone(),
+                network: self.network.clone(),
+                name: Arc::new(name.to_string()),
+                chunks: data_bytes
+                    .chunks(mode.scratchpad_size())
+                    .map(|chunk| chunk.to_vec())
+                    .collect::<Vec<_>>(),
+            }
         };
 
         self.write_pipeline(context, pads.clone(), public).await;
