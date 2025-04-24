@@ -10,6 +10,7 @@ use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::slice::Chunks;
+use std::vec::IntoIter;
 use xdg::BaseDirectories;
 
 use super::error::IndexError;
@@ -114,24 +115,40 @@ impl MasterIndex {
         Ok(())
     }
 
+    pub fn create_key(
+        &mut self,
+        key_name: &str,
+        data_bytes: &[u8],
+        mode: StorageMode,
+        public: bool,
+    ) -> Result<(Vec<PadInfo>, Vec<Vec<u8>>), Error> {
+        if public {
+            self.create_public_key(key_name, data_bytes, mode)
+        } else {
+            self.create_private_key(key_name, data_bytes, mode)
+        }
+    }
+
     pub fn create_private_key(
         &mut self,
         key_name: &str,
         data_bytes: &[u8],
         mode: StorageMode,
-    ) -> Result<Vec<PadInfo>, Error> {
+    ) -> Result<(Vec<PadInfo>, Vec<Vec<u8>>), Error> {
         if self.index.contains_key(key_name) {
             return Err(IndexError::KeyAlreadyExists(key_name.to_string()).into());
         }
 
-        let pads = self.aquire_pads(data_bytes, mode);
+        let chunks = self.chunk_data(data_bytes, mode, false); // TODO: dont collect
+
+        let pads = self.aquire_pads(chunks.clone()); // TODO: dont clone here
 
         self.index
             .insert(key_name.to_string(), IndexEntry::PrivateKey(pads.clone()));
 
         self.save(self.network_choice)?;
 
-        Ok(pads)
+        Ok((pads, chunks))
     }
 
     pub fn create_public_key(
@@ -139,48 +156,55 @@ impl MasterIndex {
         key_name: &str,
         data_bytes: &[u8],
         mode: StorageMode,
-    ) -> Result<Vec<PadInfo>, Error> {
+    ) -> Result<(Vec<PadInfo>, Vec<Vec<u8>>), Error> {
         if self.index.contains_key(key_name) {
             return Err(IndexError::KeyAlreadyExists(key_name.to_string()).into());
         }
 
-        // prepare the first pad as an index pad if data_bytes is longer than a scratchpad
+        let chunks = self.chunk_data(data_bytes, mode, true); // TODO: dont collect
 
-        let pads = if data_bytes.len() > mode.scratchpad_size() {
-            let mut pads = self.aquire_pads(data_bytes, mode);
-            // serialize index to determine the size and checksum of the index pad
-            let index_pad_serialized = serde_cbor::to_vec(&pads).unwrap();
+        let all_pads = self.aquire_pads(chunks.clone()); // TODO: dont clone here
 
-            let index_pad = self.aquire_pads(&index_pad_serialized, mode)[0].clone();
+        let mut pads = all_pads.clone();
 
-            self.index.insert(
-                key_name.to_string(),
-                IndexEntry::PublicUpload(index_pad.clone(), pads.clone()),
-            );
+        let index_pad = pads.remove(0);
 
-            // Prepend index_pad to the list of pads to be returned/processed
-            let mut final_pads = vec![index_pad];
-            final_pads.extend(pads);
-
-            // Correct the chunk indices based on the final order
-            for (i, pad) in final_pads.iter_mut().enumerate() {
-                pad.chunk_index = i;
-            }
-
-            final_pads // Return the list with corrected chunk indices
-        } else {
-            let pads = self.aquire_pads(data_bytes, mode);
-            self.index.insert(
-                key_name.to_string(),
-                IndexEntry::PublicUpload(pads[0].clone(), Vec::new()),
-            );
-
-            pads
-        };
+        self.index.insert(
+            key_name.to_string(),
+            IndexEntry::PublicUpload(index_pad, pads.clone()),
+        );
 
         self.save(self.network_choice)?;
 
-        Ok(pads)
+        Ok((all_pads, chunks))
+    }
+
+    /// Chunk the data into pads of the given mode.
+    /// If the data is public, the first pad contains the index data and the remaining pads contain the data.
+    /// If the data is private, all pads contain the data.
+    pub fn chunk_data(&self, data_bytes: &[u8], mode: StorageMode, public: bool) -> Vec<Vec<u8>> {
+        let data = if public {
+            if data_bytes.len() > mode.scratchpad_size() {
+                let fake_index: Vec<PadInfo> =
+                    Vec::with_capacity((data_bytes.len() / mode.scratchpad_size()) + 1);
+                let index_data = serde_cbor::to_vec(&fake_index).unwrap();
+
+                vec![index_data.as_slice()]
+                    .into_iter()
+                    .chain(data_bytes.chunks(mode.scratchpad_size()))
+                    .map(|chunk| chunk.to_vec())
+                    .collect::<Vec<_>>()
+            } else {
+                vec![data_bytes.to_vec()]
+            }
+        } else {
+            data_bytes
+                .chunks(mode.scratchpad_size())
+                .map(|chunk| chunk.to_vec())
+                .collect::<Vec<_>>()
+        };
+
+        data
     }
 
     pub fn recycle_errored_pad(
@@ -188,7 +212,11 @@ impl MasterIndex {
         key_name: &str,
         pad_address: &ScratchpadAddress,
     ) -> Result<PadInfo, Error> {
-        let mut new_pad = PadInfo::new(&[0u8; 1], 0);
+        let mut new_pad = if self.free_pads.is_empty() {
+            PadInfo::new(&[0u8; 1], 0)
+        } else {
+            self.free_pads.pop().unwrap()
+        };
 
         if let Some(entry) = self.index.get_mut(key_name) {
             let pad = match entry {
@@ -343,20 +371,21 @@ impl MasterIndex {
         Ok(())
     }
 
-    fn aquire_pads(&mut self, data_bytes: &[u8], mode: StorageMode) -> Vec<PadInfo> {
-        let mut chunks = data_bytes.chunks(mode.scratchpad_size());
-        let total_length = chunks.clone().count();
+    fn aquire_pads(&mut self, data_bytes: Vec<Vec<u8>>) -> Vec<PadInfo> {
+        let total_length = data_bytes.len();
 
         let mut pads = Vec::new();
 
         let to_drain_max = self.free_pads.len().min(total_length);
+
+        let mut chunks = data_bytes.into_iter();
 
         if !self.free_pads.is_empty() {
             pads.extend(
                 self.free_pads
                     .drain(0..to_drain_max)
                     .enumerate()
-                    .map(|(i, p)| p.update_data(chunks.next().unwrap(), i))
+                    .map(|(i, p)| p.update_data(&chunks.next().unwrap(), i))
                     .collect::<Vec<_>>(),
             );
         }
@@ -372,11 +401,15 @@ impl MasterIndex {
         pads
     }
 
-    fn generate_pads(&mut self, starting_chunk_index: usize, chunks: Chunks<u8>) -> Vec<PadInfo> {
+    fn generate_pads<I: Iterator<Item = Vec<u8>>>(
+        &mut self,
+        starting_chunk_index: usize,
+        chunks: I,
+    ) -> Vec<PadInfo> {
         let mut chunk_index = starting_chunk_index;
         chunks
             .map(|chunk| {
-                let pad = PadInfo::new(chunk, chunk_index);
+                let pad = PadInfo::new(&chunk, chunk_index);
                 chunk_index += 1;
                 pad
             })
@@ -605,7 +638,7 @@ mod tests {
         let data = vec![0u8; DEFAULT_SCRATCHPAD_SIZE * 2 + 10]; // Data spanning more than 2 pads
         let key_name = "test_key";
 
-        let pads = index
+        let (pads, _) = index
             .create_private_key(key_name, &data, StorageMode::Medium)
             .unwrap();
 
@@ -643,7 +676,7 @@ mod tests {
         let (_td, mut index) = setup_test_environment();
         let data = vec![0u8; DEFAULT_SCRATCHPAD_SIZE];
         let key_name = "test_key";
-        let pads = index
+        let (pads, _) = index
             .create_private_key(key_name, &data, StorageMode::Medium)
             .unwrap();
         let pad_address = pads[0].address;
@@ -679,12 +712,12 @@ mod tests {
         let key_gen = "key_gen";
         let key_conf = "key_conf";
 
-        let pads_gen = index
+        let (pads_gen, _) = index
             .create_private_key(key_gen, &data_gen, StorageMode::Medium)
             .unwrap();
         let pad_gen_addr = pads_gen[0].address;
 
-        let pads_conf = index
+        let (pads_conf, _) = index
             .create_private_key(key_conf, &data_conf, StorageMode::Medium)
             .unwrap();
         let pad_conf_addr = pads_conf[0].address;
@@ -712,7 +745,7 @@ mod tests {
         let data = vec![0u8; DEFAULT_SCRATCHPAD_SIZE * 2];
         let key_name = "test_key";
 
-        let pads = index
+        let (pads, _) = index
             .create_private_key(key_name, &data, StorageMode::Medium)
             .unwrap();
         assert!(!index.is_finished(key_name)); // Not finished initially
@@ -780,7 +813,7 @@ mod tests {
         let key2 = "key2";
 
         // Create first key, its pad gets generated
-        let pads1 = index
+        let (pads1, _) = index
             .create_private_key(key1, &data1, StorageMode::Medium)
             .unwrap();
         assert_eq!(pads1.len(), 1);
@@ -795,7 +828,7 @@ mod tests {
         assert_eq!(index.free_pads[0].status, PadStatus::Free); // Status updated
 
         // Create second key, should reuse the free pad
-        let pads2 = index
+        let (pads2, _) = index
             .create_private_key(key2, &data2, StorageMode::Medium)
             .unwrap();
         assert_eq!(pads2.len(), 1);
@@ -814,7 +847,7 @@ mod tests {
         // No free pads initially
         assert!(index.free_pads.is_empty());
 
-        let pads = index
+        let (pads, _) = index
             .create_private_key(key, &data, StorageMode::Medium)
             .unwrap();
         assert_eq!(pads.len(), 2);
@@ -831,7 +864,7 @@ mod tests {
         let key3 = "key3";
 
         // Create key1, mark pad as used, remove key -> pad goes to free_pads
-        let pads1 = index
+        let (pads1, _) = index
             .create_private_key(key1, &data1, StorageMode::Medium)
             .unwrap();
         let pad1_addr = pads1[0].address;
@@ -840,7 +873,7 @@ mod tests {
         assert_eq!(index.free_pads.len(), 1);
 
         // Create key3, requires 3 pads. Should use 1 free pad and generate 2 new ones.
-        let pads3 = index
+        let (pads3, _) = index
             .create_private_key(key3, &data3, StorageMode::Medium)
             .unwrap();
         assert_eq!(pads3.len(), 3);
