@@ -28,18 +28,19 @@
 //!
 //! ```rust,no_run
 //! use mutant_lib::MutAnt;
+//! use mutant_lib::storage::StorageMode;
 //! use anyhow::Result;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
 //!     // Use a dummy private key for doctest purposes.
-//!     let key_hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f".to_string();
+//!     let key_hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 //!
 //!     let mut ant = MutAnt::init(key_hex).await?;
 //!
-//!     ant.store("file1".to_string(), b"hello").await?;
+//!     ant.put("file1", b"hello", StorageMode::Medium, false).await?;
 //!
-//!     let data = ant.fetch("file1").await?;
+//!     let data = ant.get("file1").await?;
 //!
 //!     println!("Fetched: {}", String::from_utf8_lossy(&data));
 //!     Ok(())
@@ -48,12 +49,12 @@
 //!
 //! ### Fetching Public Data (without a private key)
 //!
-//! If you only need to fetch data that was stored publicly (using `store_public`), you can
+//! If you only need to fetch data that was stored publicly (using `put`), you can
 //! initialize a lightweight `MutAnt` instance without providing a private key:
 //!
 //! ```rust,no_run
 //! use mutant_lib::MutAnt;
-//! use autonomi::ScratchpadAddress;
+//! use mutant_lib::storage::ScratchpadAddress;
 //! use anyhow::Result;
 //!
 //! #[tokio::main]
@@ -65,15 +66,15 @@
 //!     let public_address = ScratchpadAddress::from_hex("...")?;
 //!
 //!     // Fetch the public data
-//!     let data = public_fetcher.fetch_public(public_address, None).await?;
+//!     let data = public_fetcher.get_public(&public_address).await?;
 //!
 //!     println!("Fetched public data: {} bytes", data.len());
 //!     Ok(())
 //! }
 //! ```
 //!
-//! **Note:** An instance created with `init_public` can *only* be used for `fetch_public`.
-//! Other operations requiring a private key (like `store`, `fetch` private data, `remove`, etc.)
+//! **Note:** An instance created with `init_public` can *only* be used for `get_public`.
+//! Other operations requiring a private key (like `put`, `get`, `remove`, etc.)
 //! will fail.
 //!
 //! ## Resources & Support
