@@ -613,6 +613,15 @@ impl Data {
                         Error::Internal(format!("Failed to decode public index: {}", e))
                     })?;
 
+                invoke_get_callback(
+                    &mut self.get_callback,
+                    GetEvent::Starting {
+                        total_chunks: index.len() + 1,
+                    },
+                )
+                .await
+                .unwrap();
+
                 invoke_get_callback(&mut self.get_callback, GetEvent::PadsFetched)
                     .await
                     .unwrap();
@@ -958,17 +967,13 @@ impl Data {
                 if local_index.pad_exists(&pad.address) {
                     continue;
                 }
-                free_pads_to_add.push(pad);
-                sync_result.nb_free_pads_added += 1;
-            }
-
-            // merge the pending pads
-            for pad in remote_index.get_pending_pads() {
-                if local_index.pad_exists(&pad.address) {
-                    continue;
+                if pad.status == PadStatus::Generated {
+                    pending_pads_to_add.push(pad);
+                    sync_result.nb_pending_pads_added += 1;
+                } else {
+                    free_pads_to_add.push(pad);
+                    sync_result.nb_free_pads_added += 1;
                 }
-                pending_pads_to_add.push(pad);
-                sync_result.nb_pending_pads_added += 1;
             }
 
             local_index.import_raw_pads_private_key(free_pads_to_add)?;

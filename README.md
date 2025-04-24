@@ -286,4 +286,4 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-This keyless instance is optimized for fetching public data and cannot perform operations requiring a private key (like `
+This keyless instance is optimized for fetching public data and cannot perform operations requiring a private key (like `put`, `rm`, `ls`, etc).

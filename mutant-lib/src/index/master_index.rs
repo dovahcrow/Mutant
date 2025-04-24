@@ -530,6 +530,9 @@ impl MasterIndex {
                 }
             }
         }
+        pads_hex.extend(self.free_pads.clone());
+        pads_hex.extend(self.pending_verification_pads.clone());
+
         Ok(pads_hex)
     }
 
