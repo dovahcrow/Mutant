@@ -1,6 +1,7 @@
 use crate::{
+    events::{GetCallback, GetEvent},
     index::{master_index::MasterIndex, PadInfo, PadStatus},
-    internal_events::{invoke_put_callback, PutCallback, PutEvent},
+    internal_events::{invoke_get_callback, invoke_put_callback, PutCallback, PutEvent},
     network::{Network, NetworkError},
 };
 use ant_networking::GetRecordError;
@@ -47,6 +48,7 @@ pub struct Data {
     network: Arc<Network>,
     index: Arc<RwLock<MasterIndex>>,
     put_callback: Option<PutCallback>,
+    get_callback: Option<GetCallback>,
 }
 
 impl Data {
@@ -54,16 +56,22 @@ impl Data {
         network: Arc<Network>,
         index: Arc<RwLock<MasterIndex>>,
         put_callback: Option<PutCallback>,
+        get_callback: Option<GetCallback>,
     ) -> Self {
         Self {
             network,
             index,
             put_callback,
+            get_callback,
         }
     }
 
     pub fn set_put_callback(&mut self, callback: PutCallback) {
         self.put_callback = Some(callback);
+    }
+
+    pub fn set_get_callback(&mut self, callback: GetCallback) {
+        self.get_callback = Some(callback);
     }
 
     pub async fn put(
@@ -220,8 +228,8 @@ impl Data {
             &mut context.put_callback,
             PutEvent::Starting {
                 total_chunks: total_pads,
-                initial_written_count,
-                initial_confirmed_count,
+                initial_written_count: 0,
+                initial_confirmed_count: 0,
                 chunks_to_reserve: initial_chunks_to_reserve,
             },
         )
@@ -312,6 +320,15 @@ impl Data {
                 "Pad {} already confirmed, skipping processing.",
                 current_pad_address
             );
+
+            confirmed_counter.fetch_add(1, Ordering::Relaxed);
+
+            invoke_put_callback(&mut context.put_callback, PutEvent::ChunkWritten)
+                .await
+                .unwrap();
+            invoke_put_callback(&mut context.put_callback, PutEvent::ChunkConfirmed)
+                .await
+                .unwrap();
             return;
         }
 
@@ -412,6 +429,10 @@ impl Data {
             }
         } else if initial_status == PadStatus::Written {
             pad_for_confirm = Some(pad.clone());
+
+            invoke_put_callback(&mut context.put_callback, PutEvent::ChunkWritten)
+                .await
+                .unwrap();
         }
 
         if let Some(pad_to_confirm) = pad_for_confirm {
@@ -449,7 +470,7 @@ impl Data {
                             ) {
                                 Ok(_) => {
                                     let previous_count =
-                                        confirmed_counter.fetch_add(1, Ordering::SeqCst);
+                                        confirmed_counter.fetch_add(1, Ordering::Relaxed);
                                     invoke_put_callback(
                                         &mut context.put_callback,
                                         PutEvent::ChunkConfirmed,
@@ -491,11 +512,16 @@ impl Data {
         }
     }
 
-    async fn fetch_pads_data(&self, pads: Vec<PadInfo>, public: bool) -> Result<Vec<u8>, Error> {
+    async fn fetch_pads_data(
+        &mut self,
+        pads: Vec<PadInfo>,
+        public: bool,
+    ) -> Result<Vec<u8>, Error> {
         let mut data = Vec::new();
         let mut tasks = Vec::new();
 
         for pad in pads {
+            let mut get_callback = self.get_callback.clone();
             let network = self.network.clone();
             tasks.push(tokio::spawn(async move {
                 let mut retries_left = PAD_RECYCLING_RETRIES;
@@ -518,6 +544,11 @@ impl Data {
                                     pad_result.data.len()
                                 )));
                             }
+
+                            invoke_get_callback(&mut get_callback, GetEvent::ChunkFetched)
+                                .await
+                                .unwrap();
+
                             break pad_result.data;
                         }
                         Err(e) => {
@@ -537,6 +568,11 @@ impl Data {
         }
 
         let results = futures::future::join_all(tasks).await;
+
+        invoke_get_callback(&mut self.get_callback, GetEvent::Complete)
+            .await
+            .unwrap();
+
         for result in results {
             match result {
                 Ok(Ok(pad_data)) => data.extend_from_slice(&pad_data),
@@ -555,7 +591,7 @@ impl Data {
         Ok(data)
     }
 
-    pub async fn get_public(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, Error> {
+    pub async fn get_public(&mut self, address: &ScratchpadAddress) -> Result<Vec<u8>, Error> {
         let index_pad_data = self.network.get(address, None).await?;
 
         match index_pad_data.data_encoding {
@@ -564,6 +600,11 @@ impl Data {
                     serde_cbor::from_slice(&index_pad_data.data).map_err(|e| {
                         Error::Internal(format!("Failed to decode public index: {}", e))
                     })?;
+
+                invoke_get_callback(&mut self.get_callback, GetEvent::ChunkFetched)
+                    .await
+                    .unwrap();
+
                 self.fetch_pads_data(index, true).await
             }
             DATA_ENCODING_PUBLIC_DATA => Ok(index_pad_data.data),
@@ -574,12 +615,21 @@ impl Data {
         }
     }
 
-    pub async fn get(&self, name: &str) -> Result<Vec<u8>, Error> {
+    pub async fn get(&mut self, name: &str) -> Result<Vec<u8>, Error> {
         let pads = self.index.read().await.get_pads(name);
 
         if pads.is_empty() {
             return Err(Error::Internal(format!("No pads found for key {}", name)));
         }
+
+        invoke_get_callback(
+            &mut self.get_callback,
+            GetEvent::Starting {
+                total_chunks: pads.len(),
+            },
+        )
+        .await
+        .unwrap();
 
         let is_public = self.index.read().await.is_public(name);
 

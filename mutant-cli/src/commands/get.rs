@@ -1,5 +1,5 @@
-// use crate::callbacks::StyledProgressBar;
-// use crate::callbacks::get::create_get_callback;
+use crate::callbacks::StyledProgressBar;
+use crate::callbacks::get::create_get_callback;
 use crate::history::{FetchHistoryEntry, append_history_entry};
 use chrono::Utc;
 use indicatif::MultiProgress;
@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 pub async fn handle_get(
-    mutant: MutAnt,
+    mut mutant: MutAnt,
     key_or_address: String,
     public: bool,
     multi_progress: &MultiProgress,
@@ -24,7 +24,9 @@ pub async fn handle_get(
         key_or_address, public
     );
 
-    // let (download_pb_opt, callback) = create_get_callback(multi_progress, quiet);
+    let (download_pb_opt, callback) = create_get_callback(multi_progress, quiet);
+
+    mutant.set_get_callback(callback).await;
 
     let result: Result<Vec<u8>, LibError> = if public {
         match mutant

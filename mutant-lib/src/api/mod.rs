@@ -5,6 +5,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     data::{storage_mode::StorageMode, Data},
+    events::GetCallback,
     index::{
         master_index::{IndexEntry, MasterIndex, StorageStats},
         PadInfo,
@@ -31,7 +32,12 @@ impl MutAnt {
         let network = Arc::new(Network::new(private_key_hex, network_choice)?);
         let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
 
-        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone(), None)));
+        let data = Arc::new(RwLock::new(Data::new(
+            network.clone(),
+            index.clone(),
+            None,
+            None,
+        )));
 
         Ok(Self {
             network,
@@ -44,7 +50,12 @@ impl MutAnt {
         let network_choice = NetworkChoice::Mainnet;
         let network = Arc::new(Network::new(DEV_TESTNET_PRIVATE_KEY_HEX, network_choice)?);
         let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
-        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone(), None)));
+        let data = Arc::new(RwLock::new(Data::new(
+            network.clone(),
+            index.clone(),
+            None,
+            None,
+        )));
 
         Ok(Self {
             network,
@@ -59,7 +70,12 @@ impl MutAnt {
             NetworkChoice::Devnet,
         )?);
         let index = Arc::new(RwLock::new(MasterIndex::new(NetworkChoice::Devnet)));
-        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone(), None)));
+        let data = Arc::new(RwLock::new(Data::new(
+            network.clone(),
+            index.clone(),
+            None,
+            None,
+        )));
 
         Ok(Self {
             network,
@@ -74,7 +90,12 @@ impl MutAnt {
             NetworkChoice::Devnet,
         )?);
         let index = Arc::new(RwLock::new(MasterIndex::new(NetworkChoice::Devnet)));
-        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone(), None)));
+        let data = Arc::new(RwLock::new(Data::new(
+            network.clone(),
+            index.clone(),
+            None,
+            None,
+        )));
 
         Ok(Self {
             network,
@@ -85,6 +106,10 @@ impl MutAnt {
 
     pub async fn set_put_callback(&mut self, callback: PutCallback) {
         self.data.write().await.set_put_callback(callback);
+    }
+
+    pub async fn set_get_callback(&mut self, callback: GetCallback) {
+        self.data.write().await.set_get_callback(callback);
     }
 
     pub async fn put(
@@ -104,11 +129,11 @@ impl MutAnt {
     // pub async fn store_public(&self, user_key: &[u8], data_bytes: &[u8]) -> Result<(), Error> {}
 
     pub async fn get(&self, user_key: &str) -> Result<Vec<u8>, Error> {
-        self.data.read().await.get(user_key).await
+        self.data.write().await.get(user_key).await
     }
 
     pub async fn get_public(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, Error> {
-        self.data.read().await.get_public(address).await
+        self.data.write().await.get_public(address).await
     }
 
     // pub async fn get_public(&self, user_key: &[u8]) -> Result<Vec<u8>, Error> {}

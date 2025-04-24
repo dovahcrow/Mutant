@@ -20,7 +20,7 @@ pub type PutCallback = Arc<
 /// - `Ok(true)`: Continue the operation.
 /// - `Ok(false)`: Cancel the operation (results in `Error::OperationCancelled`).
 /// - `Err(e)`: Propagate an error from the callback.
-pub type GetCallback = Box<
+pub type GetCallback = Arc<
     dyn Fn(GetEvent) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + Send + Sync>>
         + Send
         + Sync,
@@ -85,9 +85,6 @@ pub enum PutEvent {
 /// Events emitted during a `get` operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GetEvent {
-    /// Signals the start of the index fetch operation.
-    IndexLookup,
-
     /// Indicates the start of chunk fetching.
     Starting {
         /// Total number of data chunks to be fetched (including index).
@@ -95,13 +92,7 @@ pub enum GetEvent {
     },
 
     /// Indicates that a specific data chunk has been fetched from storage.
-    ChunkFetched {
-        /// The index of the chunk that was fetched.
-        chunk_index: usize,
-    },
-
-    /// Indicates that the fetched chunks are now being reassembled into the original data.
-    Reassembling,
+    ChunkFetched,
 
     /// Indicates that the `get` operation has completed successfully.
     Complete,

@@ -1,4 +1,4 @@
-// pub mod get;
+pub mod get;
 // pub mod init;
 pub mod progress;
 pub mod put;
