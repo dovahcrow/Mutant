@@ -54,6 +54,18 @@ pub type PurgeCallback = Arc<
         + Sync,
 >;
 
+/// Callback type used during `sync` operations to report progress and allow cancellation.
+///
+/// The callback receives `SyncEvent` variants and returns a `Future` that resolves to:
+/// - `Ok(true)`: Continue the operation.
+/// - `Ok(false)`: Cancel the operation (results in `Error::OperationCancelled`).
+/// - `Err(e)`: Propagate an error from the callback.
+pub type SyncCallback = Arc<
+    dyn Fn(SyncEvent) -> Pin<Box<dyn Future<Output = Result<bool, Error>> + Send + Sync>>
+        + Send
+        + Sync,
+>;
+
 /// Events emitted during a `put` operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PutEvent {
@@ -153,6 +165,22 @@ pub enum PurgeEvent {
     },
 }
 
+/// Events emitted during a `sync` operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncEvent {
+    /// Indicates the remote index is being fetched.
+    FetchingRemoteIndex,
+
+    /// Indicates that the remote index is being merged with the local index.
+    Merging,
+
+    /// Indicates that the remote index is being pushed to the network.
+    PushingRemoteIndex,
+
+    /// Indicates that the `sync` operation has completed successfully.
+    Complete,
+}
+
 /// Helper function to asynchronously invoke an optional `PutCallback`.
 ///
 /// If the callback is `Some`, it is called with the given `event`.
@@ -190,6 +218,20 @@ pub(crate) async fn invoke_get_callback(
 pub(crate) async fn invoke_purge_callback(
     callback: &mut Option<PurgeCallback>,
     event: PurgeEvent,
+) -> Result<bool, Error> {
+    if let Some(cb) = callback {
+        match cb(event).await {
+            Ok(continue_op) => Ok(continue_op),
+            Err(e) => Err(e),
+        }
+    } else {
+        Ok(true)
+    }
+}
+
+pub(crate) async fn invoke_sync_callback(
+    callback: &mut Option<SyncCallback>,
+    event: SyncEvent,
 ) -> Result<bool, Error> {
     if let Some(cb) = callback {
         match cb(event).await {

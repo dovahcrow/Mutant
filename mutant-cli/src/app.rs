@@ -318,6 +318,15 @@ pub async fn run_cli() -> Result<ExitCode, CliError> {
                 }
             }
         }
+        Commands::Sync { push_force } => {
+            match crate::commands::sync::run(mutant, push_force, &mp, cli.quiet).await {
+                Ok(_) => ExitCode::SUCCESS,
+                Err(e) => {
+                    error!("Sync command failed: {}", e);
+                    ExitCode::FAILURE
+                }
+            }
+        }
     };
     debug!(
         "run_cli: Command handler finished with result: {:?}",

@@ -91,11 +91,11 @@ pub enum Commands {
     #[command(about = "Show storage statistics")]
     Stats,
 
-    // #[command(about = "Synchronize local index cache with remote storage")]
-    // Sync {
-    //     #[arg(long, default_value_t = false)]
-    //     push_force: bool,
-    // },
+    #[command(about = "Synchronize local index cache with remote storage")]
+    Sync {
+        #[arg(long, default_value_t = false)]
+        push_force: bool,
+    },
     #[command(
         about = "Perform a get check on scratchpads that should have been created but failed at some point. Removes the pads that are not found."
     )]

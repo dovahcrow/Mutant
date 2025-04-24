@@ -130,6 +130,6 @@ pub mod events {
     // pub use crate::api::{ReserveCallback, ReserveEvent};
     pub use crate::internal_events::{
         GetCallback, GetEvent, InitCallback, InitProgressEvent, PurgeCallback, PurgeEvent,
-        PutCallback, PutEvent,
+        PutCallback, PutEvent, SyncCallback, SyncEvent,
     };
 }

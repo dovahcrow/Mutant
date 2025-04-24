@@ -129,6 +129,10 @@ impl Network {
     pub fn secret_key(&self) -> &SecretKey {
         &self.secret_key
     }
+
+    pub fn network_choice(&self) -> NetworkChoice {
+        self.network_choice
+    }
 }
 
 #[cfg(test)]

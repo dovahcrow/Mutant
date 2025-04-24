@@ -1,8 +1,9 @@
 use crate::{
-    events::{GetCallback, GetEvent, PurgeCallback, PurgeEvent},
+    events::{GetCallback, GetEvent, PurgeCallback, PurgeEvent, SyncCallback, SyncEvent},
     index::{master_index::MasterIndex, PadInfo, PadStatus},
     internal_events::{
-        invoke_get_callback, invoke_purge_callback, invoke_put_callback, PutCallback, PutEvent,
+        invoke_get_callback, invoke_purge_callback, invoke_put_callback, invoke_sync_callback,
+        PutCallback, PutEvent,
     },
     network::{Network, NetworkError},
 };
@@ -51,6 +52,7 @@ pub struct Data {
     put_callback: Option<PutCallback>,
     get_callback: Option<GetCallback>,
     purge_callback: Option<PurgeCallback>,
+    sync_callback: Option<SyncCallback>,
 }
 
 impl Data {
@@ -60,6 +62,7 @@ impl Data {
         put_callback: Option<PutCallback>,
         get_callback: Option<GetCallback>,
         purge_callback: Option<PurgeCallback>,
+        sync_callback: Option<SyncCallback>,
     ) -> Self {
         Self {
             network,
@@ -67,6 +70,7 @@ impl Data {
             put_callback,
             get_callback,
             purge_callback,
+            sync_callback,
         }
     }
 
@@ -80,6 +84,10 @@ impl Data {
 
     pub fn set_purge_callback(&mut self, callback: PurgeCallback) {
         self.purge_callback = Some(callback);
+    }
+
+    pub fn set_sync_callback(&mut self, callback: SyncCallback) {
+        self.sync_callback = Some(callback);
     }
 
     pub async fn put(
@@ -883,52 +891,81 @@ impl Data {
     /// The merge also synchronize the free and pending pads.
     /// We take care when adding or synchronizing pads that it does not already exist anywhere.
     /// If a key exists in the local and the remote, we take the latest version (check the pads counters)
-    pub async fn sync(&mut self, force: bool) -> Result<(), Error> {
+    pub async fn sync(&mut self, force: bool) -> Result<SyncResult, Error> {
+        let mut sync_result = SyncResult {
+            nb_keys_added: 0,
+            nb_keys_updated: 0,
+            nb_free_pads_added: 0,
+            nb_pending_pads_added: 0,
+        };
+
+        invoke_sync_callback(&mut self.sync_callback, SyncEvent::FetchingRemoteIndex)
+            .await
+            .unwrap();
+
         let owner_secret_key = self.network.secret_key();
         let owner_address = owner_secret_key.public_key().to_hex();
         let owner_address = ScratchpadAddress::from_hex(&owner_address).unwrap();
 
-        let remote_index = self
+        let remote_index = match self
             .network
             .get(&owner_address, Some(&owner_secret_key))
-            .await?;
-        let remote_index: MasterIndex = serde_cbor::from_slice(&remote_index.data).unwrap();
+            .await
+        {
+            Ok(get_result) => serde_cbor::from_slice(&get_result.data).unwrap(),
+            Err(_e) => MasterIndex::new(self.network.network_choice()),
+        };
+
+        invoke_sync_callback(&mut self.sync_callback, SyncEvent::Merging)
+            .await
+            .unwrap();
+
         let mut local_index = self.index.read().await.clone();
 
-        // Merge the remote index into the local index
-        for (key, remote_entry) in remote_index.list() {
-            let local_entry = local_index.get_entry(&key);
-            if local_entry.is_none() {
-                // Key does not exist in local index, add it
-                local_index.add_entry(&key, remote_entry)?;
-            } else {
-                // Key exists in local index, update it if the remote entry is newer
-                local_index.update_entry(&key, remote_entry)?;
+        if !force {
+            // Merge the remote index into the local index
+            for (key, remote_entry) in remote_index.list() {
+                let local_entry = local_index.get_entry(&key);
+                if local_entry.is_none() {
+                    // Key does not exist in local index, add it
+                    local_index.add_entry(&key, remote_entry)?;
+                    sync_result.nb_keys_added += 1;
+                } else {
+                    // Key exists in local index, update it if the remote entry is newer
+                    local_index.update_entry(&key, remote_entry)?;
+                    sync_result.nb_keys_updated += 1;
+                }
             }
+
+            let mut free_pads_to_add = Vec::new();
+            let mut pending_pads_to_add = Vec::new();
+
+            // merge the free pads
+            // check if the pad exists anywhere in the local index
+            for pad in remote_index.export_raw_pads_private_key()? {
+                if local_index.pad_exists(&pad.address) {
+                    continue;
+                }
+                free_pads_to_add.push(pad);
+                sync_result.nb_free_pads_added += 1;
+            }
+
+            // merge the pending pads
+            for pad in remote_index.get_pending_pads() {
+                if local_index.pad_exists(&pad.address) {
+                    continue;
+                }
+                pending_pads_to_add.push(pad);
+                sync_result.nb_pending_pads_added += 1;
+            }
+
+            local_index.import_raw_pads_private_key(free_pads_to_add)?;
+            local_index.import_raw_pads_private_key(pending_pads_to_add)?;
         }
 
-        let mut free_pads_to_add = Vec::new();
-        let mut pending_pads_to_add = Vec::new();
-
-        // merge the free pads
-        // check if the pad exists anywhere in the local index
-        for pad in remote_index.export_raw_pads_private_key()? {
-            if local_index.pad_exists(&pad.address) {
-                continue;
-            }
-            free_pads_to_add.push(pad);
-        }
-
-        // merge the pending pads
-        for pad in remote_index.get_pending_pads() {
-            if local_index.pad_exists(&pad.address) {
-                continue;
-            }
-            pending_pads_to_add.push(pad);
-        }
-
-        local_index.import_raw_pads_private_key(free_pads_to_add)?;
-        local_index.import_raw_pads_private_key(pending_pads_to_add)?;
+        invoke_sync_callback(&mut self.sync_callback, SyncEvent::PushingRemoteIndex)
+            .await
+            .unwrap();
 
         let serialized_index = serde_cbor::to_vec(&local_index).unwrap();
 
@@ -952,6 +989,17 @@ impl Data {
             )
             .await?;
 
-        Ok(())
+        invoke_sync_callback(&mut self.sync_callback, SyncEvent::Complete)
+            .await
+            .unwrap();
+
+        Ok(sync_result)
     }
+}
+
+pub struct SyncResult {
+    pub nb_keys_added: usize,
+    pub nb_keys_updated: usize,
+    pub nb_free_pads_added: usize,
+    pub nb_pending_pads_added: usize,
 }

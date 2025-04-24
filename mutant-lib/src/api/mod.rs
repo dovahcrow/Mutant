@@ -4,8 +4,8 @@ use autonomi::ScratchpadAddress;
 use tokio::sync::RwLock;
 
 use crate::{
-    data::{storage_mode::StorageMode, Data},
-    events::{GetCallback, PurgeCallback},
+    data::{storage_mode::StorageMode, Data, SyncResult},
+    events::{GetCallback, PurgeCallback, SyncCallback},
     index::{
         master_index::{IndexEntry, MasterIndex, StorageStats},
         PadInfo,
@@ -37,6 +37,7 @@ impl MutAnt {
             None,
             None,
             None,
+            None,
         )));
 
         Ok(Self { index, data })
@@ -49,6 +50,7 @@ impl MutAnt {
         let data = Arc::new(RwLock::new(Data::new(
             network.clone(),
             index.clone(),
+            None,
             None,
             None,
             None,
@@ -69,6 +71,7 @@ impl MutAnt {
             None,
             None,
             None,
+            None,
         )));
 
         Ok(Self { index, data })
@@ -83,6 +86,7 @@ impl MutAnt {
         let data = Arc::new(RwLock::new(Data::new(
             network.clone(),
             index.clone(),
+            None,
             None,
             None,
             None,
@@ -101,6 +105,10 @@ impl MutAnt {
 
     pub async fn set_purge_callback(&mut self, callback: PurgeCallback) {
         self.data.write().await.set_purge_callback(callback);
+    }
+
+    pub async fn set_sync_callback(&mut self, callback: SyncCallback) {
+        self.data.write().await.set_sync_callback(callback);
     }
 
     pub async fn put(
@@ -168,7 +176,7 @@ impl MutAnt {
             .await
     }
 
-    pub async fn sync(&self, force: bool) -> Result<(), Error> {
+    pub async fn sync(&self, force: bool) -> Result<SyncResult, Error> {
         self.data.write().await.sync(force).await
     }
 }
