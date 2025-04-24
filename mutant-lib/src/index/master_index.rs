@@ -315,6 +315,43 @@ impl MasterIndex {
         }
     }
 
+    pub fn get_entry(&self, key_name: &str) -> Option<&IndexEntry> {
+        self.index.get(key_name)
+    }
+
+    pub fn add_entry(&mut self, key_name: &str, entry: IndexEntry) -> Result<(), Error> {
+        self.index.insert(key_name.to_string(), entry);
+        self.save(self.network_choice)?;
+        Ok(())
+    }
+
+    pub fn update_entry(&mut self, key_name: &str, entry: IndexEntry) -> Result<(), Error> {
+        // check if the key exists, and only update if the counter of the first pad (or index pad for public keys) is higher than the local one
+        if let Some(existing_entry) = self.index.get_mut(key_name) {
+            match existing_entry {
+                IndexEntry::PrivateKey(existing_pads) => match &entry {
+                    IndexEntry::PrivateKey(pads) => {
+                        if pads[0].last_known_counter > existing_pads[0].last_known_counter {
+                            *existing_entry = entry;
+                            self.save(self.network_choice)?;
+                        }
+                    }
+                    _ => panic!("Cannot update public key with private key"),
+                },
+                IndexEntry::PublicUpload(existing_index, _existing_pads) => match &entry {
+                    IndexEntry::PublicUpload(index, _pads) => {
+                        if index.last_known_counter > existing_index.last_known_counter {
+                            *existing_entry = entry;
+                            self.save(self.network_choice)?;
+                        }
+                    }
+                    _ => panic!("Cannot update private key with public key"),
+                },
+            }
+        }
+        Ok(())
+    }
+
     pub fn remove_key(&mut self, key_name: &str) -> Result<(), Error> {
         // for each pad that has a status different than Generated, we update their status to Free
         let mut pads_to_free = Vec::new();

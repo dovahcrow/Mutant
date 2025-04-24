@@ -130,8 +130,6 @@ impl MutAnt {
         Ok(())
     }
 
-    // pub async fn sync(&self, force: bool) -> Result<(), Error> {}
-
     pub async fn list(&self) -> Result<BTreeMap<String, IndexEntry>, Error> {
         let keys = self.index.read().await.list();
         Ok(keys)
@@ -168,6 +166,10 @@ impl MutAnt {
             .await
             .health_check(key_name, recycle)
             .await
+    }
+
+    pub async fn sync(&self, force: bool) -> Result<(), Error> {
+        self.data.write().await.sync(force).await
     }
 }
 

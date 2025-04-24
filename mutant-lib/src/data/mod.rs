@@ -877,4 +877,81 @@ impl Data {
 
         Ok(())
     }
+
+    /// Get the master index from the network and merge it into a copy of the local index.
+    /// The merge is additive, it will only add or synchronize existing keys and not delete any.
+    /// The merge also synchronize the free and pending pads.
+    /// We take care when adding or synchronizing pads that it does not already exist anywhere.
+    /// If a key exists in the local and the remote, we take the latest version (check the pads counters)
+    pub async fn sync(&mut self, force: bool) -> Result<(), Error> {
+        let owner_secret_key = self.network.secret_key();
+        let owner_address = owner_secret_key.public_key().to_hex();
+        let owner_address = ScratchpadAddress::from_hex(&owner_address).unwrap();
+
+        let remote_index = self
+            .network
+            .get(&owner_address, Some(&owner_secret_key))
+            .await?;
+        let remote_index: MasterIndex = serde_cbor::from_slice(&remote_index.data).unwrap();
+        let mut local_index = self.index.read().await.clone();
+
+        // Merge the remote index into the local index
+        for (key, remote_entry) in remote_index.list() {
+            let local_entry = local_index.get_entry(&key);
+            if local_entry.is_none() {
+                // Key does not exist in local index, add it
+                local_index.add_entry(&key, remote_entry)?;
+            } else {
+                // Key exists in local index, update it if the remote entry is newer
+                local_index.update_entry(&key, remote_entry)?;
+            }
+        }
+
+        let mut free_pads_to_add = Vec::new();
+        let mut pending_pads_to_add = Vec::new();
+
+        // merge the free pads
+        // check if the pad exists anywhere in the local index
+        for pad in remote_index.export_raw_pads_private_key()? {
+            if local_index.pad_exists(&pad.address) {
+                continue;
+            }
+            free_pads_to_add.push(pad);
+        }
+
+        // merge the pending pads
+        for pad in remote_index.get_pending_pads() {
+            if local_index.pad_exists(&pad.address) {
+                continue;
+            }
+            pending_pads_to_add.push(pad);
+        }
+
+        local_index.import_raw_pads_private_key(free_pads_to_add)?;
+        local_index.import_raw_pads_private_key(pending_pads_to_add)?;
+
+        let serialized_index = serde_cbor::to_vec(&local_index).unwrap();
+
+        let pad_info = PadInfo {
+            address: owner_address,
+            status: PadStatus::Confirmed,
+            chunk_index: 0,
+            size: serialized_index.len(),
+            last_known_counter: 0,
+            sk_bytes: owner_secret_key.to_bytes().to_vec(),
+            checksum: 0,
+        };
+
+        // push the remote index to the network
+        self.network
+            .put(
+                &pad_info,
+                &serialized_index,
+                DATA_ENCODING_MASTER_INDEX,
+                true,
+            )
+            .await?;
+
+        Ok(())
+    }
 }

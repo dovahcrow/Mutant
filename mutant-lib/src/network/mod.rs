@@ -61,6 +61,7 @@ pub struct Network {
     wallet: Wallet,
     network_choice: NetworkChoice,
     client: OnceCell<Arc<Client>>,
+    secret_key: SecretKey,
 }
 
 impl Network {
@@ -74,12 +75,13 @@ impl Network {
             network_choice
         );
 
-        let (wallet, _secret_key) = create_wallet(private_key_hex, network_choice)?;
+        let (wallet, secret_key) = create_wallet(private_key_hex, network_choice)?;
 
         Ok(Self {
             wallet,
             network_choice,
             client: OnceCell::new(),
+            secret_key,
         })
     }
 
@@ -122,6 +124,10 @@ impl Network {
         is_public: bool,
     ) -> Result<PutResult, NetworkError> {
         put::put(self, pad_info, data, data_encoding, is_public).await
+    }
+
+    pub fn secret_key(&self) -> &SecretKey {
+        &self.secret_key
     }
 }
 
