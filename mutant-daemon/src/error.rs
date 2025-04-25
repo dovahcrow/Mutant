@@ -59,6 +59,12 @@ pub enum Error {
 
     #[error("Failed to write config file at {1}: {0}")]
     ConfigWrite(io::Error, PathBuf),
+
+    #[error("Failed to get base directories: {0}")]
+    BaseDirectories(#[from] xdg::BaseDirectoriesError),
+
+    #[error("Failed to decode base64 data: {0}")]
+    Base64Decode(base64::DecodeError),
 }
 
 // Implement warp::reject::Reject for DaemonError so we can use it in warp filters

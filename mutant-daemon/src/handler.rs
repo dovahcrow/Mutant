@@ -2,17 +2,17 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use futures_util::{
     sink::SinkExt,
     stream::{SplitSink, StreamExt},
 };
-use mutant_lib::{MutAnt, error::Error as LibError, storage::StorageMode};
+use mutant_lib::{error::Error as LibError, storage::StorageMode, MutAnt};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use warp::ws::{Message, WebSocket};
 
-use crate::{TaskMap, error::DaemonError};
+use crate::{error::Error as DaemonError, TaskMap};
 use mutant_protocol::{
     ErrorResponse, GetRequest, ListTasksRequest, PutCallback, PutEvent, PutRequest,
     QueryTaskRequest, Request, Response, Task, TaskCreatedResponse, TaskListEntry,
