@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use colored::Colorize;
 use mutant_client::MutantClient;
+use tokio::time::{sleep, Duration};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -19,11 +20,15 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut client = MutantClient::new();
-    client.connect("ws://localhost:3012").await?;
+    client.connect("ws://localhost:3030/ws").await?;
+
+    // Give the connection a moment to fully establish
+    sleep(Duration::from_millis(100)).await;
 
     match cli.command {
         Commands::List => {
             let tasks = client.list_tasks().await?;
+            println!("{:#?}", tasks);
 
             for task in tasks {
                 println!(
@@ -36,6 +41,9 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    // Keep the connection alive for a moment to ensure the response is received
+    sleep(Duration::from_secs(1)).await;
 
     Ok(())
 }
