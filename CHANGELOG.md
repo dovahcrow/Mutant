@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Proper network choice handling (Mainnet/Devnet/Alphanet)
   - Persistent wallet configuration
   - Support for multiple wallets (one per network)
+  - Automatic ANT wallet scanning and selection
+  - Interactive wallet selection when multiple wallets are found
 
 ## [0.4.2] - UNRELEASED
 

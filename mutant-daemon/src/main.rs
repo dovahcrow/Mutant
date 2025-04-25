@@ -9,6 +9,7 @@ use warp::Filter;
 
 mod error;
 mod handler;
+mod wallet;
 // mod protocol; // Will be removed later
 
 // Task definitions moved to mutant-protocol crate
@@ -105,15 +106,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut config = Config::load()?;
 
-    if let Some(private_key) = args.private_key {
-        config.set_private_key(network_choice, private_key);
+    let private_key = if let Some(private_key) = args.private_key {
+        config.set_private_key(network_choice, private_key.clone());
         config.save()?;
-    }
-
-    let private_key = config.get_private_key(network_choice).ok_or_else(|| {
-        tracing::error!("No private key configured for {:?}", network_choice);
-        format!("No private key configured for {:?}", network_choice)
-    })?;
+        private_key
+    } else {
+        match config.get_private_key(network_choice) {
+            Some(key) => key.to_string(),
+            None => {
+                let private_key = wallet::scan_and_select_wallet().await?;
+                config.set_private_key(network_choice, private_key.clone());
+                config.save()?;
+                private_key
+            }
+        }
+    };
 
     let mutant = Arc::new(match network_choice {
         NetworkChoice::Devnet => {
@@ -122,11 +129,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         NetworkChoice::Alphanet => {
             tracing::info!("Running in alphanet mode");
-            MutAnt::init_alphanet(private_key).await
+            MutAnt::init_alphanet(&private_key).await
         }
         NetworkChoice::Mainnet => {
             tracing::info!("Running in mainnet mode");
-            MutAnt::init(private_key).await
+            MutAnt::init(&private_key).await
         }
     }?);
     tracing::info!("MutAnt initialized successfully.");

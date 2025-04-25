@@ -1,3 +1,4 @@
+use std::{io, path::PathBuf};
 use thiserror::Error;
 use uuid::Uuid;
 use warp::reject::Reject;
@@ -32,6 +33,36 @@ pub enum DaemonError {
 
     #[error("Internal daemon error: {0}")]
     Internal(String),
+
+    #[error("Failed to read wallet file at {1}: {0}")]
+    WalletRead(io::Error, PathBuf),
+
+    #[error("Could not find Autonomi wallet directory")]
+    WalletDirNotFound,
+
+    #[error("Failed to read wallet directory at {1}: {0}")]
+    WalletDirRead(io::Error, PathBuf),
+
+    #[error("No wallet files found in {0}")]
+    NoWalletsFound(PathBuf),
+
+    #[error("Failed to get user wallet selection: {0}")]
+    UserSelectionFailed(dialoguer::Error),
+
+    #[error("No wallet configured or selected")]
+    WalletNotSet,
+
+    #[error("Failed to initialize MutAnt: {0}")]
+    MutAntInit(String),
+
+    #[error("Failed to read config file at {1}: {0}")]
+    ConfigRead(io::Error, PathBuf),
+
+    #[error("Failed to parse config file at {1}: {0}")]
+    ConfigParse(serde_json::Error, PathBuf),
+
+    #[error("Failed to write config file at {1}: {0}")]
+    ConfigWrite(io::Error, PathBuf),
 }
 
 // Implement warp::reject::Reject for DaemonError so we can use it in warp filters
