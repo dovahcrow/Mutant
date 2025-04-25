@@ -46,7 +46,8 @@ async fn handle_put(key: String, file: String) -> Result<()> {
 
     let (start_task, progress_rx) = client.put(&key, &data).await?;
 
-    callbacks::put::create_put_progress(progress_rx);
+    let multi_progress = MultiProgress::new();
+    callbacks::put::create_put_progress(progress_rx, multi_progress.clone());
 
     match start_task.await {
         Ok(result) => {
@@ -63,6 +64,9 @@ async fn handle_put(key: String, file: String) -> Result<()> {
             eprintln!("{} Task failed: {}", "Error:".bright_red(), e);
         }
     }
+
+    // Keep the MultiProgress instance alive until the task is complete
+    drop(multi_progress);
 
     Ok(())
 }

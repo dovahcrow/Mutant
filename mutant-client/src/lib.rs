@@ -37,7 +37,7 @@ type ClientTaskMap = Arc<Mutex<HashMap<TaskId, Task>>>;
 // type Ws = Rc<WebSocket>;
 
 // Type alias for the pending request senders (wrapping Option in Mutex for shared access)
-type PendingTaskCreationSender = Arc<Mutex<Option<oneshot::Sender<Result<TaskId, ClientError>>>>>;
+type PendingTaskCreationSender = Arc<Mutex<Option<PendingTaskCreation>>>;
 type PendingTaskListSender =
     Arc<Mutex<Option<oneshot::Sender<Result<Vec<TaskListEntry>, ClientError>>>>>;
 
@@ -152,9 +152,15 @@ impl MutantClient {
         match response {
             Response::TaskCreated(TaskCreatedResponse { task_id }) => {
                 info!("Task created with ID: {}", task_id);
-                if let Some(sender) = pending_task_creation.lock().unwrap().take() {
+                if let Some(pending) = pending_task_creation.lock().unwrap().take() {
                     info!("Found pending task creation sender for TaskId: {}", task_id);
-                    if sender.send(Ok(task_id)).is_err() {
+                    if let Some((completion_tx, progress_tx)) = pending.channels {
+                        task_channels
+                            .lock()
+                            .unwrap()
+                            .insert(task_id, (completion_tx, progress_tx));
+                    }
+                    if pending.sender.send(Ok(task_id)).is_err() {
                         warn!("Failed to send TaskCreated response to waiting future (receiver dropped?)");
                     }
                 } else {
@@ -260,7 +266,9 @@ impl MutantClient {
                 );
                 if let Some(sender) = pending_task_creation.lock().unwrap().take() {
                     error!("Error occurred during task creation: {}", error);
-                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                    let _ = sender
+                        .sender
+                        .send(Err(ClientError::ServerError(error.clone())));
                 } else if let Some(sender) = pending_task_list.lock().unwrap().take() {
                     error!("Error occurred during task list request: {}", error);
                     let _ = sender.send(Err(ClientError::ServerError(error.clone())));
@@ -310,7 +318,10 @@ impl MutantClient {
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
         let (task_creation_tx, task_creation_rx) = oneshot::channel();
-        *self.pending_task_creation.lock().unwrap() = Some(task_creation_tx);
+        *self.pending_task_creation.lock().unwrap() = Some(PendingTaskCreation {
+            sender: task_creation_tx,
+            channels: Some((completion_tx, progress_tx)),
+        });
 
         let data_b64 = BASE64_STANDARD.encode(data);
         info!("Encoded {} bytes of data to base64", data.len());
@@ -329,11 +340,7 @@ impl MutantClient {
                         ClientError::InternalError("TaskCreated channel canceled".to_string())
                     })??;
 
-                    info!("Task created with ID: {}, setting up channels", task_id);
-                    self.task_channels
-                        .lock()
-                        .unwrap()
-                        .insert(task_id, (completion_tx, progress_tx));
+                    info!("Task created with ID: {}", task_id);
 
                     completion_rx.await.map_err(|_| {
                         error!("Completion channel canceled");
@@ -359,7 +366,10 @@ impl MutantClient {
         }
 
         let (sender, receiver) = oneshot::channel();
-        *self.pending_task_creation.lock().unwrap() = Some(sender);
+        *self.pending_task_creation.lock().unwrap() = Some(PendingTaskCreation {
+            sender,
+            channels: None,
+        });
 
         let req = Request::Get(mutant_protocol::GetRequest {
             user_key: user_key.to_string(),
@@ -518,4 +528,9 @@ impl MutantClient {
 // Need to run this once at the start of the WASM application
 pub fn set_panic_hook() {
     console_error_panic_hook::set_once();
+}
+
+pub struct PendingTaskCreation {
+    pub sender: oneshot::Sender<Result<TaskId, ClientError>>,
+    pub channels: Option<(CompletionSender, ProgressSender)>,
 }
