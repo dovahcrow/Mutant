@@ -1,3 +1,4 @@
+use dialoguer;
 use std::{io, path::PathBuf};
 use thiserror::Error;
 use uuid::Uuid;
@@ -7,7 +8,7 @@ use warp::reject::Reject;
 // use mutant_protocol::ProtocolError;
 
 #[derive(Error, Debug)]
-pub enum DaemonError {
+pub enum Error {
     #[error("MutAnt library error: {0}")]
     MutAnt(#[from] mutant_lib::error::Error),
 
@@ -17,17 +18,12 @@ pub enum DaemonError {
     #[error("JSON serialization error: {0}")]
     SerdeJson(#[from] serde_json::Error),
 
-    #[error("Base64 decoding error: {0}")]
-    Base64Decode(#[from] base64::DecodeError),
-
-    // Daemon-specific task not found, might map to ProtocolError::TaskNotFound for response
     #[error("Task not found in daemon state: {0}")]
     TaskNotFound(Uuid),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    // Daemon-specific invalid request, might map to ProtocolError::InvalidRequest for response
     #[error("Invalid request structure received: {0}")]
     InvalidRequest(String),
 
@@ -66,7 +62,7 @@ pub enum DaemonError {
 }
 
 // Implement warp::reject::Reject for DaemonError so we can use it in warp filters
-impl Reject for DaemonError {}
+impl Reject for Error {}
 
 // Removed From implementation for protocol::Response
 /*
@@ -84,6 +80,12 @@ impl From<&DaemonError> for mutant_protocol::Response {
 */
 
 // Keep this helper, it might still be useful internally
-pub fn box_to_daemon_error(err: Box<dyn std::error::Error>) -> DaemonError {
-    DaemonError::Internal(err.to_string())
+pub fn box_to_daemon_error(err: Box<dyn std::error::Error>) -> Error {
+    err.into()
+}
+
+impl From<Box<dyn std::error::Error>> for Error {
+    fn from(err: Box<dyn std::error::Error>) -> Self {
+        Error::Internal(err.to_string())
+    }
 }

@@ -19,6 +19,8 @@ use mutant_protocol::{Task, TaskId}; // Import necessary types
 type TaskMap = Arc<RwLock<HashMap<TaskId, Task>>>;
 // --- End Task Management System ---
 
+use error::Error;
+
 #[derive(Parser)]
 struct Args {
     #[arg(long)]
@@ -42,7 +44,7 @@ struct Config {
 }
 
 impl Config {
-    fn load() -> Result<Self, Box<dyn std::error::Error>> {
+    fn load() -> Result<Self, Error> {
         let xdg_dirs = BaseDirectories::with_prefix("mutant")?;
         let config_path = xdg_dirs.get_config_file("config.json");
 
@@ -53,7 +55,7 @@ impl Config {
         }
     }
 
-    fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn save(&self) -> Result<(), Error> {
         let xdg_dirs = BaseDirectories::with_prefix("mutant")?;
         let config_path = xdg_dirs.get_config_file("config.json");
 
@@ -85,7 +87,7 @@ impl Config {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Error> {
     let args = Args::parse();
 
     // Initialize logging
@@ -122,20 +124,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let mutant = Arc::new(match network_choice {
-        NetworkChoice::Devnet => {
-            tracing::info!("Running in local mode");
-            MutAnt::init_local().await
+    let mutant = Arc::new(
+        match network_choice {
+            NetworkChoice::Devnet => {
+                tracing::info!("Running in local mode");
+                MutAnt::init_local().await
+            }
+            NetworkChoice::Alphanet => {
+                tracing::info!("Running in alphanet mode");
+                MutAnt::init_alphanet(&private_key).await
+            }
+            NetworkChoice::Mainnet => {
+                tracing::info!("Running in mainnet mode");
+                MutAnt::init(&private_key).await
+            }
         }
-        NetworkChoice::Alphanet => {
-            tracing::info!("Running in alphanet mode");
-            MutAnt::init_alphanet(&private_key).await
-        }
-        NetworkChoice::Mainnet => {
-            tracing::info!("Running in mainnet mode");
-            MutAnt::init(&private_key).await
-        }
-    }?);
+        .map_err(Error::MutAnt)?,
+    );
     tracing::info!("MutAnt initialized successfully.");
 
     // Initialize Task Management
