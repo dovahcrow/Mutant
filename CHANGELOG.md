@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Simplified `put` command syntax: `mutant put <key> <file>`
   - Added `tasks` subcommand with `list` and `get` operations
   - Better organization of task-related operations
+- Removed unused tokio-tungstenite and futures-util dependencies from mutant-client
 
 ### Added
 - Added integration test (`test_generated_pad_counter_increment`) to verify scratchpad counter increments correctly on successive writes to generated pads.

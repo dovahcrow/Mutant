@@ -7,9 +7,9 @@ use serde_json;
 use url::Url;
 
 use mutant_protocol::{
-    ErrorResponse, ListTasksRequest, QueryTaskRequest, Request, Response,
-    Task, TaskCreatedResponse, TaskId, TaskListEntry, TaskListResponse, TaskResultResponse,
-    TaskStatus, TaskType, TaskUpdateResponse,
+    ErrorResponse, ListTasksRequest, QueryTaskRequest, Request, Response, Task,
+    TaskCreatedResponse, TaskId, TaskListEntry, TaskListResponse, TaskResultResponse, TaskStatus,
+    TaskType, TaskUpdateResponse,
 };
 // use tokio::sync::RwLock; // Removed this - using Rc<RefCell<>> for WASM
 
@@ -19,11 +19,9 @@ use tracing::{debug, error, info, warn};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 
 use futures::channel::oneshot;
-use futures_util::StreamExt;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::spawn_local;
-
 
 pub mod error;
 
@@ -107,12 +105,9 @@ impl MutantClient {
 
         match response {
             Response::TaskCreated(TaskCreatedResponse { task_id }) => {
-                // Check if we were waiting for this
+                debug!("Processing TaskCreated response for task {}", task_id);
                 if let Some(sender) = pending_task_creation.lock().unwrap().take() {
-                    debug!(
-                        "Received expected TaskCreated response for TaskId: {}",
-                        task_id
-                    );
+                    debug!("Found pending task creation sender for TaskId: {}", task_id);
                     if sender.send(Ok(task_id)).is_err() {
                         warn!("Failed to send TaskCreated response to waiting future (receiver dropped?)");
                     }
@@ -128,19 +123,30 @@ impl MutantClient {
                 status,
                 progress,
             }) => {
+                debug!(
+                    "Processing TaskUpdate response for task {} with status {:?}",
+                    task_id, status
+                );
                 let mut tasks_guard = tasks.lock().unwrap();
                 if let Some(task) = tasks_guard.get_mut(&task_id) {
+                    debug!(
+                        "Found existing task {}, updating status and progress",
+                        task_id
+                    );
                     task.status = status;
                     task.progress = progress.clone();
                     info!("Task {} updated: {:?}", task_id, task.status);
+                    if let Some(ref progress) = progress {
+                        debug!("Task {} progress updated: {:?}", task_id, progress);
+                    }
                 } else {
+                    debug!("Creating new task entry for unknown task {}", task_id);
                     warn!("Received update for unknown task: {}", task_id);
-                    // Optionally add a placeholder task if we want to track all updates
                     tasks_guard.insert(
                         task_id,
                         Task {
                             id: task_id,
-                            task_type: TaskType::Get, // Unknown
+                            task_type: TaskType::Get,
                             status,
                             progress,
                             result: None,
@@ -325,23 +331,50 @@ impl MutantClient {
     pub async fn next_response(&mut self) -> Option<Result<Response, ClientError>> {
         if let Some(receiver) = &mut self.receiver {
             match receiver.try_recv() {
-                Some(event) => match event {
-                    ewebsock::WsEvent::Message(msg) => {
-                        if let ewebsock::WsMessage::Text(text) = msg {
-                            match serde_json::from_str::<Response>(&text) {
-                                Ok(response) => Some(Ok(response)),
-                                Err(e) => Some(Err(ClientError::DeserializationError(e))),
+                Some(event) => {
+                    debug!("Received WebSocket event: {:?}", event);
+                    match event {
+                        ewebsock::WsEvent::Message(msg) => {
+                            if let ewebsock::WsMessage::Text(text) = msg {
+                                debug!("Received WebSocket text message: {}", text);
+                                match serde_json::from_str::<Response>(&text) {
+                                    Ok(response) => {
+                                        debug!(
+                                            "Successfully deserialized response: {:?}",
+                                            response
+                                        );
+                                        Self::process_response(
+                                            response.clone(),
+                                            &self.tasks,
+                                            &self.pending_task_creation,
+                                            &self.pending_task_list,
+                                        );
+                                        Some(Ok(response))
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to deserialize response: {}", e);
+                                        Some(Err(ClientError::DeserializationError(e)))
+                                    }
+                                }
+                            } else {
+                                debug!("Received non-text WebSocket message");
+                                None
                             }
-                        } else {
+                        }
+                        ewebsock::WsEvent::Error(e) => {
+                            error!("WebSocket error: {}", e);
+                            Some(Err(ClientError::WebSocketError(e.to_string())))
+                        }
+                        ewebsock::WsEvent::Closed => {
+                            debug!("WebSocket connection closed");
+                            None
+                        }
+                        ewebsock::WsEvent::Opened => {
+                            debug!("WebSocket connection opened");
                             None
                         }
                     }
-                    ewebsock::WsEvent::Error(e) => {
-                        Some(Err(ClientError::WebSocketError(e.to_string())))
-                    }
-                    ewebsock::WsEvent::Closed => None,
-                    ewebsock::WsEvent::Opened => None,
-                },
+                }
                 None => None,
             }
         } else {
