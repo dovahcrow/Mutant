@@ -1,12 +1,12 @@
 use log::{debug, error, warn};
 use mutant_protocol::{
-    ErrorResponse, Response, Task, TaskCreatedResponse, TaskListResponse, TaskResult,
+    ErrorResponse, Response, Task, TaskCreatedResponse, TaskListResponse, TaskProgress, TaskResult,
     TaskResultResponse, TaskStatus, TaskType, TaskUpdateResponse,
 };
 
 use crate::{
     error::ClientError, ClientTaskMap, PendingTaskCreationSender, PendingTaskListSender,
-    TaskChannelsMap,
+    PendingTaskQuerySender, TaskChannelsMap,
 };
 
 use super::MutantClient;
@@ -19,14 +19,26 @@ impl MutantClient {
         task_channels: &TaskChannelsMap,
         pending_task_creation: &PendingTaskCreationSender,
         pending_task_list: &PendingTaskListSender,
+        pending_task_query: &PendingTaskQuerySender,
     ) {
         match response {
             Response::TaskCreated(TaskCreatedResponse { task_id }) => {
+                let task_type =
+                    if let Some(pending) = pending_task_creation.lock().unwrap().as_ref() {
+                        if pending.channels.is_some() {
+                            TaskType::Put
+                        } else {
+                            TaskType::Get
+                        }
+                    } else {
+                        TaskType::Get
+                    };
+
                 tasks.lock().unwrap().insert(
                     task_id,
                     Task {
                         id: task_id,
-                        task_type: TaskType::Get,
+                        task_type,
                         status: TaskStatus::Pending,
                         progress: None,
                         result: None,
@@ -67,16 +79,28 @@ impl MutantClient {
                         }
                     }
                 } else {
+                    let task_type = match &progress {
+                        Some(TaskProgress::Put(_)) => TaskType::Put,
+                        _ => TaskType::Get,
+                    };
+
                     tasks_guard.insert(
                         task_id,
                         Task {
                             id: task_id,
-                            task_type: TaskType::Get,
+                            task_type,
                             status,
                             progress,
                             result: None,
                         },
                     );
+                }
+
+                if let Some(sender) = pending_task_query.lock().unwrap().take() {
+                    let task = tasks_guard.get(&task_id).unwrap().clone();
+                    if sender.send(Ok(task)).is_err() {
+                        warn!("Failed to send TaskUpdate response (receiver dropped)");
+                    }
                 }
             }
             Response::TaskResult(TaskResultResponse {
@@ -97,16 +121,33 @@ impl MutantClient {
                         })));
                     }
                 } else {
+                    let task_type = if let Some(result) = &result {
+                        if result.data.is_some() {
+                            TaskType::Get
+                        } else {
+                            TaskType::Put
+                        }
+                    } else {
+                        TaskType::Get
+                    };
+
                     tasks_guard.insert(
                         task_id,
                         Task {
                             id: task_id,
-                            task_type: TaskType::Get,
+                            task_type,
                             status,
                             result,
                             progress: None,
                         },
                     );
+                }
+
+                if let Some(sender) = pending_task_query.lock().unwrap().take() {
+                    let task = tasks_guard.get(&task_id).unwrap().clone();
+                    if sender.send(Ok(task)).is_err() {
+                        warn!("Failed to send TaskResult response (receiver dropped)");
+                    }
                 }
             }
             Response::TaskList(TaskListResponse { tasks: task_list }) => {
@@ -134,6 +175,9 @@ impl MutantClient {
                 } else if let Some(sender) = pending_task_list.lock().unwrap().take() {
                     error!("Error occurred during task list request: {}", error);
                     let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(sender) = pending_task_query.lock().unwrap().take() {
+                    error!("Error occurred during task query request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
                 }
             }
         }
@@ -154,6 +198,7 @@ impl MutantClient {
                                             &self.task_channels,
                                             &self.pending_task_creation,
                                             &self.pending_task_list,
+                                            &self.pending_task_query,
                                         );
                                         return Some(Ok(response));
                                     }
@@ -176,10 +221,12 @@ impl MutantClient {
                         }
                         ewebsock::WsEvent::Opened => {
                             debug!("WebSocket connection opened");
+                            continue;
                         }
                     },
                     None => {
                         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        continue;
                     }
                 }
             }

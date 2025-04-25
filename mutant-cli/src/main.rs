@@ -115,6 +115,8 @@ async fn main() -> Result<()> {
                     let task_id = uuid::Uuid::parse_str(&task_id)?;
                     let task = client.query_task(task_id).await?;
 
+                    println!("Task: {:#?}", task);
+
                     println!(
                         "{} {} - {} ({})",
                         "•".bright_green(),
@@ -124,7 +126,14 @@ async fn main() -> Result<()> {
                     );
 
                     if let Some(progress) = task.progress {
-                        println!("  Progress: {:?}", progress);
+                        match progress {
+                            mutant_protocol::TaskProgress::Put(event) => {
+                                println!("  Progress: {:?}", event);
+                            }
+                            mutant_protocol::TaskProgress::Legacy { message } => {
+                                println!("  Progress: {}", message);
+                            }
+                        }
                     }
 
                     if let Some(result) = task.result {

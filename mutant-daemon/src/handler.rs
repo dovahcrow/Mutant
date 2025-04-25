@@ -168,11 +168,20 @@ async fn handle_put(
         // Create a callback that forwards progress events through the WebSocket
         let update_tx_clone = update_tx.clone();
         let task_id_clone = task_id;
+        let tasks_clone = tasks.clone();
         let callback: PutCallback = Arc::new(move |event: PutEvent| {
             let tx = update_tx_clone.clone();
             let task_id = task_id_clone;
+            let tasks = tasks_clone.clone();
             Box::pin(async move {
                 let progress = TaskProgress::Put(event);
+
+                // Update the task's progress in the map
+                let mut tasks_guard = tasks.write().await;
+                if let Some(task) = tasks_guard.get_mut(&task_id) {
+                    task.progress = Some(progress.clone());
+                }
+                drop(tasks_guard);
 
                 let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
                     task_id,

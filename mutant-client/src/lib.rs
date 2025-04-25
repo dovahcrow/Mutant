@@ -32,6 +32,7 @@ type ClientTaskMap = Arc<Mutex<HashMap<TaskId, Task>>>;
 type PendingTaskCreationSender = Arc<Mutex<Option<PendingTaskCreation>>>;
 type PendingTaskListSender =
     Arc<Mutex<Option<oneshot::Sender<Result<Vec<TaskListEntry>, ClientError>>>>>;
+type PendingTaskQuerySender = Arc<Mutex<Option<oneshot::Sender<Result<Task, ClientError>>>>>;
 
 pub type CompletionReceiver = oneshot::Receiver<Result<TaskResult, ClientError>>;
 pub type ProgressReceiver = mpsc::UnboundedReceiver<Result<TaskProgress, ClientError>>;
@@ -57,6 +58,7 @@ pub struct MutantClient {
     task_channels: TaskChannelsMap,
     pending_task_creation: PendingTaskCreationSender,
     pending_task_list: PendingTaskListSender,
+    pending_task_query: PendingTaskQuerySender,
     state: Arc<Mutex<ConnectionState>>,
 }
 
@@ -70,6 +72,7 @@ impl MutantClient {
             task_channels: Arc::new(Mutex::new(HashMap::new())),
             pending_task_creation: Arc::new(Mutex::new(None)),
             pending_task_list: Arc::new(Mutex::new(None)),
+            pending_task_query: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
         }
     }
@@ -234,44 +237,26 @@ impl MutantClient {
     }
 
     pub async fn query_task(&mut self, task_id: TaskId) -> Result<Task, ClientError> {
-        let (completion_tx, completion_rx) = oneshot::channel();
-        let (progress_tx, _progress_rx) = mpsc::unbounded_channel();
+        if self.pending_task_query.lock().unwrap().is_some() {
+            return Err(ClientError::InternalError(
+                "Another query_task request is already pending".to_string(),
+            ));
+        }
 
-        let (task_creation_tx, task_creation_rx) = oneshot::channel();
-        *self.pending_task_creation.lock().unwrap() = Some(PendingTaskCreation {
-            sender: task_creation_tx,
-            channels: Some((completion_tx, progress_tx)),
-        });
+        let (sender, receiver) = oneshot::channel();
+        *self.pending_task_query.lock().unwrap() = Some(sender);
 
         let req = Request::QueryTask(QueryTaskRequest { task_id });
 
         match self.send_request(req).await {
             Ok(_) => {
-                let task_id = task_creation_rx.await.map_err(|_| {
-                    error!("TaskCreated channel canceled");
-                    ClientError::InternalError("TaskCreated channel canceled".to_string())
-                })??;
-
-                info!("Task queried with ID: {}", task_id);
-
-                let _result = completion_rx.await.map_err(|_| {
-                    error!("Completion channel canceled");
-                    ClientError::InternalError("Completion channel canceled".to_string())
-                })??;
-
-                Ok(self
-                    .tasks
-                    .lock()
-                    .unwrap()
-                    .get(&task_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        ClientError::InternalError("Task not found after query".to_string())
-                    })?)
+                debug!("QueryTask request sent, waiting for response...");
+                receiver.await.map_err(|_| {
+                    ClientError::InternalError("TaskQuery channel canceled".to_string())
+                })?
             }
             Err(e) => {
-                error!("Failed to send query request: {:?}", e);
-                *self.pending_task_creation.lock().unwrap() = None;
+                *self.pending_task_query.lock().unwrap() = None;
                 Err(e)
             }
         }
@@ -305,6 +290,7 @@ impl Clone for MutantClient {
             task_channels: self.task_channels.clone(),
             pending_task_creation: self.pending_task_creation.clone(),
             pending_task_list: self.pending_task_list.clone(),
+            pending_task_query: self.pending_task_query.clone(),
             state: self.state.clone(),
         }
     }

@@ -14,8 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Better separation of concerns between task management and WebSocket communication
   - Simplified client API with clear completion and progress handling
   - Enhanced CLI to use the new parallel task execution features
+- Optimized task query to be a simple request/response without channels
 
 ### Fixed
+- Fix task query WebSocket handling to prevent premature connection closure
+- Fix task query display in CLI to properly show progress events and task results
 - Fix task creation in mutant-client to properly initialize tasks in the ClientTaskMap when receiving TaskCreatedResponse, enabling proper progress tracking
 - Fix write pipeline deadlock: Ensure main pipeline tasks (`put_private_pads`, `confirm_private_pads`) don't hold sender handles needed by each other's receiver loops by passing clones into the tasks and removing explicit drops within them.
 - Fix process hang by ensuring concurrent write/confirm tasks terminate using MPSC channels.
