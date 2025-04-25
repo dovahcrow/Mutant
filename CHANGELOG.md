@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Handles `Put` and `Get` requests (private, Medium mode only).
     - Handles `QueryTask` and `ListTasks` requests.
     - Basic error handling and reporting via WebSocket.
+- Added put command to mutant-cli to store data from files
 
 ## [0.4.2] - UNRELEASED
 
