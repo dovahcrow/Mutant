@@ -1,7 +1,5 @@
 use clap::Parser;
-use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
-use uuid::Uuid;
 
 use mutant_lib::MutAnt;
 use tokio::sync::RwLock;
