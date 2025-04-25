@@ -293,13 +293,13 @@ impl MutantClient {
     // These need rethinking for WASM's async/callback model.
     // A simple request/response map or channels might be needed.
 
-    pub async fn put(
-        &mut self,
+    pub async fn put<'a>(
+        &'a mut self,
         user_key: &str,
         data: &[u8],
     ) -> Result<
         (
-            impl Future<Output = Result<TaskResult, ClientError>>,
+            impl Future<Output = Result<TaskResult, ClientError>> + 'a,
             ProgressReceiver,
         ),
         ClientError,
@@ -320,10 +320,8 @@ impl MutantClient {
             data_b64,
         });
 
-        let mut client = self.clone();
-
         let start_task = async move {
-            match client.send_request(req).await {
+            match self.send_request(req).await {
                 Ok(_) => {
                     info!("Put request sent, waiting for TaskCreated response...");
                     let task_id = task_creation_rx.await.map_err(|_| {
@@ -332,8 +330,7 @@ impl MutantClient {
                     })??;
 
                     info!("Task created with ID: {}, setting up channels", task_id);
-                    client
-                        .task_channels
+                    self.task_channels
                         .lock()
                         .unwrap()
                         .insert(task_id, (completion_tx, progress_tx));
@@ -345,7 +342,7 @@ impl MutantClient {
                 }
                 Err(e) => {
                     error!("Failed to send put request: {:?}", e);
-                    *client.pending_task_creation.lock().unwrap() = None;
+                    *self.pending_task_creation.lock().unwrap() = None;
                     Err(e)
                 }
             }
