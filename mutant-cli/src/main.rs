@@ -63,11 +63,30 @@ async fn main() -> Result<()> {
                 let task_id = uuid::Uuid::parse_str(&task_id)?;
                 client.query_task(task_id).await?;
 
+                // Give a small delay for the response to arrive
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+                let status = client.get_task_status(task_id);
+                let result = client.get_task_result(task_id);
+
                 println!(
-                    "{} Task {} queried",
+                    "{} Task {} queried:",
                     "•".bright_green(),
                     task_id.to_string().bright_blue()
                 );
+
+                if let Some(status) = status {
+                    println!("  Status: {}", format!("{:?}", status).bright_yellow());
+                }
+
+                if let Some(result) = result {
+                    if let Some(error) = result.error {
+                        println!("  Error: {}", error.bright_red());
+                    }
+                    if let Some(data) = result.data {
+                        println!("  Data: {}", data.bright_green());
+                    }
+                }
             }
         },
     }
