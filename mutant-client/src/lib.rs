@@ -104,10 +104,15 @@ impl MutantClient {
         info!("WebSocket connection established successfully");
         self.sender = Some(sender);
         self.receiver = Some(receiver);
+        println!("Receiver is {:?}", self.receiver.is_some());
 
         *self.state.lock().unwrap() = ConnectionState::Connected;
 
-        let mut client_clone = self.clone();
+        let mut client_clone = self.partial_take_receiver();
+        println!(
+            "Client clone receiver is {:?}",
+            client_clone.receiver.is_some()
+        );
         #[cfg(target_arch = "wasm32")]
         spawn_local(async move {
             while let Some(response) = client_clone.next_response().await {
@@ -119,6 +124,11 @@ impl MutantClient {
 
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move {
+            println!("Starting tokio spawn");
+            println!(
+                "Client clone receiver is {:?}",
+                client_clone.receiver.is_some()
+            );
             while let Some(response) = client_clone.next_response().await {
                 if let Err(e) = response {
                     error!("Error processing response: {:?}", e);
@@ -389,8 +399,11 @@ impl MutantClient {
     }
 
     pub async fn next_response(&mut self) -> Option<Result<Response, ClientError>> {
+        println!("Receiver is {:?}", self.receiver.is_some());
         if let Some(receiver) = &mut self.receiver {
+            println!("Receiver is Some");
             loop {
+                println!("Trying to receive event");
                 match receiver.try_recv() {
                     Some(event) => {
                         debug!("Received WebSocket event: {:?}", event);
@@ -441,6 +454,7 @@ impl MutantClient {
                 }
             }
         } else {
+            println!("Receiver is None");
             None
         }
     }
@@ -475,6 +489,16 @@ impl Clone for MutantClient {
             pending_task_list: self.pending_task_list.clone(),
             state: self.state.clone(),
         }
+    }
+}
+
+impl MutantClient {
+    pub fn partial_take_receiver(&mut self) -> Self {
+        let mut clone = self.clone();
+
+        clone.receiver = self.receiver.take();
+
+        clone
     }
 }
 

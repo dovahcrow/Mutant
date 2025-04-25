@@ -1,7 +1,8 @@
 use super::progress::StyledProgressBar;
 use indicatif::MultiProgress;
-use log::{debug, info, warn};
-use mutant_protocol::{PutCallback, PutEvent};
+use log::{error, info, warn};
+use mutant_client::ProgressReceiver;
+use mutant_protocol::{PutCallback, PutEvent, TaskProgress};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -15,29 +16,13 @@ struct PutCallbackContext {
 }
 
 #[allow(clippy::type_complexity)]
-pub fn create_put_callback(
-    multi_progress: &MultiProgress,
-    quiet: bool,
-) -> (
-    Arc<Mutex<Option<StyledProgressBar>>>,
-    Arc<Mutex<Option<StyledProgressBar>>>,
-    Arc<Mutex<Option<StyledProgressBar>>>,
-    PutCallback,
-) {
-    info!("Creating put callback with quiet={}", quiet);
+pub fn create_put_progress(mut progress_rx: ProgressReceiver) {
+    let multi_progress = MultiProgress::new();
+
     let res_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let upload_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let confirm_pb_opt = Arc::new(Mutex::new(None::<StyledProgressBar>));
     let total_chunks_arc = Arc::new(Mutex::new(0usize));
-
-    if quiet {
-        info!("Quiet mode enabled, using noop callback");
-        let noop_callback: PutCallback = Arc::new(move |_event: PutEvent| {
-            Box::pin(async move { Ok::<bool, Box<dyn std::error::Error + Send + Sync>>(true) })
-        });
-
-        return (res_pb_opt, upload_pb_opt, confirm_pb_opt, noop_callback);
-    }
 
     let context = PutCallbackContext {
         res_pb_opt: res_pb_opt.clone(),
@@ -183,6 +168,17 @@ pub fn create_put_callback(
         })
     });
 
+    tokio::spawn(async move {
+        while let Some(progress) = progress_rx.recv().await {
+            match progress {
+                Ok(TaskProgress::Put(event)) => {
+                    callback(event.clone()).await.unwrap();
+                }
+                Ok(_) => warn!("Unexpected progress type"),
+                Err(e) => error!("Progress error: {:?}", e),
+            }
+        }
+    });
+
     info!("Put callback created successfully");
-    (res_pb_opt, upload_pb_opt, confirm_pb_opt, callback)
 }
