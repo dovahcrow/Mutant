@@ -2,9 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use colored::Colorize;
 use indicatif::MultiProgress;
-use log::{error, info, warn};
 use mutant_client::MutantClient;
-use mutant_protocol::TaskProgress;
 
 mod callbacks;
 
@@ -20,6 +18,8 @@ enum Commands {
     Put {
         key: String,
         file: String,
+        #[arg(short, long)]
+        background: bool,
     },
     Tasks {
         #[command(subcommand)]
@@ -39,8 +39,20 @@ async fn connect_to_daemon() -> Result<MutantClient> {
     Ok(client)
 }
 
-async fn handle_put(key: String, file: String) -> Result<()> {
+async fn handle_put(key: String, file: String, background: bool) -> Result<()> {
     let data = std::fs::read(&file)?;
+
+    if background {
+        let _ = tokio::spawn(async move {
+            let mut client = connect_to_daemon().await.unwrap();
+            let (start_task, _progress_rx) = client.put(&key, &data).await.unwrap();
+            start_task.await.unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        return Ok(());
+    }
 
     let mut client = connect_to_daemon().await?;
 
@@ -52,15 +64,12 @@ async fn handle_put(key: String, file: String) -> Result<()> {
     match start_task.await {
         Ok(result) => {
             if let Some(error) = result.error {
-                error!("Upload failed: {}", error);
                 eprintln!("{} {}", "Error:".bright_red(), error);
             } else {
-                info!("Upload completed successfully");
                 println!("{} Upload complete!", "•".bright_green());
             }
         }
         Err(e) => {
-            error!("Task failed: {:?}", e);
             eprintln!("{} Task failed: {}", "Error:".bright_red(), e);
         }
     }
@@ -78,8 +87,12 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Put { key, file } => {
-            handle_put(key, file).await?;
+        Commands::Put {
+            key,
+            file,
+            background,
+        } => {
+            handle_put(key, file, background).await?;
         }
         Commands::Tasks { command } => {
             let mut client = connect_to_daemon().await?;
@@ -100,7 +113,27 @@ async fn main() -> Result<()> {
                 }
                 TasksCommands::Get { task_id } => {
                     let task_id = uuid::Uuid::parse_str(&task_id)?;
-                    client.query_task(task_id).await?;
+                    let task = client.query_task(task_id).await?;
+
+                    println!(
+                        "{} {} - {} ({})",
+                        "•".bright_green(),
+                        task.id,
+                        format!("{:?}", task.task_type).bright_blue(),
+                        format!("{:?}", task.status).bright_yellow()
+                    );
+
+                    if let Some(progress) = task.progress {
+                        println!("  Progress: {:?}", progress);
+                    }
+
+                    if let Some(result) = task.result {
+                        if let Some(error) = result.error {
+                            println!("  {}: {}", "Error".bright_red(), error);
+                        } else if let Some(data) = result.data {
+                            println!("  {}: {} bytes", "Data".bright_green(), data.len());
+                        }
+                    }
                 }
             }
         }

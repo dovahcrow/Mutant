@@ -233,10 +233,48 @@ impl MutantClient {
         }
     }
 
-    pub async fn query_task(&mut self, task_id: TaskId) -> Result<(), ClientError> {
-        // Sends the request, result comes back to onmessage and updates the internal map.
+    pub async fn query_task(&mut self, task_id: TaskId) -> Result<Task, ClientError> {
+        let (completion_tx, completion_rx) = oneshot::channel();
+        let (progress_tx, _progress_rx) = mpsc::unbounded_channel();
+
+        let (task_creation_tx, task_creation_rx) = oneshot::channel();
+        *self.pending_task_creation.lock().unwrap() = Some(PendingTaskCreation {
+            sender: task_creation_tx,
+            channels: Some((completion_tx, progress_tx)),
+        });
+
         let req = Request::QueryTask(QueryTaskRequest { task_id });
-        self.send_request(req).await
+
+        match self.send_request(req).await {
+            Ok(_) => {
+                let task_id = task_creation_rx.await.map_err(|_| {
+                    error!("TaskCreated channel canceled");
+                    ClientError::InternalError("TaskCreated channel canceled".to_string())
+                })??;
+
+                info!("Task queried with ID: {}", task_id);
+
+                let _result = completion_rx.await.map_err(|_| {
+                    error!("Completion channel canceled");
+                    ClientError::InternalError("Completion channel canceled".to_string())
+                })??;
+
+                Ok(self
+                    .tasks
+                    .lock()
+                    .unwrap()
+                    .get(&task_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        ClientError::InternalError("Task not found after query".to_string())
+                    })?)
+            }
+            Err(e) => {
+                error!("Failed to send query request: {:?}", e);
+                *self.pending_task_creation.lock().unwrap() = None;
+                Err(e)
+            }
+        }
     }
 
     // --- Accessor methods for internal state ---

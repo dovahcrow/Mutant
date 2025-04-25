@@ -1,7 +1,6 @@
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use mutant_protocol::{
-    ErrorResponse, ListTasksRequest, QueryTaskRequest, Request, Response, Task,
-    TaskCreatedResponse, TaskId, TaskListEntry, TaskListResponse, TaskProgress, TaskResult,
+    ErrorResponse, Response, Task, TaskCreatedResponse, TaskListResponse, TaskResult,
     TaskResultResponse, TaskStatus, TaskType, TaskUpdateResponse,
 };
 

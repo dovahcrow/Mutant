@@ -1,4 +1,3 @@
-use log::{error, info};
 use mutant_protocol::Request;
 
 use crate::{error::ClientError, MutantClient};
