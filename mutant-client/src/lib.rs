@@ -152,6 +152,17 @@ impl MutantClient {
         match response {
             Response::TaskCreated(TaskCreatedResponse { task_id }) => {
                 info!("Task created with ID: {}", task_id);
+                tasks.lock().unwrap().insert(
+                    task_id,
+                    Task {
+                        id: task_id,
+                        task_type: TaskType::Get,
+                        status: TaskStatus::Pending,
+                        progress: None,
+                        result: None,
+                    },
+                );
+
                 if let Some(pending) = pending_task_creation.lock().unwrap().take() {
                     info!("Found pending task creation sender for TaskId: {}", task_id);
                     if let Some((completion_tx, progress_tx)) = pending.channels {

@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enhanced CLI to use the new parallel task execution features
 
 ### Fixed
+- Fix task creation in mutant-client to properly initialize tasks in the ClientTaskMap when receiving TaskCreatedResponse, enabling proper progress tracking
 - Fix write pipeline deadlock: Ensure main pipeline tasks (`put_private_pads`, `confirm_private_pads`) don't hold sender handles needed by each other's receiver loops by passing clones into the tasks and removing explicit drops within them.
 - Fix process hang by ensuring concurrent write/confirm tasks terminate using MPSC channels.
 - Adapt to `scratchpad_put` SDK changes where it no longer returns a `Receipt`. Code now correctly destructures the `(AttoTokens, ScratchpadAddress)` tuple and avoids updating the `PadInfo.receipt` field, resolving compilation errors.
