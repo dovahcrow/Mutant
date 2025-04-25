@@ -1,3 +1,4 @@
+use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use uuid::Uuid;
@@ -18,8 +19,16 @@ use mutant_protocol::{Task, TaskId}; // Import necessary types
 type TaskMap = Arc<RwLock<HashMap<TaskId, Task>>>;
 // --- End Task Management System ---
 
+#[derive(Parser)]
+struct Args {
+    #[arg(long)]
+    local: bool,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+
     // Initialize logging
     tracing_subscriber::registry()
         .with(fmt::layer())
@@ -31,9 +40,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize MutAnt (using local devnet for now)
     // TODO: Make this configurable
     let mutant = Arc::new(
-        MutAnt::init_local()
-            .await
-            .expect("Failed to initialize MutAnt"),
+        if args.local {
+            tracing::info!("Running in local mode");
+            MutAnt::init_local().await
+        } else {
+            tracing::info!("Running in mainnet mode");
+            MutAnt::init_public().await
+        }
+        .expect("Failed to initialize MutAnt"),
     );
     tracing::info!("MutAnt initialized successfully.");
 
