@@ -4356,7 +4356,9 @@ dependencies = [
  "anyhow",
  "clap",
  "colored",
+ "indicatif",
  "mutant-client",
+ "mutant-protocol",
  "tokio",
  "uuid",
 ]

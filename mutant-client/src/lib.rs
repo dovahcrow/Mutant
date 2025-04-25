@@ -53,22 +53,11 @@ enum ConnectionState {
 
 /// A client for interacting with the Mutant Daemon over WebSocket (Cross-platform implementation).
 pub struct MutantClient {
-    // Replace web_sys::WebSocket with ewebsock sender/receiver
-    // ws: Option<Ws>,
     sender: Option<ewebsock::WsSender>,
-    // Receiver needs careful handling - maybe store it temporarily during connect?
-    // Or it needs to be moved to the receiving task.
-    // Let's omit receiver from the struct for now, it will be handled by the task.
+    receiver: Option<ewebsock::WsReceiver>,
     tasks: ClientTaskMap,
     pending_task_creation: PendingTaskCreationSender,
     pending_task_list: PendingTaskListSender,
-    // Remove WASM callbacks
-    // _onopen_callback: Option<Closure<dyn FnMut()>>,
-    // _onmessage_callback: Option<Closure<dyn FnMut(MessageEvent)>>,
-    // _onerror_callback: Option<Closure<dyn FnMut(ErrorEvent)>>,
-    // _onclose_callback: Option<Closure<dyn FnMut(CloseEvent)>>,
-
-    // TODO: Maybe add a state field? e.g., Arc<Mutex<ConnectionState>>
     state: Arc<Mutex<ConnectionState>>,
 }
 
@@ -78,16 +67,11 @@ impl MutantClient {
     /// Creates a new client instance but does not connect yet.
     pub fn new() -> Self {
         Self {
-            // ws: None, // Removed
             sender: None,
+            receiver: None,
             tasks: Arc::new(Mutex::new(HashMap::new())),
             pending_task_creation: Arc::new(Mutex::new(None)),
             pending_task_list: Arc::new(Mutex::new(None)),
-            // Callbacks removed
-            // _onopen_callback: None,
-            // _onmessage_callback: None,
-            // _onerror_callback: None,
-            // _onclose_callback: None,
             state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
         }
     }
@@ -99,7 +83,7 @@ impl MutantClient {
             return Ok(());
         }
 
-        let url = Url::parse(addr)?;
+        let url = Url::parse(addr).map_err(|e| ClientError::UrlParseError(e))?;
         info!("Connecting to Mutant Daemon at {}", url);
 
         *self.state.lock().unwrap() = ConnectionState::Connecting;
@@ -108,111 +92,12 @@ impl MutantClient {
         let (sender, receiver) = ewebsock::connect(url.as_str(), options)
             .map_err(|e| ClientError::WebSocketError(e.to_string()))?;
 
-        // Store sender for future use
         self.sender = Some(sender);
+        self.receiver = Some(receiver);
 
-        // Clone shared state for the receiver task
-        let tasks = self.tasks.clone();
-        let pending_task_creation = self.pending_task_creation.clone();
-        let pending_task_list = self.pending_task_list.clone();
-        let state = self.state.clone();
-
-        // Spawn a task to handle incoming messages
-        #[cfg(target_arch = "wasm32")]
-        spawn_local(async move {
-            Self::handle_receiver_loop(
-                receiver,
-                tasks,
-                pending_task_creation,
-                pending_task_list,
-                state,
-            )
-            .await;
-        });
-
-        #[cfg(not(target_arch = "wasm32"))]
-        spawn(async move {
-            Self::handle_receiver_loop(
-                receiver,
-                tasks,
-                pending_task_creation,
-                pending_task_list,
-                state,
-            )
-            .await;
-        });
+        *self.state.lock().unwrap() = ConnectionState::Connected;
 
         Ok(())
-    }
-
-    /// Internal function to handle the WebSocket receiver loop
-    async fn handle_receiver_loop(
-        mut receiver: ewebsock::WsReceiver,
-        tasks: ClientTaskMap,
-        pending_task_creation: PendingTaskCreationSender,
-        pending_task_list: PendingTaskListSender,
-        state: Arc<Mutex<ConnectionState>>,
-    ) {
-        loop {
-            match receiver.try_recv() {
-                Some(event) => match event {
-                    ewebsock::WsEvent::Opened => {
-                        info!("WebSocket connection opened");
-                        *state.lock().unwrap() = ConnectionState::Connected;
-                    }
-                    ewebsock::WsEvent::Message(msg) => {
-                        if let ewebsock::WsMessage::Text(text) = msg {
-                            debug!("Received message: {}", text);
-                            match serde_json::from_str::<Response>(&text) {
-                                Ok(response) => {
-                                    Self::process_response(
-                                        response,
-                                        &tasks,
-                                        &pending_task_creation,
-                                        &pending_task_list,
-                                    );
-                                }
-                                Err(e) => {
-                                    warn!(
-                                        "Failed to deserialize server message: {}. Text: {}",
-                                        e, text
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    ewebsock::WsEvent::Error(e) => {
-                        let err_str = e.to_string();
-                        error!("WebSocket error: {}", err_str);
-                        *state.lock().unwrap() = ConnectionState::Error(err_str.clone());
-                        // Signal error to pending requests
-                        if let Some(sender) = pending_task_creation.lock().unwrap().take() {
-                            let _ = sender.send(Err(ClientError::WebSocketError(err_str.clone())));
-                        }
-                        if let Some(sender) = pending_task_list.lock().unwrap().take() {
-                            let _ = sender.send(Err(ClientError::WebSocketError(err_str)));
-                        }
-                        break;
-                    }
-                    ewebsock::WsEvent::Closed => {
-                        info!("WebSocket connection closed");
-                        *state.lock().unwrap() = ConnectionState::Disconnected;
-                        // Signal closure to pending requests
-                        if let Some(sender) = pending_task_creation.lock().unwrap().take() {
-                            let _ = sender.send(Err(ClientError::NotConnected));
-                        }
-                        if let Some(sender) = pending_task_list.lock().unwrap().take() {
-                            let _ = sender.send(Err(ClientError::NotConnected));
-                        }
-                        break;
-                    }
-                },
-                None => {
-                    // No message available, yield to other tasks
-                    tokio::task::yield_now().await;
-                }
-            }
-        }
     }
 
     /// Processes a deserialized response from the server
@@ -336,8 +221,8 @@ impl MutantClient {
     /// Sends a request over the WebSocket.
     async fn send_request(&mut self, request: Request) -> Result<(), ClientError> {
         if let Some(sender) = &mut self.sender {
-            let json = serde_json::to_string(&request)?;
-            debug!("Sending request: {}", json);
+            let json =
+                serde_json::to_string(&request).map_err(|e| ClientError::SerializationError(e))?;
             sender.send(ewebsock::WsMessage::Text(json));
             Ok(())
         } else {
@@ -441,6 +326,33 @@ impl MutantClient {
         self.send_request(req).await
     }
 
+    pub async fn next_response(&mut self) -> Option<Result<Response, ClientError>> {
+        if let Some(receiver) = &mut self.receiver {
+            match receiver.try_recv() {
+                Some(event) => match event {
+                    ewebsock::WsEvent::Message(msg) => {
+                        if let ewebsock::WsMessage::Text(text) = msg {
+                            match serde_json::from_str::<Response>(&text) {
+                                Ok(response) => Some(Ok(response)),
+                                Err(e) => Some(Err(ClientError::DeserializationError(e))),
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    ewebsock::WsEvent::Error(e) => {
+                        Some(Err(ClientError::WebSocketError(e.to_string())))
+                    }
+                    ewebsock::WsEvent::Closed => None,
+                    ewebsock::WsEvent::Opened => None,
+                },
+                None => None,
+            }
+        } else {
+            None
+        }
+    }
+
     // --- Accessor methods for internal state ---
 
     pub fn get_task_status(&self, task_id: TaskId) -> Option<TaskStatus> {
@@ -457,6 +369,19 @@ impl MutantClient {
             .unwrap()
             .get(&task_id)
             .and_then(|t| t.result.clone())
+    }
+}
+
+impl Clone for MutantClient {
+    fn clone(&self) -> Self {
+        Self {
+            sender: None,
+            receiver: None,
+            tasks: self.tasks.clone(),
+            pending_task_creation: self.pending_task_creation.clone(),
+            pending_task_list: self.pending_task_list.clone(),
+            state: self.state.clone(),
+        }
     }
 }
 

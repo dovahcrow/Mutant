@@ -1,7 +1,11 @@
 use anyhow::Result;
 use clap::Parser;
 use colored::Colorize;
+use indicatif::{ProgressBar, ProgressStyle};
 use mutant_client::MutantClient;
+use mutant_protocol::{Response, TaskStatus, TaskType};
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -44,6 +48,59 @@ async fn main() -> Result<()> {
                 "•".bright_green(),
                 task_id.to_string().bright_blue()
             );
+
+            let pb = ProgressBar::new(100);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template(
+                        "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}% {msg}",
+                    )
+                    .unwrap()
+                    .progress_chars("#>-"),
+            );
+
+            let (tx, mut rx) = mpsc::channel(100);
+            let mut client_clone = client.clone();
+            let pb = Arc::new(pb);
+            let pb_clone = pb.clone();
+
+            tokio::spawn(async move {
+                while let Some(response) = client_clone.next_response().await {
+                    if let Ok(response) = response {
+                        if let Response::TaskUpdate(update) = response {
+                            if update.task_id == task_id {
+                                if let Some(progress) = update.progress {
+                                    let _ = tx.send(progress.message).await;
+                                }
+                            }
+                        } else if let Response::TaskResult(result) = response {
+                            if result.task_id == task_id {
+                                match result.status {
+                                    TaskStatus::Completed => {
+                                        pb_clone.finish_with_message("Upload complete!");
+                                        break;
+                                    }
+                                    TaskStatus::Failed => {
+                                        pb_clone.abandon_with_message("Upload failed!");
+                                        if let Some(result) = result.result {
+                                            if let Some(error) = result.error {
+                                                eprintln!("{} {}", "Error:".bright_red(), error);
+                                            }
+                                        }
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            while let Some(msg) = rx.recv().await {
+                pb.set_message(msg);
+                pb.inc(10);
+            }
         }
         Commands::Tasks { command } => match command {
             TasksCommands::List => {

@@ -155,29 +155,31 @@ async fn handle_put(
 
     tokio::spawn(async move {
         tracing::info!(task_id = %task_id, user_key = %user_key, "Starting PUT task");
-        let start_update_res = {
-            let mut tasks_guard = tasks.write().await;
-            if let Some(task) = tasks_guard.get_mut(&task_id) {
-                task.status = TaskStatus::InProgress;
-                let progress = TaskProgress {
-                    message: "Starting PUT operation".to_string(),
-                };
-                task.progress = Some(progress.clone());
-                Some(Response::TaskUpdate(TaskUpdateResponse {
-                    task_id,
-                    status: TaskStatus::InProgress,
-                    progress: Some(progress),
-                }))
-            } else {
-                None
-            }
+
+        let send_progress = |msg: &str| {
+            let progress = TaskProgress {
+                message: msg.to_string(),
+            };
+            let update = Response::TaskUpdate(TaskUpdateResponse {
+                task_id,
+                status: TaskStatus::InProgress,
+                progress: Some(progress.clone()),
+            });
+            let _ = update_tx.send(update);
         };
-        if let Some(update) = start_update_res {
-            if update_tx.send(update).is_err() {
-                tracing::warn!(task_id = %task_id, "Client disconnected before task started");
-                return; // Exit if client disconnected
-            }
+
+        let mut tasks_guard = tasks.write().await;
+        if let Some(task) = tasks_guard.get_mut(&task_id) {
+            task.status = TaskStatus::InProgress;
+            send_progress("Initializing PUT operation");
         }
+        drop(tasks_guard);
+
+        send_progress("Preparing data for upload");
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        send_progress("Uploading data to network");
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
         let result = mutant
             .put(&user_key, &data_bytes, StorageMode::Medium, false)
@@ -201,13 +203,12 @@ async fn handle_put(
                         }))
                     }
                     Err(e) => {
-                        let error_msg = e.to_string();
                         task.status = TaskStatus::Failed;
                         task.result = Some(TaskResult {
                             data: None,
-                            error: Some(error_msg.clone()),
+                            error: Some(e.to_string()),
                         });
-                        tracing::error!(task_id = %task_id, user_key = %user_key, "PUT task failed: {}", error_msg);
+                        tracing::error!(task_id = %task_id, user_key = %user_key, error = %e, "PUT task failed");
                         Some(Response::TaskResult(TaskResultResponse {
                             task_id,
                             status: TaskStatus::Failed,
@@ -216,15 +217,12 @@ async fn handle_put(
                     }
                 }
             } else {
-                tracing::warn!(task_id = %task_id, "Task removed before PUT completion?");
                 None
             }
         };
 
         if let Some(response) = final_response {
-            if update_tx.send(response).is_err() {
-                tracing::debug!(task_id = %task_id, "Client disconnected before final PUT result sent");
-            }
+            let _ = update_tx.send(response);
         }
     });
 
