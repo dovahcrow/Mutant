@@ -60,6 +60,7 @@ pub struct MutantClient {
 impl MutantClient {
     /// Creates a new client instance but does not connect yet.
     pub fn new() -> Self {
+        info!("Creating new MutantClient instance");
         Self {
             sender: None,
             receiver: None,
@@ -72,6 +73,7 @@ impl MutantClient {
 
     /// Establishes a WebSocket connection to the Mutant Daemon.
     pub async fn connect(&mut self, addr: &str) -> Result<(), ClientError> {
+        info!("Attempting to connect to {}", addr);
         if self.sender.is_some() {
             warn!("Already connected or connecting.");
             return Ok(());
@@ -83,9 +85,11 @@ impl MutantClient {
         *self.state.lock().unwrap() = ConnectionState::Connecting;
 
         let options = ewebsock::Options::default();
+        info!("Establishing WebSocket connection...");
         let (sender, receiver) = ewebsock::connect(url.as_str(), options)
             .map_err(|e| ClientError::WebSocketError(e.to_string()))?;
 
+        info!("WebSocket connection established successfully");
         self.sender = Some(sender);
         self.receiver = Some(receiver);
 
@@ -101,13 +105,13 @@ impl MutantClient {
         pending_task_creation: &PendingTaskCreationSender,
         pending_task_list: &PendingTaskListSender,
     ) {
-        debug!("Processing server response: {:?}", response);
+        info!("Processing server response: {:?}", response);
 
         match response {
             Response::TaskCreated(TaskCreatedResponse { task_id }) => {
-                debug!("Processing TaskCreated response for task {}", task_id);
+                info!("Task created with ID: {}", task_id);
                 if let Some(sender) = pending_task_creation.lock().unwrap().take() {
-                    debug!("Found pending task creation sender for TaskId: {}", task_id);
+                    info!("Found pending task creation sender for TaskId: {}", task_id);
                     if sender.send(Ok(task_id)).is_err() {
                         warn!("Failed to send TaskCreated response to waiting future (receiver dropped?)");
                     }
@@ -123,25 +127,23 @@ impl MutantClient {
                 status,
                 progress,
             }) => {
-                debug!(
-                    "Processing TaskUpdate response for task {} with status {:?}",
-                    task_id, status
+                info!(
+                    "Task {} updated - Status: {:?}, Progress: {:?}",
+                    task_id, status, progress
                 );
                 let mut tasks_guard = tasks.lock().unwrap();
                 if let Some(task) = tasks_guard.get_mut(&task_id) {
-                    debug!(
-                        "Found existing task {}, updating status and progress",
-                        task_id
+                    info!(
+                        "Updating existing task {} - New status: {:?}",
+                        task_id, status
                     );
                     task.status = status;
                     task.progress = progress.clone();
-                    info!("Task {} updated: {:?}", task_id, task.status);
                     if let Some(ref progress) = progress {
-                        debug!("Task {} progress updated: {:?}", task_id, progress);
+                        info!("Task {} progress updated: {:?}", task_id, progress);
                     }
                 } else {
-                    debug!("Creating new task entry for unknown task {}", task_id);
-                    warn!("Received update for unknown task: {}", task_id);
+                    info!("Creating new task entry for unknown task {}", task_id);
                     tasks_guard.insert(
                         task_id,
                         Task {
@@ -159,18 +161,22 @@ impl MutantClient {
                 status,
                 result,
             }) => {
+                info!(
+                    "Received task result - ID: {}, Status: {:?}, Result: {:?}",
+                    task_id, status, result
+                );
                 let mut tasks_guard = tasks.lock().unwrap();
                 if let Some(task) = tasks_guard.get_mut(&task_id) {
+                    info!("Updating task {} with final result", task_id);
                     task.status = status;
                     task.result = result.clone();
-                    info!("Task {} finished: {:?}", task_id, task.status);
                 } else {
-                    warn!("Received result for unknown/untracked task: {}", task_id);
+                    info!("Creating new task entry for completed task {}", task_id);
                     tasks_guard.insert(
                         task_id,
                         Task {
                             id: task_id,
-                            task_type: TaskType::Get, // Unknown
+                            task_type: TaskType::Get,
                             status,
                             result,
                             progress: None,
@@ -179,42 +185,30 @@ impl MutantClient {
                 }
             }
             Response::TaskList(TaskListResponse { tasks: task_list }) => {
-                // Check if we were waiting for this
+                info!("Received task list with {} tasks", task_list.len());
                 if let Some(sender) = pending_task_list.lock().unwrap().take() {
-                    debug!(
-                        "Received expected TaskList response ({} tasks)",
-                        task_list.len()
-                    );
+                    info!("Sending task list to waiting receiver");
                     if sender.send(Ok(task_list)).is_err() {
-                        warn!("Failed to send TaskList response to waiting future (receiver dropped?)");
+                        warn!("Failed to send TaskList response (receiver dropped)");
                     }
                 } else {
-                    warn!("Received TaskList but no request was pending.");
+                    warn!("Received TaskList but no request was pending");
                 }
             }
             Response::Error(ErrorResponse {
                 error,
                 original_request,
             }) => {
-                // Check if this error corresponds to a pending request
+                error!(
+                    "Server error received: {}. Original request: {:?}",
+                    error, original_request
+                );
                 if let Some(sender) = pending_task_creation.lock().unwrap().take() {
-                    warn!(
-                        "Received Error response while waiting for TaskCreated: {}",
-                        error
-                    );
-                    let _ = sender.send(Err(ClientError::ServerError(error)));
+                    error!("Error occurred during task creation: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
                 } else if let Some(sender) = pending_task_list.lock().unwrap().take() {
-                    warn!(
-                        "Received Error response while waiting for TaskList: {}",
-                        error
-                    );
-                    let _ = sender.send(Err(ClientError::ServerError(error)));
-                } else {
-                    // Generic error, not tied to a specific pending request we are handling here
-                    error!(
-                        "Received server error: {}. Original request: {:?}",
-                        error, original_request
-                    );
+                    error!("Error occurred during task list request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
                 }
             }
         }
@@ -222,12 +216,20 @@ impl MutantClient {
 
     /// Sends a request over the WebSocket.
     async fn send_request(&mut self, request: Request) -> Result<(), ClientError> {
-        let sender = self.sender.as_mut().ok_or(ClientError::NotConnected)?;
+        info!("Preparing to send request: {:?}", request);
+        let sender = self.sender.as_mut().ok_or_else(|| {
+            error!("Attempted to send request while not connected");
+            ClientError::NotConnected
+        })?;
 
-        let json =
-            serde_json::to_string(&request).map_err(|e| ClientError::SerializationError(e))?;
+        let json = serde_json::to_string(&request).map_err(|e| {
+            error!("Failed to serialize request: {}", e);
+            ClientError::SerializationError(e)
+        })?;
 
+        info!("Sending request to server");
         sender.send(ewebsock::WsMessage::Text(json));
+        info!("Request sent successfully");
 
         Ok(())
     }
@@ -237,8 +239,9 @@ impl MutantClient {
     // A simple request/response map or channels might be needed.
 
     pub async fn put(&mut self, user_key: &str, data: &[u8]) -> Result<TaskId, ClientError> {
-        // Ensure only one put/get request is pending
+        info!("Starting put operation for key: {}", user_key);
         if self.pending_task_creation.lock().unwrap().is_some() {
+            error!("Another put/get request is already pending");
             return Err(ClientError::InternalError(
                 "Another put/get request is already pending".to_string(),
             ));
@@ -248,6 +251,8 @@ impl MutantClient {
         *self.pending_task_creation.lock().unwrap() = Some(sender);
 
         let data_b64 = BASE64_STANDARD.encode(data);
+        info!("Encoded {} bytes of data to base64", data.len());
+
         let req = Request::Put(mutant_protocol::PutRequest {
             user_key: user_key.to_string(),
             data_b64,
@@ -255,13 +260,14 @@ impl MutantClient {
 
         match self.send_request(req).await {
             Ok(_) => {
-                debug!("Put request sent, waiting for TaskCreated response...");
+                info!("Put request sent, waiting for response...");
                 receiver.await.map_err(|_| {
+                    error!("TaskCreated channel canceled");
                     ClientError::InternalError("TaskCreated channel canceled".to_string())
                 })?
             }
             Err(e) => {
-                // Request failed, clear the pending sender
+                error!("Failed to send put request: {:?}", e);
                 *self.pending_task_creation.lock().unwrap() = None;
                 Err(e)
             }
