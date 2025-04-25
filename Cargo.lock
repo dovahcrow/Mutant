@@ -4358,6 +4358,7 @@ dependencies = [
  "colored",
  "mutant-client",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

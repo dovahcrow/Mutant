@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Modified pad confirmation retry logic to use a total time budget instead of fixed retries and sleep.
 - Refactored mutant-cli to use the new mutant-client library
 - Implemented basic task list functionality in mutant-cli
+- Improved mutant-cli subcommands structure:
+  - Simplified `put` command syntax: `mutant put <key> <file>`
+  - Added `tasks` subcommand with `list` and `get` operations
+  - Better organization of task-related operations
 
 ### Added
 - Added integration test (`test_generated_pad_counter_increment`) to verify scratchpad counter increments correctly on successive writes to generated pads.
