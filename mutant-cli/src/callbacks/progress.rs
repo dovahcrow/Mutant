@@ -7,6 +7,7 @@ pub struct StyledProgressBar {
 impl StyledProgressBar {
     pub fn new_for_steps(multi_progress: &MultiProgress) -> Self {
         let pb = multi_progress.add(ProgressBar::new(100));
+        pb.enable_steady_tick(std::time::Duration::from_millis(100));
         pb.set_style(
             ProgressStyle::default_bar()
                 .template(

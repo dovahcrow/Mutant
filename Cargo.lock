@@ -4370,7 +4370,6 @@ dependencies = [
  "indicatif",
  "log",
  "mutant-client",
- "mutant-lib",
  "mutant-protocol",
  "tokio",
  "uuid",

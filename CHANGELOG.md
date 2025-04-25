@@ -28,10 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Better organization of task-related operations
 - Removed unused tokio-tungstenite and futures-util dependencies from mutant-client
 - Enhanced logging in mutant-client for better visibility of operations and task progress
-- Enhance logging in CLI and callbacks for better operation visibility
-  - Add detailed logging for progress bar creation and updates
-  - Improve logging messages for task progress tracking
-  - Add logging for all major operations in put callbacks
 
 ### Added
 - Added integration test (`test_generated_pad_counter_increment`) to verify scratchpad counter increments correctly on successive writes to generated pads.

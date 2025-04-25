@@ -1,5 +1,7 @@
 // This file will contain the client library implementation
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Mutex;
 use std::{collections::HashMap, sync::Arc}; // Use std Mutex for simplicity, can switch to tokio::sync::Mutex if needed later
 
@@ -8,8 +10,8 @@ use url::Url;
 
 use mutant_protocol::{
     ErrorResponse, ListTasksRequest, QueryTaskRequest, Request, Response, Task,
-    TaskCreatedResponse, TaskId, TaskListEntry, TaskListResponse, TaskResultResponse, TaskStatus,
-    TaskType, TaskUpdateResponse,
+    TaskCreatedResponse, TaskId, TaskListEntry, TaskListResponse, TaskProgress, TaskResult,
+    TaskResultResponse, TaskStatus, TaskType, TaskUpdateResponse,
 };
 // use tokio::sync::RwLock; // Removed this - using Rc<RefCell<>> for WASM
 
@@ -55,6 +57,11 @@ pub struct MutantClient {
     state: Arc<Mutex<ConnectionState>>,
 }
 
+type CompletionReceiver = oneshot::Receiver<Result<TaskResult, ClientError>>;
+type ProgressReceiver = tokio::sync::mpsc::UnboundedReceiver<Result<TaskProgress, ClientError>>;
+
+type CompletionSender = oneshot::Sender<Result<TaskResult, ClientError>>;
+type ProgressSender = tokio::sync::mpsc::UnboundedSender<Result<TaskProgress, ClientError>>;
 // enum ConnectionState { Connecting, Open, Closed(Option<String>), Error(String) }
 
 impl MutantClient {
@@ -238,7 +245,11 @@ impl MutantClient {
     // These need rethinking for WASM's async/callback model.
     // A simple request/response map or channels might be needed.
 
-    pub async fn put(&mut self, user_key: &str, data: &[u8]) -> Result<TaskId, ClientError> {
+    pub async fn put(
+        &mut self,
+        user_key: &str,
+        data: &[u8],
+    ) -> Result<(CompletionReceiver, ProgressReceiver), ClientError> {
         info!("Starting put operation for key: {}", user_key);
         if self.pending_task_creation.lock().unwrap().is_some() {
             error!("Another put/get request is already pending");
@@ -249,6 +260,9 @@ impl MutantClient {
 
         let (sender, receiver) = oneshot::channel();
         *self.pending_task_creation.lock().unwrap() = Some(sender);
+
+        let (progress_sender, progress_receiver) = tokio::sync::mpsc::unbounded();
+        *self.pending_task_progress.lock().unwrap() = Some(progress_sender);
 
         let data_b64 = BASE64_STANDARD.encode(data);
         info!("Encoded {} bytes of data to base64", data.len());
@@ -336,52 +350,54 @@ impl MutantClient {
 
     pub async fn next_response(&mut self) -> Option<Result<Response, ClientError>> {
         if let Some(receiver) = &mut self.receiver {
-            match receiver.try_recv() {
-                Some(event) => {
-                    debug!("Received WebSocket event: {:?}", event);
-                    match event {
-                        ewebsock::WsEvent::Message(msg) => {
-                            if let ewebsock::WsMessage::Text(text) = msg {
-                                debug!("Received WebSocket text message: {}", text);
-                                match serde_json::from_str::<Response>(&text) {
-                                    Ok(response) => {
-                                        debug!(
-                                            "Successfully deserialized response: {:?}",
-                                            response
-                                        );
-                                        Self::process_response(
-                                            response.clone(),
-                                            &self.tasks,
-                                            &self.pending_task_creation,
-                                            &self.pending_task_list,
-                                        );
-                                        Some(Ok(response))
+            loop {
+                match receiver.try_recv() {
+                    Some(event) => {
+                        debug!("Received WebSocket event: {:?}", event);
+                        match event {
+                            ewebsock::WsEvent::Message(msg) => {
+                                if let ewebsock::WsMessage::Text(text) = msg {
+                                    debug!("Received WebSocket text message: {}", text);
+                                    match serde_json::from_str::<Response>(&text) {
+                                        Ok(response) => {
+                                            debug!(
+                                                "Successfully deserialized response: {:?}",
+                                                response
+                                            );
+                                            Self::process_response(
+                                                response.clone(),
+                                                &self.tasks,
+                                                &self.pending_task_creation,
+                                                &self.pending_task_list,
+                                            );
+                                            return Some(Ok(response));
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to deserialize response: {}", e);
+                                            return Some(Err(ClientError::DeserializationError(e)));
+                                        }
                                     }
-                                    Err(e) => {
-                                        error!("Failed to deserialize response: {}", e);
-                                        Some(Err(ClientError::DeserializationError(e)))
-                                    }
+                                } else {
+                                    debug!("Received non-text WebSocket message");
                                 }
-                            } else {
-                                debug!("Received non-text WebSocket message");
-                                None
+                            }
+                            ewebsock::WsEvent::Error(e) => {
+                                error!("WebSocket error: {}", e);
+                                return Some(Err(ClientError::WebSocketError(e.to_string())));
+                            }
+                            ewebsock::WsEvent::Closed => {
+                                debug!("WebSocket connection closed");
+                                return None;
+                            }
+                            ewebsock::WsEvent::Opened => {
+                                debug!("WebSocket connection opened");
                             }
                         }
-                        ewebsock::WsEvent::Error(e) => {
-                            error!("WebSocket error: {}", e);
-                            Some(Err(ClientError::WebSocketError(e.to_string())))
-                        }
-                        ewebsock::WsEvent::Closed => {
-                            debug!("WebSocket connection closed");
-                            None
-                        }
-                        ewebsock::WsEvent::Opened => {
-                            debug!("WebSocket connection opened");
-                            None
-                        }
+                    }
+                    None => {
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                     }
                 }
-                None => None,
             }
         } else {
             None

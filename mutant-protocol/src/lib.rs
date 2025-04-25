@@ -292,44 +292,44 @@ pub enum Request {
 
 // --- Outgoing Responses ---
 
-#[derive(Serialize, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Serialize, Debug, PartialEq, Eq, Deserialize, Clone)]
 pub struct TaskCreatedResponse {
     pub task_id: Uuid,
 }
 
-#[derive(Serialize, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Serialize, Debug, PartialEq, Eq, Deserialize, Clone)]
 pub struct TaskUpdateResponse {
     pub task_id: Uuid,
     pub status: TaskStatus,
     pub progress: Option<TaskProgress>,
 }
 
-#[derive(Serialize, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Serialize, Debug, PartialEq, Eq, Deserialize, Clone)]
 pub struct TaskResultResponse {
     pub task_id: Uuid,
     pub status: TaskStatus,
     pub result: Option<TaskResult>,
 }
 
-#[derive(Serialize, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Serialize, Debug, PartialEq, Eq, Deserialize, Clone)]
 pub struct TaskListEntry {
     pub task_id: Uuid,
     pub task_type: TaskType,
     pub status: TaskStatus,
 }
 
-#[derive(Serialize, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Serialize, Debug, PartialEq, Eq, Deserialize, Clone)]
 pub struct TaskListResponse {
     pub tasks: Vec<TaskListEntry>,
 }
 
-#[derive(Serialize, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Serialize, Debug, PartialEq, Eq, Deserialize, Clone)]
 pub struct ErrorResponse {
     pub error: String,
     pub original_request: Option<String>,
 }
 
-#[derive(Serialize, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Serialize, Debug, PartialEq, Eq, Deserialize, Clone)]
 #[serde(tag = "type")]
 pub enum Response {
     TaskCreated(TaskCreatedResponse),
