@@ -37,8 +37,24 @@ pub enum TaskStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TaskProgress {
-    pub message: String,
+pub enum TaskProgress {
+    Put(PutProgressEvent),
+    // Legacy format for backward compatibility
+    Legacy { message: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PutProgressEvent {
+    Starting {
+        total_chunks: usize,
+        initial_written_count: usize,
+        initial_confirmed_count: usize,
+        chunks_to_reserve: usize,
+    },
+    PadReserved,
+    PadsWritten,
+    PadsConfirmed,
+    Complete,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

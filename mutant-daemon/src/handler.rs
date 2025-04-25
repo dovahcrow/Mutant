@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
@@ -5,16 +7,16 @@ use futures_util::{
     sink::SinkExt,
     stream::{SplitSink, StreamExt},
 };
-use mutant_lib::{MutAnt, storage::StorageMode};
+use mutant_lib::{MutAnt, error::Error as LibError, events::PutEvent, storage::StorageMode};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use warp::ws::{Message, WebSocket};
 
 use crate::{TaskMap, error::DaemonError};
 use mutant_protocol::{
-    ErrorResponse, GetRequest, ListTasksRequest, PutRequest, QueryTaskRequest, Request, Response,
-    Task, TaskCreatedResponse, TaskListEntry, TaskListResponse, TaskProgress, TaskResult,
-    TaskResultResponse, TaskStatus, TaskType, TaskUpdateResponse,
+    ErrorResponse, GetRequest, ListTasksRequest, PutProgressEvent, PutRequest, QueryTaskRequest,
+    Request, Response, Task, TaskCreatedResponse, TaskListEntry, TaskListResponse, TaskProgress,
+    TaskResult, TaskResultResponse, TaskStatus, TaskType, TaskUpdateResponse,
 };
 
 // Helper function to send JSON responses
@@ -156,30 +158,50 @@ async fn handle_put(
     tokio::spawn(async move {
         tracing::info!(task_id = %task_id, user_key = %user_key, "Starting PUT task");
 
-        let send_progress = |msg: &str| {
-            let progress = TaskProgress {
-                message: msg.to_string(),
-            };
-            let update = Response::TaskUpdate(TaskUpdateResponse {
-                task_id,
-                status: TaskStatus::InProgress,
-                progress: Some(progress.clone()),
-            });
-            let _ = update_tx.send(update);
-        };
-
         let mut tasks_guard = tasks.write().await;
         if let Some(task) = tasks_guard.get_mut(&task_id) {
             task.status = TaskStatus::InProgress;
-            send_progress("Initializing PUT operation");
         }
         drop(tasks_guard);
 
-        send_progress("Preparing data for upload");
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        // Create a callback that forwards progress events through the WebSocket
+        let update_tx_clone = update_tx.clone();
+        let task_id_clone = task_id;
+        let callback = Arc::new(move |event: PutEvent| -> Pin<Box<dyn Future<Output = Result<bool, LibError>> + Send + Sync>> {
+            let tx = update_tx_clone.clone();
+            let task_id = task_id_clone;
+            Box::pin(async move {
+                let progress = match event {
+                    PutEvent::Starting {
+                        total_chunks,
+                        initial_written_count,
+                        initial_confirmed_count,
+                        chunks_to_reserve,
+                    } => TaskProgress::Put(PutProgressEvent::Starting {
+                        total_chunks,
+                        initial_written_count,
+                        initial_confirmed_count,
+                        chunks_to_reserve,
+                    }),
+                    PutEvent::PadReserved => TaskProgress::Put(PutProgressEvent::PadReserved),
+                    PutEvent::PadsWritten => TaskProgress::Put(PutProgressEvent::PadsWritten),
+                    PutEvent::PadsConfirmed => TaskProgress::Put(PutProgressEvent::PadsConfirmed),
+                    PutEvent::Complete => TaskProgress::Put(PutProgressEvent::Complete),
+                };
 
-        send_progress("Uploading data to network");
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
+                    task_id,
+                    status: TaskStatus::InProgress,
+                    progress: Some(progress),
+                }));
+
+                Ok(true)
+            })
+        });
+
+        // Set the callback on the mutant instance
+        let mut mutant = (*mutant).clone();
+        mutant.set_put_callback(callback).await;
 
         let result = mutant
             .put(&user_key, &data_bytes, StorageMode::Medium, false)
@@ -259,7 +281,7 @@ async fn handle_get(
             let mut tasks_guard = tasks.write().await;
             if let Some(task) = tasks_guard.get_mut(&task_id) {
                 task.status = TaskStatus::InProgress;
-                let progress = TaskProgress {
+                let progress = TaskProgress::Legacy {
                     message: "Starting GET operation".to_string(),
                 };
                 task.progress = Some(progress.clone());

@@ -3,6 +3,11 @@
 use std::sync::Mutex;
 use std::{collections::HashMap, sync::Arc}; // Use std Mutex for simplicity, can switch to tokio::sync::Mutex if needed later
 
+use ewebsock::WsMessage;
+use ewebsock::{WsEvent, WsSender};
+use serde_json;
+use url::Url;
+
 use mutant_protocol::{
     ErrorResponse, GetRequest, ListTasksRequest, PutRequest, QueryTaskRequest, Request, Response,
     Task, TaskCreatedResponse, TaskId, TaskListEntry, TaskListResponse, TaskResultResponse,
@@ -11,12 +16,12 @@ use mutant_protocol::{
 // use tokio::sync::RwLock; // Removed this - using Rc<RefCell<>> for WASM
 
 use tracing::{debug, error, info, warn};
-use url::Url;
 
 // Base64 engine
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 
 use futures::channel::oneshot;
+use futures_util::StreamExt;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::spawn_local;
@@ -24,13 +29,9 @@ use wasm_bindgen_futures::spawn_local;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::spawn;
 
-mod message;
-
-use crate::error::Error;
-use crate::message::{Message, MessageType};
-
 pub mod error;
-pub use error::ClientError;
+
+use crate::error::{ClientError, Error};
 
 // Shared state for tasks managed by the client (using Arc<Mutex> for thread safety)
 type ClientTaskMap = Arc<Mutex<HashMap<TaskId, Task>>>;
@@ -48,7 +49,6 @@ enum ConnectionState {
     Disconnected,
     Connecting,
     Connected,
-    Error(String),
 }
 
 /// A client for interacting with the Mutant Daemon over WebSocket (Cross-platform implementation).
@@ -220,14 +220,14 @@ impl MutantClient {
 
     /// Sends a request over the WebSocket.
     async fn send_request(&mut self, request: Request) -> Result<(), ClientError> {
-        if let Some(sender) = &mut self.sender {
-            let json =
-                serde_json::to_string(&request).map_err(|e| ClientError::SerializationError(e))?;
-            sender.send(ewebsock::WsMessage::Text(json));
-            Ok(())
-        } else {
-            Err(ClientError::NotConnected)
-        }
+        let sender = self.sender.as_mut().ok_or(ClientError::NotConnected)?;
+
+        let json =
+            serde_json::to_string(&request).map_err(|e| ClientError::SerializationError(e))?;
+
+        sender.send(ewebsock::WsMessage::Text(json));
+
+        Ok(())
     }
 
     // --- Public API Methods ---

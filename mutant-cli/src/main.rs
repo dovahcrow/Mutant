@@ -3,7 +3,7 @@ use clap::Parser;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use mutant_client::MutantClient;
-use mutant_protocol::{Response, TaskStatus, TaskType};
+use mutant_protocol::{PutProgressEvent, Response, TaskProgress, TaskStatus, TaskType};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -70,7 +70,36 @@ async fn main() -> Result<()> {
                         if let Response::TaskUpdate(update) = response {
                             if update.task_id == task_id {
                                 if let Some(progress) = update.progress {
-                                    let _ = tx.send(progress.message).await;
+                                    match progress {
+                                        TaskProgress::Legacy { message } => {
+                                            let _ = tx.send(message).await;
+                                        }
+                                        TaskProgress::Put(event) => {
+                                            let message = match event {
+                                                PutProgressEvent::Starting {
+                                                    total_chunks,
+                                                    initial_written_count,
+                                                    initial_confirmed_count,
+                                                    chunks_to_reserve,
+                                                } => {
+                                                    format!("Starting upload: {} chunks total, {} written, {} confirmed, {} to reserve", total_chunks, initial_written_count, initial_confirmed_count, chunks_to_reserve)
+                                                }
+                                                PutProgressEvent::PadReserved => {
+                                                    "Pad space reserved".to_string()
+                                                }
+                                                PutProgressEvent::PadsWritten => {
+                                                    "Pads written".to_string()
+                                                }
+                                                PutProgressEvent::PadsConfirmed => {
+                                                    "Pads confirmed".to_string()
+                                                }
+                                                PutProgressEvent::Complete => {
+                                                    "Upload complete".to_string()
+                                                }
+                                            };
+                                            let _ = tx.send(message).await;
+                                        }
+                                    }
                                 }
                             }
                         } else if let Response::TaskResult(result) = response {
