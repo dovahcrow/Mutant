@@ -15,12 +15,13 @@ use mutant_protocol::{
 };
 // use tokio::sync::RwLock; // Removed this - using Rc<RefCell<>> for WASM
 
-use tracing::{debug, error, info, warn};
+use log::{debug, error, info, warn};
 
 // Base64 engine
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 
 use futures::channel::oneshot;
+use tokio::sync::mpsc;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::spawn_local;
@@ -40,6 +41,15 @@ type PendingTaskCreationSender = Arc<Mutex<Option<oneshot::Sender<Result<TaskId,
 type PendingTaskListSender =
     Arc<Mutex<Option<oneshot::Sender<Result<Vec<TaskListEntry>, ClientError>>>>>;
 
+pub type CompletionReceiver = oneshot::Receiver<Result<TaskResult, ClientError>>;
+pub type ProgressReceiver = mpsc::UnboundedReceiver<Result<TaskProgress, ClientError>>;
+
+type CompletionSender = oneshot::Sender<Result<TaskResult, ClientError>>;
+type ProgressSender = mpsc::UnboundedSender<Result<TaskProgress, ClientError>>;
+
+type TaskChannels = (CompletionSender, ProgressSender);
+type TaskChannelsMap = Arc<Mutex<HashMap<TaskId, TaskChannels>>>;
+
 #[derive(Debug, Clone, PartialEq)]
 enum ConnectionState {
     Disconnected,
@@ -52,17 +62,11 @@ pub struct MutantClient {
     sender: Option<ewebsock::WsSender>,
     receiver: Option<ewebsock::WsReceiver>,
     tasks: ClientTaskMap,
+    task_channels: TaskChannelsMap,
     pending_task_creation: PendingTaskCreationSender,
     pending_task_list: PendingTaskListSender,
     state: Arc<Mutex<ConnectionState>>,
 }
-
-type CompletionReceiver = oneshot::Receiver<Result<TaskResult, ClientError>>;
-type ProgressReceiver = tokio::sync::mpsc::UnboundedReceiver<Result<TaskProgress, ClientError>>;
-
-type CompletionSender = oneshot::Sender<Result<TaskResult, ClientError>>;
-type ProgressSender = tokio::sync::mpsc::UnboundedSender<Result<TaskProgress, ClientError>>;
-// enum ConnectionState { Connecting, Open, Closed(Option<String>), Error(String) }
 
 impl MutantClient {
     /// Creates a new client instance but does not connect yet.
@@ -72,6 +76,7 @@ impl MutantClient {
             sender: None,
             receiver: None,
             tasks: Arc::new(Mutex::new(HashMap::new())),
+            task_channels: Arc::new(Mutex::new(HashMap::new())),
             pending_task_creation: Arc::new(Mutex::new(None)),
             pending_task_list: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
@@ -102,6 +107,25 @@ impl MutantClient {
 
         *self.state.lock().unwrap() = ConnectionState::Connected;
 
+        let mut client_clone = self.clone();
+        #[cfg(target_arch = "wasm32")]
+        spawn_local(async move {
+            while let Some(response) = client_clone.next_response().await {
+                if let Err(e) = response {
+                    error!("Error processing response: {:?}", e);
+                }
+            }
+        });
+
+        #[cfg(not(target_arch = "wasm32"))]
+        tokio::spawn(async move {
+            while let Some(response) = client_clone.next_response().await {
+                if let Err(e) = response {
+                    error!("Error processing response: {:?}", e);
+                }
+            }
+        });
+
         Ok(())
     }
 
@@ -109,6 +133,7 @@ impl MutantClient {
     fn process_response(
         response: Response,
         tasks: &ClientTaskMap,
+        task_channels: &TaskChannelsMap,
         pending_task_creation: &PendingTaskCreationSender,
         pending_task_list: &PendingTaskListSender,
     ) {
@@ -146,8 +171,13 @@ impl MutantClient {
                     );
                     task.status = status;
                     task.progress = progress.clone();
-                    if let Some(ref progress) = progress {
+
+                    if let Some(progress) = progress {
                         info!("Task {} progress updated: {:?}", task_id, progress);
+                        if let Some((_, progress_tx)) = task_channels.lock().unwrap().get(&task_id)
+                        {
+                            let _ = progress_tx.send(Ok(progress));
+                        }
                     }
                 } else {
                     info!("Creating new task entry for unknown task {}", task_id);
@@ -177,6 +207,14 @@ impl MutantClient {
                     info!("Updating task {} with final result", task_id);
                     task.status = status;
                     task.result = result.clone();
+
+                    if let Some((completion_tx, _)) = task_channels.lock().unwrap().remove(&task_id)
+                    {
+                        let _ = completion_tx.send(Ok(result.unwrap_or_else(|| TaskResult {
+                            data: None,
+                            error: None,
+                        })));
+                    }
                 } else {
                     info!("Creating new task entry for completed task {}", task_id);
                     tasks_guard.insert(
@@ -251,18 +289,12 @@ impl MutantClient {
         data: &[u8],
     ) -> Result<(CompletionReceiver, ProgressReceiver), ClientError> {
         info!("Starting put operation for key: {}", user_key);
-        if self.pending_task_creation.lock().unwrap().is_some() {
-            error!("Another put/get request is already pending");
-            return Err(ClientError::InternalError(
-                "Another put/get request is already pending".to_string(),
-            ));
-        }
 
-        let (sender, receiver) = oneshot::channel();
-        *self.pending_task_creation.lock().unwrap() = Some(sender);
+        let (completion_tx, completion_rx) = oneshot::channel();
+        let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
-        let (progress_sender, progress_receiver) = tokio::sync::mpsc::unbounded();
-        *self.pending_task_progress.lock().unwrap() = Some(progress_sender);
+        let (task_creation_tx, task_creation_rx) = oneshot::channel();
+        *self.pending_task_creation.lock().unwrap() = Some(task_creation_tx);
 
         let data_b64 = BASE64_STANDARD.encode(data);
         info!("Encoded {} bytes of data to base64", data.len());
@@ -274,11 +306,19 @@ impl MutantClient {
 
         match self.send_request(req).await {
             Ok(_) => {
-                info!("Put request sent, waiting for response...");
-                receiver.await.map_err(|_| {
+                info!("Put request sent, waiting for TaskCreated response...");
+                let task_id = task_creation_rx.await.map_err(|_| {
                     error!("TaskCreated channel canceled");
                     ClientError::InternalError("TaskCreated channel canceled".to_string())
-                })?
+                })??;
+
+                info!("Task created with ID: {}, setting up channels", task_id);
+                self.task_channels
+                    .lock()
+                    .unwrap()
+                    .insert(task_id, (completion_tx, progress_tx));
+
+                Ok((completion_rx, progress_rx))
             }
             Err(e) => {
                 error!("Failed to send put request: {:?}", e);
@@ -367,6 +407,7 @@ impl MutantClient {
                                             Self::process_response(
                                                 response.clone(),
                                                 &self.tasks,
+                                                &self.task_channels,
                                                 &self.pending_task_creation,
                                                 &self.pending_task_list,
                                             );
@@ -429,6 +470,7 @@ impl Clone for MutantClient {
             sender: None,
             receiver: None,
             tasks: self.tasks.clone(),
+            task_channels: self.task_channels.clone(),
             pending_task_creation: self.pending_task_creation.clone(),
             pending_task_list: self.pending_task_list.clone(),
             state: self.state.clone(),

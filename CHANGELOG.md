@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Refactored mutant-client to support parallel task execution:
+  - Added task-specific channels for progress and completion events
+  - Improved progress tracking and error handling
+  - Better separation of concerns between task management and WebSocket communication
+  - Simplified client API with clear completion and progress handling
+  - Enhanced CLI to use the new parallel task execution features
+
 ### Fixed
 - Fix write pipeline deadlock: Ensure main pipeline tasks (`put_private_pads`, `confirm_private_pads`) don't hold sender handles needed by each other's receiver loops by passing clones into the tasks and removing explicit drops within them.
 - Fix process hang by ensuring concurrent write/confirm tasks terminate using MPSC channels.
@@ -47,6 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Support for multiple wallets (one per network)
   - Automatic ANT wallet scanning and selection
   - Interactive wallet selection when multiple wallets are found
+- Added background task in MutantClient to process WebSocket responses continuously
 
 ## [0.4.2] - UNRELEASED
 
