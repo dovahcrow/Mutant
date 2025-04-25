@@ -44,12 +44,12 @@ async fn handle_put(key: String, file: String) -> Result<()> {
 
     let mut client = connect_to_daemon().await?;
 
-    let (completion_rx, progress_rx) = client.put(&key, &data).await?;
+    let (start_task, progress_rx) = client.put(&key, &data).await?;
 
     callbacks::put::create_put_progress(progress_rx);
 
-    match completion_rx.await {
-        Ok(Ok(result)) => {
+    match start_task.await {
+        Ok(result) => {
             if let Some(error) = result.error {
                 error!("Upload failed: {}", error);
                 eprintln!("{} {}", "Error:".bright_red(), error);
@@ -58,13 +58,9 @@ async fn handle_put(key: String, file: String) -> Result<()> {
                 println!("{} Upload complete!", "•".bright_green());
             }
         }
-        Ok(Err(e)) => {
+        Err(e) => {
             error!("Task failed: {:?}", e);
             eprintln!("{} Task failed: {}", "Error:".bright_red(), e);
-        }
-        Err(e) => {
-            error!("Completion channel error: {:?}", e);
-            eprintln!("{} Completion channel error: {}", "Error:".bright_red(), e);
         }
     }
 

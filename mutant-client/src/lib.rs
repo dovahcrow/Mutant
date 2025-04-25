@@ -297,7 +297,13 @@ impl MutantClient {
         &mut self,
         user_key: &str,
         data: &[u8],
-    ) -> Result<(CompletionReceiver, ProgressReceiver), ClientError> {
+    ) -> Result<
+        (
+            impl Future<Output = Result<TaskResult, ClientError>>,
+            ProgressReceiver,
+        ),
+        ClientError,
+    > {
         info!("Starting put operation for key: {}", user_key);
 
         let (completion_tx, completion_rx) = oneshot::channel();
@@ -314,28 +320,38 @@ impl MutantClient {
             data_b64,
         });
 
-        match self.send_request(req).await {
-            Ok(_) => {
-                info!("Put request sent, waiting for TaskCreated response...");
-                let task_id = task_creation_rx.await.map_err(|_| {
-                    error!("TaskCreated channel canceled");
-                    ClientError::InternalError("TaskCreated channel canceled".to_string())
-                })??;
+        let mut client = self.clone();
 
-                info!("Task created with ID: {}, setting up channels", task_id);
-                self.task_channels
-                    .lock()
-                    .unwrap()
-                    .insert(task_id, (completion_tx, progress_tx));
+        let start_task = async move {
+            match client.send_request(req).await {
+                Ok(_) => {
+                    info!("Put request sent, waiting for TaskCreated response...");
+                    let task_id = task_creation_rx.await.map_err(|_| {
+                        error!("TaskCreated channel canceled");
+                        ClientError::InternalError("TaskCreated channel canceled".to_string())
+                    })??;
 
-                Ok((completion_rx, progress_rx))
+                    info!("Task created with ID: {}, setting up channels", task_id);
+                    client
+                        .task_channels
+                        .lock()
+                        .unwrap()
+                        .insert(task_id, (completion_tx, progress_tx));
+
+                    completion_rx.await.map_err(|_| {
+                        error!("Completion channel canceled");
+                        ClientError::InternalError("Completion channel canceled".to_string())
+                    })?
+                }
+                Err(e) => {
+                    error!("Failed to send put request: {:?}", e);
+                    *client.pending_task_creation.lock().unwrap() = None;
+                    Err(e)
+                }
             }
-            Err(e) => {
-                error!("Failed to send put request: {:?}", e);
-                *self.pending_task_creation.lock().unwrap() = None;
-                Err(e)
-            }
-        }
+        };
+
+        Ok((start_task, progress_rx))
     }
 
     pub async fn get(&mut self, user_key: &str) -> Result<TaskId, ClientError> {
