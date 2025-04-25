@@ -1,38 +1,41 @@
-mod app;
-mod callbacks;
-mod cli;
-mod commands;
-mod history;
+use anyhow::Result;
+use clap::Parser;
+use colored::Colorize;
+use mutant_client::MutantClient;
 
-use env_logger::{Builder, Env};
-use log::{debug, error, info};
-use std::process::ExitCode;
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
 
-use crate::app::run_cli;
+#[derive(clap::Subcommand)]
+enum Commands {
+    List,
+}
 
 #[tokio::main]
-async fn main() -> ExitCode {
-    if let Err(e) = Builder::from_env(Env::default().default_filter_or("error")).try_init() {
-        eprintln!("Failed to initialize logger: {}", e);
-        return ExitCode::FAILURE;
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let mut client = MutantClient::new();
+    client.connect("ws://localhost:3012").await?;
+
+    match cli.command {
+        Commands::List => {
+            let tasks = client.list_tasks().await?;
+
+            for task in tasks {
+                println!(
+                    "{} {} - {} ({})",
+                    "•".bright_green(),
+                    task.task_id,
+                    format!("{:?}", task.task_type).bright_blue(),
+                    format!("{:?}", task.status).bright_yellow()
+                );
+            }
+        }
     }
 
-    debug!("Entering main, calling run_cli...");
-    match run_cli().await {
-        Ok(exit_code) => {
-            debug!("run_cli returned successfully with code: {:?}", exit_code);
-            if exit_code == ExitCode::SUCCESS {
-                info!("MutAnt CLI finished successfully.");
-            } else {
-                error!("MutAnt CLI exited with error: {:?}", exit_code);
-            }
-            exit_code
-        }
-        Err(e) => {
-            debug!("run_cli returned error: {}", e);
-            error!("MutAnt CLI Error: {}", e);
-            eprintln!("Error: {}", e);
-            ExitCode::FAILURE
-        }
-    }
+    Ok(())
 }
