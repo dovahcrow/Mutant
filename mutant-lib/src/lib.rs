@@ -128,7 +128,7 @@ pub mod error {
 }
 pub mod events {
     // pub use crate::api::{ReserveCallback, ReserveEvent};
-    pub use crate::internal_events::{
+    pub use mutant_protocol::{
         GetCallback, GetEvent, InitCallback, InitProgressEvent, PurgeCallback, PurgeEvent,
         PutCallback, PutEvent, SyncCallback, SyncEvent,
     };

@@ -3,7 +3,6 @@ use crate::{
     index::{master_index::MasterIndex, PadInfo, PadStatus},
     internal_events::{
         invoke_get_callback, invoke_purge_callback, invoke_put_callback, invoke_sync_callback,
-        PutCallback, PutEvent,
     },
     network::{Network, NetworkError},
 };
@@ -25,6 +24,8 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 
+use mutant_protocol::{PutCallback, PutEvent};
+
 pub const DATA_ENCODING_MASTER_INDEX: u64 = 0;
 pub const DATA_ENCODING_PRIVATE_DATA: u64 = 1;
 pub const DATA_ENCODING_PUBLIC_INDEX: u64 = 2;
@@ -37,7 +38,7 @@ const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 10);
 
 pub mod storage_mode;
 
-pub use crate::internal_error::Error;
+pub use crate::error::Error;
 
 #[derive(Clone)]
 struct Context {

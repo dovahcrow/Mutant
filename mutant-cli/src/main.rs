@@ -1,11 +1,13 @@
 use anyhow::Result;
 use clap::Parser;
 use colored::Colorize;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::MultiProgress;
 use mutant_client::MutantClient;
-use mutant_protocol::{PutProgressEvent, Response, TaskProgress, TaskStatus, TaskType};
+use mutant_protocol::{PutEvent, Response, TaskProgress, TaskStatus};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+
+mod callbacks;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -49,20 +51,11 @@ async fn main() -> Result<()> {
                 task_id.to_string().bright_blue()
             );
 
-            let pb = ProgressBar::new(100);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template(
-                        "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}% {msg}",
-                    )
-                    .unwrap()
-                    .progress_chars("#>-"),
-            );
+            let multi_progress = MultiProgress::new();
+            let (_res_pb_opt, _upload_pb_opt, _confirm_pb_opt, callback) =
+                callbacks::put::create_put_callback(&multi_progress, false);
 
-            let (tx, mut rx) = mpsc::channel(100);
             let mut client_clone = client.clone();
-            let pb = Arc::new(pb);
-            let pb_clone = pb.clone();
 
             tokio::spawn(async move {
                 while let Some(response) = client_clone.next_response().await {
@@ -71,34 +64,10 @@ async fn main() -> Result<()> {
                             if update.task_id == task_id {
                                 if let Some(progress) = update.progress {
                                     match progress {
-                                        TaskProgress::Legacy { message } => {
-                                            let _ = tx.send(message).await;
-                                        }
                                         TaskProgress::Put(event) => {
-                                            let message = match event {
-                                                PutProgressEvent::Starting {
-                                                    total_chunks,
-                                                    initial_written_count,
-                                                    initial_confirmed_count,
-                                                    chunks_to_reserve,
-                                                } => {
-                                                    format!("Starting upload: {} chunks total, {} written, {} confirmed, {} to reserve", total_chunks, initial_written_count, initial_confirmed_count, chunks_to_reserve)
-                                                }
-                                                PutProgressEvent::PadReserved => {
-                                                    "Pad space reserved".to_string()
-                                                }
-                                                PutProgressEvent::PadsWritten => {
-                                                    "Pads written".to_string()
-                                                }
-                                                PutProgressEvent::PadsConfirmed => {
-                                                    "Pads confirmed".to_string()
-                                                }
-                                                PutProgressEvent::Complete => {
-                                                    "Upload complete".to_string()
-                                                }
-                                            };
-                                            let _ = tx.send(message).await;
+                                            let _ = callback(event).await;
                                         }
+                                        _ => {}
                                     }
                                 }
                             }
@@ -106,11 +75,10 @@ async fn main() -> Result<()> {
                             if result.task_id == task_id {
                                 match result.status {
                                     TaskStatus::Completed => {
-                                        pb_clone.finish_with_message("Upload complete!");
+                                        println!("{} Upload complete!", "•".bright_green());
                                         break;
                                     }
                                     TaskStatus::Failed => {
-                                        pb_clone.abandon_with_message("Upload failed!");
                                         if let Some(result) = result.result {
                                             if let Some(error) = result.error {
                                                 eprintln!("{} {}", "Error:".bright_red(), error);
@@ -124,12 +92,8 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-            });
-
-            while let Some(msg) = rx.recv().await {
-                pb.set_message(msg);
-                pb.inc(10);
-            }
+            })
+            .await?;
         }
         Commands::Tasks { command } => match command {
             TasksCommands::List => {
@@ -149,7 +113,6 @@ async fn main() -> Result<()> {
                 let task_id = uuid::Uuid::parse_str(&task_id)?;
                 client.query_task(task_id).await?;
 
-                // Give a small delay for the response to arrive
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
                 let status = client.get_task_status(task_id);

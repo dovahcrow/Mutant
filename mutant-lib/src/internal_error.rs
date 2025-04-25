@@ -55,4 +55,7 @@ pub enum Error {
     /// Specific error indicating a failure reported by a callback mechanism.
     #[error("Callback failed: {0}")]
     CallbackFailed(String),
+
+    #[error("Callback error: {0}")]
+    CallbackError(String),
 }

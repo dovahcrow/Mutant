@@ -7,16 +7,17 @@ use futures_util::{
     sink::SinkExt,
     stream::{SplitSink, StreamExt},
 };
-use mutant_lib::{MutAnt, error::Error as LibError, events::PutEvent, storage::StorageMode};
+use mutant_lib::{MutAnt, error::Error as LibError, storage::StorageMode};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use warp::ws::{Message, WebSocket};
 
 use crate::{TaskMap, error::DaemonError};
 use mutant_protocol::{
-    ErrorResponse, GetRequest, ListTasksRequest, PutProgressEvent, PutRequest, QueryTaskRequest,
-    Request, Response, Task, TaskCreatedResponse, TaskListEntry, TaskListResponse, TaskProgress,
-    TaskResult, TaskResultResponse, TaskStatus, TaskType, TaskUpdateResponse,
+    ErrorResponse, GetRequest, ListTasksRequest, PutCallback, PutEvent, PutRequest,
+    QueryTaskRequest, Request, Response, Task, TaskCreatedResponse, TaskListEntry,
+    TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskStatus, TaskType,
+    TaskUpdateResponse,
 };
 
 // Helper function to send JSON responses
@@ -167,27 +168,11 @@ async fn handle_put(
         // Create a callback that forwards progress events through the WebSocket
         let update_tx_clone = update_tx.clone();
         let task_id_clone = task_id;
-        let callback = Arc::new(move |event: PutEvent| -> Pin<Box<dyn Future<Output = Result<bool, LibError>> + Send + Sync>> {
+        let callback: PutCallback = Arc::new(move |event: PutEvent| {
             let tx = update_tx_clone.clone();
             let task_id = task_id_clone;
             Box::pin(async move {
-                let progress = match event {
-                    PutEvent::Starting {
-                        total_chunks,
-                        initial_written_count,
-                        initial_confirmed_count,
-                        chunks_to_reserve,
-                    } => TaskProgress::Put(PutProgressEvent::Starting {
-                        total_chunks,
-                        initial_written_count,
-                        initial_confirmed_count,
-                        chunks_to_reserve,
-                    }),
-                    PutEvent::PadReserved => TaskProgress::Put(PutProgressEvent::PadReserved),
-                    PutEvent::PadsWritten => TaskProgress::Put(PutProgressEvent::PadsWritten),
-                    PutEvent::PadsConfirmed => TaskProgress::Put(PutProgressEvent::PadsConfirmed),
-                    PutEvent::Complete => TaskProgress::Put(PutProgressEvent::Complete),
-                };
+                let progress = TaskProgress::Put(event);
 
                 let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
                     task_id,

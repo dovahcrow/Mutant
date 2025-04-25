@@ -4354,10 +4354,13 @@ name = "mutant-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.21.7",
  "clap",
  "colored",
  "indicatif",
+ "log",
  "mutant-client",
+ "mutant-lib",
  "mutant-protocol",
  "tokio",
  "uuid",
@@ -4431,6 +4434,7 @@ dependencies = [
  "indicatif",
  "k256",
  "log",
+ "mutant-protocol",
  "once_cell",
  "pretty_env_logger",
  "rand 0.8.5",

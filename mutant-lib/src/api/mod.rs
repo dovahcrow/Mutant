@@ -5,15 +5,17 @@ use tokio::sync::RwLock;
 
 use crate::{
     data::{storage_mode::StorageMode, Data, SyncResult},
+    error::Error,
     events::{GetCallback, PurgeCallback, SyncCallback},
     index::{
         master_index::{IndexEntry, MasterIndex, StorageStats},
         PadInfo,
     },
-    internal_error::Error,
-    internal_events::PutCallback,
+    internal_events,
     network::{Network, NetworkChoice, DEV_TESTNET_PRIVATE_KEY_HEX},
 };
+
+use mutant_protocol::PutCallback;
 
 /// The main entry point for interacting with the MutAnt distributed storage system.
 ///
