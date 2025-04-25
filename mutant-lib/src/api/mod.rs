@@ -97,6 +97,38 @@ impl MutAnt {
         Ok(Self { index, data })
     }
 
+    pub async fn init_alphanet(private_key_hex: &str) -> Result<Self, Error> {
+        let network_choice = NetworkChoice::Alphanet;
+        let network = Arc::new(Network::new(private_key_hex, network_choice)?);
+        let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
+        let data = Arc::new(RwLock::new(Data::new(
+            network.clone(),
+            index.clone(),
+            None,
+            None,
+            None,
+            None,
+        )));
+
+        Ok(Self { index, data })
+    }
+
+    pub async fn init_public_alphanet() -> Result<Self, Error> {
+        let network_choice = NetworkChoice::Alphanet;
+        let network = Arc::new(Network::new(DEV_TESTNET_PRIVATE_KEY_HEX, network_choice)?);
+        let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
+        let data = Arc::new(RwLock::new(Data::new(
+            network.clone(),
+            index.clone(),
+            None,
+            None,
+            None,
+            None,
+        )));
+
+        Ok(Self { index, data })
+    }
+
     pub async fn set_put_callback(&mut self, callback: PutCallback) {
         self.data.write().await.set_put_callback(callback);
     }

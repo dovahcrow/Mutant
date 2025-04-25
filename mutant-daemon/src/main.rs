@@ -21,6 +21,8 @@ type TaskMap = Arc<RwLock<HashMap<TaskId, Task>>>;
 struct Args {
     #[arg(long)]
     local: bool,
+    #[arg(long)]
+    alphanet: bool,
 }
 
 #[tokio::main]
@@ -41,6 +43,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if args.local {
             tracing::info!("Running in local mode");
             MutAnt::init_local().await
+        } else if args.alphanet {
+            tracing::info!("Running in alphanet mode");
+            MutAnt::init_alphanet(DEV_TESTNET_PRIVATE_KEY_HEX).await
         } else {
             tracing::info!("Running in mainnet mode");
             MutAnt::init_public().await
