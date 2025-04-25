@@ -159,6 +159,7 @@ impl MutantClient {
                             .lock()
                             .unwrap()
                             .insert(task_id, (completion_tx, progress_tx));
+                        println!("TASK CHANNEL OK");
                     }
                     if pending.sender.send(Ok(task_id)).is_err() {
                         warn!("Failed to send TaskCreated response to waiting future (receiver dropped?)");
@@ -181,6 +182,7 @@ impl MutantClient {
                 );
                 let mut tasks_guard = tasks.lock().unwrap();
                 if let Some(task) = tasks_guard.get_mut(&task_id) {
+                    println!("HEEEEEEEEEEEEEEEEEEEEEEEEEEEEERRRRRRRRRRRRE");
                     info!(
                         "Updating existing task {} - New status: {:?}",
                         task_id, status
