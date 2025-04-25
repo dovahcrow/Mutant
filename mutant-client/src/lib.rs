@@ -1,6 +1,7 @@
 // This file will contain the client library implementation
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::sync::Mutex;
+use std::{collections::HashMap, sync::Arc}; // Use std Mutex for simplicity, can switch to tokio::sync::Mutex if needed later
 
 use mutant_protocol::{
     ErrorResponse, GetRequest, ListTasksRequest, PutRequest, QueryTaskRequest, Request, Response,
@@ -11,201 +12,214 @@ use mutant_protocol::{
 
 use tracing::{debug, error, info, warn};
 use url::Url;
-use wasm_bindgen::{prelude::*, JsCast};
-use wasm_bindgen_futures::spawn_local;
-use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
 // Base64 engine
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 
 use futures::channel::oneshot;
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_futures::spawn_local;
+
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::spawn;
+
+mod message;
+
+use crate::error::Error;
+use crate::message::{Message, MessageType};
+
 pub mod error;
 pub use error::ClientError;
 
-// Shared state for tasks managed by the client (using Rc/RefCell for single-threaded WASM)
-type ClientTaskMap = Rc<RefCell<HashMap<TaskId, Task>>>;
+// Shared state for tasks managed by the client (using Arc<Mutex> for thread safety)
+type ClientTaskMap = Arc<Mutex<HashMap<TaskId, Task>>>;
 
-// Type alias for the WebSocket, wrapped for sharing via Rc
-type Ws = Rc<WebSocket>;
+// Remove Ws alias for web_sys::WebSocket
+// type Ws = Rc<WebSocket>;
 
-// Type alias for the pending request senders
-type PendingTaskCreationSender = oneshot::Sender<Result<TaskId, ClientError>>;
-type PendingTaskListSender = oneshot::Sender<Result<Vec<TaskListEntry>, ClientError>>; // Send Result
+// Type alias for the pending request senders (wrapping Option in Mutex for shared access)
+type PendingTaskCreationSender = Arc<Mutex<Option<oneshot::Sender<Result<TaskId, ClientError>>>>>;
+type PendingTaskListSender =
+    Arc<Mutex<Option<oneshot::Sender<Result<Vec<TaskListEntry>, ClientError>>>>>;
 
-/// A client for interacting with the Mutant Daemon over WebSocket (WASM implementation).
-// #[derive(Clone)] // Clone might be tricky with Rc<RefCell> and callbacks
-pub struct MutantClient {
-    ws: Option<Ws>,
-    tasks: ClientTaskMap,
-    // Senders for pending requests expecting a specific response
-    pending_task_creation: Rc<RefCell<Option<PendingTaskCreationSender>>>,
-    pending_task_list: Rc<RefCell<Option<PendingTaskListSender>>>,
-    // Callbacks need to be stored so they aren't dropped
-    _onopen_callback: Option<Closure<dyn FnMut()>>,
-    _onmessage_callback: Option<Closure<dyn FnMut(MessageEvent)>>,
-    _onerror_callback: Option<Closure<dyn FnMut(ErrorEvent)>>,
-    _onclose_callback: Option<Closure<dyn FnMut(CloseEvent)>>,
-    // Channel to signal connection status?
-    // connection_state: Rc<RefCell<ConnectionState>> // Example
+#[derive(Debug, Clone, PartialEq)]
+enum ConnectionState {
+    Disconnected,
+    Connecting,
+    Connected,
+    Error(String),
 }
 
-// enum ConnectionState { Connecting, Open, Closed, Error(String) }
+/// A client for interacting with the Mutant Daemon over WebSocket (Cross-platform implementation).
+pub struct MutantClient {
+    // Replace web_sys::WebSocket with ewebsock sender/receiver
+    // ws: Option<Ws>,
+    sender: Option<ewebsock::WsSender>,
+    // Receiver needs careful handling - maybe store it temporarily during connect?
+    // Or it needs to be moved to the receiving task.
+    // Let's omit receiver from the struct for now, it will be handled by the task.
+    tasks: ClientTaskMap,
+    pending_task_creation: PendingTaskCreationSender,
+    pending_task_list: PendingTaskListSender,
+    // Remove WASM callbacks
+    // _onopen_callback: Option<Closure<dyn FnMut()>>,
+    // _onmessage_callback: Option<Closure<dyn FnMut(MessageEvent)>>,
+    // _onerror_callback: Option<Closure<dyn FnMut(ErrorEvent)>>,
+    // _onclose_callback: Option<Closure<dyn FnMut(CloseEvent)>>,
+
+    // TODO: Maybe add a state field? e.g., Arc<Mutex<ConnectionState>>
+    state: Arc<Mutex<ConnectionState>>,
+}
+
+// enum ConnectionState { Connecting, Open, Closed(Option<String>), Error(String) }
 
 impl MutantClient {
     /// Creates a new client instance but does not connect yet.
     pub fn new() -> Self {
         Self {
-            ws: None,
-            tasks: Rc::new(RefCell::new(HashMap::new())),
-            pending_task_creation: Rc::new(RefCell::new(None)), // Initialize pending senders
-            pending_task_list: Rc::new(RefCell::new(None)),     // Initialize pending senders
-            _onopen_callback: None,
-            _onmessage_callback: None,
-            _onerror_callback: None,
-            _onclose_callback: None,
-            // connection_state: Rc::new(RefCell::new(ConnectionState::Closed)),
+            // ws: None, // Removed
+            sender: None,
+            tasks: Arc::new(Mutex::new(HashMap::new())),
+            pending_task_creation: Arc::new(Mutex::new(None)),
+            pending_task_list: Arc::new(Mutex::new(None)),
+            // Callbacks removed
+            // _onopen_callback: None,
+            // _onmessage_callback: None,
+            // _onerror_callback: None,
+            // _onclose_callback: None,
+            state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
         }
     }
 
     /// Establishes a WebSocket connection to the Mutant Daemon.
     pub async fn connect(&mut self, addr: &str) -> Result<(), ClientError> {
-        if self.ws.is_some() {
+        if self.sender.is_some() {
             warn!("Already connected or connecting.");
-            return Ok(()); // Or return an error?
+            return Ok(());
         }
 
         let url = Url::parse(addr)?;
         info!("Connecting to Mutant Daemon at {}", url);
 
-        // Create WebSocket instance
-        let ws = WebSocket::new(url.as_str())?;
-        ws.set_binary_type(web_sys::BinaryType::Blob); // Or Arraybuffer
-        let ws = Rc::new(ws);
+        *self.state.lock().unwrap() = ConnectionState::Connecting;
 
-        // --- Create Closures for callbacks ---
-        // Need to clone Rc pointers to be moved into closures
-        let tasks_clone_open = self.tasks.clone();
-        // let state_clone_open = self.connection_state.clone();
-        let onopen_callback = Closure::wrap(Box::new(move || {
-            info!("WebSocket connection opened.");
-            // *state_clone_open.borrow_mut() = ConnectionState::Open;
-            // TODO: Handle potential tasks added before connection was fully open?
-        }) as Box<dyn FnMut()>);
+        let options = ewebsock::Options::default();
+        let (sender, receiver) = ewebsock::connect(url.as_str(), options)
+            .map_err(|e| ClientError::WebSocketError(e.to_string()))?;
 
-        // Clone Rc<RefCell<>> for pending senders to move into onmessage
-        let tasks_clone_message = self.tasks.clone();
-        let pending_task_creation_clone = self.pending_task_creation.clone();
-        let pending_task_list_clone = self.pending_task_list.clone();
+        // Store sender for future use
+        self.sender = Some(sender);
 
-        let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
-            match e.data() {
-                data if data.is_string() => {
-                    let text = data.as_string().unwrap();
-                    match serde_json::from_str::<Response>(&text) {
-                        Ok(response) => {
-                            // Pass pending senders to process_response
-                            Self::process_response(
-                                response,
-                                tasks_clone_message.clone(),
-                                pending_task_creation_clone.clone(),
-                                pending_task_list_clone.clone(),
-                            );
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to deserialize server message: {}. Text: {}",
-                                e, text
-                            );
-                        }
-                    }
-                }
-                // Handle binary data if needed later
-                // data if data.instance_of::<web_sys::Blob>().unwrap_or(false) => {
-                //     warn!("Received unexpected binary message (Blob)");
-                // }
-                // data if data.instance_of::<js_sys::ArrayBuffer>().unwrap_or(false) => {
-                //     warn!("Received unexpected binary message (ArrayBuffer)");
-                // }
-                _ => {
-                    warn!("Received non-text message: {:?}", e.data());
-                }
-            }
-        }) as Box<dyn FnMut(MessageEvent)>);
+        // Clone shared state for the receiver task
+        let tasks = self.tasks.clone();
+        let pending_task_creation = self.pending_task_creation.clone();
+        let pending_task_list = self.pending_task_list.clone();
+        let state = self.state.clone();
 
-        // Clone Rc<RefCell<>> for pending senders to potentially clear them on error/close
-        let pending_task_creation_clone_err = self.pending_task_creation.clone();
-        let pending_task_list_clone_err = self.pending_task_list.clone();
-        let onerror_callback = Closure::wrap(Box::new(move |e: ErrorEvent| {
-            error!("WebSocket error: {:?}", e);
-            // Signal error to pending requests
-            if let Some(sender) = pending_task_creation_clone_err.borrow_mut().take() {
-                let _ = sender.send(Err(ClientError::WebSocketError(e.message())));
-            }
-            if let Some(sender) = pending_task_list_clone_err.borrow_mut().take() {
-                let _ = sender.send(Err(ClientError::WebSocketError(e.message())));
-            }
-        }) as Box<dyn FnMut(ErrorEvent)>);
+        // Spawn a task to handle incoming messages
+        #[cfg(target_arch = "wasm32")]
+        spawn_local(async move {
+            Self::handle_receiver_loop(
+                receiver,
+                tasks,
+                pending_task_creation,
+                pending_task_list,
+                state,
+            )
+            .await;
+        });
 
-        let pending_task_creation_clone_close = self.pending_task_creation.clone();
-        let pending_task_list_clone_close = self.pending_task_list.clone();
-        let onclose_callback = Closure::wrap(Box::new(move |e: CloseEvent| {
-            info!(
-                "WebSocket closed: code={}, reason='{}', wasClean={}",
-                e.code(),
-                e.reason(),
-                e.was_clean()
-            );
-            // Signal close to pending requests
-            let close_err = || {
-                Err(ClientError::WebSocketError(format!(
-                    "WebSocket closed: code={}, reason='{}'",
-                    e.code(),
-                    e.reason()
-                )))
-            };
-            if let Some(sender) = pending_task_creation_clone_close.borrow_mut().take() {
-                let _ = sender.send(close_err());
-            }
-            if let Some(sender) = pending_task_list_clone_close.borrow_mut().take() {
-                let _ = sender.send(close_err());
-            }
-        }) as Box<dyn FnMut(CloseEvent)>);
+        #[cfg(not(target_arch = "wasm32"))]
+        spawn(async move {
+            Self::handle_receiver_loop(
+                receiver,
+                tasks,
+                pending_task_creation,
+                pending_task_list,
+                state,
+            )
+            .await;
+        });
 
-        // Attach callbacks
-        ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
-        ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
-        ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
-        ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
-
-        // Store closures so they stay alive
-        self._onopen_callback = Some(onopen_callback);
-        self._onmessage_callback = Some(onmessage_callback);
-        self._onerror_callback = Some(onerror_callback);
-        self._onclose_callback = Some(onclose_callback);
-
-        self.ws = Some(ws);
-        // *self.connection_state.borrow_mut() = ConnectionState::Connecting;
-
-        // Note: Connection happens asynchronously. We return Ok here.
-        // The caller should ideally wait for the onopen event or check state.
         Ok(())
     }
 
-    /// Processes a deserialized response from the server (called from onmessage).
-    /// Needs to take Rc<RefCell<...>> because it's called from a closure.
+    /// Internal function to handle the WebSocket receiver loop
+    async fn handle_receiver_loop(
+        mut receiver: ewebsock::WsReceiver,
+        tasks: ClientTaskMap,
+        pending_task_creation: PendingTaskCreationSender,
+        pending_task_list: PendingTaskListSender,
+        state: Arc<Mutex<ConnectionState>>,
+    ) {
+        while let Some(event) = receiver.try_recv() {
+            match event {
+                ewebsock::WsEvent::Opened => {
+                    info!("WebSocket connection opened");
+                    *state.lock().unwrap() = ConnectionState::Connected;
+                }
+                ewebsock::WsEvent::Message(msg) => {
+                    if let ewebsock::WsMessage::Text(text) = msg {
+                        match serde_json::from_str::<Response>(&text) {
+                            Ok(response) => {
+                                Self::process_response(
+                                    response,
+                                    &tasks,
+                                    &pending_task_creation,
+                                    &pending_task_list,
+                                );
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Failed to deserialize server message: {}. Text: {}",
+                                    e, text
+                                );
+                            }
+                        }
+                    }
+                }
+                ewebsock::WsEvent::Error(e) => {
+                    let err_str = e.to_string();
+                    error!("WebSocket error: {}", err_str);
+                    *state.lock().unwrap() = ConnectionState::Error(err_str.clone());
+                    // Signal error to pending requests
+                    if let Some(sender) = pending_task_creation.lock().unwrap().take() {
+                        let _ = sender.send(Err(ClientError::WebSocketError(err_str.clone())));
+                    }
+                    if let Some(sender) = pending_task_list.lock().unwrap().take() {
+                        let _ = sender.send(Err(ClientError::WebSocketError(err_str)));
+                    }
+                }
+                ewebsock::WsEvent::Closed => {
+                    info!("WebSocket connection closed");
+                    *state.lock().unwrap() = ConnectionState::Disconnected;
+                    // Signal closure to pending requests
+                    if let Some(sender) = pending_task_creation.lock().unwrap().take() {
+                        let _ = sender.send(Err(ClientError::NotConnected));
+                    }
+                    if let Some(sender) = pending_task_list.lock().unwrap().take() {
+                        let _ = sender.send(Err(ClientError::NotConnected));
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Processes a deserialized response from the server
     fn process_response(
         response: Response,
-        tasks: ClientTaskMap,
-        pending_task_creation: Rc<RefCell<Option<PendingTaskCreationSender>>>,
-        pending_task_list: Rc<RefCell<Option<PendingTaskListSender>>>,
+        tasks: &ClientTaskMap,
+        pending_task_creation: &PendingTaskCreationSender,
+        pending_task_list: &PendingTaskListSender,
     ) {
         debug!("Processing server response: {:?}", response);
 
         match response {
-            Response::TaskCreated(res @ TaskCreatedResponse { task_id }) => {
+            Response::TaskCreated(TaskCreatedResponse { task_id }) => {
                 // Check if we were waiting for this
-                if let Some(sender) = pending_task_creation.borrow_mut().take() {
+                if let Some(sender) = pending_task_creation.lock().unwrap().take() {
                     debug!(
                         "Received expected TaskCreated response for TaskId: {}",
                         task_id
@@ -219,21 +233,16 @@ impl MutantClient {
                         task_id
                     );
                 }
-                // Still update the main task map if the task already exists (e.g., from query)
-                // Or should TaskCreated *only* go via oneshot?
-                // Let's assume TaskCreated is *only* for the initial request.
             }
-            Response::TaskUpdate(
-                res @ TaskUpdateResponse {
-                    task_id,
-                    status,
-                    progress,
-                },
-            ) => {
-                let mut tasks_guard = tasks.borrow_mut();
+            Response::TaskUpdate(TaskUpdateResponse {
+                task_id,
+                status,
+                progress,
+            }) => {
+                let mut tasks_guard = tasks.lock().unwrap();
                 if let Some(task) = tasks_guard.get_mut(&task_id) {
                     task.status = status;
-                    task.progress = progress;
+                    task.progress = progress.clone();
                     info!("Task {} updated: {:?}", task_id, task.status);
                 } else {
                     warn!("Received update for unknown task: {}", task_id);
@@ -250,17 +259,15 @@ impl MutantClient {
                     );
                 }
             }
-            Response::TaskResult(
-                res @ TaskResultResponse {
-                    task_id,
-                    status,
-                    result,
-                },
-            ) => {
-                let mut tasks_guard = tasks.borrow_mut();
+            Response::TaskResult(TaskResultResponse {
+                task_id,
+                status,
+                result,
+            }) => {
+                let mut tasks_guard = tasks.lock().unwrap();
                 if let Some(task) = tasks_guard.get_mut(&task_id) {
                     task.status = status;
-                    task.result = result;
+                    task.result = result.clone();
                     info!("Task {} finished: {:?}", task_id, task.status);
                 } else {
                     warn!("Received result for unknown/untracked task: {}", task_id);
@@ -276,9 +283,9 @@ impl MutantClient {
                     );
                 }
             }
-            Response::TaskList(res @ TaskListResponse { tasks: task_list }) => {
+            Response::TaskList(TaskListResponse { tasks: task_list }) => {
                 // Check if we were waiting for this
-                if let Some(sender) = pending_task_list.borrow_mut().take() {
+                if let Some(sender) = pending_task_list.lock().unwrap().take() {
                     debug!(
                         "Received expected TaskList response ({} tasks)",
                         task_list.len()
@@ -290,20 +297,18 @@ impl MutantClient {
                     warn!("Received TaskList but no request was pending.");
                 }
             }
-            Response::Error(
-                res @ ErrorResponse {
-                    error,
-                    original_request,
-                },
-            ) => {
+            Response::Error(ErrorResponse {
+                error,
+                original_request,
+            }) => {
                 // Check if this error corresponds to a pending request
-                if let Some(sender) = pending_task_creation.borrow_mut().take() {
+                if let Some(sender) = pending_task_creation.lock().unwrap().take() {
                     warn!(
                         "Received Error response while waiting for TaskCreated: {}",
                         error
                     );
                     let _ = sender.send(Err(ClientError::ServerError(error)));
-                } else if let Some(sender) = pending_task_list.borrow_mut().take() {
+                } else if let Some(sender) = pending_task_list.lock().unwrap().take() {
                     warn!(
                         "Received Error response while waiting for TaskList: {}",
                         error
@@ -321,24 +326,11 @@ impl MutantClient {
     }
 
     /// Sends a request over the WebSocket.
-    async fn send_request(&self, request: Request) -> Result<(), ClientError> {
-        if let Some(ws) = &self.ws {
-            // Check connection state before sending
-            match ws.ready_state() {
-                WebSocket::OPEN => {
-                    let json = serde_json::to_string(&request)?;
-                    ws.send_with_str(&json)
-                        .map_err(|js_err| ClientError::WebSocketError(format!("{:?}", js_err)))?;
-                    Ok(())
-                }
-                WebSocket::CONNECTING => {
-                    // Could wait or queue, but erroring is simpler for now
-                    Err(ClientError::WebSocketError(
-                        "WebSocket is still connecting".to_string(),
-                    ))
-                }
-                _ => Err(ClientError::NotConnected), // CLOSED or CLOSING
-            }
+    async fn send_request(&mut self, request: Request) -> Result<(), ClientError> {
+        if let Some(sender) = &mut self.sender {
+            let json = serde_json::to_string(&request)?;
+            sender.send(ewebsock::WsMessage::Text(json));
+            Ok(())
         } else {
             Err(ClientError::NotConnected)
         }
@@ -350,14 +342,14 @@ impl MutantClient {
 
     pub async fn put(&mut self, user_key: &str, data: &[u8]) -> Result<TaskId, ClientError> {
         // Ensure only one put/get request is pending
-        if self.pending_task_creation.borrow().is_some() {
+        if self.pending_task_creation.lock().unwrap().is_some() {
             return Err(ClientError::InternalError(
                 "Another put/get request is already pending".to_string(),
             ));
         }
 
         let (sender, receiver) = oneshot::channel();
-        *self.pending_task_creation.borrow_mut() = Some(sender);
+        *self.pending_task_creation.lock().unwrap() = Some(sender);
 
         let data_b64 = BASE64_STANDARD.encode(data);
         let req = Request::Put(mutant_protocol::PutRequest {
@@ -368,28 +360,27 @@ impl MutantClient {
         match self.send_request(req).await {
             Ok(_) => {
                 debug!("Put request sent, waiting for TaskCreated response...");
-                // Wait for the response from the onmessage handler via the oneshot channel
                 receiver.await.map_err(|_| {
                     ClientError::InternalError("TaskCreated channel canceled".to_string())
                 })?
             }
             Err(e) => {
                 // Request failed, clear the pending sender
-                *self.pending_task_creation.borrow_mut() = None;
+                *self.pending_task_creation.lock().unwrap() = None;
                 Err(e)
             }
         }
     }
 
     pub async fn get(&mut self, user_key: &str) -> Result<TaskId, ClientError> {
-        if self.pending_task_creation.borrow().is_some() {
+        if self.pending_task_creation.lock().unwrap().is_some() {
             return Err(ClientError::InternalError(
                 "Another put/get request is already pending".to_string(),
             ));
         }
 
         let (sender, receiver) = oneshot::channel();
-        *self.pending_task_creation.borrow_mut() = Some(sender);
+        *self.pending_task_creation.lock().unwrap() = Some(sender);
 
         let req = Request::Get(mutant_protocol::GetRequest {
             user_key: user_key.to_string(),
@@ -403,21 +394,21 @@ impl MutantClient {
                 })?
             }
             Err(e) => {
-                *self.pending_task_creation.borrow_mut() = None;
+                *self.pending_task_creation.lock().unwrap() = None;
                 Err(e)
             }
         }
     }
 
-    pub async fn list_tasks(&self) -> Result<Vec<TaskListEntry>, ClientError> {
-        if self.pending_task_list.borrow().is_some() {
+    pub async fn list_tasks(&mut self) -> Result<Vec<TaskListEntry>, ClientError> {
+        if self.pending_task_list.lock().unwrap().is_some() {
             return Err(ClientError::InternalError(
                 "Another list_tasks request is already pending".to_string(),
             ));
         }
 
         let (sender, receiver) = oneshot::channel();
-        *self.pending_task_list.borrow_mut() = Some(sender);
+        *self.pending_task_list.lock().unwrap() = Some(sender);
 
         let req = Request::ListTasks(ListTasksRequest);
 
@@ -429,13 +420,13 @@ impl MutantClient {
                 })?
             }
             Err(e) => {
-                *self.pending_task_list.borrow_mut() = None;
+                *self.pending_task_list.lock().unwrap() = None;
                 Err(e)
             }
         }
     }
 
-    pub async fn query_task(&self, task_id: TaskId) -> Result<(), ClientError> {
+    pub async fn query_task(&mut self, task_id: TaskId) -> Result<(), ClientError> {
         // Sends the request, result comes back to onmessage and updates the internal map.
         let req = Request::QueryTask(QueryTaskRequest { task_id });
         self.send_request(req).await
@@ -444,12 +435,17 @@ impl MutantClient {
     // --- Accessor methods for internal state ---
 
     pub fn get_task_status(&self, task_id: TaskId) -> Option<TaskStatus> {
-        self.tasks.borrow().get(&task_id).map(|t| t.status.clone())
+        self.tasks
+            .lock()
+            .unwrap()
+            .get(&task_id)
+            .map(|t| t.status.clone())
     }
 
     pub fn get_task_result(&self, task_id: TaskId) -> Option<mutant_protocol::TaskResult> {
         self.tasks
-            .borrow()
+            .lock()
+            .unwrap()
             .get(&task_id)
             .and_then(|t| t.result.clone())
     }

@@ -1,5 +1,5 @@
 use mutant_protocol::Response;
-use thiserror::Error;
+pub use thiserror::Error;
 use wasm_bindgen::JsValue;
 
 #[derive(Error, Debug)]
@@ -8,7 +8,7 @@ pub enum ClientError {
     ConnectionError(String),
 
     #[error("WebSocket communication error: {0}")]
-    WebSocketError(String), // Use String to capture JsValue error messages
+    WebSocketError(String),
 
     #[error("URL parsing error: {0}")]
     UrlParseError(#[from] url::ParseError),
@@ -19,8 +19,8 @@ pub enum ClientError {
     #[error("JSON deserialization error: {0}")]
     DeserializationError(serde_json::Error),
 
-    #[error("Received message is not valid text: {0:?}")]
-    NonTextMessageReceived(JsValue),
+    #[error("Received message is not valid text: {0}")]
+    NonTextMessageReceived(String),
 
     #[error("Base64 decoding error: {0}")]
     Base64DecodeError(#[from] base64::DecodeError),
