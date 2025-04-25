@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Handles `QueryTask` and `ListTasks` requests.
     - Basic error handling and reporting via WebSocket.
 - Added put command to mutant-cli to store data from files
+- Added wallet management system to mutant-daemon:
+  - Configuration file support in XDG config directory
+  - Command-line private key override option
+  - Proper network choice handling (Mainnet/Devnet/Alphanet)
+  - Persistent wallet configuration
 
 ## [0.4.2] - UNRELEASED
 
