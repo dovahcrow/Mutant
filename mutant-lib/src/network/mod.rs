@@ -25,6 +25,7 @@ use tokio::sync::OnceCell;
 pub enum NetworkChoice {
     Mainnet,
     Devnet,
+    Alphanet,
 }
 
 impl Default for NetworkChoice {

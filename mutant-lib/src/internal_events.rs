@@ -1,13 +1,16 @@
 use mutant_protocol::{
-    GetCallback, GetEvent, InitCallback, InitProgressEvent, PurgeCallback, PurgeEvent, PutCallback,
-    PutEvent, SyncCallback, SyncEvent,
+    GetCallback as ProtocolGetCallback, GetEvent as ProtocolGetEvent,
+    InitCallback as ProtocolInitCallback, InitProgressEvent as ProtocolInitProgressEvent,
+    PurgeCallback as ProtocolPurgeCallback, PurgeEvent as ProtocolPurgeEvent,
+    PutCallback as ProtocolPutCallback, PutEvent as ProtocolPutEvent,
+    SyncCallback as ProtocolSyncCallback, SyncEvent as ProtocolSyncEvent,
 };
 
 use crate::error::Error;
 
 pub async fn invoke_put_callback(
-    callback: &mut Option<PutCallback>,
-    event: PutEvent,
+    callback: &mut Option<ProtocolPutCallback>,
+    event: ProtocolPutEvent,
 ) -> Result<bool, Error> {
     if let Some(cb) = callback {
         match cb(event).await {
@@ -20,8 +23,8 @@ pub async fn invoke_put_callback(
 }
 
 pub(crate) async fn invoke_get_callback(
-    callback: &mut Option<GetCallback>,
-    event: GetEvent,
+    callback: &mut Option<ProtocolGetCallback>,
+    event: ProtocolGetEvent,
 ) -> Result<bool, Error> {
     if let Some(cb) = callback {
         match cb(event).await {
@@ -34,8 +37,8 @@ pub(crate) async fn invoke_get_callback(
 }
 
 pub(crate) async fn invoke_purge_callback(
-    callback: &mut Option<PurgeCallback>,
-    event: PurgeEvent,
+    callback: &mut Option<ProtocolPurgeCallback>,
+    event: ProtocolPurgeEvent,
 ) -> Result<bool, Error> {
     if let Some(cb) = callback {
         match cb(event).await {
@@ -48,8 +51,8 @@ pub(crate) async fn invoke_purge_callback(
 }
 
 pub(crate) async fn invoke_sync_callback(
-    callback: &mut Option<SyncCallback>,
-    event: SyncEvent,
+    callback: &mut Option<ProtocolSyncCallback>,
+    event: ProtocolSyncEvent,
 ) -> Result<bool, Error> {
     if let Some(cb) = callback {
         match cb(event).await {

@@ -36,6 +36,8 @@ enum TasksCommands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
+
     let cli = Cli::parse();
     let mut client = MutantClient::new();
     client.connect("ws://localhost:3030/ws").await?;
@@ -43,6 +45,11 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Put { key, file } => {
             let data = std::fs::read(&file)?;
+            let multi_progress = MultiProgress::new();
+            let (_res_pb_opt, _upload_pb_opt, _confirm_pb_opt, callback) =
+                callbacks::put::create_put_callback(&multi_progress, false);
+
+            // client.set_put_callback(callback);
             let task_id = client.put(&key, &data).await?;
 
             println!(
@@ -50,10 +57,6 @@ async fn main() -> Result<()> {
                 "•".bright_green(),
                 task_id.to_string().bright_blue()
             );
-
-            let multi_progress = MultiProgress::new();
-            let (_res_pb_opt, _upload_pb_opt, _confirm_pb_opt, callback) =
-                callbacks::put::create_put_callback(&multi_progress, false);
 
             let mut client_clone = client.clone();
 
@@ -65,7 +68,7 @@ async fn main() -> Result<()> {
                                 if let Some(progress) = update.progress {
                                     match progress {
                                         TaskProgress::Put(event) => {
-                                            let _ = callback(event).await;
+                                            log::debug!("Received put event: {:?}", event);
                                         }
                                         _ => {}
                                     }

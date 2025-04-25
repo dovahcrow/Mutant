@@ -8,6 +8,7 @@ anyhow = "1.0"
 base64 = "0.21"
 clap = { version = "4.4", features = ["derive"] }
 colored = "2.0"
+env_logger = "0.11"
 indicatif = "0.17"
 log = "0.4"
 mutant-client = { path = "../mutant-client" }

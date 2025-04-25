@@ -3,13 +3,11 @@
 use std::sync::Mutex;
 use std::{collections::HashMap, sync::Arc}; // Use std Mutex for simplicity, can switch to tokio::sync::Mutex if needed later
 
-use ewebsock::WsMessage;
-use ewebsock::{WsEvent, WsSender};
 use serde_json;
 use url::Url;
 
 use mutant_protocol::{
-    ErrorResponse, GetRequest, ListTasksRequest, PutRequest, QueryTaskRequest, Request, Response,
+    ErrorResponse, ListTasksRequest, QueryTaskRequest, Request, Response,
     Task, TaskCreatedResponse, TaskId, TaskListEntry, TaskListResponse, TaskResultResponse,
     TaskStatus, TaskType, TaskUpdateResponse,
 };
@@ -26,12 +24,10 @@ use futures_util::StreamExt;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::spawn_local;
 
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::spawn;
 
 pub mod error;
 
-use crate::error::{ClientError, Error};
+use crate::error::ClientError;
 
 // Shared state for tasks managed by the client (using Arc<Mutex> for thread safety)
 type ClientTaskMap = Arc<Mutex<HashMap<TaskId, Task>>>;

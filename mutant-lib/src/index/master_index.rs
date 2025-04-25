@@ -645,6 +645,7 @@ fn get_index_file_path(network_choice: NetworkChoice) -> Result<PathBuf, Error> 
     let filename = match network_choice {
         NetworkChoice::Mainnet => "master_index_mainnet.cbor",
         NetworkChoice::Devnet => "master_index_devnet.cbor",
+        NetworkChoice::Alphanet => "master_index_alphanet.cbor",
     };
     Ok(data_dir.join(filename))
 }
