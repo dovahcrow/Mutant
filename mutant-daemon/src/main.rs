@@ -29,9 +29,15 @@ struct Args {
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
-struct Config {
+struct NetworkConfig {
     private_key: String,
-    network_choice: NetworkChoice,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Default)]
+struct Config {
+    mainnet: Option<NetworkConfig>,
+    devnet: Option<NetworkConfig>,
+    alphanet: Option<NetworkConfig>,
 }
 
 impl Config {
@@ -42,7 +48,7 @@ impl Config {
         if let Ok(content) = std::fs::read_to_string(&config_path) {
             Ok(serde_json::from_str(&content)?)
         } else {
-            Err("No config file found".into())
+            Ok(Config::default())
         }
     }
 
@@ -57,6 +63,23 @@ impl Config {
         let content = serde_json::to_string_pretty(self)?;
         std::fs::write(config_path, content)?;
         Ok(())
+    }
+
+    fn get_private_key(&self, network_choice: NetworkChoice) -> Option<&str> {
+        match network_choice {
+            NetworkChoice::Mainnet => self.mainnet.as_ref().map(|c| c.private_key.as_str()),
+            NetworkChoice::Devnet => self.devnet.as_ref().map(|c| c.private_key.as_str()),
+            NetworkChoice::Alphanet => self.alphanet.as_ref().map(|c| c.private_key.as_str()),
+        }
+    }
+
+    fn set_private_key(&mut self, network_choice: NetworkChoice, private_key: String) {
+        let config = NetworkConfig { private_key };
+        match network_choice {
+            NetworkChoice::Mainnet => self.mainnet = Some(config),
+            NetworkChoice::Devnet => self.devnet = Some(config),
+            NetworkChoice::Alphanet => self.alphanet = Some(config),
+        }
     }
 }
 
@@ -80,22 +103,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         NetworkChoice::Mainnet
     };
 
-    let config = if let Some(private_key) = args.private_key {
-        let config = Config {
-            private_key,
-            network_choice,
-        };
+    let mut config = Config::load()?;
+
+    if let Some(private_key) = args.private_key {
+        config.set_private_key(network_choice, private_key);
         config.save()?;
-        config
-    } else {
-        match Config::load() {
-            Ok(config) => config,
-            Err(_) => {
-                tracing::error!("No private key provided and no config file found");
-                return Err("No private key provided and no config file found".into());
-            }
-        }
-    };
+    }
+
+    let private_key = config.get_private_key(network_choice).ok_or_else(|| {
+        tracing::error!("No private key configured for {:?}", network_choice);
+        format!("No private key configured for {:?}", network_choice)
+    })?;
 
     let mutant = Arc::new(match network_choice {
         NetworkChoice::Devnet => {
@@ -104,11 +122,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         NetworkChoice::Alphanet => {
             tracing::info!("Running in alphanet mode");
-            MutAnt::init_alphanet(&config.private_key).await
+            MutAnt::init_alphanet(private_key).await
         }
         NetworkChoice::Mainnet => {
             tracing::info!("Running in mainnet mode");
-            MutAnt::init(&config.private_key).await
+            MutAnt::init(private_key).await
         }
     }?);
     tracing::info!("MutAnt initialized successfully.");

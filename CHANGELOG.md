@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Command-line private key override option
   - Proper network choice handling (Mainnet/Devnet/Alphanet)
   - Persistent wallet configuration
+  - Support for multiple wallets (one per network)
 
 ## [0.4.2] - UNRELEASED
 

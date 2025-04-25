@@ -11,7 +11,6 @@ use crate::{
         master_index::{IndexEntry, MasterIndex, StorageStats},
         PadInfo,
     },
-    internal_events,
     network::{Network, NetworkChoice, DEV_TESTNET_PRIVATE_KEY_HEX},
 };
 

@@ -1,6 +1,5 @@
 use mutant_protocol::{
     GetCallback as ProtocolGetCallback, GetEvent as ProtocolGetEvent,
-    InitCallback as ProtocolInitCallback, InitProgressEvent as ProtocolInitProgressEvent,
     PurgeCallback as ProtocolPurgeCallback, PurgeEvent as ProtocolPurgeEvent,
     PutCallback as ProtocolPutCallback, PutEvent as ProtocolPutEvent,
     SyncCallback as ProtocolSyncCallback, SyncEvent as ProtocolSyncEvent,
