@@ -1,7 +1,4 @@
-use std::io::Write;
-
 use anyhow::Result;
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use clap::Parser;
 use colored::Colorize;
 use indicatif::MultiProgress;

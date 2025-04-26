@@ -1,9 +1,9 @@
 use dialoguer::{theme::ColorfulTheme, Select};
-use directories::{BaseDirs, ProjectDirs};
+use directories::BaseDirs;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::{
-    fs, io,
+    fs,
     path::{Path, PathBuf},
 };
 

@@ -2,7 +2,6 @@ use std::future::Future;
 use std::sync::Mutex;
 use std::{collections::HashMap, sync::Arc};
 
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use futures::channel::oneshot;
 use log::{debug, error, info, warn};
 use tokio::sync::mpsc;
@@ -121,7 +120,6 @@ impl MutantClient {
     }
 
     // --- Public API Methods ---
-    // These need rethinking for WASM's async/callback model.
     // A simple request/response map or channels might be needed.
 
     pub async fn put<'a>(

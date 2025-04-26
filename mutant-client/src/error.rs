@@ -22,9 +22,6 @@ pub enum ClientError {
     #[error("Received message is not valid text: {0}")]
     NonTextMessageReceived(String),
 
-    #[error("Base64 decoding error: {0}")]
-    Base64DecodeError(#[from] base64::DecodeError),
-
     #[error("Received unexpected response from server: {0:?}")]
     UnexpectedResponse(Response),
 

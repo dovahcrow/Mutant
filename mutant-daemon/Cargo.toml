@@ -23,4 +23,3 @@ warp = "0.3"
 xdg = "2.5"
 
 futures-util = "*"
-base64 = "*"
