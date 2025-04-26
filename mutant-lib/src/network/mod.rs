@@ -6,6 +6,7 @@ pub mod wallet;
 
 use blsttc::SecretKey;
 use client::Config;
+use deadpool::managed::{self, Pool, PoolError};
 pub use error::NetworkError;
 
 use self::client::create_client;
@@ -16,10 +17,13 @@ use crate::index::PadInfo;
 pub const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
+use async_trait::async_trait;
 use autonomi::{AttoTokens, Client, ScratchpadAddress, Wallet};
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use log::{debug, info};
 use std::sync::Arc;
-use tokio::sync::OnceCell;
+use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum NetworkChoice {
@@ -54,6 +58,56 @@ pub struct PutResult {
     pub address: ScratchpadAddress,
 }
 
+#[derive(Error, Debug)]
+pub enum PoolManagerError {
+    #[error(transparent)]
+    Network(#[from] NetworkError),
+    #[error("Pool interaction error: {0}")]
+    Pool(String),
+}
+
+impl From<PoolError<PoolManagerError>> for PoolManagerError {
+    fn from(e: PoolError<PoolManagerError>) -> Self {
+        PoolManagerError::Pool(e.to_string())
+    }
+}
+
+#[derive(Debug)]
+pub struct ClientManager {
+    network_choice: NetworkChoice,
+    config: Config,
+}
+
+impl managed::Manager for ClientManager {
+    type Type = Client;
+    type Error = PoolManagerError;
+
+    async fn create(&self) -> Result<Self::Type, Self::Error> {
+        let network_choice = self.network_choice; // Copy values
+        let config = self.config;
+        info!(
+            "Creating new client for pool (Network: {:?}, Config: {:?})",
+            network_choice, config
+        );
+        create_client(network_choice, config)
+            .await
+            .map_err(PoolManagerError::Network)
+    }
+
+    async fn recycle(
+        &self,
+        conn: &mut Self::Type,
+        metrics: &managed::Metrics,
+    ) -> managed::RecycleResult<Self::Error> {
+        // TODO: Implement a proper health check if the Client API supports it.
+        // For now, assume the client is always healthy.
+        // Use args to satisfy borrow checker and avoid unused warnings
+        let _ = conn;
+        let _ = metrics;
+        Ok(())
+    }
+}
+
 /// Provides an interface to interact with the Autonomi network.
 ///
 /// This adapter handles client initialization, wallet management, and delegates
@@ -61,7 +115,7 @@ pub struct PutResult {
 pub struct Network {
     wallet: Wallet,
     network_choice: NetworkChoice,
-    client: OnceCell<Arc<Client>>,
+    pool: Pool<ClientManager>,
     secret_key: SecretKey,
 }
 
@@ -78,32 +132,32 @@ impl Network {
 
         let (wallet, secret_key) = create_wallet(private_key_hex, network_choice)?;
 
+        let manager = ClientManager {
+            network_choice,
+            config: Config::Get,
+        };
+        let pool = Pool::builder(manager)
+            .max_size(50) // Adjust size as needed
+            .build()
+            .map_err(|e| {
+                NetworkError::ClientInitError(format!("Failed to create GET pool: {}", e))
+            })?;
+
         Ok(Self {
             wallet,
             network_choice,
-            client: OnceCell::new(),
+            pool,
             secret_key,
         })
     }
 
-    /// Retrieves the underlying Autonomi network client, initializing it if necessary.
-    async fn get_or_init_client(&self, config: Config) -> Result<Arc<Client>, NetworkError> {
-        // create_client(self.network_choice, config)
-        //     .await
-        //     .map(Arc::new)
-        self.client
-            .get_or_try_init(|| async {
-                let network_choice_clone = self.network_choice;
-                info!(
-                    "Initializing network client for {:?}...",
-                    network_choice_clone
-                );
-                create_client(network_choice_clone, config)
-                    .await
-                    .map(Arc::new)
-            })
-            .await
-            .map(Arc::clone)
+    /// Retrieves an Autonomi network client from the appropriate pool.
+    async fn get_client(
+        &self,
+        config: Config,
+    ) -> Result<managed::Object<ClientManager>, PoolManagerError> {
+        debug!("Requesting client from pool (Config: {:?})", config);
+        self.pool.get().await.map_err(PoolManagerError::from)
     }
 
     /// Retrieves the raw content of a scratchpad from the network.

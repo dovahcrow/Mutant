@@ -42,7 +42,9 @@ pub(super) async fn put(
         pad_info.address,
         data.len()
     );
-    let client = adapter.get_or_init_client(Config::Put).await?;
+    let client = adapter.get_client(Config::Put).await.map_err(|e| {
+        NetworkError::ClientAccessError(format!("Failed to get client from pool: {}", e))
+    })?;
 
     let owner_sk = pad_info.secret_key();
 

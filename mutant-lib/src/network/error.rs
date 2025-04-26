@@ -12,6 +12,12 @@ pub enum NetworkError {
     #[error("Failed to initialize Autonomi client: {0}")]
     ClientInitError(String),
 
+    #[error("Failed to access Autonomi client from pool: {0}")]
+    ClientAccessError(String),
+
+    #[error("Autonomi client interaction failed: {0}")]
+    ClientInteractionError(String),
+
     #[error("Invalid configuration: {0}")]
     ConfigError(String),
 

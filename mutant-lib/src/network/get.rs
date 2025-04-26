@@ -33,8 +33,10 @@ pub(super) async fn get(
     address: &ScratchpadAddress,
     owner_sk: Option<&SecretKey>,
 ) -> Result<GetResult, NetworkError> {
-    trace!("network::get called for address: {}", address);
-    let client = adapter.get_or_init_client(Config::Get).await?;
+    debug!("Starting get for pad {}", address);
+    let client = adapter.get_client(Config::Get).await.map_err(|e| {
+        NetworkError::ClientAccessError(format!("Failed to get client from pool: {}", e))
+    })?;
 
     let get_future = client.scratchpad_get(address);
 
