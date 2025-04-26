@@ -23,6 +23,7 @@ enum Commands {
     },
     Get {
         key: String,
+        destination_path: String,
     },
     Tasks {
         #[command(subcommand)]
@@ -83,13 +84,11 @@ async fn handle_put(key: String, file: String, background: bool) -> Result<()> {
     Ok(())
 }
 
-async fn handle_get(key: String, background: bool) -> Result<()> {
-    let destination_path = "/tmp/mutant_get_dest";
-
+async fn handle_get(key: String, destination_path: String, background: bool) -> Result<()> {
     if background {
         let _ = tokio::spawn(async move {
             let mut client = connect_to_daemon().await.unwrap();
-            let (start_task, _progress_rx) = client.get(&key, destination_path).await.unwrap();
+            let (start_task, _progress_rx) = client.get(&key, &destination_path).await.unwrap();
             start_task.await.unwrap();
         });
 
@@ -99,7 +98,7 @@ async fn handle_get(key: String, background: bool) -> Result<()> {
     }
 
     let mut client = connect_to_daemon().await?;
-    let (start_task, progress_rx) = client.get(&key, destination_path).await?;
+    let (start_task, progress_rx) = client.get(&key, &destination_path).await?;
 
     let multi_progress = MultiProgress::new();
     callbacks::get::create_get_progress(progress_rx, &multi_progress);
@@ -138,8 +137,11 @@ async fn main() -> Result<()> {
         } => {
             handle_put(key, file, background).await?;
         }
-        Commands::Get { key } => {
-            handle_get(key, false).await?;
+        Commands::Get {
+            key,
+            destination_path,
+        } => {
+            handle_get(key, destination_path, false).await?;
         }
         Commands::Tasks { command } => {
             let mut client = connect_to_daemon().await?;

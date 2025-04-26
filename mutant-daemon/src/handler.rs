@@ -324,13 +324,8 @@ async fn handle_get(
             if let Some(task) = tasks_guard.get_mut(&task_id) {
                 match write_result {
                     Ok(data_bytes) => {
-                        // Successfully got data AND wrote to file
-                        // let data_b64 = BASE64_STANDARD.encode(&data_bytes); // No longer sending data back
                         task.status = TaskStatus::Completed;
-                        task.result = Some(TaskResult {
-                            // data: Some(data_b64), // REMOVED
-                            error: None,
-                        });
+                        task.result = Some(TaskResult { error: None });
                         tracing::info!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, bytes_written = data_bytes.len(), "GET task completed successfully");
                         Some(Response::TaskResult(TaskResultResponse {
                             task_id,
@@ -339,11 +334,9 @@ async fn handle_get(
                         }))
                     }
                     Err(e) => {
-                        // Either mutant.get failed or fs::write failed
                         let error_msg = e.to_string();
                         task.status = TaskStatus::Failed;
                         task.result = Some(TaskResult {
-                            // data: None, // REMOVED
                             error: Some(error_msg.clone()),
                         });
                         tracing::error!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, "GET task failed: {}", error_msg);
