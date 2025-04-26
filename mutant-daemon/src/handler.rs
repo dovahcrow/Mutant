@@ -15,8 +15,9 @@ use crate::{error::Error as DaemonError, TaskMap};
 use mutant_protocol::{
     ErrorResponse, GetEvent, GetRequest, KeyDetails, ListKeysRequest, ListKeysResponse,
     ListTasksRequest, PutCallback, PutEvent, PutRequest, QueryTaskRequest, Request, Response,
-    RmRequest, RmSuccessResponse, Task, TaskCreatedResponse, TaskListEntry, TaskListResponse,
-    TaskProgress, TaskResult, TaskResultResponse, TaskStatus, TaskType, TaskUpdateResponse,
+    RmRequest, RmSuccessResponse, StatsRequest, StatsResponse, Task, TaskCreatedResponse,
+    TaskListEntry, TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskStatus,
+    TaskType, TaskUpdateResponse,
 };
 
 // Helper function to send JSON responses
@@ -131,6 +132,7 @@ async fn handle_request(
         Request::ListKeys(list_keys_req) => {
             handle_list_keys(list_keys_req, update_tx, mutant).await?
         }
+        Request::Stats(stats_req) => handle_stats(stats_req, update_tx, mutant).await?,
     }
     Ok(())
 }
@@ -530,7 +532,7 @@ async fn handle_list_keys(
                 })
                 .collect();
 
-            Response::ListKeys(ListKeysResponse { details })
+            Response::ListKeys(ListKeysResponse { keys: details })
         }
         Err(e) => {
             tracing::error!("Failed to list keys from mutant-lib: {}", e);
@@ -540,6 +542,34 @@ async fn handle_list_keys(
             })
         }
     };
+
+    update_tx
+        .send(response)
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    Ok(())
+}
+
+async fn handle_stats(
+    _req: StatsRequest,
+    update_tx: mpsc::UnboundedSender<Response>,
+    mutant: Arc<MutAnt>,
+) -> Result<(), DaemonError> {
+    tracing::debug!("Handling Stats request");
+
+    // Call the method which returns StorageStats directly
+    let stats = mutant.get_storage_stats().await;
+    tracing::info!("Retrieved storage stats successfully: {:?}", stats);
+
+    // Adapt the fields from mutant_lib::StorageStats to mutant_protocol::StatsResponse
+    let response = Response::Stats(StatsResponse {
+        total_keys: stats.nb_keys,
+        // total_size: stats.total_size, // This field does not exist in StorageStats
+        total_pads: stats.total_pads,
+        occupied_pads: stats.occupied_pads,
+        free_pads: stats.free_pads,
+        pending_verify_pads: stats.pending_verification_pads,
+    });
 
     update_tx
         .send(response)

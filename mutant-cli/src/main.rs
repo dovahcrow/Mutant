@@ -5,6 +5,7 @@ use humansize::{format_size, BINARY};
 use indicatif::MultiProgress;
 use mutant_client::MutantClient;
 use mutant_protocol::KeyDetails;
+use mutant_protocol::StatsResponse;
 
 mod callbacks;
 
@@ -36,6 +37,8 @@ enum Commands {
     },
     #[command(about = "List stored keys")]
     Ls,
+    #[command(about = "Show storage statistics")]
+    Stats,
     Tasks {
         #[command(subcommand)]
         command: TasksCommands,
@@ -192,6 +195,21 @@ async fn handle_ls() -> Result<()> {
     Ok(())
 }
 
+async fn handle_stats() -> Result<()> {
+    let mut client = connect_to_daemon().await?;
+    let stats = client.get_stats().await?;
+
+    println!("Storage Statistics:");
+    println!("-------------------");
+    println!("Total Keys: {}", stats.total_keys);
+    println!("Total Pads Managed:    {}", stats.total_pads);
+    println!("  Occupied (Private):  {}", stats.occupied_pads);
+    println!("  Free Pads:           {}", stats.free_pads);
+    println!("  Pending Verify Pads: {}", stats.pending_verify_pads);
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
@@ -219,6 +237,9 @@ async fn main() -> Result<()> {
         }
         Commands::Ls => {
             handle_ls().await?;
+        }
+        Commands::Stats => {
+            handle_stats().await?;
         }
         Commands::Tasks { command } => {
             let mut client = connect_to_daemon().await?;

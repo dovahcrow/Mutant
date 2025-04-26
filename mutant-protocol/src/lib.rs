@@ -299,6 +299,7 @@ pub enum Request {
     ListTasks(ListTasksRequest),
     Rm(RmRequest),
     ListKeys(ListKeysRequest),
+    Stats(StatsRequest),
 }
 
 // --- Outgoing Responses ---
@@ -358,9 +359,22 @@ pub struct KeyDetails {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ListKeysResponse {
-    // Changed from Vec<String> to Vec<KeyDetails>
-    pub details: Vec<KeyDetails>,
+    pub keys: Vec<KeyDetails>,
 }
+
+// Add these structs
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StatsRequest {}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StatsResponse {
+    pub total_keys: u64,
+    pub total_pads: u64,
+    pub occupied_pads: u64,
+    pub free_pads: u64,
+    pub pending_verify_pads: u64,
+}
+// End of added structs
 
 /// Represents all possible responses the daemon can send to the client.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -373,6 +387,7 @@ pub enum Response {
     TaskList(TaskListResponse),
     RmSuccess(RmSuccessResponse),
     ListKeys(ListKeysResponse),
+    Stats(StatsResponse),
 }
 
 // Helper moved to where Response is used (client/server)

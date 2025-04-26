@@ -1,12 +1,12 @@
 use log::{debug, error, warn};
 use mutant_protocol::{
-    ErrorResponse, ListKeysResponse, Response, RmSuccessResponse, Task, TaskCreatedResponse,
-    TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskStatus, TaskType,
-    TaskUpdateResponse,
+    ErrorResponse, ListKeysResponse, Response, RmSuccessResponse, StatsResponse, Task,
+    TaskCreatedResponse, TaskListResponse, TaskProgress, TaskResult, TaskResultResponse,
+    TaskStatus, TaskType, TaskUpdateResponse,
 };
 
 use crate::{
-    error::ClientError, ClientTaskMap, PendingListKeysSender, PendingRmSender,
+    error::ClientError, ClientTaskMap, PendingListKeysSender, PendingRmSender, PendingStatsSender,
     PendingTaskCreationSender, PendingTaskListSender, PendingTaskQuerySender, TaskChannelsMap,
 };
 
@@ -23,6 +23,7 @@ impl MutantClient {
         pending_task_query: &PendingTaskQuerySender,
         pending_rm: &PendingRmSender,
         pending_list_keys: &PendingListKeysSender,
+        pending_stats: &PendingStatsSender,
     ) {
         match response {
             Response::TaskCreated(TaskCreatedResponse { task_id }) => {
@@ -186,13 +187,22 @@ impl MutantClient {
                     warn!("Received RM success response but no request was pending");
                 }
             }
-            Response::ListKeys(ListKeysResponse { details }) => {
+            Response::ListKeys(ListKeysResponse { keys }) => {
                 if let Some(sender) = pending_list_keys.lock().unwrap().take() {
-                    if sender.send(Ok(details)).is_err() {
+                    if sender.send(Ok(keys)).is_err() {
                         warn!("Failed to send ListKeys response (receiver dropped)");
                     }
                 } else {
                     warn!("Received ListKeys response but no request was pending");
+                }
+            }
+            Response::Stats(stats_response) => {
+                if let Some(sender) = pending_stats.lock().unwrap().take() {
+                    if sender.send(Ok(stats_response)).is_err() {
+                        warn!("Failed to send Stats response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received Stats response but no request was pending");
                 }
             }
         }
@@ -216,6 +226,7 @@ impl MutantClient {
                                             &self.pending_task_query,
                                             &self.pending_rm,
                                             &self.pending_list_keys,
+                                            &self.pending_stats,
                                         );
                                         return Some(Ok(response));
                                     }

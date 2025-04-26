@@ -11,8 +11,8 @@ use url::Url;
 use wasm_bindgen_futures::spawn_local;
 
 use mutant_protocol::{
-    KeyDetails, ListTasksRequest, QueryTaskRequest, Request, Task, TaskId, TaskListEntry,
-    TaskProgress, TaskResult, TaskStatus,
+    KeyDetails, ListTasksRequest, QueryTaskRequest, Request, StatsRequest, StatsResponse, Task,
+    TaskId, TaskListEntry, TaskProgress, TaskResult, TaskStatus,
 };
 
 pub mod error;
@@ -35,6 +35,7 @@ type PendingTaskQuerySender = Arc<Mutex<Option<oneshot::Sender<Result<Task, Clie
 type PendingRmSender = Arc<Mutex<Option<oneshot::Sender<Result<(), ClientError>>>>>;
 type PendingListKeysSender =
     Arc<Mutex<Option<oneshot::Sender<Result<Vec<KeyDetails>, ClientError>>>>>;
+type PendingStatsSender = Arc<Mutex<Option<oneshot::Sender<Result<StatsResponse, ClientError>>>>>;
 
 pub type CompletionReceiver = oneshot::Receiver<Result<TaskResult, ClientError>>;
 pub type ProgressReceiver = mpsc::UnboundedReceiver<Result<TaskProgress, ClientError>>;
@@ -63,6 +64,7 @@ pub struct MutantClient {
     pending_task_query: PendingTaskQuerySender,
     pending_rm: PendingRmSender,
     pending_list_keys: PendingListKeysSender,
+    pending_stats: PendingStatsSender,
     state: Arc<Mutex<ConnectionState>>,
 }
 
@@ -79,6 +81,7 @@ impl MutantClient {
             pending_task_query: Arc::new(Mutex::new(None)),
             pending_rm: Arc::new(Mutex::new(None)),
             pending_list_keys: Arc::new(Mutex::new(None)),
+            pending_stats: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
         }
     }
@@ -370,6 +373,25 @@ impl MutantClient {
         }
     }
 
+    pub async fn get_stats(&mut self) -> Result<StatsResponse, ClientError> {
+        if self.pending_stats.lock().unwrap().is_some() {
+            return Err(ClientError::InternalError(
+                "Another stats request is already pending".to_string(),
+            ));
+        }
+
+        let (tx, rx) = oneshot::channel();
+        *self.pending_stats.lock().unwrap() = Some(tx);
+
+        let req = Request::Stats(StatsRequest {});
+
+        self.send_request(req).await?;
+
+        rx.await.map_err(|_| {
+            ClientError::InternalError("Stats response channel canceled".to_string())
+        })?
+    }
+
     // --- Accessor methods for internal state ---
 
     pub fn get_task_status(&self, task_id: TaskId) -> Option<TaskStatus> {
@@ -401,6 +423,7 @@ impl Clone for MutantClient {
             pending_task_query: self.pending_task_query.clone(),
             pending_rm: self.pending_rm.clone(),
             pending_list_keys: self.pending_list_keys.clone(),
+            pending_stats: self.pending_stats.clone(),
             state: self.state.clone(),
         }
     }
