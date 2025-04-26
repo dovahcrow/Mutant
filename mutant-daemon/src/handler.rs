@@ -13,11 +13,11 @@ use warp::ws::{Message, WebSocket};
 
 use crate::{error::Error as DaemonError, TaskMap};
 use mutant_protocol::{
-    ErrorResponse, GetEvent, GetRequest, KeyDetails, ListKeysRequest, ListKeysResponse,
-    ListTasksRequest, PutCallback, PutEvent, PutRequest, QueryTaskRequest, Request, Response,
-    RmRequest, RmSuccessResponse, StatsRequest, StatsResponse, Task, TaskCreatedResponse,
-    TaskListEntry, TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskStatus,
-    TaskType, TaskUpdateResponse,
+    ErrorResponse, GetCallback, GetEvent, GetRequest, KeyDetails, ListKeysRequest,
+    ListKeysResponse, ListTasksRequest, PutCallback, PutEvent, PutRequest, QueryTaskRequest,
+    Request, Response, RmRequest, RmSuccessResponse, StatsRequest, StatsResponse, Task,
+    TaskCreatedResponse, TaskListEntry, TaskListResponse, TaskProgress, TaskResult,
+    TaskResultResponse, TaskStatus, TaskType, TaskUpdateResponse,
 };
 
 // Helper function to send JSON responses
@@ -290,27 +290,43 @@ async fn handle_get(
 
     tokio::spawn(async move {
         tracing::info!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, "Starting GET task");
-        let start_update_res = {
-            let mut tasks_guard = tasks.write().await;
-            if let Some(task) = tasks_guard.get_mut(&task_id) {
-                task.status = TaskStatus::InProgress;
-                let progress = TaskProgress::Get(GetEvent::Starting { total_chunks: 1 }); // Assuming 1 chunk for now
-                task.progress = Some(progress.clone());
-                Some(Response::TaskUpdate(TaskUpdateResponse {
+
+        let mut tasks_guard = tasks.write().await;
+        if let Some(task) = tasks_guard.get_mut(&task_id) {
+            task.status = TaskStatus::InProgress;
+        }
+        drop(tasks_guard);
+
+        // Create a callback that forwards progress events through the WebSocket
+        let update_tx_clone = update_tx.clone();
+        let task_id_clone = task_id;
+        let tasks_clone = tasks.clone();
+        let callback: GetCallback = Arc::new(move |event: GetEvent| {
+            let tx = update_tx_clone.clone();
+            let task_id = task_id_clone;
+            let tasks = tasks_clone.clone();
+            Box::pin(async move {
+                let progress = TaskProgress::Get(event);
+
+                // Update the task's progress in the map
+                let mut tasks_guard = tasks.write().await;
+                if let Some(task) = tasks_guard.get_mut(&task_id) {
+                    task.progress = Some(progress.clone());
+                }
+                drop(tasks_guard);
+
+                let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
                     task_id,
                     status: TaskStatus::InProgress,
                     progress: Some(progress),
-                }))
-            } else {
-                None
-            }
-        };
-        if let Some(update) = start_update_res {
-            if update_tx.send(update).is_err() {
-                tracing::warn!(task_id = %task_id, "Client disconnected before GET task started");
-                return; // Exit if client disconnected
-            }
-        }
+                }));
+
+                Ok(true)
+            })
+        });
+
+        let mut mutant = (*mutant).clone();
+        mutant.set_get_callback(callback).await;
 
         let get_result = if req.public {
             let address = ScratchpadAddress::from_hex(&user_key).unwrap();
