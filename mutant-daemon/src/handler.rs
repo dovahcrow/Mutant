@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use tokio::fs; // Added for async file operations
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use futures_util::{
@@ -136,10 +137,18 @@ async fn handle_put(
 ) -> Result<(), DaemonError> {
     let task_id = Uuid::new_v4();
     let user_key = req.user_key.clone();
+    let source_path = req.source_path.clone(); // Keep path for logging
 
-    let data_bytes = BASE64_STANDARD
-        .decode(&req.data_b64)
-        .map_err(DaemonError::Base64Decode)?;
+    // Read data from the local source path instead of decoding base64
+    // let data_bytes = BASE64_STANDARD
+    //     .decode(&req.data_b64)
+    //     .map_err(DaemonError::Base64Decode)?;
+    let data_bytes = fs::read(&req.source_path).await.map_err(|e| {
+        DaemonError::IoError(format!(
+            "Failed to read source file {}: {}",
+            req.source_path, e
+        ))
+    })?;
 
     let task = Task {
         id: task_id,
@@ -157,7 +166,7 @@ async fn handle_put(
         .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
 
     tokio::spawn(async move {
-        tracing::info!(task_id = %task_id, user_key = %user_key, "Starting PUT task");
+        tracing::info!(task_id = %task_id, user_key = %user_key, source_path = %source_path, "Starting PUT task");
 
         let mut tasks_guard = tasks.write().await;
         if let Some(task) = tasks_guard.get_mut(&task_id) {
@@ -197,6 +206,7 @@ async fn handle_put(
         let mut mutant = (*mutant).clone();
         mutant.set_put_callback(callback).await;
 
+        // Use the data read from the file
         let result = mutant
             .put(&user_key, &data_bytes, StorageMode::Medium, false)
             .await;
@@ -208,10 +218,10 @@ async fn handle_put(
                     Ok(_addr) => {
                         task.status = TaskStatus::Completed;
                         task.result = Some(TaskResult {
-                            data: None,
+                            // data: None, // Data is no longer part of TaskResult
                             error: None,
                         });
-                        tracing::info!(task_id = %task_id, user_key = %user_key, "PUT task completed successfully");
+                        tracing::info!(task_id = %task_id, user_key = %user_key, source_path = %source_path, "PUT task completed successfully");
                         Some(Response::TaskResult(TaskResultResponse {
                             task_id,
                             status: TaskStatus::Completed,
@@ -221,10 +231,10 @@ async fn handle_put(
                     Err(e) => {
                         task.status = TaskStatus::Failed;
                         task.result = Some(TaskResult {
-                            data: None,
+                            // data: None, // Data is no longer part of TaskResult
                             error: Some(e.to_string()),
                         });
-                        tracing::error!(task_id = %task_id, user_key = %user_key, error = %e, "PUT task failed");
+                        tracing::error!(task_id = %task_id, user_key = %user_key, source_path = %source_path, error = %e, "PUT task failed");
                         Some(Response::TaskResult(TaskResultResponse {
                             task_id,
                             status: TaskStatus::Failed,
@@ -253,6 +263,7 @@ async fn handle_get(
 ) -> Result<(), DaemonError> {
     let task_id = Uuid::new_v4();
     let user_key = req.user_key.clone();
+    let destination_path = req.destination_path.clone(); // Keep path for logging and writing
 
     let task = Task {
         id: task_id,
@@ -270,12 +281,12 @@ async fn handle_get(
         .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
 
     tokio::spawn(async move {
-        tracing::info!(task_id = %task_id, user_key = %user_key, "Starting GET task");
+        tracing::info!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, "Starting GET task");
         let start_update_res = {
             let mut tasks_guard = tasks.write().await;
             if let Some(task) = tasks_guard.get_mut(&task_id) {
                 task.status = TaskStatus::InProgress;
-                let progress = TaskProgress::Get(GetEvent::Starting { total_chunks: 1 });
+                let progress = TaskProgress::Get(GetEvent::Starting { total_chunks: 1 }); // Assuming 1 chunk for now
                 task.progress = Some(progress.clone());
                 Some(Response::TaskUpdate(TaskUpdateResponse {
                     task_id,
@@ -293,20 +304,37 @@ async fn handle_get(
             }
         }
 
-        let result = mutant.get(&user_key).await;
+        let get_result = mutant.get(&user_key).await;
+
+        let write_result = match get_result {
+            Ok(data_bytes) => {
+                // Write the received bytes to the destination path
+                fs::write(&destination_path, &data_bytes)
+                    .await
+                    .map_err(|e| {
+                        DaemonError::IoError(format!(
+                            "Failed to write to destination file {}: {}",
+                            destination_path, e
+                        ))
+                    })
+                    .map(|_| data_bytes) // Pass data_bytes through on success for tracing length maybe
+            }
+            Err(e) => Err(DaemonError::LibError(e)), // Propagate the lib error
+        };
 
         let final_response = {
             let mut tasks_guard = tasks.write().await;
             if let Some(task) = tasks_guard.get_mut(&task_id) {
-                match result {
+                match write_result {
                     Ok(data_bytes) => {
-                        let data_b64 = BASE64_STANDARD.encode(&data_bytes);
+                        // Successfully got data AND wrote to file
+                        // let data_b64 = BASE64_STANDARD.encode(&data_bytes); // No longer sending data back
                         task.status = TaskStatus::Completed;
                         task.result = Some(TaskResult {
-                            data: Some(data_b64),
+                            // data: Some(data_b64), // REMOVED
                             error: None,
                         });
-                        tracing::info!(task_id = %task_id, user_key = %user_key, "GET task completed successfully");
+                        tracing::info!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, bytes_written = data_bytes.len(), "GET task completed successfully");
                         Some(Response::TaskResult(TaskResultResponse {
                             task_id,
                             status: TaskStatus::Completed,
@@ -314,13 +342,14 @@ async fn handle_get(
                         }))
                     }
                     Err(e) => {
+                        // Either mutant.get failed or fs::write failed
                         let error_msg = e.to_string();
                         task.status = TaskStatus::Failed;
                         task.result = Some(TaskResult {
-                            data: None,
+                            // data: None, // REMOVED
                             error: Some(error_msg.clone()),
                         });
-                        tracing::error!(task_id = %task_id, user_key = %user_key, "GET task failed: {}", error_msg);
+                        tracing::error!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, "GET task failed: {}", error_msg);
                         Some(Response::TaskResult(TaskResultResponse {
                             task_id,
                             status: TaskStatus::Failed,

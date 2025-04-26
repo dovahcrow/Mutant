@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Daemon:** Modified Put/Get operations to use local file paths (`source_path`, `destination_path`) on the daemon instead of transferring file data over WebSocket. The daemon now reads from/writes to its local filesystem directly.
 - Refactored mutant-client to support parallel task execution:
   - Added task-specific channels for progress and completion events
   - Improved progress tracking and error handling

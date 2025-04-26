@@ -244,7 +244,6 @@ pub enum TaskProgress {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskResult {
-    pub data: Option<String>,  // Base64 encoded for Get
     pub error: Option<String>, // Error message if TaskStatus is Failed
 }
 
@@ -261,15 +260,16 @@ pub struct Task {
 
 // --- Incoming Requests ---
 
-#[derive(Deserialize, Debug, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PutRequest {
     pub user_key: String,
-    pub data_b64: String,
+    pub source_path: String, // Path to the file on the daemon's filesystem
 }
 
-#[derive(Deserialize, Debug, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetRequest {
     pub user_key: String,
+    pub destination_path: String, // Path where the fetched file should be saved on the daemon
 }
 
 #[derive(Deserialize, Debug, PartialEq, Eq, Serialize)]

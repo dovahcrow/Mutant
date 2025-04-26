@@ -127,7 +127,7 @@ impl MutantClient {
     pub async fn put<'a>(
         &'a mut self,
         user_key: &str,
-        data: &[u8],
+        source_path: &str,
     ) -> Result<
         (
             impl Future<Output = Result<TaskResult, ClientError>> + 'a,
@@ -135,7 +135,10 @@ impl MutantClient {
         ),
         ClientError,
     > {
-        info!("Starting put operation for key: {}", user_key);
+        info!(
+            "Starting put operation for key: {} from path: {}",
+            user_key, source_path
+        );
 
         let (completion_tx, completion_rx) = oneshot::channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
@@ -146,11 +149,9 @@ impl MutantClient {
             channels: Some((completion_tx, progress_tx)),
         });
 
-        let data_b64 = BASE64_STANDARD.encode(data);
-
         let req = Request::Put(mutant_protocol::PutRequest {
             user_key: user_key.to_string(),
-            data_b64,
+            source_path: source_path.to_string(),
         });
 
         let start_task = async move {
@@ -182,6 +183,7 @@ impl MutantClient {
     pub async fn get(
         &mut self,
         user_key: &str,
+        destination_path: &str,
     ) -> Result<
         (
             impl Future<Output = Result<TaskResult, ClientError>> + '_,
@@ -206,6 +208,7 @@ impl MutantClient {
 
         let req = Request::Get(mutant_protocol::GetRequest {
             user_key: user_key.to_string(),
+            destination_path: destination_path.to_string(),
         });
 
         let start_task = async move {

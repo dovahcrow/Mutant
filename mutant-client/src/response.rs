@@ -115,20 +115,14 @@ impl MutantClient {
 
                     if let Some((completion_tx, _)) = task_channels.lock().unwrap().remove(&task_id)
                     {
-                        let _ = completion_tx.send(Ok(result.unwrap_or_else(|| TaskResult {
-                            data: None,
-                            error: None,
-                        })));
+                        let _ = completion_tx
+                            .send(Ok(result.unwrap_or_else(|| TaskResult { error: None })));
                     }
                 } else {
-                    let task_type = if let Some(result) = &result {
-                        if result.data.is_some() {
-                            TaskType::Get
-                        } else {
-                            TaskType::Put
-                        }
-                    } else {
+                    let task_type = if result.as_ref().map_or(false, |r| r.error.is_some()) {
                         TaskType::Get
+                    } else {
+                        TaskType::Put
                     };
 
                     tasks_guard.insert(

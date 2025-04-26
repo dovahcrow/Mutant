@@ -46,12 +46,12 @@ async fn connect_to_daemon() -> Result<MutantClient> {
 }
 
 async fn handle_put(key: String, file: String, background: bool) -> Result<()> {
-    let data = std::fs::read(&file)?;
+    let source_path = file;
 
     if background {
         let _ = tokio::spawn(async move {
             let mut client = connect_to_daemon().await.unwrap();
-            let (start_task, _progress_rx) = client.put(&key, &data).await.unwrap();
+            let (start_task, _progress_rx) = client.put(&key, &source_path).await.unwrap();
             start_task.await.unwrap();
         });
 
@@ -62,7 +62,7 @@ async fn handle_put(key: String, file: String, background: bool) -> Result<()> {
 
     let mut client = connect_to_daemon().await?;
 
-    let (start_task, progress_rx) = client.put(&key, &data).await?;
+    let (start_task, progress_rx) = client.put(&key, &source_path).await?;
 
     let multi_progress = MultiProgress::new();
     callbacks::put::create_put_progress(progress_rx, multi_progress.clone());
@@ -87,10 +87,12 @@ async fn handle_put(key: String, file: String, background: bool) -> Result<()> {
 }
 
 async fn handle_get(key: String, background: bool) -> Result<()> {
+    let destination_path = "/tmp/mutant_get_dest";
+
     if background {
         let _ = tokio::spawn(async move {
             let mut client = connect_to_daemon().await.unwrap();
-            let (start_task, _progress_rx) = client.get(&key).await.unwrap();
+            let (start_task, _progress_rx) = client.get(&key, destination_path).await.unwrap();
             start_task.await.unwrap();
         });
 
@@ -100,7 +102,7 @@ async fn handle_get(key: String, background: bool) -> Result<()> {
     }
 
     let mut client = connect_to_daemon().await?;
-    let (start_task, progress_rx) = client.get(&key).await?;
+    let (start_task, progress_rx) = client.get(&key, destination_path).await?;
 
     let multi_progress = MultiProgress::new();
     callbacks::get::create_get_progress(progress_rx, &multi_progress);
@@ -109,11 +111,12 @@ async fn handle_get(key: String, background: bool) -> Result<()> {
         Ok(result) => {
             if let Some(error) = result.error {
                 eprintln!("{} {}", "Error:".bright_red(), error);
-            } else if let Some(data) = result.data {
-                let data = BASE64_STANDARD.decode(&data).unwrap();
-                std::io::stdout().write_all(&data)?;
             } else {
-                println!("{} Get task completed with no data.", "•".bright_green());
+                println!(
+                    "{} Get task completed. Result saved to {} on daemon.",
+                    "•".bright_green(),
+                    destination_path
+                );
             }
         }
         Err(e) => {
@@ -186,8 +189,11 @@ async fn main() -> Result<()> {
                     if let Some(result) = task.result {
                         if let Some(error) = result.error {
                             println!("  {}: {}", "Error".bright_red(), error);
-                        } else if let Some(data) = result.data {
-                            println!("  {}: {} bytes", "Data".bright_green(), data.len());
+                        } else {
+                            println!(
+                                "  {}: Completed (result stored on daemon)",
+                                "Result".bright_green()
+                            );
                         }
                     }
                 }

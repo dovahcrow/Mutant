@@ -24,6 +24,12 @@ pub enum Error {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("IO error (formatted): {0}")]
+    IoError(String),
+
+    #[error("Library error (formatted): {0}")]
+    LibError(mutant_lib::error::Error),
+
     #[error("Invalid request structure received: {0}")]
     InvalidRequest(String),
 
