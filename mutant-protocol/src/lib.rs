@@ -435,7 +435,7 @@ pub const LIGHTEST_SCRATCHPAD_SIZE: usize = 512 * 1024;
 pub const LIGHT_SCRATCHPAD_SIZE: usize = 1 * 1024 * 1024;
 pub const MEDIUM_SCRATCHPAD_SIZE: usize = 2 * 1024 * 1024;
 pub const HEAVY_SCRATCHPAD_SIZE: usize = 3 * 1024 * 1024;
-pub const HEAVIEST_SCRATCHPAD_SIZE: usize = 4 * 1024 * 1024;
+pub const HEAVIEST_SCRATCHPAD_SIZE: usize = (4 * 1024 * 1024) - 4096;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum StorageMode {
