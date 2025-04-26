@@ -167,9 +167,7 @@ pub fn create_put_progress(mut progress_rx: ProgressReceiver, multi_progress: Mu
     });
 
     tokio::spawn(async move {
-        warn!("Starting put callback");
         while let Some(progress) = progress_rx.recv().await {
-            warn!("Received progress event {:#?}", progress);
             match progress {
                 Ok(TaskProgress::Put(event)) => {
                     callback(event.clone()).await.unwrap();
@@ -179,6 +177,4 @@ pub fn create_put_progress(mut progress_rx: ProgressReceiver, multi_progress: Mu
             }
         }
     });
-
-    info!("Put callback created successfully");
 }

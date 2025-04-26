@@ -1,4 +1,7 @@
+use std::io::Write;
+
 use anyhow::Result;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use clap::Parser;
 use colored::Colorize;
 use indicatif::MultiProgress;
@@ -97,18 +100,18 @@ async fn handle_get(key: String, background: bool) -> Result<()> {
     }
 
     let mut client = connect_to_daemon().await?;
-    let (start_task, _progress_rx) = client.get(&key).await?;
+    let (start_task, progress_rx) = client.get(&key).await?;
+
+    let multi_progress = MultiProgress::new();
+    callbacks::get::create_get_progress(progress_rx, &multi_progress);
 
     match start_task.await {
         Ok(result) => {
             if let Some(error) = result.error {
                 eprintln!("{} {}", "Error:".bright_red(), error);
             } else if let Some(data) = result.data {
-                println!(
-                    "{} Download complete! {} bytes",
-                    "•".bright_green(),
-                    data.len()
-                );
+                let data = BASE64_STANDARD.decode(&data).unwrap();
+                std::io::stdout().write_all(&data)?;
             } else {
                 println!("{} Get task completed with no data.", "•".bright_green());
             }
@@ -174,8 +177,8 @@ async fn main() -> Result<()> {
                             mutant_protocol::TaskProgress::Put(event) => {
                                 println!("  Progress: {:?}", event);
                             }
-                            mutant_protocol::TaskProgress::Legacy { message } => {
-                                println!("  Progress: {}", message);
+                            mutant_protocol::TaskProgress::Get(event) => {
+                                println!("  Progress: {:?}", event);
                             }
                         }
                     }

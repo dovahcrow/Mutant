@@ -14,7 +14,7 @@ use warp::ws::{Message, WebSocket};
 
 use crate::{error::Error as DaemonError, TaskMap};
 use mutant_protocol::{
-    ErrorResponse, GetRequest, ListTasksRequest, PutCallback, PutEvent, PutRequest,
+    ErrorResponse, GetEvent, GetRequest, ListTasksRequest, PutCallback, PutEvent, PutRequest,
     QueryTaskRequest, Request, Response, Task, TaskCreatedResponse, TaskListEntry,
     TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskStatus, TaskType,
     TaskUpdateResponse,
@@ -275,9 +275,7 @@ async fn handle_get(
             let mut tasks_guard = tasks.write().await;
             if let Some(task) = tasks_guard.get_mut(&task_id) {
                 task.status = TaskStatus::InProgress;
-                let progress = TaskProgress::Legacy {
-                    message: "Starting GET operation".to_string(),
-                };
+                let progress = TaskProgress::Get(GetEvent::Starting { total_chunks: 1 });
                 task.progress = Some(progress.clone());
                 Some(Response::TaskUpdate(TaskUpdateResponse {
                     task_id,

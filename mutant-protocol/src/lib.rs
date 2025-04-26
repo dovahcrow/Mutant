@@ -239,8 +239,7 @@ pub type PutCallback = Arc<
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskProgress {
     Put(PutEvent),
-    // Legacy format for backward compatibility
-    Legacy { message: String },
+    Get(GetEvent),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
