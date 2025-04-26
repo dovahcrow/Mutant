@@ -150,12 +150,12 @@ async fn main() -> Result<(), Error> {
     // Define WebSocket route using the actual handler
     let ws_route = warp::path("ws")
         .and(warp::ws())
-        .and(warp::any().map(move || mutant.clone())) // Pass MutAnt instance
-        .and(warp::any().map(move || tasks.clone())) // Pass TaskMap
+        .and(warp::any().map(move || mutant.clone()))
+        .and(warp::any().map(move || tasks.clone()))
         .map(
             |ws: warp::ws::Ws, mutant_instance: Arc<MutAnt>, task_map: TaskMap| {
-                // Use the handler from the handler module
-                ws.on_upgrade(move |socket| handler::handle_ws(socket, mutant_instance, task_map))
+                ws.max_message_size(2_147_483_648)
+                    .on_upgrade(move |socket| handler::handle_ws(socket, mutant_instance, task_map))
             },
         );
 
