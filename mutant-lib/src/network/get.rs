@@ -7,7 +7,7 @@ use autonomi::scratchpad::ScratchpadError;
 use autonomi::ScratchpadAddress;
 use autonomi::SecretKey;
 use log::debug;
-use log::{error, trace};
+use log::error;
 use tokio::time::{timeout, Duration};
 
 use super::GetResult;

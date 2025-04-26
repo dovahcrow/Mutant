@@ -175,7 +175,7 @@ impl MutantClient {
                     let _ = sender.send(Err(ClientError::ServerError(error.clone())));
                 }
             }
-            Response::RmSuccess(RmSuccessResponse { user_key }) => {
+            Response::RmSuccess(RmSuccessResponse { user_key: _ }) => {
                 if let Some(sender) = pending_rm.lock().unwrap().take() {
                     if sender.send(Ok(())).is_err() {
                         warn!("Failed to send RM success response (receiver dropped)");

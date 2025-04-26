@@ -45,7 +45,7 @@ struct Context {
     index: Arc<RwLock<MasterIndex>>,
     network: Arc<Network>,
     name: Arc<String>,
-    chunks: Vec<Vec<u8>>,
+    chunks: Arc<Vec<Vec<u8>>>,
     put_callback: Option<PutCallback>,
 }
 
@@ -148,7 +148,7 @@ impl Data {
             index: self.index.clone(),
             network: self.network.clone(),
             name: Arc::new(name.to_string()),
-            chunks,
+            chunks: Arc::new(chunks),
             put_callback: self.put_callback.clone(),
         };
 
@@ -176,7 +176,7 @@ impl Data {
             index: self.index.clone(),
             network: self.network.clone(),
             name: Arc::new(name.to_string()),
-            chunks,
+            chunks: Arc::new(chunks),
             put_callback: self.put_callback.clone(),
         };
 
@@ -365,6 +365,21 @@ impl Data {
             return;
         }
 
+        let chunk_data_option = context.chunks.get(pad.chunk_index as usize).cloned();
+        let chunk_data = match chunk_data_option {
+            Some(data) => data,
+            None => {
+                error!(
+                    "CRITICAL: Chunk index {} out of bounds for key {}. Pad address: {}. Status: {:?}. Halting processing for this pad.",
+                    pad.chunk_index,
+                    key_name,
+                    current_pad_address,
+                    initial_status
+                );
+                return;
+            }
+        };
+
         let recycle_pad = async || match context
             .index
             .write()
@@ -402,7 +417,7 @@ impl Data {
             loop {
                 let put_result = context
                     .network
-                    .put(&pad, &context.chunks[pad.chunk_index], encoding, public)
+                    .put(&pad, &chunk_data, encoding, public)
                     .await;
 
                 match put_result {
