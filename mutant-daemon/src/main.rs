@@ -155,6 +155,7 @@ async fn main() -> Result<(), Error> {
         .map(
             |ws: warp::ws::Ws, mutant_instance: Arc<MutAnt>, task_map: TaskMap| {
                 ws.max_message_size(2_147_483_648)
+                    .max_frame_size(2_147_483_648)
                     .on_upgrade(move |socket| handler::handle_ws(socket, mutant_instance, task_map))
             },
         );
