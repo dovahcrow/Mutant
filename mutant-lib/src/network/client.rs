@@ -10,7 +10,7 @@ pub enum Config {
 }
 
 fn get_config(config: Config) -> ClientConfig {
-    let mut client_config = ClientConfig::default();
+    let client_config = ClientConfig::default();
 
     if config == Config::Get {
         // client_config.strategy.scratchpad.get_retry = RetryStrategy::N(NonZero::new(1).unwrap());

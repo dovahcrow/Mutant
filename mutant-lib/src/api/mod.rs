@@ -150,11 +150,12 @@ impl MutAnt {
         data_bytes: &[u8],
         mode: StorageMode,
         public: bool,
+        no_verify: bool,
     ) -> Result<ScratchpadAddress, Error> {
         self.data
             .write()
             .await
-            .put(user_key, data_bytes, mode, public)
+            .put(user_key, data_bytes, mode, public, no_verify)
             .await
     }
 
@@ -246,7 +247,7 @@ mod tests {
         let data_bytes = generate_random_bytes(128);
 
         let result = mutant
-            .put(&user_key, &data_bytes, StorageMode::Medium, false)
+            .put(&user_key, &data_bytes, StorageMode::Medium, false, false)
             .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
@@ -270,7 +271,7 @@ mod tests {
         let data_bytes = generate_random_bytes(128);
 
         let result = mutant
-            .put(&user_key, &data_bytes, StorageMode::Medium, false)
+            .put(&user_key, &data_bytes, StorageMode::Medium, false, false)
             .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
@@ -278,7 +279,7 @@ mod tests {
         let data_bytes = generate_random_bytes(128);
 
         let result = mutant
-            .put(&user_key, &data_bytes, StorageMode::Medium, false)
+            .put(&user_key, &data_bytes, StorageMode::Medium, false, false)
             .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
@@ -294,14 +295,14 @@ mod tests {
         let data_bytes = generate_random_bytes(128);
 
         // Start the first put operation but do not await its completion
-        let first_put = mutant.put(&user_key, &data_bytes, StorageMode::Medium, false);
+        let first_put = mutant.put(&user_key, &data_bytes, StorageMode::Medium, false, false);
 
         // Simulate an interruption by dropping the future before it completes
         drop(first_put);
 
         // Now attempt to resume the operation with the same data
         let result = mutant
-            .put(&user_key, &data_bytes, StorageMode::Medium, false)
+            .put(&user_key, &data_bytes, StorageMode::Medium, false, false)
             .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());

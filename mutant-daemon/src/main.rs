@@ -10,14 +10,10 @@ use warp::Filter;
 mod error;
 mod handler;
 mod wallet;
-// mod protocol; // Will be removed later
 
-// Task definitions moved to mutant-protocol crate
-use mutant_protocol::{Task, TaskId}; // Import necessary types
+use mutant_protocol::{Task, TaskId};
 
-// --- Task Management System (Daemon Specific) ---
 type TaskMap = Arc<RwLock<HashMap<TaskId, Task>>>;
-// --- End Task Management System ---
 
 use error::Error;
 
@@ -90,7 +86,6 @@ impl Config {
 async fn main() -> Result<(), Error> {
     let args = Args::parse();
 
-    // Initialize logging
     tracing_subscriber::registry()
         .with(fmt::layer())
         .with(EnvFilter::from_default_env())
@@ -154,9 +149,7 @@ async fn main() -> Result<(), Error> {
         .and(warp::any().map(move || tasks.clone()))
         .map(
             |ws: warp::ws::Ws, mutant_instance: Arc<MutAnt>, task_map: TaskMap| {
-                ws.max_message_size(2_147_483_648)
-                    .max_frame_size(2_147_483_648)
-                    .on_upgrade(move |socket| handler::handle_ws(socket, mutant_instance, task_map))
+                ws.on_upgrade(move |socket| handler::handle_ws(socket, mutant_instance, task_map))
             },
         );
 

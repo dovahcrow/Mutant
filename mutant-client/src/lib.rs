@@ -126,6 +126,7 @@ impl MutantClient {
         &'a mut self,
         user_key: &str,
         source_path: &str,
+        no_verify: bool,
     ) -> Result<
         (
             impl Future<Output = Result<TaskResult, ClientError>> + 'a,
@@ -150,6 +151,7 @@ impl MutantClient {
         let req = Request::Put(mutant_protocol::PutRequest {
             user_key: user_key.to_string(),
             source_path: source_path.to_string(),
+            no_verify,
         });
 
         let start_task = async move {

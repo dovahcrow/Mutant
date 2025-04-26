@@ -99,6 +99,7 @@ impl Data {
         data_bytes: &[u8],
         mode: StorageMode,
         public: bool,
+        no_verify: bool,
     ) -> Result<ScratchpadAddress, Error> {
         if self.index.read().await.contains_key(&name) {
             if self
@@ -108,15 +109,18 @@ impl Data {
                 .verify_checksum(&name, data_bytes, mode)
             {
                 info!("Resume for {}", name);
-                self.resume(name, data_bytes, mode, public).await
+                self.resume(name, data_bytes, mode, public, no_verify).await
             } else {
                 info!("Update for {}", name);
                 self.index.write().await.remove_key(&name).unwrap();
-                return self.first_store(name, data_bytes, mode, public).await;
+                return self
+                    .first_store(name, data_bytes, mode, public, no_verify)
+                    .await;
             }
         } else {
             info!("First store for {}", name);
-            self.first_store(name, data_bytes, mode, public).await
+            self.first_store(name, data_bytes, mode, public, no_verify)
+                .await
         }
     }
 
@@ -126,13 +130,16 @@ impl Data {
         data_bytes: &[u8],
         mode: StorageMode,
         public: bool,
+        no_verify: bool,
     ) -> Result<ScratchpadAddress, Error> {
         let pads = self.index.read().await.get_pads(name);
 
         // check pads are in the correct mode or remove key and start over
         if pads.iter().any(|p| p.size > mode.scratchpad_size()) {
             self.index.write().await.remove_key(name).unwrap();
-            return self.first_store(name, data_bytes, mode, public).await;
+            return self
+                .first_store(name, data_bytes, mode, public, no_verify)
+                .await;
         }
 
         let chunks = self.index.read().await.chunk_data(data_bytes, mode, public);
@@ -145,7 +152,8 @@ impl Data {
             put_callback: self.put_callback.clone(),
         };
 
-        self.write_pipeline(context, pads.clone(), public).await;
+        self.write_pipeline(context, pads.clone(), public, no_verify)
+            .await;
 
         Ok(pads[0].address)
     }
@@ -156,6 +164,7 @@ impl Data {
         data_bytes: &[u8],
         mode: StorageMode,
         public: bool,
+        no_verify: bool,
     ) -> Result<ScratchpadAddress, Error> {
         let (pads, chunks) = self
             .index
@@ -171,12 +180,19 @@ impl Data {
             put_callback: self.put_callback.clone(),
         };
 
-        self.write_pipeline(context, pads.clone(), public).await;
+        self.write_pipeline(context, pads.clone(), public, no_verify)
+            .await;
 
         Ok(pads[0].address)
     }
 
-    async fn write_pipeline(&self, context: Context, pads: Vec<PadInfo>, public: bool) {
+    async fn write_pipeline(
+        &self,
+        context: Context,
+        pads: Vec<PadInfo>,
+        public: bool,
+        no_verify: bool,
+    ) {
         let (pad_tx, pad_rx) = channel(CHUNK_PROCESSING_QUEUE_SIZE);
 
         let initial_confirmed_count = pads
@@ -196,6 +212,7 @@ impl Data {
             initial_confirmed_count,
             initial_chunks_to_reserve,
             public,
+            no_verify,
         );
 
         for pad in pads {
@@ -215,6 +232,7 @@ impl Data {
         initial_confirmed_count: usize,
         initial_chunks_to_reserve: usize,
         public: bool,
+        no_verify: bool,
     ) -> Result<(), tokio::task::JoinError> {
         let key_name = context.name.clone();
         let total_pads = context.chunks.len();
@@ -269,6 +287,7 @@ impl Data {
                                     } else {
                                         false
                                     },
+                                    no_verify,
                                 ).await;
                             }));
                         },
@@ -320,6 +339,7 @@ impl Data {
         pad_tx: Sender<PadInfo>,
         public: bool,
         is_index: bool,
+        no_verify: bool,
     ) {
         let current_pad_address = pad.address;
         let key_name = &context.name;
@@ -448,6 +468,27 @@ impl Data {
                 .unwrap();
         }
 
+        if no_verify {
+            match context.index.write().await.update_pad_status(
+                key_name,
+                &current_pad_address,
+                PadStatus::Confirmed,
+                None,
+            ) {
+                Ok(_) => {
+                    confirmed_counter.fetch_add(1, Ordering::Relaxed);
+                    invoke_put_callback(&mut context.put_callback, PutEvent::PadsConfirmed)
+                        .await
+                        .unwrap();
+                }
+                Err(e) => error!(
+                    "Failed to update pad {} status to Confirmed: {}",
+                    current_pad_address, e
+                ),
+            };
+            return;
+        }
+
         if let Some(pad_to_confirm) = pad_for_confirm {
             let start_time = Instant::now();
 
@@ -570,7 +611,6 @@ impl Data {
                             if retries_left == 0 {
                                 return Err(Error::Network(e));
                             }
-                            tokio::time::sleep(Duration::from_secs(1)).await;
                             continue;
                         }
                     };

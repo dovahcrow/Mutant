@@ -264,6 +264,7 @@ pub struct Task {
 pub struct PutRequest {
     pub user_key: String,
     pub source_path: String, // Path to the file on the daemon's filesystem
+    pub no_verify: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

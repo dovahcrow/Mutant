@@ -20,10 +20,14 @@ enum Commands {
         file: String,
         #[arg(short, long)]
         background: bool,
+        #[arg(short, long)]
+        no_verify: bool,
     },
     Get {
         key: String,
         destination_path: String,
+        #[arg(short, long)]
+        background: bool,
     },
     Tasks {
         #[command(subcommand)]
@@ -43,13 +47,14 @@ async fn connect_to_daemon() -> Result<MutantClient> {
     Ok(client)
 }
 
-async fn handle_put(key: String, file: String, background: bool) -> Result<()> {
+async fn handle_put(key: String, file: String, background: bool, no_verify: bool) -> Result<()> {
     let source_path = file;
 
     if background {
         let _ = tokio::spawn(async move {
             let mut client = connect_to_daemon().await.unwrap();
-            let (start_task, _progress_rx) = client.put(&key, &source_path).await.unwrap();
+            let (start_task, _progress_rx) =
+                client.put(&key, &source_path, no_verify).await.unwrap();
             start_task.await.unwrap();
         });
 
@@ -60,7 +65,7 @@ async fn handle_put(key: String, file: String, background: bool) -> Result<()> {
 
     let mut client = connect_to_daemon().await?;
 
-    let (start_task, progress_rx) = client.put(&key, &source_path).await?;
+    let (start_task, progress_rx) = client.put(&key, &source_path, no_verify).await?;
 
     let multi_progress = MultiProgress::new();
     callbacks::put::create_put_progress(progress_rx, multi_progress.clone());
@@ -134,14 +139,16 @@ async fn main() -> Result<()> {
             key,
             file,
             background,
+            no_verify,
         } => {
-            handle_put(key, file, background).await?;
+            handle_put(key, file, background, no_verify).await?;
         }
         Commands::Get {
             key,
             destination_path,
+            background,
         } => {
-            handle_get(key, destination_path, false).await?;
+            handle_get(key, destination_path, background).await?;
         }
         Commands::Tasks { command } => {
             let mut client = connect_to_daemon().await?;
