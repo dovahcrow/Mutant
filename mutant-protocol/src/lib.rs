@@ -291,7 +291,7 @@ pub struct ListKeysRequest;
 
 /// Represents all possible requests the client can send to the daemon.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(untagged)]
+#[serde(tag = "type")]
 pub enum Request {
     Put(PutRequest),
     Get(GetRequest),
