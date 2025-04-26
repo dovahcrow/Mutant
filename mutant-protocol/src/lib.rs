@@ -281,68 +281,89 @@ pub struct QueryTaskRequest {
 #[derive(Deserialize, Debug, PartialEq, Eq, Serialize, Clone)]
 pub struct ListTasksRequest;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RmRequest {
     pub user_key: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListKeysRequest;
+
 /// Represents all possible requests the client can send to the daemon.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
 pub enum Request {
     Put(PutRequest),
     Get(GetRequest),
     QueryTask(QueryTaskRequest),
     ListTasks(ListTasksRequest),
-    Rm(RmRequest), // Added Rm variant
+    Rm(RmRequest),
+    ListKeys(ListKeysRequest),
 }
 
 // --- Outgoing Responses ---
 
-#[derive(Serialize, Debug, PartialEq, Eq, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskCreatedResponse {
     pub task_id: Uuid,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskUpdateResponse {
     pub task_id: TaskId,
     pub status: TaskStatus,
     pub progress: Option<TaskProgress>,
 }
 
-#[derive(Serialize, Debug, PartialEq, Eq, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskResultResponse {
     pub task_id: Uuid,
     pub status: TaskStatus,
     pub result: Option<TaskResult>,
 }
 
-#[derive(Serialize, Debug, PartialEq, Eq, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskListEntry {
     pub task_id: Uuid,
     pub task_type: TaskType,
     pub status: TaskStatus,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskListResponse {
     pub tasks: Vec<TaskListEntry>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ErrorResponse {
     pub error: String,
     pub original_request: Option<String>, // Optional original request string for context
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RmSuccessResponse {
     pub user_key: String,
 }
 
+/// Detailed information about a single stored key.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KeyDetails {
+    pub key: String,
+    pub total_size: usize,
+    pub pad_count: usize,
+    pub confirmed_pads: usize,
+    pub is_public: bool,
+    pub public_address: Option<String>, // hex representation
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListKeysResponse {
+    // Changed from Vec<String> to Vec<KeyDetails>
+    pub details: Vec<KeyDetails>,
+}
+
 /// Represents all possible responses the daemon can send to the client.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub enum Response {
     Error(ErrorResponse),
@@ -350,7 +371,8 @@ pub enum Response {
     TaskUpdate(TaskUpdateResponse),
     TaskResult(TaskResultResponse),
     TaskList(TaskListResponse),
-    RmSuccess(RmSuccessResponse), // Added RmSuccess variant
+    RmSuccess(RmSuccessResponse),
+    ListKeys(ListKeysResponse),
 }
 
 // Helper moved to where Response is used (client/server)

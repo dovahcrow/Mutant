@@ -1,8 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
 use colored::Colorize;
+use humansize::{format_size, BINARY};
 use indicatif::MultiProgress;
 use mutant_client::MutantClient;
+use mutant_protocol::KeyDetails;
 
 mod callbacks;
 
@@ -32,6 +34,8 @@ enum Commands {
     Rm {
         key: String,
     },
+    #[command(about = "List stored keys")]
+    Ls,
     Tasks {
         #[command(subcommand)]
         command: TasksCommands,
@@ -134,6 +138,57 @@ async fn handle_get(key: String, destination_path: String, background: bool) -> 
 async fn handle_rm(key: String) -> Result<()> {
     let mut client = connect_to_daemon().await?;
     client.rm(&key).await?;
+    println!("{} Key '{}' removed.", "•".bright_green(), key);
+    Ok(())
+}
+
+async fn handle_ls() -> Result<()> {
+    let mut client = connect_to_daemon().await?;
+    let details = client.list_keys().await?;
+
+    if details.is_empty() {
+        println!("No keys stored.");
+    } else {
+        println!(
+            "{:<20} {:>5} {:>10} {:>10} {}",
+            "Key", "Pads", "Size", "Status", "Address/Info"
+        );
+        println!("{}", "-".repeat(70));
+
+        for detail in details {
+            let completion_str = if detail.pad_count == 0 {
+                "0% (0/0)".to_string()
+            } else if detail.confirmed_pads == detail.pad_count {
+                "Ready".bright_green().to_string()
+            } else {
+                format!(
+                    "{}% ({}/{})",
+                    detail.confirmed_pads * 100 / detail.pad_count,
+                    detail.confirmed_pads,
+                    detail.pad_count
+                )
+                .bright_yellow()
+                .to_string()
+            };
+
+            let size_str = format_size(detail.total_size, BINARY);
+
+            let address_info = if detail.is_public {
+                format!("Public: {}", detail.public_address.unwrap_or_default())
+            } else {
+                "Private".to_string()
+            };
+
+            println!(
+                "{:<20} {:>5} {:>10} {:<10} {}",
+                detail.key,
+                detail.pad_count,
+                size_str,
+                completion_str.to_string(),
+                address_info
+            );
+        }
+    }
     Ok(())
 }
 
@@ -161,6 +216,9 @@ async fn main() -> Result<()> {
         }
         Commands::Rm { key } => {
             handle_rm(key).await?;
+        }
+        Commands::Ls => {
+            handle_ls().await?;
         }
         Commands::Tasks { command } => {
             let mut client = connect_to_daemon().await?;

@@ -5,6 +5,7 @@ use futures_util::{
     sink::SinkExt,
     stream::{SplitSink, StreamExt},
 };
+use mutant_lib::storage::{IndexEntry, PadStatus};
 use mutant_lib::{storage::StorageMode, MutAnt};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -12,10 +13,10 @@ use warp::ws::{Message, WebSocket};
 
 use crate::{error::Error as DaemonError, TaskMap};
 use mutant_protocol::{
-    ErrorResponse, GetEvent, GetRequest, ListTasksRequest, PutCallback, PutEvent, PutRequest,
-    QueryTaskRequest, Request, Response, RmRequest, RmSuccessResponse, Task, TaskCreatedResponse,
-    TaskListEntry, TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskStatus,
-    TaskType, TaskUpdateResponse,
+    ErrorResponse, GetEvent, GetRequest, KeyDetails, ListKeysRequest, ListKeysResponse,
+    ListTasksRequest, PutCallback, PutEvent, PutRequest, QueryTaskRequest, Request, Response,
+    RmRequest, RmSuccessResponse, Task, TaskCreatedResponse, TaskListEntry, TaskListResponse,
+    TaskProgress, TaskResult, TaskResultResponse, TaskStatus, TaskType, TaskUpdateResponse,
 };
 
 // Helper function to send JSON responses
@@ -127,6 +128,9 @@ async fn handle_request(
         }
         Request::ListTasks(list_req) => handle_list_tasks(list_req, update_tx, tasks).await?,
         Request::Rm(rm_req) => handle_rm(rm_req, update_tx, mutant, original_request_str).await?,
+        Request::ListKeys(list_keys_req) => {
+            handle_list_keys(list_keys_req, update_tx, mutant).await?
+        }
     }
     Ok(())
 }
@@ -457,6 +461,82 @@ async fn handle_rm(
             Response::Error(ErrorResponse {
                 error: e.to_string(),
                 original_request: Some(original_request_str.to_string()),
+            })
+        }
+    };
+
+    update_tx
+        .send(response)
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    Ok(())
+}
+
+async fn handle_list_keys(
+    _req: ListKeysRequest,
+    update_tx: mpsc::UnboundedSender<Response>,
+    mutant: Arc<MutAnt>,
+) -> Result<(), DaemonError> {
+    tracing::debug!("Handling ListKeys request");
+
+    // Use mutant.list() to get detailed IndexEntry data
+    let index_result = mutant.list().await;
+
+    let response = match index_result {
+        Ok(index_map) => {
+            tracing::info!("Found {} keys", index_map.len());
+            let details: Vec<KeyDetails> = index_map
+                .into_iter()
+                .map(|(key, entry)| match entry {
+                    IndexEntry::PrivateKey(pads) => {
+                        let total_size = pads.iter().map(|p| p.size).sum::<usize>();
+                        let pad_count = pads.len();
+                        let confirmed_pads = pads
+                            .iter()
+                            .filter(|p| p.status == PadStatus::Confirmed)
+                            .count();
+                        KeyDetails {
+                            key,
+                            total_size,
+                            pad_count,
+                            confirmed_pads,
+                            is_public: false,
+                            public_address: None,
+                        }
+                    }
+                    IndexEntry::PublicUpload(index_pad, pads) => {
+                        let data_size = pads.iter().map(|p| p.size).sum::<usize>();
+                        let total_size = data_size + index_pad.size;
+                        let pad_count = pads.len() + 1; // +1 for index pad
+                        let confirmed_data_pads = pads
+                            .iter()
+                            .filter(|p| p.status == PadStatus::Confirmed)
+                            .count();
+                        let index_pad_confirmed = if index_pad.status == PadStatus::Confirmed {
+                            1
+                        } else {
+                            0
+                        };
+                        let confirmed_pads = confirmed_data_pads + index_pad_confirmed;
+                        KeyDetails {
+                            key,
+                            total_size,
+                            pad_count,
+                            confirmed_pads,
+                            is_public: true,
+                            public_address: Some(index_pad.address.to_hex()),
+                        }
+                    }
+                })
+                .collect();
+
+            Response::ListKeys(ListKeysResponse { details })
+        }
+        Err(e) => {
+            tracing::error!("Failed to list keys from mutant-lib: {}", e);
+            Response::Error(ErrorResponse {
+                error: format!("Failed to retrieve key list: {}", e),
+                original_request: None, // Cannot easily get original string here yet
             })
         }
     };

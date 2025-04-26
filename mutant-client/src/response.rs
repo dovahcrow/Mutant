@@ -1,12 +1,13 @@
 use log::{debug, error, warn};
 use mutant_protocol::{
-    ErrorResponse, Response, RmSuccessResponse, Task, TaskCreatedResponse, TaskListResponse,
-    TaskProgress, TaskResult, TaskResultResponse, TaskStatus, TaskType, TaskUpdateResponse,
+    ErrorResponse, ListKeysResponse, Response, RmSuccessResponse, Task, TaskCreatedResponse,
+    TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskStatus, TaskType,
+    TaskUpdateResponse,
 };
 
 use crate::{
-    error::ClientError, ClientTaskMap, PendingRmSender, PendingTaskCreationSender,
-    PendingTaskListSender, PendingTaskQuerySender, TaskChannelsMap,
+    error::ClientError, ClientTaskMap, PendingListKeysSender, PendingRmSender,
+    PendingTaskCreationSender, PendingTaskListSender, PendingTaskQuerySender, TaskChannelsMap,
 };
 
 use super::MutantClient;
@@ -21,6 +22,7 @@ impl MutantClient {
         pending_task_list: &PendingTaskListSender,
         pending_task_query: &PendingTaskQuerySender,
         pending_rm: &PendingRmSender,
+        pending_list_keys: &PendingListKeysSender,
     ) {
         match response {
             Response::TaskCreated(TaskCreatedResponse { task_id }) => {
@@ -184,6 +186,15 @@ impl MutantClient {
                     warn!("Received RM success response but no request was pending");
                 }
             }
+            Response::ListKeys(ListKeysResponse { details }) => {
+                if let Some(sender) = pending_list_keys.lock().unwrap().take() {
+                    if sender.send(Ok(details)).is_err() {
+                        warn!("Failed to send ListKeys response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received ListKeys response but no request was pending");
+                }
+            }
         }
     }
 
@@ -204,6 +215,7 @@ impl MutantClient {
                                             &self.pending_task_list,
                                             &self.pending_task_query,
                                             &self.pending_rm,
+                                            &self.pending_list_keys,
                                         );
                                         return Some(Ok(response));
                                     }

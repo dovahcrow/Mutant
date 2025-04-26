@@ -11,8 +11,8 @@ use url::Url;
 use wasm_bindgen_futures::spawn_local;
 
 use mutant_protocol::{
-    ListTasksRequest, QueryTaskRequest, Request, Task, TaskId, TaskListEntry, TaskProgress,
-    TaskResult, TaskStatus,
+    KeyDetails, ListTasksRequest, QueryTaskRequest, Request, Task, TaskId, TaskListEntry,
+    TaskProgress, TaskResult, TaskStatus,
 };
 
 pub mod error;
@@ -33,6 +33,8 @@ type PendingTaskListSender =
     Arc<Mutex<Option<oneshot::Sender<Result<Vec<TaskListEntry>, ClientError>>>>>;
 type PendingTaskQuerySender = Arc<Mutex<Option<oneshot::Sender<Result<Task, ClientError>>>>>;
 type PendingRmSender = Arc<Mutex<Option<oneshot::Sender<Result<(), ClientError>>>>>;
+type PendingListKeysSender =
+    Arc<Mutex<Option<oneshot::Sender<Result<Vec<KeyDetails>, ClientError>>>>>;
 
 pub type CompletionReceiver = oneshot::Receiver<Result<TaskResult, ClientError>>;
 pub type ProgressReceiver = mpsc::UnboundedReceiver<Result<TaskProgress, ClientError>>;
@@ -60,6 +62,7 @@ pub struct MutantClient {
     pending_task_list: PendingTaskListSender,
     pending_task_query: PendingTaskQuerySender,
     pending_rm: PendingRmSender,
+    pending_list_keys: PendingListKeysSender,
     state: Arc<Mutex<ConnectionState>>,
 }
 
@@ -75,6 +78,7 @@ impl MutantClient {
             pending_task_list: Arc::new(Mutex::new(None)),
             pending_task_query: Arc::new(Mutex::new(None)),
             pending_rm: Arc::new(Mutex::new(None)),
+            pending_list_keys: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
         }
     }
@@ -254,14 +258,61 @@ impl MutantClient {
         });
 
         match self.send_request(req).await {
-            Ok(_) => {
-                debug!("Rm request sent, waiting for RM response...");
-                receiver
-                    .await
-                    .map_err(|_| ClientError::InternalError("Rm channel canceled".to_string()))?
-            }
+            Ok(_) => match receiver.await {
+                Ok(result) => {
+                    *self.pending_rm.lock().unwrap() = None;
+                    result
+                }
+                Err(_) => {
+                    *self.pending_rm.lock().unwrap() = None;
+                    Err(ClientError::InternalError(
+                        "Rm response channel canceled".to_string(),
+                    ))
+                }
+            },
             Err(e) => {
                 *self.pending_rm.lock().unwrap() = None;
+                Err(e)
+            }
+        }
+    }
+
+    /// Retrieves a list of all stored keys from the daemon.
+    pub async fn list_keys(&mut self) -> Result<Vec<KeyDetails>, ClientError> {
+        if self.pending_list_keys.lock().unwrap().is_some() {
+            return Err(ClientError::InternalError(
+                "Another list_keys request is already pending".to_string(),
+            ));
+        }
+
+        let (sender, receiver): (
+            oneshot::Sender<Result<Vec<KeyDetails>, ClientError>>,
+            oneshot::Receiver<Result<Vec<KeyDetails>, ClientError>>,
+        ) = oneshot::channel();
+        *self.pending_list_keys.lock().unwrap() = Some(sender);
+
+        let req = Request::ListKeys(mutant_protocol::ListKeysRequest);
+
+        match self.send_request(req).await {
+            Ok(_) => {
+                debug!("ListKeys request sent, waiting for response...");
+                match receiver.await {
+                    Ok(result) => {
+                        *self.pending_list_keys.lock().unwrap() = None;
+                        result
+                    }
+                    Err(_) => {
+                        *self.pending_list_keys.lock().unwrap() = None;
+                        error!("ListKeys response channel canceled");
+                        Err(ClientError::InternalError(
+                            "ListKeys response channel canceled".to_string(),
+                        ))
+                    }
+                }
+            }
+            Err(e) => {
+                *self.pending_list_keys.lock().unwrap() = None;
+                error!("Failed to send ListKeys request: {:?}", e);
                 Err(e)
             }
         }
@@ -349,6 +400,7 @@ impl Clone for MutantClient {
             pending_task_list: self.pending_task_list.clone(),
             pending_task_query: self.pending_task_query.clone(),
             pending_rm: self.pending_rm.clone(),
+            pending_list_keys: self.pending_list_keys.clone(),
             state: self.state.clone(),
         }
     }
