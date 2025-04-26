@@ -198,6 +198,7 @@ impl MutantClient {
         &mut self,
         user_key: &str,
         destination_path: &str,
+        public: bool,
     ) -> Result<
         (
             impl Future<Output = Result<TaskResult, ClientError>> + '_,
@@ -223,6 +224,7 @@ impl MutantClient {
         let req = Request::Get(mutant_protocol::GetRequest {
             user_key: user_key.to_string(),
             destination_path: destination_path.to_string(),
+            public,
         });
 
         let start_task = async move {

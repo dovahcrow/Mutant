@@ -5,7 +5,7 @@ use futures_util::{
     sink::SinkExt,
     stream::{SplitSink, StreamExt},
 };
-use mutant_lib::storage::{IndexEntry, PadStatus};
+use mutant_lib::storage::{IndexEntry, PadStatus, ScratchpadAddress};
 use mutant_lib::{storage::StorageMode, MutAnt};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -312,7 +312,12 @@ async fn handle_get(
             }
         }
 
-        let get_result = mutant.get(&user_key).await;
+        let get_result = if req.public {
+            let address = ScratchpadAddress::from_hex(&user_key).unwrap();
+            mutant.get_public(&address).await
+        } else {
+            mutant.get(&user_key).await
+        };
 
         let write_result = match get_result {
             Ok(data_bytes) => {

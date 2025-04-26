@@ -37,6 +37,8 @@ enum Commands {
         destination_path: String,
         #[arg(short, long)]
         background: bool,
+        #[arg(short, long)]
+        public: bool,
     },
     Rm {
         key: String,
@@ -141,11 +143,17 @@ async fn handle_put(
     Ok(())
 }
 
-async fn handle_get(key: String, destination_path: String, background: bool) -> Result<()> {
+async fn handle_get(
+    key: String,
+    destination_path: String,
+    public: bool,
+    background: bool,
+) -> Result<()> {
     if background {
         let _ = tokio::spawn(async move {
             let mut client = connect_to_daemon().await.unwrap();
-            let (start_task, _progress_rx) = client.get(&key, &destination_path).await.unwrap();
+            let (start_task, _progress_rx) =
+                client.get(&key, &destination_path, public).await.unwrap();
             start_task.await.unwrap();
         });
 
@@ -155,7 +163,7 @@ async fn handle_get(key: String, destination_path: String, background: bool) -> 
     }
 
     let mut client = connect_to_daemon().await?;
-    let (start_task, progress_rx) = client.get(&key, &destination_path).await?;
+    let (start_task, progress_rx) = client.get(&key, &destination_path, public).await?;
 
     let multi_progress = MultiProgress::new();
     callbacks::get::create_get_progress(progress_rx, &multi_progress);
@@ -273,8 +281,9 @@ async fn main() -> Result<()> {
             key,
             destination_path,
             background,
+            public,
         } => {
-            handle_get(key, destination_path, background).await?;
+            handle_get(key, destination_path, public, background).await?;
         }
         Commands::Rm { key } => {
             handle_rm(key).await?;

@@ -273,6 +273,7 @@ pub struct PutRequest {
 pub struct GetRequest {
     pub user_key: String,
     pub destination_path: String, // Path where the fetched file should be saved on the daemon
+    pub public: bool,
 }
 
 #[derive(Deserialize, Debug, PartialEq, Eq, Serialize, Clone)]
