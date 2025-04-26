@@ -153,7 +153,7 @@ async fn handle_ls() -> Result<()> {
         println!("No keys stored.");
     } else {
         println!(
-            "{:<20} {:>5} {:>10} {:>10} {}",
+            "{:<20} {:>5} {:>10} {:<12} {}",
             "Key", "Pads", "Size", "Status", "Address/Info"
         );
         println!("{}", "-".repeat(70));
@@ -183,7 +183,7 @@ async fn handle_ls() -> Result<()> {
             };
 
             println!(
-                "{:<20} {:>5} {:>10} {:<10} {}",
+                "{:<20} {:>5} {:>10} {:<21} {}",
                 detail.key,
                 detail.pad_count,
                 size_str,
