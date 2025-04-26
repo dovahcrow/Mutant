@@ -216,13 +216,7 @@ async fn handle_put(
 
         // Use the data read from the file
         let result = mutant
-            .put(
-                &user_key,
-                &data_bytes,
-                StorageMode::Medium,
-                false,
-                req.no_verify,
-            )
+            .put(&user_key, &data_bytes, req.mode, req.public, req.no_verify)
             .await;
 
         let final_response = {

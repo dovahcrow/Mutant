@@ -1,11 +1,13 @@
 use anyhow::Result;
 use clap::Parser;
+use clap::ValueEnum;
 use colored::Colorize;
 use humansize::{format_size, BINARY};
 use indicatif::MultiProgress;
 use mutant_client::MutantClient;
 use mutant_protocol::KeyDetails;
 use mutant_protocol::StatsResponse;
+use mutant_protocol::StorageMode;
 
 mod callbacks;
 
@@ -21,6 +23,10 @@ enum Commands {
     Put {
         key: String,
         file: String,
+        #[arg(short, long)]
+        public: bool,
+        #[arg(value_enum, short, long, default_value_t = StorageModeCli::Medium)]
+        mode: StorageModeCli,
         #[arg(short, long)]
         background: bool,
         #[arg(short, long)]
@@ -45,6 +51,32 @@ enum Commands {
     },
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+pub enum StorageModeCli {
+    /// 0.5 MB per scratchpad
+    Lightest,
+    /// 1 MB per scratchpad
+    Light,
+    /// 2 MB per scratchpad
+    Medium,
+    /// 3 MB per scratchpad
+    Heavy,
+    /// 4 MB per scratchpad
+    Heaviest,
+}
+
+impl From<StorageModeCli> for StorageMode {
+    fn from(mode: StorageModeCli) -> Self {
+        match mode {
+            StorageModeCli::Lightest => StorageMode::Lightest,
+            StorageModeCli::Light => StorageMode::Light,
+            StorageModeCli::Medium => StorageMode::Medium,
+            StorageModeCli::Heavy => StorageMode::Heavy,
+            StorageModeCli::Heaviest => StorageMode::Heaviest,
+        }
+    }
+}
+
 #[derive(clap::Subcommand)]
 enum TasksCommands {
     List,
@@ -57,14 +89,22 @@ async fn connect_to_daemon() -> Result<MutantClient> {
     Ok(client)
 }
 
-async fn handle_put(key: String, file: String, background: bool, no_verify: bool) -> Result<()> {
+async fn handle_put(
+    key: String,
+    file: String,
+    public: bool,
+    mode: StorageMode,
+    no_verify: bool,
+    background: bool,
+) -> Result<()> {
     let source_path = file;
-
     if background {
         let _ = tokio::spawn(async move {
             let mut client = connect_to_daemon().await.unwrap();
-            let (start_task, _progress_rx) =
-                client.put(&key, &source_path, no_verify).await.unwrap();
+            let (start_task, _progress_rx) = client
+                .put(&key, &source_path, mode, public, no_verify)
+                .await
+                .unwrap();
             start_task.await.unwrap();
         });
 
@@ -75,7 +115,9 @@ async fn handle_put(key: String, file: String, background: bool, no_verify: bool
 
     let mut client = connect_to_daemon().await?;
 
-    let (start_task, progress_rx) = client.put(&key, &source_path, no_verify).await?;
+    let (start_task, progress_rx) = client
+        .put(&key, &source_path, mode, public, no_verify)
+        .await?;
 
     let multi_progress = MultiProgress::new();
     callbacks::put::create_put_progress(progress_rx, multi_progress.clone());
@@ -222,8 +264,10 @@ async fn main() -> Result<()> {
             file,
             background,
             no_verify,
+            public,
+            mode,
         } => {
-            handle_put(key, file, background, no_verify).await?;
+            handle_put(key, file, public, mode.into(), no_verify, background).await?;
         }
         Commands::Get {
             key,

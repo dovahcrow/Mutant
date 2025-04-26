@@ -19,12 +19,11 @@ use std::{
     },
     time::Duration,
 };
-use storage_mode::StorageMode;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 
-use mutant_protocol::{PutCallback, PutEvent};
+use mutant_protocol::{PutCallback, PutEvent, StorageMode};
 
 pub const DATA_ENCODING_MASTER_INDEX: u64 = 0;
 pub const DATA_ENCODING_PRIVATE_DATA: u64 = 1;
@@ -35,8 +34,6 @@ pub const CHUNK_PROCESSING_QUEUE_SIZE: usize = 256;
 pub const PAD_RECYCLING_RETRIES: usize = 3;
 
 const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 10);
-
-pub mod storage_mode;
 
 pub use crate::error::Error;
 
@@ -106,7 +103,7 @@ impl Data {
                 .index
                 .read()
                 .await
-                .verify_checksum(&name, data_bytes, mode)
+                .verify_checksum(&name, data_bytes, mode.clone())
             {
                 info!("Resume for {}", name);
                 self.resume(name, data_bytes, mode, public, no_verify).await

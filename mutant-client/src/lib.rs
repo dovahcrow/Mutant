@@ -11,8 +11,8 @@ use url::Url;
 use wasm_bindgen_futures::spawn_local;
 
 use mutant_protocol::{
-    KeyDetails, ListTasksRequest, QueryTaskRequest, Request, StatsRequest, StatsResponse, Task,
-    TaskId, TaskListEntry, TaskProgress, TaskResult, TaskStatus,
+    KeyDetails, ListTasksRequest, QueryTaskRequest, Request, StatsRequest, StatsResponse,
+    StorageMode, Task, TaskId, TaskListEntry, TaskProgress, TaskResult, TaskStatus,
 };
 
 pub mod error;
@@ -136,6 +136,8 @@ impl MutantClient {
         &'a mut self,
         user_key: &str,
         source_path: &str,
+        mode: StorageMode,
+        public: bool,
         no_verify: bool,
     ) -> Result<
         (
@@ -161,6 +163,8 @@ impl MutantClient {
         let req = Request::Put(mutant_protocol::PutRequest {
             user_key: user_key.to_string(),
             source_path: source_path.to_string(),
+            mode,
+            public,
             no_verify,
         });
 

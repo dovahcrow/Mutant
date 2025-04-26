@@ -264,6 +264,8 @@ pub struct Task {
 pub struct PutRequest {
     pub user_key: String,
     pub source_path: String, // Path to the file on the daemon's filesystem
+    pub mode: StorageMode,
+    pub public: bool,
     pub no_verify: bool,
 }
 
@@ -426,4 +428,36 @@ pub enum ProtocolError {
 
     #[error("WebSocket error: {0}")] // Can be used by both client/server
     WebSocket(String),
+}
+
+pub const LIGHTEST_SCRATCHPAD_SIZE: usize = 512 * 1024;
+pub const LIGHT_SCRATCHPAD_SIZE: usize = 1 * 1024 * 1024;
+pub const MEDIUM_SCRATCHPAD_SIZE: usize = 2 * 1024 * 1024;
+pub const HEAVY_SCRATCHPAD_SIZE: usize = 3 * 1024 * 1024;
+pub const HEAVIEST_SCRATCHPAD_SIZE: usize = 4 * 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StorageMode {
+    /// 0.5 MB per scratchpad
+    Lightest,
+    /// 1 MB per scratchpad
+    Light,
+    /// 2 MB per scratchpad
+    Medium,
+    /// 3 MB per scratchpad
+    Heavy,
+    /// 4 MB per scratchpad
+    Heaviest,
+}
+
+impl StorageMode {
+    pub fn scratchpad_size(&self) -> usize {
+        match self {
+            StorageMode::Lightest => LIGHTEST_SCRATCHPAD_SIZE,
+            StorageMode::Light => LIGHT_SCRATCHPAD_SIZE,
+            StorageMode::Medium => MEDIUM_SCRATCHPAD_SIZE,
+            StorageMode::Heavy => HEAVY_SCRATCHPAD_SIZE,
+            StorageMode::Heaviest => HEAVIEST_SCRATCHPAD_SIZE,
+        }
+    }
 }

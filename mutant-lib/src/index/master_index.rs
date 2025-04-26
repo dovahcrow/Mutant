@@ -1,8 +1,8 @@
 use crate::config::NetworkChoice;
-use crate::data::storage_mode::StorageMode;
 use crate::storage::ScratchpadAddress;
 use crate::{index::pad_info::PadInfo, internal_error::Error};
 use log::{debug, info};
+use mutant_protocol::StorageMode;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -654,7 +654,7 @@ fn get_index_file_path(network_choice: NetworkChoice) -> Result<PathBuf, Error> 
 mod tests {
     use super::*;
     use crate::config::NetworkChoice;
-    use crate::data::storage_mode::MEDIUM_SCRATCHPAD_SIZE;
+    use mutant_protocol::MEDIUM_SCRATCHPAD_SIZE;
 
     const DEFAULT_SCRATCHPAD_SIZE: usize = MEDIUM_SCRATCHPAD_SIZE;
 
