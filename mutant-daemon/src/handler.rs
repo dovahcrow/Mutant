@@ -13,9 +13,9 @@ use warp::ws::{Message, WebSocket};
 use crate::{error::Error as DaemonError, TaskMap};
 use mutant_protocol::{
     ErrorResponse, GetEvent, GetRequest, ListTasksRequest, PutCallback, PutEvent, PutRequest,
-    QueryTaskRequest, Request, Response, Task, TaskCreatedResponse, TaskListEntry,
-    TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskStatus, TaskType,
-    TaskUpdateResponse,
+    QueryTaskRequest, Request, Response, RmRequest, RmSuccessResponse, Task, TaskCreatedResponse,
+    TaskListEntry, TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskStatus,
+    TaskType, TaskUpdateResponse,
 };
 
 // Helper function to send JSON responses
@@ -72,6 +72,7 @@ pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap) {
                 Ok(request) => {
                     if let Err(e) = handle_request(
                         request,
+                        original_request.as_str(),
                         update_tx.clone(), // Pass the update channel sender
                         mutant.clone(),
                         tasks.clone(),
@@ -113,6 +114,7 @@ pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap) {
 
 async fn handle_request(
     request: Request,
+    original_request_str: &str,
     update_tx: mpsc::UnboundedSender<Response>,
     mutant: Arc<MutAnt>,
     tasks: TaskMap,
@@ -120,8 +122,11 @@ async fn handle_request(
     match request {
         Request::Put(put_req) => handle_put(put_req, update_tx, mutant, tasks).await?,
         Request::Get(get_req) => handle_get(get_req, update_tx, mutant, tasks).await?,
-        Request::QueryTask(query_req) => handle_query_task(query_req, update_tx, tasks).await?,
+        Request::QueryTask(query_req) => {
+            handle_query_task(query_req, update_tx, tasks, original_request_str).await?
+        }
         Request::ListTasks(list_req) => handle_list_tasks(list_req, update_tx, tasks).await?,
+        Request::Rm(rm_req) => handle_rm(rm_req, update_tx, mutant, original_request_str).await?,
     }
     Ok(())
 }
@@ -372,6 +377,7 @@ async fn handle_query_task(
     req: QueryTaskRequest,
     update_tx: mpsc::UnboundedSender<Response>,
     tasks: TaskMap,
+    original_request_str: &str,
 ) -> Result<(), DaemonError> {
     let task_id = req.task_id;
     let tasks_guard = tasks.read().await;
@@ -396,7 +402,7 @@ async fn handle_query_task(
         tracing::warn!(task_id = %task_id, "Query for unknown task");
         Response::Error(ErrorResponse {
             error: format!("Task not found: {}", task_id),
-            original_request: None,
+            original_request: Some(original_request_str.to_string()),
         })
     };
 
@@ -427,5 +433,37 @@ async fn handle_list_tasks(
         .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
 
     tracing::debug!("Listed all tasks");
+    Ok(())
+}
+
+async fn handle_rm(
+    req: RmRequest,
+    update_tx: mpsc::UnboundedSender<Response>,
+    mutant: Arc<MutAnt>,
+    original_request_str: &str,
+) -> Result<(), DaemonError> {
+    let user_key = req.user_key.clone();
+    tracing::info!(user_key = %user_key, "Starting RM task");
+
+    let result = mutant.rm(&user_key).await;
+
+    let response = match result {
+        Ok(_) => {
+            tracing::info!(user_key = %user_key, "RM task completed successfully");
+            Response::RmSuccess(RmSuccessResponse { user_key })
+        }
+        Err(e) => {
+            tracing::error!(user_key = %user_key, error = %e, "RM task failed");
+            Response::Error(ErrorResponse {
+                error: e.to_string(),
+                original_request: Some(original_request_str.to_string()),
+            })
+        }
+    };
+
+    update_tx
+        .send(response)
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
     Ok(())
 }

@@ -32,6 +32,7 @@ type PendingTaskCreationSender = Arc<Mutex<Option<PendingTaskCreation>>>;
 type PendingTaskListSender =
     Arc<Mutex<Option<oneshot::Sender<Result<Vec<TaskListEntry>, ClientError>>>>>;
 type PendingTaskQuerySender = Arc<Mutex<Option<oneshot::Sender<Result<Task, ClientError>>>>>;
+type PendingRmSender = Arc<Mutex<Option<oneshot::Sender<Result<(), ClientError>>>>>;
 
 pub type CompletionReceiver = oneshot::Receiver<Result<TaskResult, ClientError>>;
 pub type ProgressReceiver = mpsc::UnboundedReceiver<Result<TaskProgress, ClientError>>;
@@ -58,6 +59,7 @@ pub struct MutantClient {
     pending_task_creation: PendingTaskCreationSender,
     pending_task_list: PendingTaskListSender,
     pending_task_query: PendingTaskQuerySender,
+    pending_rm: PendingRmSender,
     state: Arc<Mutex<ConnectionState>>,
 }
 
@@ -72,6 +74,7 @@ impl MutantClient {
             pending_task_creation: Arc::new(Mutex::new(None)),
             pending_task_list: Arc::new(Mutex::new(None)),
             pending_task_query: Arc::new(Mutex::new(None)),
+            pending_rm: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
         }
     }
@@ -236,6 +239,34 @@ impl MutantClient {
         Ok((start_task, progress_rx))
     }
 
+    pub async fn rm(&mut self, user_key: &str) -> Result<(), ClientError> {
+        if self.pending_rm.lock().unwrap().is_some() {
+            return Err(ClientError::InternalError(
+                "Another rm request is already pending".to_string(),
+            ));
+        }
+
+        let (sender, receiver) = oneshot::channel();
+        *self.pending_rm.lock().unwrap() = Some(sender);
+
+        let req = Request::Rm(mutant_protocol::RmRequest {
+            user_key: user_key.to_string(),
+        });
+
+        match self.send_request(req).await {
+            Ok(_) => {
+                debug!("Rm request sent, waiting for RM response...");
+                receiver
+                    .await
+                    .map_err(|_| ClientError::InternalError("Rm channel canceled".to_string()))?
+            }
+            Err(e) => {
+                *self.pending_rm.lock().unwrap() = None;
+                Err(e)
+            }
+        }
+    }
+
     pub async fn list_tasks(&mut self) -> Result<Vec<TaskListEntry>, ClientError> {
         if self.pending_task_list.lock().unwrap().is_some() {
             return Err(ClientError::InternalError(
@@ -317,6 +348,7 @@ impl Clone for MutantClient {
             pending_task_creation: self.pending_task_creation.clone(),
             pending_task_list: self.pending_task_list.clone(),
             pending_task_query: self.pending_task_query.clone(),
+            pending_rm: self.pending_rm.clone(),
             state: self.state.clone(),
         }
     }

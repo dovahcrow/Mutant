@@ -29,6 +29,9 @@ enum Commands {
         #[arg(short, long)]
         background: bool,
     },
+    Rm {
+        key: String,
+    },
     Tasks {
         #[command(subcommand)]
         command: TasksCommands,
@@ -128,6 +131,12 @@ async fn handle_get(key: String, destination_path: String, background: bool) -> 
     Ok(())
 }
 
+async fn handle_rm(key: String) -> Result<()> {
+    let mut client = connect_to_daemon().await?;
+    client.rm(&key).await?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
@@ -149,6 +158,9 @@ async fn main() -> Result<()> {
             background,
         } => {
             handle_get(key, destination_path, background).await?;
+        }
+        Commands::Rm { key } => {
+            handle_rm(key).await?;
         }
         Commands::Tasks { command } => {
             let mut client = connect_to_daemon().await?;

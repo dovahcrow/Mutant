@@ -1,6 +1,7 @@
 use base64::DecodeError;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use thiserror::Error;
@@ -273,21 +274,28 @@ pub struct GetRequest {
     pub destination_path: String, // Path where the fetched file should be saved on the daemon
 }
 
-#[derive(Deserialize, Debug, PartialEq, Eq, Serialize)]
+#[derive(Deserialize, Debug, PartialEq, Eq, Serialize, Clone)]
 pub struct QueryTaskRequest {
     pub task_id: Uuid,
 }
 
-#[derive(Deserialize, Debug, PartialEq, Eq, Serialize)]
+#[derive(Deserialize, Debug, PartialEq, Eq, Serialize, Clone)]
 pub struct ListTasksRequest;
 
-#[derive(Deserialize, Debug, PartialEq, Eq, Serialize)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RmRequest {
+    pub user_key: String,
+}
+
+/// Represents all possible requests the client can send to the daemon.
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub enum Request {
     Put(PutRequest),
     Get(GetRequest),
     QueryTask(QueryTaskRequest),
     ListTasks(ListTasksRequest),
+    Rm(RmRequest), // Added Rm variant
 }
 
 // --- Outgoing Responses ---
@@ -297,9 +305,9 @@ pub struct TaskCreatedResponse {
     pub task_id: Uuid,
 }
 
-#[derive(Serialize, Debug, PartialEq, Eq, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TaskUpdateResponse {
-    pub task_id: Uuid,
+    pub task_id: TaskId,
     pub status: TaskStatus,
     pub progress: Option<TaskProgress>,
 }
@@ -318,25 +326,32 @@ pub struct TaskListEntry {
     pub status: TaskStatus,
 }
 
-#[derive(Serialize, Debug, PartialEq, Eq, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TaskListResponse {
     pub tasks: Vec<TaskListEntry>,
 }
 
-#[derive(Serialize, Debug, PartialEq, Eq, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ErrorResponse {
     pub error: String,
-    pub original_request: Option<String>,
+    pub original_request: Option<String>, // Optional original request string for context
 }
 
-#[derive(Serialize, Debug, PartialEq, Eq, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RmSuccessResponse {
+    pub user_key: String,
+}
+
+/// Represents all possible responses the daemon can send to the client.
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub enum Response {
+    Error(ErrorResponse),
     TaskCreated(TaskCreatedResponse),
     TaskUpdate(TaskUpdateResponse),
     TaskResult(TaskResultResponse),
     TaskList(TaskListResponse),
-    Error(ErrorResponse),
+    RmSuccess(RmSuccessResponse), // Added RmSuccess variant
 }
 
 // Helper moved to where Response is used (client/server)

@@ -1,12 +1,12 @@
 use log::{debug, error, warn};
 use mutant_protocol::{
-    ErrorResponse, Response, Task, TaskCreatedResponse, TaskListResponse, TaskProgress, TaskResult,
-    TaskResultResponse, TaskStatus, TaskType, TaskUpdateResponse,
+    ErrorResponse, Response, RmSuccessResponse, Task, TaskCreatedResponse, TaskListResponse,
+    TaskProgress, TaskResult, TaskResultResponse, TaskStatus, TaskType, TaskUpdateResponse,
 };
 
 use crate::{
-    error::ClientError, ClientTaskMap, PendingTaskCreationSender, PendingTaskListSender,
-    PendingTaskQuerySender, TaskChannelsMap,
+    error::ClientError, ClientTaskMap, PendingRmSender, PendingTaskCreationSender,
+    PendingTaskListSender, PendingTaskQuerySender, TaskChannelsMap,
 };
 
 use super::MutantClient;
@@ -20,6 +20,7 @@ impl MutantClient {
         pending_task_creation: &PendingTaskCreationSender,
         pending_task_list: &PendingTaskListSender,
         pending_task_query: &PendingTaskQuerySender,
+        pending_rm: &PendingRmSender,
     ) {
         match response {
             Response::TaskCreated(TaskCreatedResponse { task_id }) => {
@@ -174,6 +175,15 @@ impl MutantClient {
                     let _ = sender.send(Err(ClientError::ServerError(error.clone())));
                 }
             }
+            Response::RmSuccess(RmSuccessResponse { user_key }) => {
+                if let Some(sender) = pending_rm.lock().unwrap().take() {
+                    if sender.send(Ok(())).is_err() {
+                        warn!("Failed to send RM success response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received RM success response but no request was pending");
+                }
+            }
         }
     }
 
@@ -193,6 +203,7 @@ impl MutantClient {
                                             &self.pending_task_creation,
                                             &self.pending_task_list,
                                             &self.pending_task_query,
+                                            &self.pending_rm,
                                         );
                                         return Some(Ok(response));
                                     }
