@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Simplified client API with clear completion and progress handling
   - Enhanced CLI to use the new parallel task execution features
 - Optimized task query to be a simple request/response without channels
+- Made the `get` method in `mutant-client` behave like the `put` method, returning a `Future` and `ProgressReceiver`.
+- Updated `mutant-cli` to handle the new return type of the `client.get` method.
 
 ### Fixed
 - Fix task query WebSocket handling to prevent premature connection closure

@@ -179,35 +179,58 @@ impl MutantClient {
         Ok((start_task, progress_rx))
     }
 
-    pub async fn get(&mut self, user_key: &str) -> Result<TaskId, ClientError> {
+    pub async fn get(
+        &mut self,
+        user_key: &str,
+    ) -> Result<
+        (
+            impl Future<Output = Result<TaskResult, ClientError>> + '_,
+            ProgressReceiver,
+        ),
+        ClientError,
+    > {
         if self.pending_task_creation.lock().unwrap().is_some() {
             return Err(ClientError::InternalError(
                 "Another put/get request is already pending".to_string(),
             ));
         }
 
-        let (sender, receiver) = oneshot::channel();
+        let (completion_tx, completion_rx) = oneshot::channel();
+        let (progress_tx, progress_rx) = mpsc::unbounded_channel();
+
+        let (task_creation_tx, task_creation_rx) = oneshot::channel();
         *self.pending_task_creation.lock().unwrap() = Some(PendingTaskCreation {
-            sender,
-            channels: None,
+            sender: task_creation_tx,
+            channels: Some((completion_tx, progress_tx)),
         });
 
         let req = Request::Get(mutant_protocol::GetRequest {
             user_key: user_key.to_string(),
         });
 
-        match self.send_request(req).await {
-            Ok(_) => {
-                debug!("Get request sent, waiting for TaskCreated response...");
-                receiver.await.map_err(|_| {
-                    ClientError::InternalError("TaskCreated channel canceled".to_string())
-                })?
+        let start_task = async move {
+            match self.send_request(req).await {
+                Ok(_) => {
+                    debug!("Get request sent, waiting for TaskCreated response...");
+                    let task_id = task_creation_rx.await.map_err(|_| {
+                        ClientError::InternalError("TaskCreated channel canceled".to_string())
+                    })??;
+
+                    info!("Task created with ID: {}", task_id);
+
+                    completion_rx.await.map_err(|_| {
+                        error!("Completion channel canceled");
+                        ClientError::InternalError("Completion channel canceled".to_string())
+                    })?
+                }
+                Err(e) => {
+                    *self.pending_task_creation.lock().unwrap() = None;
+                    Err(e)
+                }
             }
-            Err(e) => {
-                *self.pending_task_creation.lock().unwrap() = None;
-                Err(e)
-            }
-        }
+        };
+
+        Ok((start_task, progress_rx))
     }
 
     pub async fn list_tasks(&mut self) -> Result<Vec<TaskListEntry>, ClientError> {

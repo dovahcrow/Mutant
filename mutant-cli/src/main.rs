@@ -21,6 +21,9 @@ enum Commands {
         #[arg(short, long)]
         background: bool,
     },
+    Get {
+        key: String,
+    },
     Tasks {
         #[command(subcommand)]
         command: TasksCommands,
@@ -80,6 +83,44 @@ async fn handle_put(key: String, file: String, background: bool) -> Result<()> {
     Ok(())
 }
 
+async fn handle_get(key: String, background: bool) -> Result<()> {
+    if background {
+        let _ = tokio::spawn(async move {
+            let mut client = connect_to_daemon().await.unwrap();
+            let (start_task, _progress_rx) = client.get(&key).await.unwrap();
+            start_task.await.unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        return Ok(());
+    }
+
+    let mut client = connect_to_daemon().await?;
+    let (start_task, _progress_rx) = client.get(&key).await?;
+
+    match start_task.await {
+        Ok(result) => {
+            if let Some(error) = result.error {
+                eprintln!("{} {}", "Error:".bright_red(), error);
+            } else if let Some(data) = result.data {
+                println!(
+                    "{} Download complete! {} bytes",
+                    "•".bright_green(),
+                    data.len()
+                );
+            } else {
+                println!("{} Get task completed with no data.", "•".bright_green());
+            }
+        }
+        Err(e) => {
+            eprintln!("{} Task failed: {}", "Error:".bright_red(), e);
+        }
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
@@ -93,6 +134,9 @@ async fn main() -> Result<()> {
             background,
         } => {
             handle_put(key, file, background).await?;
+        }
+        Commands::Get { key } => {
+            handle_get(key, false).await?;
         }
         Commands::Tasks { command } => {
             let mut client = connect_to_daemon().await?;
