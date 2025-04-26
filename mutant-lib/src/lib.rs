@@ -38,7 +38,7 @@
 //!
 //!     let mut ant = MutAnt::init(key_hex).await?;
 //!
-//!     ant.put("file1", b"hello", StorageMode::Medium, false).await?;
+//!     ant.put("file1", b"hello", StorageMode::Medium, false, false).await?;
 //!
 //!     let data = ant.get("file1").await?;
 //!
