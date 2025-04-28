@@ -69,6 +69,10 @@ pub async fn handle_tasks(command: TasksCommands) -> Result<()> {
                 }
             }
         }
+        TasksCommands::Stop { task_id } => {
+            let task_id = uuid::Uuid::parse_str(&task_id)?;
+            client.stop_task(task_id).await?;
+        }
     }
 
     Ok(())

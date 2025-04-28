@@ -11,16 +11,16 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 use warp::ws::{Message, WebSocket};
 
-use crate::{error::Error as DaemonError, TaskMap};
+use crate::{error::Error as DaemonError, TaskEntry, TaskMap};
 use mutant_protocol::{
     ErrorResponse, ExportRequest, ExportResponse, ExportResult, GetCallback, GetEvent, GetRequest,
     GetResult, HealthCheckCallback, HealthCheckEvent, HealthCheckRequest, ImportRequest,
     ImportResponse, ImportResult, KeyDetails, ListKeysRequest, ListKeysResponse, ListTasksRequest,
     PurgeCallback, PurgeEvent, PurgeRequest, PutCallback, PutEvent, PutRequest, QueryTaskRequest,
-    Request, Response, RmRequest, RmSuccessResponse, StatsRequest, StatsResponse, SyncCallback,
-    SyncEvent, SyncRequest, Task, TaskCreatedResponse, TaskListEntry, TaskListResponse,
-    TaskProgress, TaskResult, TaskResultResponse, TaskResultType, TaskStatus, TaskType,
-    TaskUpdateResponse,
+    Request, Response, RmRequest, RmSuccessResponse, StatsRequest, StatsResponse, StopTaskRequest,
+    SyncCallback, SyncEvent, SyncRequest, Task, TaskCreatedResponse, TaskListEntry,
+    TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskResultType, TaskStatus,
+    TaskStoppedResponse, TaskType, TaskUpdateResponse,
 };
 
 // Helper function to send JSON responses
@@ -143,6 +143,9 @@ async fn handle_request(
         Request::HealthCheck(health_check_req) => {
             handle_health_check(health_check_req, update_tx, mutant, tasks).await?
         }
+        Request::StopTask(stop_task_req) => {
+            handle_stop_task(stop_task_req, update_tx, tasks).await?
+        }
     }
     Ok(())
 }
@@ -175,22 +178,32 @@ async fn handle_put(
         progress: None,
         result: TaskResult::Pending,
     };
-    {
-        tasks.write().await.insert(task_id, task.clone());
-    }
+    // We will insert the TaskEntry after spawning the task and getting the handle
 
     update_tx
         .send(Response::TaskCreated(TaskCreatedResponse { task_id }))
         .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
 
-    tokio::spawn(async move {
+    // Clone Arc handles *before* moving them into the async block
+    let tasks_clone = tasks.clone();
+    let mutant_clone = mutant.clone();
+    let update_tx_clone_for_spawn = update_tx.clone();
+
+    let task_handle = tokio::spawn(async move {
+        // Use the cloned handles inside the spawned task
+        let tasks = tasks_clone;
+        let mutant = mutant_clone;
+        let update_tx = update_tx_clone_for_spawn;
+
         tracing::info!(task_id = %task_id, user_key = %user_key, source_path = %source_path, "Starting PUT task");
 
-        let mut tasks_guard = tasks.write().await;
-        if let Some(task) = tasks_guard.get_mut(&task_id) {
-            task.status = TaskStatus::InProgress;
-        }
-        drop(tasks_guard);
+        // Update status in TaskMap
+        {
+            let mut tasks_guard = tasks.write().await;
+            if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                entry.task.status = TaskStatus::InProgress;
+            }
+        } // RwLockWriteGuard is dropped here
 
         // Create callback *inside* the task
         let update_tx_clone = update_tx.clone();
@@ -204,16 +217,22 @@ async fn handle_put(
                 let progress = TaskProgress::Put(event);
                 // Update task progress in map
                 let mut tasks_guard = tasks.write().await;
-                if let Some(task) = tasks_guard.get_mut(&task_id) {
-                    task.progress = Some(progress.clone());
+                if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                    // Only update if the task is still considered InProgress
+                    if entry.task.status == TaskStatus::InProgress {
+                        entry.task.progress = Some(progress.clone());
+                        // Send update via channel
+                        let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
+                            task_id,
+                            status: TaskStatus::InProgress,
+                            progress: Some(progress),
+                        }));
+                    } else {
+                        tracing::warn!(task_id = %task_id, "Received PUT progress update for task not InProgress (status: {:?}). Ignoring.", entry.task.status);
+                        return Ok(false); // Indicate to stop sending updates if task is no longer InProgress
+                    }
                 }
                 drop(tasks_guard);
-                // Send update via channel
-                let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
-                    task_id,
-                    status: TaskStatus::InProgress,
-                    progress: Some(progress),
-                }));
                 Ok(true)
             })
         });
@@ -232,30 +251,41 @@ async fn handle_put(
 
         let final_response = {
             let mut tasks_guard = tasks.write().await;
-            if let Some(task) = tasks_guard.get_mut(&task_id) {
-                match result {
-                    Ok(_addr) => {
-                        task.status = TaskStatus::Completed;
-                        task.result = TaskResult::Result(TaskResultType::Put(()));
-                        tracing::info!(task_id = %task_id, user_key = %user_key, source_path = %source_path, "PUT task completed successfully");
-                        Some(Response::TaskResult(TaskResultResponse {
-                            task_id,
-                            status: TaskStatus::Completed,
-                            result: task.result.clone(),
-                        }))
+            // Check if task entry still exists and hasn't been stopped
+            if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                // Only update if the task hasn't been stopped externally
+                if entry.task.status != TaskStatus::Stopped {
+                    match result {
+                        Ok(_addr) => {
+                            entry.task.status = TaskStatus::Completed;
+                            entry.task.result = TaskResult::Result(TaskResultType::Put(()));
+                            entry.abort_handle = None; // Task finished, remove handle
+                            tracing::info!(task_id = %task_id, user_key = %user_key, source_path = %source_path, "PUT task completed successfully");
+                            Some(Response::TaskResult(TaskResultResponse {
+                                task_id,
+                                status: TaskStatus::Completed,
+                                result: entry.task.result.clone(),
+                            }))
+                        }
+                        Err(e) => {
+                            entry.task.status = TaskStatus::Failed;
+                            entry.task.result = TaskResult::Error(e.to_string());
+                            entry.abort_handle = None; // Task finished, remove handle
+                            tracing::error!(task_id = %task_id, user_key = %user_key, source_path = %source_path, error = %e, "PUT task failed");
+                            Some(Response::TaskResult(TaskResultResponse {
+                                task_id,
+                                status: TaskStatus::Failed,
+                                result: entry.task.result.clone(),
+                            }))
+                        }
                     }
-                    Err(e) => {
-                        task.status = TaskStatus::Failed;
-                        task.result = TaskResult::Error(e.to_string());
-                        tracing::error!(task_id = %task_id, user_key = %user_key, source_path = %source_path, error = %e, "PUT task failed");
-                        Some(Response::TaskResult(TaskResultResponse {
-                            task_id,
-                            status: TaskStatus::Failed,
-                            result: task.result.clone(),
-                        }))
-                    }
+                } else {
+                    tracing::info!(task_id = %task_id, "PUT task was stopped before completion.");
+                    entry.abort_handle = None; // Ensure handle is cleared if stopped
+                    None // No final result to send if stopped
                 }
             } else {
+                tracing::warn!(task_id = %task_id, "Task entry removed before PUT completion?");
                 None
             }
         };
@@ -264,6 +294,18 @@ async fn handle_put(
             let _ = update_tx.send(response);
         }
     });
+
+    // Get the abort handle and create the TaskEntry
+    let abort_handle = task_handle.abort_handle();
+    let task_entry = TaskEntry {
+        task, // The task struct created earlier
+        abort_handle: Some(abort_handle),
+    };
+
+    // Insert the TaskEntry into the map *after* spawning
+    {
+        tasks.write().await.insert(task_id, task_entry);
+    }
 
     Ok(())
 }
@@ -285,22 +327,31 @@ async fn handle_get(
         progress: None,
         result: TaskResult::Pending,
     };
-    {
-        tasks.write().await.insert(task_id, task.clone());
-    }
 
     update_tx
         .send(Response::TaskCreated(TaskCreatedResponse { task_id }))
         .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
 
-    tokio::spawn(async move {
+    // Clone Arc handles *before* moving them into the async block
+    let tasks_clone = tasks.clone();
+    let mutant_clone = mutant.clone();
+    let update_tx_clone_for_spawn = update_tx.clone();
+
+    let task_handle = tokio::spawn(async move {
+        // Use the cloned handles inside the spawned task
+        let tasks = tasks_clone;
+        let mutant = mutant_clone;
+        let update_tx = update_tx_clone_for_spawn;
+
         tracing::info!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, "Starting GET task");
 
-        let mut tasks_guard = tasks.write().await;
-        if let Some(task) = tasks_guard.get_mut(&task_id) {
-            task.status = TaskStatus::InProgress;
+        // Update status in TaskMap
+        {
+            let mut tasks_guard = tasks.write().await;
+            if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                entry.task.status = TaskStatus::InProgress;
+            }
         }
-        drop(tasks_guard);
 
         // Create callback *inside* the task
         let update_tx_clone = update_tx.clone();
@@ -314,24 +365,40 @@ async fn handle_get(
                 let progress = TaskProgress::Get(event);
                 // Update task progress
                 let mut tasks_guard = tasks.write().await;
-                if let Some(task) = tasks_guard.get_mut(&task_id) {
-                    task.progress = Some(progress.clone());
+                if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                    // Only update if the task is still considered InProgress
+                    if entry.task.status == TaskStatus::InProgress {
+                        entry.task.progress = Some(progress.clone());
+                        // Send update via channel
+                        let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
+                            task_id,
+                            status: TaskStatus::InProgress,
+                            progress: Some(progress),
+                        }));
+                    } else {
+                        tracing::warn!(task_id = %task_id, "Received GET progress update for task not InProgress (status: {:?}). Ignoring.", entry.task.status);
+                        return Ok(false); // Indicate to stop sending updates if task is no longer InProgress
+                    }
                 }
                 drop(tasks_guard);
-                // Send update via channel
-                let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
-                    task_id,
-                    status: TaskStatus::InProgress,
-                    progress: Some(progress),
-                }));
                 Ok(true)
             })
         });
 
         // Call get or get_public with the callback
         let get_result = if req.public {
-            let address = ScratchpadAddress::from_hex(&user_key).unwrap();
-            mutant.get_public(&address, Some(callback)).await // Pass callback
+            // TODO: Fix public key handling if necessary, ScratchpadAddress requires valid hex
+            match ScratchpadAddress::from_hex(&user_key) {
+                Ok(address) => mutant.get_public(&address, Some(callback)).await,
+                Err(hex_err) => {
+                    // Wrap the underlying lib error in DaemonError::LibError
+                    let lib_err = mutant_lib::error::Error::Internal(format!(
+                        "Invalid public key hex format for '{}': {}",
+                        user_key, hex_err
+                    ));
+                    Err(lib_err)
+                }
+            }
         } else {
             mutant.get(&user_key, Some(callback)).await // Pass callback
         };
@@ -354,34 +421,44 @@ async fn handle_get(
 
         let final_response = {
             let mut tasks_guard = tasks.write().await;
-            if let Some(task) = tasks_guard.get_mut(&task_id) {
-                match write_result {
-                    Ok(data_bytes) => {
-                        task.status = TaskStatus::Completed;
-                        task.result = TaskResult::Result(TaskResultType::Get(GetResult {
-                            size: data_bytes.len(),
-                        }));
-                        tracing::info!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, bytes_written = data_bytes.len(), "GET task completed successfully");
-                        Some(Response::TaskResult(TaskResultResponse {
-                            task_id,
-                            status: TaskStatus::Completed,
-                            result: task.result.clone(),
-                        }))
+            if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                // Only update if the task hasn't been stopped externally
+                if entry.task.status != TaskStatus::Stopped {
+                    match write_result {
+                        Ok(data_bytes) => {
+                            entry.task.status = TaskStatus::Completed;
+                            entry.task.result =
+                                TaskResult::Result(TaskResultType::Get(GetResult {
+                                    size: data_bytes.len(),
+                                }));
+                            entry.abort_handle = None; // Task finished, remove handle
+                            tracing::info!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, bytes_written = data_bytes.len(), "GET task completed successfully");
+                            Some(Response::TaskResult(TaskResultResponse {
+                                task_id,
+                                status: TaskStatus::Completed,
+                                result: entry.task.result.clone(),
+                            }))
+                        }
+                        Err(e) => {
+                            let error_msg = e.to_string();
+                            entry.task.status = TaskStatus::Failed;
+                            entry.task.result = TaskResult::Error(error_msg.clone());
+                            entry.abort_handle = None; // Task finished, remove handle
+                            tracing::error!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, "GET task failed: {}", error_msg);
+                            Some(Response::TaskResult(TaskResultResponse {
+                                task_id,
+                                status: TaskStatus::Failed,
+                                result: entry.task.result.clone(),
+                            }))
+                        }
                     }
-                    Err(e) => {
-                        let error_msg = e.to_string();
-                        task.status = TaskStatus::Failed;
-                        task.result = TaskResult::Error(error_msg.clone());
-                        tracing::error!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, "GET task failed: {}", error_msg);
-                        Some(Response::TaskResult(TaskResultResponse {
-                            task_id,
-                            status: TaskStatus::Failed,
-                            result: task.result.clone(),
-                        }))
-                    }
+                } else {
+                    tracing::info!(task_id = %task_id, "GET task was stopped before completion.");
+                    entry.abort_handle = None; // Ensure handle is cleared if stopped
+                    None // No final result to send if stopped
                 }
             } else {
-                tracing::warn!(task_id = %task_id, "Task removed before GET completion?");
+                tracing::warn!(task_id = %task_id, "Task entry removed before GET completion?");
                 None
             }
         };
@@ -391,6 +468,18 @@ async fn handle_get(
             }
         }
     });
+
+    // Get the abort handle and create the TaskEntry
+    let abort_handle = task_handle.abort_handle();
+    let task_entry = TaskEntry {
+        task, // The task struct created earlier
+        abort_handle: Some(abort_handle),
+    };
+
+    // Insert the TaskEntry into the map *after* spawning
+    {
+        tasks.write().await.insert(task_id, task_entry);
+    }
 
     Ok(())
 }
@@ -410,22 +499,31 @@ async fn handle_sync(
         progress: None,
         result: TaskResult::Pending,
     };
-    {
-        tasks.write().await.insert(task_id, task.clone());
-    }
 
     update_tx
         .send(Response::TaskCreated(TaskCreatedResponse { task_id }))
         .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
 
-    tokio::spawn(async move {
+    // Clone Arc handles *before* moving them into the async block
+    let tasks_clone = tasks.clone();
+    let mutant_clone = mutant.clone();
+    let update_tx_clone_for_spawn = update_tx.clone();
+
+    let task_handle = tokio::spawn(async move {
+        // Use the cloned handles inside the spawned task
+        let tasks = tasks_clone;
+        let mutant = mutant_clone;
+        let update_tx = update_tx_clone_for_spawn;
+
         tracing::info!(task_id = %task_id, "Starting SYNC task");
 
-        let mut tasks_guard = tasks.write().await;
-        if let Some(task) = tasks_guard.get_mut(&task_id) {
-            task.status = TaskStatus::InProgress;
+        // Update status in TaskMap
+        {
+            let mut tasks_guard = tasks.write().await;
+            if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                entry.task.status = TaskStatus::InProgress;
+            }
         }
-        drop(tasks_guard);
 
         // Create callback *inside* the task
         let update_tx_clone = update_tx.clone();
@@ -439,16 +537,22 @@ async fn handle_sync(
                 let progress = TaskProgress::Sync(event);
                 // Update task progress
                 let mut tasks_guard = tasks.write().await;
-                if let Some(task) = tasks_guard.get_mut(&task_id) {
-                    task.progress = Some(progress.clone());
+                if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                    // Only update if the task is still considered InProgress
+                    if entry.task.status == TaskStatus::InProgress {
+                        entry.task.progress = Some(progress.clone());
+                        // Send update via channel
+                        let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
+                            task_id,
+                            status: TaskStatus::InProgress,
+                            progress: Some(progress),
+                        }));
+                    } else {
+                        tracing::warn!(task_id = %task_id, "Received SYNC progress update for task not InProgress (status: {:?}). Ignoring.", entry.task.status);
+                        return Ok(false); // Indicate to stop sending updates if task is no longer InProgress
+                    }
                 }
                 drop(tasks_guard);
-                // Send update via channel
-                let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
-                    task_id,
-                    status: TaskStatus::InProgress,
-                    progress: Some(progress),
-                }));
                 Ok(true)
             })
         });
@@ -458,32 +562,42 @@ async fn handle_sync(
 
         let final_response = {
             let mut tasks_guard = tasks.write().await;
-            if let Some(task) = tasks_guard.get_mut(&task_id) {
-                match sync_result {
-                    Ok(sync_result) => {
-                        task.status = TaskStatus::Completed;
-                        task.result = TaskResult::Result(TaskResultType::Sync(sync_result));
-                        tracing::info!(task_id = %task_id, "SYNC task completed successfully");
-                        Some(Response::TaskResult(TaskResultResponse {
-                            task_id,
-                            status: TaskStatus::Completed,
-                            result: task.result.clone(),
-                        }))
+            if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                // Only update if the task hasn't been stopped externally
+                if entry.task.status != TaskStatus::Stopped {
+                    match sync_result {
+                        Ok(sync_result_data) => {
+                            entry.task.status = TaskStatus::Completed;
+                            entry.task.result =
+                                TaskResult::Result(TaskResultType::Sync(sync_result_data));
+                            entry.abort_handle = None; // Task finished, remove handle
+                            tracing::info!(task_id = %task_id, "SYNC task completed successfully");
+                            Some(Response::TaskResult(TaskResultResponse {
+                                task_id,
+                                status: TaskStatus::Completed,
+                                result: entry.task.result.clone(),
+                            }))
+                        }
+                        Err(e) => {
+                            let error_msg = e.to_string();
+                            entry.task.status = TaskStatus::Failed;
+                            entry.task.result = TaskResult::Error(error_msg.clone());
+                            entry.abort_handle = None; // Task finished, remove handle
+                            tracing::error!(task_id = %task_id, "SYNC task failed: {}", error_msg);
+                            Some(Response::TaskResult(TaskResultResponse {
+                                task_id,
+                                status: TaskStatus::Failed,
+                                result: entry.task.result.clone(),
+                            }))
+                        }
                     }
-                    Err(e) => {
-                        let error_msg = e.to_string();
-                        task.status = TaskStatus::Failed;
-                        task.result = TaskResult::Error(error_msg.clone());
-                        tracing::error!(task_id = %task_id, "SYNC task failed: {}", error_msg);
-                        Some(Response::TaskResult(TaskResultResponse {
-                            task_id,
-                            status: TaskStatus::Failed,
-                            result: task.result.clone(),
-                        }))
-                    }
+                } else {
+                    tracing::info!(task_id = %task_id, "SYNC task was stopped before completion.");
+                    entry.abort_handle = None; // Ensure handle is cleared if stopped
+                    None // No final result to send if stopped
                 }
             } else {
-                tracing::warn!(task_id = %task_id, "Task removed before SYNC completion?");
+                tracing::warn!(task_id = %task_id, "Task entry removed before SYNC completion?");
                 None
             }
         };
@@ -493,6 +607,18 @@ async fn handle_sync(
             }
         }
     });
+
+    // Get the abort handle and create the TaskEntry
+    let abort_handle = task_handle.abort_handle();
+    let task_entry = TaskEntry {
+        task, // The task struct created earlier
+        abort_handle: Some(abort_handle),
+    };
+
+    // Insert the TaskEntry into the map *after* spawning
+    {
+        tasks.write().await.insert(task_id, task_entry);
+    }
 
     Ok(())
 }
@@ -507,27 +633,37 @@ async fn handle_purge(
 
     let task = Task {
         id: task_id,
-        task_type: TaskType::Sync,
+        // TaskType should be Purge, not Sync
+        task_type: TaskType::Purge,
         status: TaskStatus::Pending,
         progress: None,
         result: TaskResult::Pending,
     };
-    {
-        tasks.write().await.insert(task_id, task.clone());
-    }
 
     update_tx
         .send(Response::TaskCreated(TaskCreatedResponse { task_id }))
         .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
 
-    tokio::spawn(async move {
+    // Clone Arc handles *before* moving them into the async block
+    let tasks_clone = tasks.clone();
+    let mutant_clone = mutant.clone();
+    let update_tx_clone_for_spawn = update_tx.clone();
+
+    let task_handle = tokio::spawn(async move {
+        // Use the cloned handles inside the spawned task
+        let tasks = tasks_clone;
+        let mutant = mutant_clone;
+        let update_tx = update_tx_clone_for_spawn;
+
         tracing::info!(task_id = %task_id, "Starting PURGE task");
 
-        let mut tasks_guard = tasks.write().await;
-        if let Some(task) = tasks_guard.get_mut(&task_id) {
-            task.status = TaskStatus::InProgress;
+        // Update status in TaskMap
+        {
+            let mut tasks_guard = tasks.write().await;
+            if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                entry.task.status = TaskStatus::InProgress;
+            }
         }
-        drop(tasks_guard);
 
         // Create callback *inside* the task
         let update_tx_clone = update_tx.clone();
@@ -541,16 +677,22 @@ async fn handle_purge(
                 let progress = TaskProgress::Purge(event);
                 // Update task progress
                 let mut tasks_guard = tasks.write().await;
-                if let Some(task) = tasks_guard.get_mut(&task_id) {
-                    task.progress = Some(progress.clone());
+                if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                    // Only update if the task is still considered InProgress
+                    if entry.task.status == TaskStatus::InProgress {
+                        entry.task.progress = Some(progress.clone());
+                        // Send update via channel
+                        let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
+                            task_id,
+                            status: TaskStatus::InProgress,
+                            progress: Some(progress),
+                        }));
+                    } else {
+                        tracing::warn!(task_id = %task_id, "Received PURGE progress update for task not InProgress (status: {:?}). Ignoring.", entry.task.status);
+                        return Ok(false); // Indicate to stop sending updates if task is no longer InProgress
+                    }
                 }
                 drop(tasks_guard);
-                // Send update via channel
-                let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
-                    task_id,
-                    status: TaskStatus::InProgress,
-                    progress: Some(progress),
-                }));
                 Ok(true)
             })
         });
@@ -560,32 +702,42 @@ async fn handle_purge(
 
         let final_response = {
             let mut tasks_guard = tasks.write().await;
-            if let Some(task) = tasks_guard.get_mut(&task_id) {
-                match purge_result {
-                    Ok(purge_result) => {
-                        task.status = TaskStatus::Completed;
-                        task.result = TaskResult::Result(TaskResultType::Purge(purge_result));
-                        tracing::info!(task_id = %task_id, "PURGE task completed successfully");
-                        Some(Response::TaskResult(TaskResultResponse {
-                            task_id,
-                            status: TaskStatus::Completed,
-                            result: task.result.clone(),
-                        }))
+            if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                // Only update if the task hasn't been stopped externally
+                if entry.task.status != TaskStatus::Stopped {
+                    match purge_result {
+                        Ok(purge_result_data) => {
+                            entry.task.status = TaskStatus::Completed;
+                            entry.task.result =
+                                TaskResult::Result(TaskResultType::Purge(purge_result_data));
+                            entry.abort_handle = None; // Task finished, remove handle
+                            tracing::info!(task_id = %task_id, "PURGE task completed successfully");
+                            Some(Response::TaskResult(TaskResultResponse {
+                                task_id,
+                                status: TaskStatus::Completed,
+                                result: entry.task.result.clone(),
+                            }))
+                        }
+                        Err(e) => {
+                            let error_msg = e.to_string();
+                            entry.task.status = TaskStatus::Failed;
+                            entry.task.result = TaskResult::Error(error_msg.clone());
+                            entry.abort_handle = None; // Task finished, remove handle
+                            tracing::error!(task_id = %task_id, "PURGE task failed: {}", error_msg);
+                            Some(Response::TaskResult(TaskResultResponse {
+                                task_id,
+                                status: TaskStatus::Failed,
+                                result: entry.task.result.clone(),
+                            }))
+                        }
                     }
-                    Err(e) => {
-                        let error_msg = e.to_string();
-                        task.status = TaskStatus::Failed;
-                        task.result = TaskResult::Error(error_msg.clone());
-                        tracing::error!(task_id = %task_id, "PURGE task failed: {}", error_msg);
-                        Some(Response::TaskResult(TaskResultResponse {
-                            task_id,
-                            status: TaskStatus::Failed,
-                            result: task.result.clone(),
-                        }))
-                    }
+                } else {
+                    tracing::info!(task_id = %task_id, "PURGE task was stopped before completion.");
+                    entry.abort_handle = None; // Ensure handle is cleared if stopped
+                    None // No final result to send if stopped
                 }
             } else {
-                tracing::warn!(task_id = %task_id, "Task removed before PURGE completion?");
+                tracing::warn!(task_id = %task_id, "Task entry removed before PURGE completion?");
                 None
             }
         };
@@ -595,6 +747,18 @@ async fn handle_purge(
             }
         }
     });
+
+    // Get the abort handle and create the TaskEntry
+    let abort_handle = task_handle.abort_handle();
+    let task_entry = TaskEntry {
+        task, // The task struct created earlier
+        abort_handle: Some(abort_handle),
+    };
+
+    // Insert the TaskEntry into the map *after* spawning
+    {
+        tasks.write().await.insert(task_id, task_entry);
+    }
 
     Ok(())
 }
@@ -614,22 +778,31 @@ async fn handle_health_check(
         progress: None,
         result: TaskResult::Pending,
     };
-    {
-        tasks.write().await.insert(task_id, task.clone());
-    }
 
     update_tx
         .send(Response::TaskCreated(TaskCreatedResponse { task_id }))
         .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
 
-    tokio::spawn(async move {
+    // Clone Arc handles *before* moving them into the async block
+    let tasks_clone = tasks.clone();
+    let mutant_clone = mutant.clone();
+    let update_tx_clone_for_spawn = update_tx.clone();
+
+    let task_handle = tokio::spawn(async move {
+        // Use the cloned handles inside the spawned task
+        let tasks = tasks_clone;
+        let mutant = mutant_clone;
+        let update_tx = update_tx_clone_for_spawn;
+
         tracing::info!(task_id = %task_id, "Starting HEALTH CHECK task");
 
-        let mut tasks_guard = tasks.write().await;
-        if let Some(task) = tasks_guard.get_mut(&task_id) {
-            task.status = TaskStatus::InProgress;
+        // Update status in TaskMap
+        {
+            let mut tasks_guard = tasks.write().await;
+            if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                entry.task.status = TaskStatus::InProgress;
+            }
         }
-        drop(tasks_guard);
 
         // Create callback *inside* the task
         let update_tx_clone = update_tx.clone();
@@ -643,16 +816,22 @@ async fn handle_health_check(
                 let progress = TaskProgress::HealthCheck(event);
                 // Update task progress
                 let mut tasks_guard = tasks.write().await;
-                if let Some(task) = tasks_guard.get_mut(&task_id) {
-                    task.progress = Some(progress.clone());
+                if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                    // Only update if the task is still considered InProgress
+                    if entry.task.status == TaskStatus::InProgress {
+                        entry.task.progress = Some(progress.clone());
+                        // Send update via channel
+                        let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
+                            task_id,
+                            status: TaskStatus::InProgress,
+                            progress: Some(progress),
+                        }));
+                    } else {
+                        tracing::warn!(task_id = %task_id, "Received HEALTH_CHECK progress update for task not InProgress (status: {:?}). Ignoring.", entry.task.status);
+                        return Ok(false); // Indicate to stop sending updates if task is no longer InProgress
+                    }
                 }
                 drop(tasks_guard);
-                // Send update via channel
-                let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
-                    task_id,
-                    status: TaskStatus::InProgress,
-                    progress: Some(progress),
-                }));
                 Ok(true)
             })
         });
@@ -664,33 +843,43 @@ async fn handle_health_check(
 
         let final_response = {
             let mut tasks_guard = tasks.write().await;
-            if let Some(task) = tasks_guard.get_mut(&task_id) {
-                match health_check_result {
-                    Ok(health_check_result) => {
-                        task.status = TaskStatus::Completed;
-                        task.result =
-                            TaskResult::Result(TaskResultType::HealthCheck(health_check_result));
-                        tracing::info!(task_id = %task_id, "HEALTH CHECK task completed successfully");
-                        Some(Response::TaskResult(TaskResultResponse {
-                            task_id,
-                            status: TaskStatus::Completed,
-                            result: task.result.clone(),
-                        }))
+            if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                // Only update if the task hasn't been stopped externally
+                if entry.task.status != TaskStatus::Stopped {
+                    match health_check_result {
+                        Ok(health_check_result_data) => {
+                            entry.task.status = TaskStatus::Completed;
+                            entry.task.result = TaskResult::Result(TaskResultType::HealthCheck(
+                                health_check_result_data,
+                            ));
+                            entry.abort_handle = None; // Task finished, remove handle
+                            tracing::info!(task_id = %task_id, "HEALTH CHECK task completed successfully");
+                            Some(Response::TaskResult(TaskResultResponse {
+                                task_id,
+                                status: TaskStatus::Completed,
+                                result: entry.task.result.clone(),
+                            }))
+                        }
+                        Err(e) => {
+                            let error_msg = e.to_string();
+                            entry.task.status = TaskStatus::Failed;
+                            entry.task.result = TaskResult::Error(error_msg.clone());
+                            entry.abort_handle = None; // Task finished, remove handle
+                            tracing::error!(task_id = %task_id, "HEALTH CHECK task failed: {}", error_msg);
+                            Some(Response::TaskResult(TaskResultResponse {
+                                task_id,
+                                status: TaskStatus::Failed,
+                                result: entry.task.result.clone(),
+                            }))
+                        }
                     }
-                    Err(e) => {
-                        let error_msg = e.to_string();
-                        task.status = TaskStatus::Failed;
-                        task.result = TaskResult::Error(error_msg.clone());
-                        tracing::error!(task_id = %task_id, "HEALTH CHECK task failed: {}", error_msg);
-                        Some(Response::TaskResult(TaskResultResponse {
-                            task_id,
-                            status: TaskStatus::Failed,
-                            result: task.result.clone(),
-                        }))
-                    }
+                } else {
+                    tracing::info!(task_id = %task_id, "HEALTH CHECK task was stopped before completion.");
+                    entry.abort_handle = None; // Ensure handle is cleared if stopped
+                    None // No final result to send if stopped
                 }
             } else {
-                tracing::warn!(task_id = %task_id, "Task removed before HEALTH CHECK completion?");
+                tracing::warn!(task_id = %task_id, "Task entry removed before HEALTH CHECK completion?");
                 None
             }
         };
@@ -700,6 +889,18 @@ async fn handle_health_check(
             }
         }
     });
+
+    // Get the abort handle and create the TaskEntry
+    let abort_handle = task_handle.abort_handle();
+    let task_entry = TaskEntry {
+        task, // The task struct created earlier
+        abort_handle: Some(abort_handle),
+    };
+
+    // Insert the TaskEntry into the map *after* spawning
+    {
+        tasks.write().await.insert(task_id, task_entry);
+    }
 
     Ok(())
 }
@@ -713,20 +914,20 @@ async fn handle_query_task(
     let task_id = req.task_id;
     let tasks_guard = tasks.read().await;
 
-    let response = if let Some(task) = tasks_guard.get(&task_id) {
+    let response = if let Some(entry) = tasks_guard.get(&task_id) {
         tracing::debug!(task_id = %task_id, "Queried task status");
-        match task.status {
+        match entry.task.status {
             TaskStatus::Completed | TaskStatus::Failed => {
                 Response::TaskResult(TaskResultResponse {
-                    task_id: task.id,
-                    status: task.status.clone(),
-                    result: task.result.clone(),
+                    task_id: entry.task.id,
+                    status: entry.task.status.clone(),
+                    result: entry.task.result.clone(),
                 })
             }
             _ => Response::TaskUpdate(TaskUpdateResponse {
-                task_id: task.id,
-                status: task.status.clone(),
-                progress: task.progress.clone(),
+                task_id: entry.task.id,
+                status: entry.task.status.clone(),
+                progress: entry.task.progress.clone(),
             }),
         }
     } else {
@@ -752,10 +953,10 @@ async fn handle_list_tasks(
     let tasks_guard = tasks.read().await;
     let task_list: Vec<TaskListEntry> = tasks_guard
         .values()
-        .map(|task| TaskListEntry {
-            task_id: task.id,
-            task_type: task.task_type.clone(),
-            status: task.status.clone(),
+        .map(|entry| TaskListEntry {
+            task_id: entry.task.id,
+            task_type: entry.task.task_type.clone(),
+            status: entry.task.status.clone(),
         })
         .collect();
 
@@ -962,6 +1163,70 @@ async fn handle_export(
     update_tx
         .send(response)
         .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    Ok(())
+}
+
+async fn handle_stop_task(
+    req: StopTaskRequest,
+    update_tx: mpsc::UnboundedSender<Response>,
+    tasks: TaskMap,
+) -> Result<(), DaemonError> {
+    let task_id = req.task_id;
+    tracing::info!(task_id = %task_id, "Received request to stop task");
+    let mut tasks_guard = tasks.write().await;
+
+    if let Some(entry) = tasks_guard.get_mut(&task_id) {
+        // Check if the task is in a state that can be stopped
+        match entry.task.status {
+            TaskStatus::Pending | TaskStatus::InProgress => {
+                tracing::info!(task_id = %task_id, "Attempting to abort task");
+                // Abort the task if the handle exists
+                if let Some(handle) = &entry.abort_handle {
+                    handle.abort();
+                    entry.abort_handle = None; // Remove handle after aborting
+                    entry.task.status = TaskStatus::Stopped;
+                    entry.task.result =
+                        TaskResult::Error("Task stopped by user request".to_string());
+                    tracing::info!(task_id = %task_id, "Task aborted and status set to Stopped");
+
+                    // Send TaskStoppedResponse instead of TaskResult
+                    let final_update = Response::TaskStopped(TaskStoppedResponse { task_id });
+                    // Send needs the original update_tx, not the cloned one from spawn
+                    if update_tx.send(final_update).is_err() {
+                        tracing::warn!(task_id = %task_id, "Failed to send stop confirmation to client (channel closed)");
+                    }
+                } else {
+                    // This case might happen if the task finished *just* before stop was processed
+                    // or if it's a non-abortable task type (though currently all are)
+                    tracing::warn!(task_id = %task_id, "Stop requested, but task had no abort handle (might have already finished?). Current status: {:?}", entry.task.status);
+                    // If already completed/failed, don't change status back to Stopped
+                    if entry.task.status != TaskStatus::Completed
+                        && entry.task.status != TaskStatus::Failed
+                    {
+                        entry.task.status = TaskStatus::Stopped;
+                        entry.task.result = TaskResult::Error(
+                            "Task stopped by user request (handle missing)".to_string(),
+                        );
+                    }
+                }
+            }
+            TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Stopped => {
+                // Task is already in a final state, nothing to do
+                tracing::info!(task_id = %task_id, "Stop requested, but task is already in final state: {:?}", entry.task.status);
+            }
+        }
+    } else {
+        tracing::warn!(task_id = %task_id, "Stop requested for unknown task ID");
+        // Optionally send an error response back?
+        let error_response = Response::Error(ErrorResponse {
+            error: format!("Task not found: {}", task_id),
+            original_request: None, // Don't have original request string here easily
+        });
+        if update_tx.send(error_response).is_err() {
+            tracing::warn!(task_id = %task_id, "Failed to send task not found error to client (channel closed)");
+        }
+    }
 
     Ok(())
 }

@@ -1,8 +1,8 @@
-use log::{debug, error, warn};
+use log::{debug, error, trace, warn};
 use mutant_protocol::{
     ErrorResponse, ExportResponse, ImportResponse, ListKeysResponse, Response, RmSuccessResponse,
     Task, TaskCreatedResponse, TaskListResponse, TaskProgress, TaskResult, TaskResultResponse,
-    TaskStatus, TaskType, TaskUpdateResponse,
+    TaskStatus, TaskStoppedResponse, TaskType, TaskUpdateResponse,
 };
 
 use crate::{
@@ -11,6 +11,9 @@ use crate::{
 };
 
 use super::MutantClient;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tokio::sync::oneshot;
 
 impl MutantClient {
     /// Processes a deserialized response from the server
@@ -307,6 +310,7 @@ impl MutantClient {
                     warn!("Received Export response but no Export request was pending");
                 }
             }
+            Response::TaskStopped(res) => handle_task_stopped(res, pending_requests.clone()),
         }
     }
 
@@ -359,4 +363,42 @@ impl MutantClient {
             None
         }
     }
+}
+
+// Correctly define the function to accept Arc<Mutex<...>>
+fn handle_task_stopped(
+    res: TaskStoppedResponse,
+    pending_requests_mutex: Arc<Mutex<HashMap<PendingRequestKey, PendingSender>>>,
+) {
+    trace!("Received TaskStopped response for task {}", res.task_id);
+    // Lock the mutex to get mutable access to the map
+    let mut pending_requests = match pending_requests_mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            error!(
+                "Mutex poisoned when handling TaskStopped for task {}: {}. Recovering.",
+                res.task_id, poisoned
+            );
+            poisoned.into_inner() // Recover the data even if poisoned
+        }
+    };
+
+    // Find the corresponding sender using the correct key type
+    if let Some(PendingSender::StopTask(sender)) =
+        pending_requests.remove(&PendingRequestKey::StopTask(res.task_id))
+    {
+        // Sender expects Result<TaskStoppedResponse, ClientError>
+        if sender.send(Ok(res)).is_err() {
+            warn!(
+                "Failed to send TaskStopped result for task {}: receiver dropped",
+                res.task_id
+            );
+        }
+    } else {
+        warn!(
+            "Received TaskStopped response for unknown/mismatched request key (task_id: {})",
+            res.task_id
+        );
+    }
+    // Lock guard is dropped here, releasing the mutex
 }

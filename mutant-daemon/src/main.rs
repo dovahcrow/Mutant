@@ -14,8 +14,17 @@ mod wallet;
 use mutant_protocol::{Task, TaskId};
 
 use tokio::signal;
+use tokio::task::AbortHandle;
 
-type TaskMap = Arc<RwLock<HashMap<TaskId, Task>>>;
+// Define a struct to hold task state and its abort handle
+#[derive(Debug)] // Add Debug trait, Skip Clone for now
+struct TaskEntry {
+    task: Task,
+    abort_handle: Option<AbortHandle>,
+}
+
+// Update TaskMap to store TaskEntry instead of just Task
+type TaskMap = Arc<RwLock<HashMap<TaskId, TaskEntry>>>;
 
 use error::Error;
 

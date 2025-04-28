@@ -11,9 +11,13 @@ use url::Url;
 use wasm_bindgen_futures::spawn_local;
 
 use mutant_protocol::{
-    ExportResult, HealthCheckResult, ImportResult, KeyDetails, PurgeResult, Request, StatsResponse,
-    StorageMode, SyncResult, Task, TaskId, TaskListEntry, TaskProgress, TaskResult, TaskStatus,
-    TaskType,
+    ErrorResponse, ExportRequest, ExportResponse, ExportResult, GetRequest, GetResult,
+    HealthCheckRequest, HealthCheckResult, ImportRequest, ImportResponse, ImportResult, KeyDetails,
+    ListKeysRequest, ListKeysResponse, ListTasksRequest, ProtocolError, PurgeResult, PutRequest,
+    QueryTaskRequest, Request, Response, RmRequest, RmSuccessResponse, StatsRequest, StatsResponse,
+    StopTaskRequest, StorageMode, SyncRequest, SyncResult, Task, TaskCreatedResponse, TaskId,
+    TaskListEntry, TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskStatus,
+    TaskStoppedResponse, TaskType, TaskUpdateResponse,
 };
 
 pub mod error;
@@ -40,6 +44,7 @@ pub enum PendingRequestKey {
     Import,
     Export,
     HealthCheck,
+    StopTask,
 }
 
 // Enum to hold the different sender types for the pending requests map
@@ -59,6 +64,7 @@ pub enum PendingSender {
     Import(oneshot::Sender<Result<ImportResult, ClientError>>),
     Export(oneshot::Sender<Result<ExportResult, ClientError>>),
     HealthCheck(oneshot::Sender<Result<HealthCheckResult, ClientError>>),
+    StopTask(oneshot::Sender<Result<TaskStoppedResponse, ClientError>>),
 }
 
 // The new map type for pending requests
@@ -291,6 +297,11 @@ impl MutantClient {
                 destination_path: destination_path.to_string()
             }
         )
+    }
+
+    /// Stops a running task on the daemon.
+    pub async fn stop_task(&mut self, task_id: TaskId) -> Result<TaskStoppedResponse, ClientError> {
+        direct_request!(self, StopTask, StopTaskRequest { task_id })
     }
 
     // --- Accessor methods for internal state ---

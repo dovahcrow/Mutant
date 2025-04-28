@@ -113,6 +113,8 @@ pub enum TasksCommands {
     List,
     #[command(about = "Get the status of a background task")]
     Get { task_id: String },
+    #[command(about = "Stop a background task")]
+    Stop { task_id: String },
 }
 
 #[derive(clap::Subcommand)]

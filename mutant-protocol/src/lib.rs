@@ -244,6 +244,7 @@ pub enum TaskType {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskStatus {
+    Stopped,
     Pending,
     InProgress,
     Completed,
@@ -339,6 +340,11 @@ pub struct QueryTaskRequest {
 #[derive(Deserialize, Debug, PartialEq, Eq, Serialize, Clone)]
 pub struct ListTasksRequest;
 
+#[derive(Deserialize, Debug, PartialEq, Eq, Serialize, Clone)]
+pub struct StopTaskRequest {
+    pub task_id: Uuid,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RmRequest {
     pub user_key: String,
@@ -360,6 +366,7 @@ pub enum Request {
     Get(GetRequest),
     QueryTask(QueryTaskRequest),
     ListTasks(ListTasksRequest),
+    StopTask(StopTaskRequest),
     Rm(RmRequest),
     ListKeys(ListKeysRequest),
     Stats(StatsRequest),
@@ -389,6 +396,11 @@ pub struct TaskResultResponse {
     pub task_id: Uuid,
     pub status: TaskStatus,
     pub result: TaskResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskStoppedResponse {
+    pub task_id: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -532,6 +544,7 @@ pub enum Response {
     TaskCreated(TaskCreatedResponse),
     TaskUpdate(TaskUpdateResponse),
     TaskResult(TaskResultResponse),
+    TaskStopped(TaskStoppedResponse),
     TaskList(TaskListResponse),
     RmSuccess(RmSuccessResponse),
     ListKeys(ListKeysResponse),
