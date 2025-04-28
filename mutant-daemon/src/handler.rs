@@ -5,7 +5,7 @@ use futures_util::{
     sink::SinkExt,
     stream::{SplitSink, StreamExt},
 };
-use mutant_lib::storage::{IndexEntry, PadStatus, ScratchpadAddress};
+use mutant_lib::storage::{IndexEntry, PadInfo, PadStatus, ScratchpadAddress};
 use mutant_lib::MutAnt;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -13,12 +13,13 @@ use warp::ws::{Message, WebSocket};
 
 use crate::{error::Error as DaemonError, TaskMap};
 use mutant_protocol::{
-    ErrorResponse, GetCallback, GetEvent, GetRequest, KeyDetails, ListKeysRequest,
-    ListKeysResponse, ListTasksRequest, PurgeCallback, PurgeEvent, PurgeRequest, PutCallback,
-    PutEvent, PutRequest, QueryTaskRequest, Request, Response, RmRequest, RmSuccessResponse,
-    StatsRequest, StatsResponse, SyncCallback, SyncEvent, SyncRequest, Task, TaskCreatedResponse,
-    TaskListEntry, TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskResultType,
-    TaskStatus, TaskType, TaskUpdateResponse,
+    ErrorResponse, ExportRequest, ExportResponse, ExportResult, GetCallback, GetEvent, GetRequest,
+    HealthCheckCallback, HealthCheckEvent, HealthCheckRequest, ImportRequest, ImportResponse,
+    ImportResult, KeyDetails, ListKeysRequest, ListKeysResponse, ListTasksRequest, PurgeCallback,
+    PurgeEvent, PurgeRequest, PutCallback, PutEvent, PutRequest, QueryTaskRequest, Request,
+    Response, RmRequest, RmSuccessResponse, StatsRequest, StatsResponse, SyncCallback, SyncEvent,
+    SyncRequest, Task, TaskCreatedResponse, TaskListEntry, TaskListResponse, TaskProgress,
+    TaskResult, TaskResultResponse, TaskResultType, TaskStatus, TaskType, TaskUpdateResponse,
 };
 
 // Helper function to send JSON responses
@@ -136,6 +137,11 @@ async fn handle_request(
         Request::Stats(stats_req) => handle_stats(stats_req, update_tx, mutant).await?,
         Request::Sync(sync_req) => handle_sync(sync_req, update_tx, mutant, tasks).await?,
         Request::Purge(purge_req) => handle_purge(purge_req, update_tx, mutant, tasks).await?,
+        Request::Import(import_req) => handle_import(import_req, update_tx, mutant).await?,
+        Request::Export(export_req) => handle_export(export_req, update_tx, mutant).await?,
+        Request::HealthCheck(health_check_req) => {
+            handle_health_check(health_check_req, update_tx, mutant, tasks).await?
+        }
     }
     Ok(())
 }
@@ -601,6 +607,113 @@ async fn handle_purge(
     Ok(())
 }
 
+async fn handle_health_check(
+    req: HealthCheckRequest,
+    update_tx: mpsc::UnboundedSender<Response>,
+    mutant: Arc<MutAnt>,
+    tasks: TaskMap,
+) -> Result<(), DaemonError> {
+    let task_id = Uuid::new_v4();
+
+    let task = Task {
+        id: task_id,
+        task_type: TaskType::HealthCheck,
+        status: TaskStatus::Pending,
+        progress: None,
+        result: TaskResult::Pending,
+    };
+    {
+        tasks.write().await.insert(task_id, task.clone());
+    }
+
+    update_tx
+        .send(Response::TaskCreated(TaskCreatedResponse { task_id }))
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    tokio::spawn(async move {
+        tracing::info!(task_id = %task_id, "Starting HEALTH CHECK task");
+
+        let mut tasks_guard = tasks.write().await;
+        if let Some(task) = tasks_guard.get_mut(&task_id) {
+            task.status = TaskStatus::InProgress;
+        }
+        drop(tasks_guard);
+
+        // Create a callback that forwards progress events through the WebSocket
+        let update_tx_clone = update_tx.clone();
+        let task_id_clone = task_id;
+        let tasks_clone = tasks.clone();
+        let callback: HealthCheckCallback = Arc::new(move |event: HealthCheckEvent| {
+            let tx = update_tx_clone.clone();
+            let task_id = task_id_clone;
+            let tasks = tasks_clone.clone();
+            Box::pin(async move {
+                let progress = TaskProgress::HealthCheck(event);
+
+                // Update the task's progress in the map
+                let mut tasks_guard = tasks.write().await;
+                if let Some(task) = tasks_guard.get_mut(&task_id) {
+                    task.progress = Some(progress.clone());
+                }
+                drop(tasks_guard);
+
+                let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
+                    task_id,
+                    status: TaskStatus::InProgress,
+                    progress: Some(progress),
+                }));
+
+                Ok(true)
+            })
+        });
+
+        let mut mutant = (*mutant).clone();
+        mutant.set_health_check_callback(callback).await;
+
+        let health_check_result = mutant.health_check(&req.key_name, req.recycle).await;
+
+        let final_response = {
+            let mut tasks_guard = tasks.write().await;
+            if let Some(task) = tasks_guard.get_mut(&task_id) {
+                match health_check_result {
+                    Ok(health_check_result) => {
+                        task.status = TaskStatus::Completed;
+                        task.result =
+                            TaskResult::Result(TaskResultType::HealthCheck(health_check_result));
+                        tracing::info!(task_id = %task_id, "HEALTH CHECK task completed successfully");
+                        Some(Response::TaskResult(TaskResultResponse {
+                            task_id,
+                            status: TaskStatus::Completed,
+                            result: task.result.clone(),
+                        }))
+                    }
+                    Err(e) => {
+                        let error_msg = e.to_string();
+                        task.status = TaskStatus::Failed;
+                        task.result = TaskResult::Error(error_msg.clone());
+                        tracing::error!(task_id = %task_id, "HEALTH CHECK task failed: {}", error_msg);
+                        Some(Response::TaskResult(TaskResultResponse {
+                            task_id,
+                            status: TaskStatus::Failed,
+                            result: task.result.clone(),
+                        }))
+                    }
+                }
+            } else {
+                tracing::warn!(task_id = %task_id, "Task removed before HEALTH CHECK completion?");
+                None
+            }
+        };
+        if let Some(response) = final_response {
+            if update_tx.send(response).is_err() {
+                tracing::debug!(task_id = %task_id, "Client disconnected before final HEALTH CHECK result sent");
+            }
+        }
+    });
+
+    Ok(())
+}
+
 async fn handle_query_task(
     req: QueryTaskRequest,
     update_tx: mpsc::UnboundedSender<Response>,
@@ -791,6 +904,69 @@ async fn handle_stats(
         occupied_pads: stats.occupied_pads,
         free_pads: stats.free_pads,
         pending_verify_pads: stats.pending_verification_pads,
+    });
+
+    update_tx
+        .send(response)
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    Ok(())
+}
+
+async fn handle_import(
+    req: ImportRequest,
+    update_tx: mpsc::UnboundedSender<Response>,
+    mutant: Arc<MutAnt>,
+) -> Result<(), DaemonError> {
+    tracing::debug!("Handling Import request");
+
+    let file_path = req.file_path.clone();
+    let pads_hex = fs::read(&file_path)
+        .await
+        .map_err(|e| DaemonError::IoError(format!("Failed to read file {}: {}", file_path, e)))?;
+
+    let pads_hex: Vec<PadInfo> = serde_json::from_slice(&pads_hex)
+        .map_err(|e| DaemonError::IoError(format!("Failed to parse pads hex: {}", e)))?;
+
+    // Call the method which returns StorageStats directly
+    let stats = mutant.import_raw_pads_private_key(pads_hex).await;
+    tracing::info!("Imported file successfully: {:?}", stats);
+
+    let response = Response::Import(ImportResponse {
+        result: ImportResult {
+            nb_keys_imported: 0, // TODO
+        },
+    });
+
+    update_tx
+        .send(response)
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    Ok(())
+}
+
+async fn handle_export(
+    req: ExportRequest,
+    update_tx: mpsc::UnboundedSender<Response>,
+    mutant: Arc<MutAnt>,
+) -> Result<(), DaemonError> {
+    tracing::debug!("Handling Export request");
+
+    let destination_path = req.destination_path.clone();
+
+    let pads_hex = mutant.export_raw_pads_private_key().await?;
+
+    let pads_hex = serde_json::to_vec(&pads_hex)
+        .map_err(|e| DaemonError::IoError(format!("Failed to serialize pads hex: {}", e)))?;
+
+    fs::write(&destination_path, pads_hex).await.map_err(|e| {
+        DaemonError::IoError(format!("Failed to write file {}: {}", destination_path, e))
+    })?;
+
+    let response = Response::Export(ExportResponse {
+        result: ExportResult {
+            nb_keys_exported: 0, // TODO
+        },
     });
 
     update_tx

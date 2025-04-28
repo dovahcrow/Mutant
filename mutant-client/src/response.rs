@@ -1,6 +1,6 @@
 use log::{debug, error, warn};
 use mutant_protocol::{
-    ErrorResponse, ListKeysResponse, PurgeResponse, Response, RmSuccessResponse, SyncResponse,
+    ErrorResponse, ExportResponse, ImportResponse, ListKeysResponse, Response, RmSuccessResponse,
     Task, TaskCreatedResponse, TaskListResponse, TaskProgress, TaskResult, TaskResultResponse,
     TaskStatus, TaskType, TaskUpdateResponse,
 };
@@ -228,6 +228,16 @@ impl MutantClient {
                 {
                     error!("Error occurred during stats request: {}", error);
                     let _ = sender.send(Err(ClientError::ServerError(error)));
+                } else if let Some(PendingSender::Import(sender)) =
+                    requests.remove(&PendingRequestKey::Import)
+                {
+                    error!("Error occurred during import request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error)));
+                } else if let Some(PendingSender::Export(sender)) =
+                    requests.remove(&PendingRequestKey::Export)
+                {
+                    error!("Error occurred during export request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error)));
                 } else {
                     warn!("Received server error, but no matching pending request found.");
                 }
@@ -271,30 +281,30 @@ impl MutantClient {
                     warn!("Received Stats response but no Stats request was pending");
                 }
             }
-            Response::Sync(SyncResponse { result }) => {
+            Response::Import(ImportResponse { result }) => {
                 let pending_sender = pending_requests
                     .lock()
                     .unwrap()
-                    .remove(&PendingRequestKey::Sync);
-                if let Some(PendingSender::Sync(sender)) = pending_sender {
+                    .remove(&PendingRequestKey::Import);
+                if let Some(PendingSender::Import(sender)) = pending_sender {
                     if sender.send(Ok(result)).is_err() {
-                        warn!("Failed to send Sync response (receiver dropped)");
+                        warn!("Failed to send Import response (receiver dropped)");
                     }
                 } else {
-                    warn!("Received Sync response but no Sync request was pending");
+                    warn!("Received Import response but no Import request was pending");
                 }
             }
-            Response::Purge(PurgeResponse { result }) => {
+            Response::Export(ExportResponse { result }) => {
                 let pending_sender = pending_requests
                     .lock()
                     .unwrap()
-                    .remove(&PendingRequestKey::Purge);
-                if let Some(PendingSender::Purge(sender)) = pending_sender {
+                    .remove(&PendingRequestKey::Export);
+                if let Some(PendingSender::Export(sender)) = pending_sender {
                     if sender.send(Ok(result)).is_err() {
-                        warn!("Failed to send Purge response (receiver dropped)");
+                        warn!("Failed to send Export response (receiver dropped)");
                     }
                 } else {
-                    warn!("Received Purge response but no Purge request was pending");
+                    warn!("Received Export response but no Export request was pending");
                 }
             }
         }

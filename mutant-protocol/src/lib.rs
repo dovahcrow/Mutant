@@ -101,6 +101,25 @@ pub type SyncCallback = Arc<
         + Sync,
 >;
 
+/// Callback type used during `health_check` operations to report progress and allow cancellation.
+///
+/// The callback receives `HealthCheckEvent` variants and returns a `Future` that resolves to:
+/// - `Ok(true)`: Continue the operation.
+/// - `Ok(false)`: Cancel the operation (results in `Error::OperationCancelled`).
+/// - `Err(e)`: Propagate an error from the callback.
+pub type HealthCheckCallback = Arc<
+    dyn Fn(
+            HealthCheckEvent,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = Result<bool, Box<dyn std::error::Error + Send + Sync>>>
+                    + Send
+                    + Sync,
+            >,
+        > + Send
+        + Sync,
+>;
+
 /// Events emitted during a `get` operation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GetEvent {
@@ -191,6 +210,25 @@ pub enum SyncEvent {
     Complete,
 }
 
+/// Events emitted during a `health_check` operation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HealthCheckEvent {
+    /// Indicates the start of the `health_check` operation.
+    Starting {
+        /// Total number of keys to be checked.
+        total_keys: usize,
+    },
+
+    /// Indicates that a key has been processed
+    KeyProcessed,
+
+    /// Indicates that the `health_check` operation has completed successfully.
+    Complete {
+        /// Number of keys marked for reupload
+        nb_keys_updated: usize,
+    },
+}
+
 // --- Task Management System Definitions ---
 
 pub type TaskId = Uuid;
@@ -201,6 +239,7 @@ pub enum TaskType {
     Get,
     Sync,
     Purge,
+    HealthCheck,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -244,6 +283,7 @@ pub enum TaskProgress {
     Get(GetEvent),
     Sync(SyncEvent),
     Purge(PurgeEvent),
+    HealthCheck(HealthCheckEvent),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -259,6 +299,7 @@ pub enum TaskResultType {
     Get(()),
     Sync(SyncResult),
     Purge(PurgeResult),
+    HealthCheck(HealthCheckResult),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -324,6 +365,9 @@ pub enum Request {
     Stats(StatsRequest),
     Sync(SyncRequest),
     Purge(PurgeRequest),
+    Import(ImportRequest),
+    Export(ExportRequest),
+    HealthCheck(HealthCheckRequest),
 }
 
 // --- Outgoing Responses ---
@@ -428,6 +472,53 @@ pub struct PurgeResult {
     pub nb_pads_purged: usize,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ImportRequest {
+    pub file_path: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ImportResponse {
+    pub result: ImportResult,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ImportResult {
+    pub nb_keys_imported: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ExportRequest {
+    pub destination_path: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ExportResponse {
+    pub result: ExportResult,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ExportResult {
+    pub nb_keys_exported: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct HealthCheckRequest {
+    pub key_name: String,
+    pub recycle: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct HealthCheckResponse {
+    pub result: HealthCheckResult,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct HealthCheckResult {
+    pub nb_keys_reset: usize,
+    pub nb_keys_recycled: usize,
+}
+
 /// Represents all possible responses the daemon can send to the client.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
@@ -440,8 +531,8 @@ pub enum Response {
     RmSuccess(RmSuccessResponse),
     ListKeys(ListKeysResponse),
     Stats(StatsResponse),
-    Sync(SyncResponse),
-    Purge(PurgeResponse),
+    Import(ImportResponse),
+    Export(ExportResponse),
 }
 
 // Helper moved to where Response is used (client/server)

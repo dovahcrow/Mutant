@@ -11,8 +11,9 @@ use url::Url;
 use wasm_bindgen_futures::spawn_local;
 
 use mutant_protocol::{
-    KeyDetails, PurgeResult, Request, StatsResponse, StorageMode, SyncResult, Task, TaskId,
-    TaskListEntry, TaskProgress, TaskResult, TaskStatus, TaskType,
+    ExportResult, HealthCheckResult, ImportResult, KeyDetails, PurgeResult, Request, StatsResponse,
+    StorageMode, SyncResult, Task, TaskId, TaskListEntry, TaskProgress, TaskResult, TaskStatus,
+    TaskType,
 };
 
 pub mod error;
@@ -36,6 +37,9 @@ pub enum PendingRequestKey {
     Stats,
     Sync,
     Purge,
+    Import,
+    Export,
+    HealthCheck,
 }
 
 // Enum to hold the different sender types for the pending requests map
@@ -52,6 +56,9 @@ pub enum PendingSender {
     Stats(oneshot::Sender<Result<StatsResponse, ClientError>>),
     Sync(oneshot::Sender<Result<SyncResult, ClientError>>),
     Purge(oneshot::Sender<Result<PurgeResult, ClientError>>),
+    Import(oneshot::Sender<Result<ImportResult, ClientError>>),
+    Export(oneshot::Sender<Result<ExportResult, ClientError>>),
+    HealthCheck(oneshot::Sender<Result<HealthCheckResult, ClientError>>),
 }
 
 // The new map type for pending requests
@@ -218,6 +225,27 @@ impl MutantClient {
         long_request!(self, Purge, PurgeRequest { aggressive })
     }
 
+    pub async fn health_check(
+        &mut self,
+        key_name: &str,
+        recycle: bool,
+    ) -> Result<
+        (
+            impl Future<Output = Result<TaskResult, ClientError>> + '_,
+            ProgressReceiver,
+        ),
+        ClientError,
+    > {
+        long_request!(
+            self,
+            HealthCheck,
+            HealthCheckRequest {
+                key_name: key_name.to_string(),
+                recycle,
+            }
+        )
+    }
+
     /// Retrieves a list of all stored keys from the daemon.
     pub async fn list_keys(&mut self) -> Result<Vec<KeyDetails>, ClientError> {
         direct_request!(self, ListKeys, ListKeysRequest)
@@ -243,6 +271,26 @@ impl MutantClient {
 
     pub async fn get_stats(&mut self) -> Result<StatsResponse, ClientError> {
         direct_request!(self, Stats, StatsRequest {})
+    }
+
+    pub async fn import(&mut self, file_path: &str) -> Result<ImportResult, ClientError> {
+        direct_request!(
+            self,
+            Import,
+            ImportRequest {
+                file_path: file_path.to_string()
+            }
+        )
+    }
+
+    pub async fn export(&mut self, destination_path: &str) -> Result<ExportResult, ClientError> {
+        direct_request!(
+            self,
+            Export,
+            ExportRequest {
+                destination_path: destination_path.to_string()
+            }
+        )
     }
 
     // --- Accessor methods for internal state ---

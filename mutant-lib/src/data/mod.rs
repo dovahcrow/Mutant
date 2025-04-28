@@ -23,7 +23,10 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 
-use mutant_protocol::{PurgeResult, PutCallback, PutEvent, StorageMode, SyncResult};
+use mutant_protocol::{
+    HealthCheckCallback, HealthCheckResult, PurgeResult, PutCallback, PutEvent, StorageMode,
+    SyncResult,
+};
 
 pub const DATA_ENCODING_MASTER_INDEX: u64 = 0;
 pub const DATA_ENCODING_PRIVATE_DATA: u64 = 1;
@@ -53,6 +56,7 @@ pub struct Data {
     get_callback: Option<GetCallback>,
     purge_callback: Option<PurgeCallback>,
     sync_callback: Option<SyncCallback>,
+    health_check_callback: Option<HealthCheckCallback>,
 }
 
 impl Data {
@@ -63,6 +67,7 @@ impl Data {
         get_callback: Option<GetCallback>,
         purge_callback: Option<PurgeCallback>,
         sync_callback: Option<SyncCallback>,
+        health_check_callback: Option<HealthCheckCallback>,
     ) -> Self {
         Self {
             network,
@@ -71,6 +76,7 @@ impl Data {
             get_callback,
             purge_callback,
             sync_callback,
+            health_check_callback,
         }
     }
 
@@ -88,6 +94,10 @@ impl Data {
 
     pub fn set_sync_callback(&mut self, callback: SyncCallback) {
         self.sync_callback = Some(callback);
+    }
+
+    pub fn set_health_check_callback(&mut self, callback: HealthCheckCallback) {
+        self.health_check_callback = Some(callback);
     }
 
     pub async fn put(
@@ -824,7 +834,11 @@ impl Data {
         })
     }
 
-    pub async fn health_check(&mut self, key_name: &str, recycle: bool) -> Result<(), Error> {
+    pub async fn health_check(
+        &mut self,
+        key_name: &str,
+        recycle: bool,
+    ) -> Result<HealthCheckResult, Error> {
         let pads = self.index.read().await.get_pads(key_name);
         let nb_recycled = Arc::new(AtomicUsize::new(0));
         let nb_reset = Arc::new(AtomicUsize::new(0));
@@ -949,7 +963,10 @@ impl Data {
             println!("Please re-run the same put command you used before to resume the upload of the missing pads to the network.");
         }
 
-        Ok(())
+        Ok(HealthCheckResult {
+            nb_keys_reset: nb_reset.load(Ordering::Relaxed),
+            nb_keys_recycled: nb_recycled.load(Ordering::Relaxed),
+        })
     }
 
     /// Get the master index from the network and merge it into a copy of the local index.

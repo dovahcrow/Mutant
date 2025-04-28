@@ -54,6 +54,19 @@ pub enum Commands {
         #[arg(short, long)]
         background: bool,
     },
+    Import {
+        file_path: String,
+    },
+    Export {
+        destination_path: String,
+    },
+    HealthCheck {
+        key_name: String,
+        #[arg(short, long)]
+        background: bool,
+        #[arg(short, long)]
+        recycle: bool,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]

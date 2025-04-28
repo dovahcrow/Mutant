@@ -51,6 +51,19 @@ pub async fn run() -> Result<()> {
         } => {
             commands::purge::handle_purge(aggressive, background).await?;
         }
+        Commands::Import { file_path } => {
+            commands::import::handle_import(file_path).await?;
+        }
+        Commands::Export { destination_path } => {
+            commands::export::handle_export(destination_path).await?;
+        }
+        Commands::HealthCheck {
+            key_name,
+            background,
+            recycle,
+        } => {
+            commands::health_check::handle_health_check(key_name, background, recycle).await?;
+        }
     }
 
     Ok(())

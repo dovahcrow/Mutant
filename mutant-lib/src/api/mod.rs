@@ -14,7 +14,9 @@ use crate::{
     network::{Network, NetworkChoice, DEV_TESTNET_PRIVATE_KEY_HEX},
 };
 
-use mutant_protocol::{PurgeResult, PutCallback, StorageMode, SyncResult};
+use mutant_protocol::{
+    HealthCheckCallback, HealthCheckResult, PurgeResult, PutCallback, StorageMode, SyncResult,
+};
 
 /// The main entry point for interacting with the MutAnt distributed storage system.
 ///
@@ -39,6 +41,7 @@ impl MutAnt {
             None,
             None,
             None,
+            None,
         )));
 
         Ok(Self { index, data })
@@ -51,6 +54,7 @@ impl MutAnt {
         let data = Arc::new(RwLock::new(Data::new(
             network.clone(),
             index.clone(),
+            None,
             None,
             None,
             None,
@@ -73,6 +77,7 @@ impl MutAnt {
             None,
             None,
             None,
+            None,
         )));
 
         Ok(Self { index, data })
@@ -87,6 +92,7 @@ impl MutAnt {
         let data = Arc::new(RwLock::new(Data::new(
             network.clone(),
             index.clone(),
+            None,
             None,
             None,
             None,
@@ -107,6 +113,7 @@ impl MutAnt {
             None,
             None,
             None,
+            None,
         )));
 
         Ok(Self { index, data })
@@ -119,6 +126,7 @@ impl MutAnt {
         let data = Arc::new(RwLock::new(Data::new(
             network.clone(),
             index.clone(),
+            None,
             None,
             None,
             None,
@@ -142,6 +150,10 @@ impl MutAnt {
 
     pub async fn set_sync_callback(&mut self, callback: SyncCallback) {
         self.data.write().await.set_sync_callback(callback);
+    }
+
+    pub async fn set_health_check_callback(&mut self, callback: HealthCheckCallback) {
+        self.data.write().await.set_health_check_callback(callback);
     }
 
     pub async fn put(
@@ -182,10 +194,7 @@ impl MutAnt {
         Ok(pads_hex)
     }
 
-    pub async fn import_raw_pads_private_key(
-        &mut self,
-        pads_hex: Vec<PadInfo>,
-    ) -> Result<(), Error> {
+    pub async fn import_raw_pads_private_key(&self, pads_hex: Vec<PadInfo>) -> Result<(), Error> {
         self.index
             .write()
             .await
@@ -202,7 +211,11 @@ impl MutAnt {
         self.index.read().await.get_storage_stats()
     }
 
-    pub async fn health_check(&self, key_name: &str, recycle: bool) -> Result<(), Error> {
+    pub async fn health_check(
+        &self,
+        key_name: &str,
+        recycle: bool,
+    ) -> Result<HealthCheckResult, Error> {
         self.data
             .write()
             .await
