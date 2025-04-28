@@ -11,13 +11,9 @@ use url::Url;
 use wasm_bindgen_futures::spawn_local;
 
 use mutant_protocol::{
-    ErrorResponse, ExportRequest, ExportResponse, ExportResult, GetRequest, GetResult,
-    HealthCheckRequest, HealthCheckResult, ImportRequest, ImportResponse, ImportResult, KeyDetails,
-    ListKeysRequest, ListKeysResponse, ListTasksRequest, ProtocolError, PurgeResult, PutRequest,
-    QueryTaskRequest, Request, Response, RmRequest, RmSuccessResponse, StatsRequest, StatsResponse,
-    StopTaskRequest, StorageMode, SyncRequest, SyncResult, Task, TaskCreatedResponse, TaskId,
-    TaskListEntry, TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskStatus,
-    TaskStoppedResponse, TaskType, TaskUpdateResponse,
+    ExportResult, HealthCheckResult, ImportResult, KeyDetails, PurgeResult, Request, StatsResponse,
+    StorageMode, SyncResult, Task, TaskId, TaskListEntry, TaskProgress, TaskResult, TaskStatus,
+    TaskStoppedResponse, TaskType,
 };
 
 pub mod error;

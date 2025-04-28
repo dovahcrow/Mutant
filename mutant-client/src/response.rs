@@ -13,7 +13,6 @@ use crate::{
 use super::MutantClient;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tokio::sync::oneshot;
 
 impl MutantClient {
     /// Processes a deserialized response from the server
@@ -385,10 +384,10 @@ fn handle_task_stopped(
 
     // Find the corresponding sender using the correct key type
     if let Some(PendingSender::StopTask(sender)) =
-        pending_requests.remove(&PendingRequestKey::StopTask(res.task_id))
+        pending_requests.remove(&PendingRequestKey::StopTask)
     {
         // Sender expects Result<TaskStoppedResponse, ClientError>
-        if sender.send(Ok(res)).is_err() {
+        if sender.send(Ok(res.clone())).is_err() {
             warn!(
                 "Failed to send TaskStopped result for task {}: receiver dropped",
                 res.task_id
