@@ -35,7 +35,7 @@ pub async fn handle_get(
             TaskResult::Error(error) => {
                 eprintln!("{} {}", "Error:".bright_red(), error);
             }
-            TaskResult::Result(result) => {
+            TaskResult::Result(_result) => {
                 println!(
                     "{} Get task completed. Result saved to {} on daemon.",
                     "•".bright_green(),

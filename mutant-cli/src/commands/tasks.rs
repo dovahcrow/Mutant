@@ -55,7 +55,7 @@ pub async fn handle_tasks(command: TasksCommands) -> Result<()> {
                 TaskResult::Error(error) => {
                     println!("  {}: {}", "Error".bright_red(), error);
                 }
-                TaskResult::Result(result) => {
+                TaskResult::Result(_result) => {
                     println!(
                         "  {}: Completed (result stored on daemon)",
                         "Result".bright_green()

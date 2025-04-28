@@ -44,7 +44,7 @@ pub async fn handle_put(
             TaskResult::Error(error) => {
                 eprintln!("{} {}", "Error:".bright_red(), error);
             }
-            TaskResult::Result(result) => {
+            TaskResult::Result(_result) => {
                 println!("{} Upload complete!", "•".bright_green());
             }
             TaskResult::Pending => {
