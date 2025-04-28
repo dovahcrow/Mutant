@@ -16,9 +16,9 @@ use mutant_protocol::{
     ErrorResponse, GetCallback, GetEvent, GetRequest, KeyDetails, ListKeysRequest,
     ListKeysResponse, ListTasksRequest, PutCallback, PutEvent, PutRequest, QueryTaskRequest,
     Request, Response, RmRequest, RmSuccessResponse, StatsRequest, StatsResponse, SyncCallback,
-    SyncEvent, SyncRequest, SyncResponse, Task, TaskCreatedResponse, TaskListEntry,
-    TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskResultType, TaskStatus,
-    TaskType, TaskUpdateResponse,
+    SyncEvent, SyncRequest, Task, TaskCreatedResponse, TaskListEntry, TaskListResponse,
+    TaskProgress, TaskResult, TaskResultResponse, TaskResultType, TaskStatus, TaskType,
+    TaskUpdateResponse,
 };
 
 // Helper function to send JSON responses

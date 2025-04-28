@@ -1,6 +1,7 @@
 use crate::network::error::NetworkError;
 use crate::network::NetworkChoice;
-use autonomi::{Client, ClientConfig, InitialPeersConfig, ResponseQuorum, RetryStrategy};
+use autonomi::{Client, ClientConfig, InitialPeersConfig};
+// use autonomi::{ResponseQuorum, RetryStrategy}
 use log::info;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
