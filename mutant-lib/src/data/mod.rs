@@ -23,7 +23,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 
-use mutant_protocol::{PutCallback, PutEvent, StorageMode, SyncResult};
+use mutant_protocol::{PurgeResult, PutCallback, PutEvent, StorageMode, SyncResult};
 
 pub const DATA_ENCODING_MASTER_INDEX: u64 = 0;
 pub const DATA_ENCODING_PRIVATE_DATA: u64 = 1;
@@ -723,7 +723,7 @@ impl Data {
         self.fetch_pads_data(pads, is_public).await
     }
 
-    pub async fn purge(&mut self, aggressive: bool) -> Result<(), Error> {
+    pub async fn purge(&mut self, aggressive: bool) -> Result<PurgeResult, Error> {
         let pads = self.index.read().await.get_pending_pads();
 
         let nb_verified = Arc::new(AtomicUsize::new(0));
@@ -819,7 +819,9 @@ impl Data {
         .await
         .unwrap();
 
-        Ok(())
+        Ok(PurgeResult {
+            nb_pads_purged: nb_failed.load(Ordering::Relaxed),
+        })
     }
 
     pub async fn health_check(&mut self, key_name: &str, recycle: bool) -> Result<(), Error> {

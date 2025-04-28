@@ -11,8 +11,8 @@ use url::Url;
 use wasm_bindgen_futures::spawn_local;
 
 use mutant_protocol::{
-    KeyDetails, Request, StatsResponse, StorageMode, SyncResult, Task, TaskId, TaskListEntry,
-    TaskProgress, TaskResult, TaskStatus, TaskType,
+    KeyDetails, PurgeResult, Request, StatsResponse, StorageMode, SyncResult, Task, TaskId,
+    TaskListEntry, TaskProgress, TaskResult, TaskStatus, TaskType,
 };
 
 pub mod error;
@@ -35,6 +35,7 @@ pub enum PendingRequestKey {
     ListKeys,
     Stats,
     Sync,
+    Purge,
 }
 
 // Enum to hold the different sender types for the pending requests map
@@ -50,6 +51,7 @@ pub enum PendingSender {
     ListKeys(oneshot::Sender<Result<Vec<KeyDetails>, ClientError>>),
     Stats(oneshot::Sender<Result<StatsResponse, ClientError>>),
     Sync(oneshot::Sender<Result<SyncResult, ClientError>>),
+    Purge(oneshot::Sender<Result<PurgeResult, ClientError>>),
 }
 
 // The new map type for pending requests
@@ -201,6 +203,19 @@ impl MutantClient {
         ClientError,
     > {
         long_request!(self, Sync, SyncRequest { push_force })
+    }
+
+    pub async fn purge(
+        &mut self,
+        aggressive: bool,
+    ) -> Result<
+        (
+            impl Future<Output = Result<TaskResult, ClientError>> + '_,
+            ProgressReceiver,
+        ),
+        ClientError,
+    > {
+        long_request!(self, Purge, PurgeRequest { aggressive })
     }
 
     /// Retrieves a list of all stored keys from the daemon.

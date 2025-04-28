@@ -14,7 +14,7 @@ use crate::{
     network::{Network, NetworkChoice, DEV_TESTNET_PRIVATE_KEY_HEX},
 };
 
-use mutant_protocol::{PutCallback, StorageMode, SyncResult};
+use mutant_protocol::{PurgeResult, PutCallback, StorageMode, SyncResult};
 
 /// The main entry point for interacting with the MutAnt distributed storage system.
 ///
@@ -194,7 +194,7 @@ impl MutAnt {
         Ok(())
     }
 
-    pub async fn purge(&self, aggressive: bool) -> Result<(), Error> {
+    pub async fn purge(&self, aggressive: bool) -> Result<PurgeResult, Error> {
         self.data.write().await.purge(aggressive).await
     }
 

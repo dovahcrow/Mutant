@@ -45,6 +45,9 @@ pub async fn handle_tasks(command: TasksCommands) -> Result<()> {
                     TaskProgress::Sync(event) => {
                         println!("  Progress: {:?}", event);
                     }
+                    TaskProgress::Purge(event) => {
+                        println!("  Progress: {:?}", event);
+                    }
                 }
             }
 

@@ -1,7 +1,7 @@
 use log::{debug, error, warn};
 use mutant_protocol::{
-    ErrorResponse, ListKeysResponse, Response, RmSuccessResponse, SyncResponse, Task,
-    TaskCreatedResponse, TaskListResponse, TaskProgress, TaskResult, TaskResultResponse,
+    ErrorResponse, ListKeysResponse, PurgeResponse, Response, RmSuccessResponse, SyncResponse,
+    Task, TaskCreatedResponse, TaskListResponse, TaskProgress, TaskResult, TaskResultResponse,
     TaskStatus, TaskType, TaskUpdateResponse,
 };
 
@@ -282,6 +282,19 @@ impl MutantClient {
                     }
                 } else {
                     warn!("Received Sync response but no Sync request was pending");
+                }
+            }
+            Response::Purge(PurgeResponse { result }) => {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::Purge);
+                if let Some(PendingSender::Purge(sender)) = pending_sender {
+                    if sender.send(Ok(result)).is_err() {
+                        warn!("Failed to send Purge response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received Purge response but no Purge request was pending");
                 }
             }
         }

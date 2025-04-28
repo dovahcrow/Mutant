@@ -200,6 +200,7 @@ pub enum TaskType {
     Put,
     Get,
     Sync,
+    Purge,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -242,6 +243,7 @@ pub enum TaskProgress {
     Put(PutEvent),
     Get(GetEvent),
     Sync(SyncEvent),
+    Purge(PurgeEvent),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -256,6 +258,7 @@ pub enum TaskResultType {
     Put(()),
     Get(()),
     Sync(SyncResult),
+    Purge(PurgeResult),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -303,6 +306,11 @@ pub struct RmRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ListKeysRequest;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PurgeRequest {
+    pub aggressive: bool,
+}
+
 /// Represents all possible requests the client can send to the daemon.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
@@ -315,6 +323,7 @@ pub enum Request {
     ListKeys(ListKeysRequest),
     Stats(StatsRequest),
     Sync(SyncRequest),
+    Purge(PurgeRequest),
 }
 
 // --- Outgoing Responses ---
@@ -409,6 +418,16 @@ pub struct SyncResult {
     pub nb_pending_pads_added: usize,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PurgeResponse {
+    pub result: PurgeResult,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PurgeResult {
+    pub nb_pads_purged: usize,
+}
+
 /// Represents all possible responses the daemon can send to the client.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
@@ -422,6 +441,7 @@ pub enum Response {
     ListKeys(ListKeysResponse),
     Stats(StatsResponse),
     Sync(SyncResponse),
+    Purge(PurgeResponse),
 }
 
 // Helper moved to where Response is used (client/server)

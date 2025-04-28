@@ -48,6 +48,12 @@ pub enum Commands {
         #[arg(short, long)]
         background: bool,
     },
+    Purge {
+        #[arg(short, long)]
+        aggressive: bool,
+        #[arg(short, long)]
+        background: bool,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]

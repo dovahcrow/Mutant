@@ -45,6 +45,12 @@ pub async fn run() -> Result<()> {
         } => {
             commands::sync::handle_sync(background, push_force).await?;
         }
+        Commands::Purge {
+            aggressive,
+            background,
+        } => {
+            commands::purge::handle_purge(aggressive, background).await?;
+        }
     }
 
     Ok(())
