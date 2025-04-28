@@ -1,8 +1,8 @@
 use log::{debug, error, warn};
 use mutant_protocol::{
-    ErrorResponse, ListKeysResponse, Response, RmSuccessResponse, Task, TaskCreatedResponse,
-    TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskStatus, TaskType,
-    TaskUpdateResponse,
+    ErrorResponse, ListKeysResponse, Response, RmSuccessResponse, SyncResponse, Task,
+    TaskCreatedResponse, TaskListResponse, TaskProgress, TaskResult, TaskResultResponse,
+    TaskStatus, TaskType, TaskUpdateResponse,
 };
 
 use crate::{
@@ -37,7 +37,7 @@ impl MutantClient {
                             task_type,
                             status: TaskStatus::Pending,
                             progress: None,
-                            result: None,
+                            result: TaskResult::Pending,
                         },
                     );
 
@@ -91,7 +91,7 @@ impl MutantClient {
                             task_type,
                             status,
                             progress,
-                            result: None,
+                            result: TaskResult::Pending,
                         },
                     );
                 }
@@ -129,12 +129,7 @@ impl MutantClient {
 
                     if let Some((completion_tx, _)) = task_channels.lock().unwrap().remove(&task_id)
                     {
-                        if completion_tx
-                            .send(Ok(result
-                                .clone()
-                                .unwrap_or_else(|| TaskResult { error: None })))
-                            .is_err()
-                        {
+                        if completion_tx.send(Ok(result.clone())).is_err() {
                             warn!(
                                 "Failed to send final task result for task {} (receiver dropped)",
                                 task_id
@@ -146,7 +141,8 @@ impl MutantClient {
                         "Received TaskResult for unknown task {}, creating entry.",
                         task_id
                     );
-                    let task_type = if result.as_ref().map_or(false, |r| r.error.is_some()) {
+                    // FIXME: Nonsense
+                    let task_type = if let TaskResult::Error(_) = result {
                         TaskType::Get
                     } else {
                         TaskType::Put
@@ -273,6 +269,19 @@ impl MutantClient {
                     }
                 } else {
                     warn!("Received Stats response but no Stats request was pending");
+                }
+            }
+            Response::Sync(SyncResponse { result }) => {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::Sync);
+                if let Some(PendingSender::Sync(sender)) = pending_sender {
+                    if sender.send(Ok(result)).is_err() {
+                        warn!("Failed to send Sync response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received Sync response but no Sync request was pending");
                 }
             }
         }

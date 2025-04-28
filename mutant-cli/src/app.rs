@@ -39,6 +39,12 @@ pub async fn run() -> Result<()> {
         Commands::Tasks { command } => {
             commands::tasks::handle_tasks(command).await?;
         }
+        Commands::Sync {
+            background,
+            push_force,
+        } => {
+            commands::sync::handle_sync(background, push_force).await?;
+        }
     }
 
     Ok(())

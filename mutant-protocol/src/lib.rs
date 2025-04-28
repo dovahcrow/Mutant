@@ -199,6 +199,7 @@ pub type TaskId = Uuid;
 pub enum TaskType {
     Put,
     Get,
+    Sync,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -240,11 +241,21 @@ pub type PutCallback = Arc<
 pub enum TaskProgress {
     Put(PutEvent),
     Get(GetEvent),
+    Sync(SyncEvent),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TaskResult {
-    pub error: Option<String>, // Error message if TaskStatus is Failed
+pub enum TaskResult {
+    Pending,
+    Error(String),
+    Result(TaskResultType),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TaskResultType {
+    Put(()),
+    Get(()),
+    Sync(SyncResult),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -253,7 +264,7 @@ pub struct Task {
     pub task_type: TaskType,
     pub status: TaskStatus,
     pub progress: Option<TaskProgress>,
-    pub result: Option<TaskResult>,
+    pub result: TaskResult,
 }
 
 // --- Protocol Definitions (Requests & Responses) ---
@@ -303,6 +314,7 @@ pub enum Request {
     Rm(RmRequest),
     ListKeys(ListKeysRequest),
     Stats(StatsRequest),
+    Sync(SyncRequest),
 }
 
 // --- Outgoing Responses ---
@@ -323,7 +335,7 @@ pub struct TaskUpdateResponse {
 pub struct TaskResultResponse {
     pub task_id: Uuid,
     pub status: TaskStatus,
-    pub result: Option<TaskResult>,
+    pub result: TaskResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -379,6 +391,24 @@ pub struct StatsResponse {
 }
 // End of added structs
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SyncRequest {
+    pub push_force: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SyncResponse {
+    pub result: SyncResult,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SyncResult {
+    pub nb_keys_added: usize,
+    pub nb_keys_updated: usize,
+    pub nb_free_pads_added: usize,
+    pub nb_pending_pads_added: usize,
+}
+
 /// Represents all possible responses the daemon can send to the client.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
@@ -391,6 +421,7 @@ pub enum Response {
     RmSuccess(RmSuccessResponse),
     ListKeys(ListKeysResponse),
     Stats(StatsResponse),
+    Sync(SyncResponse),
 }
 
 // Helper moved to where Response is used (client/server)

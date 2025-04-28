@@ -4,6 +4,7 @@ use anyhow::Result;
 use colored::Colorize;
 use indicatif::MultiProgress;
 use mutant_protocol::StorageMode;
+use mutant_protocol::TaskResult;
 
 pub async fn handle_put(
     key: String,
@@ -39,13 +40,17 @@ pub async fn handle_put(
     callbacks::put::create_put_progress(progress_rx, multi_progress.clone());
 
     match start_task.await {
-        Ok(result) => {
-            if let Some(error) = result.error {
+        Ok(result) => match result {
+            TaskResult::Error(error) => {
                 eprintln!("{} {}", "Error:".bright_red(), error);
-            } else {
+            }
+            TaskResult::Result(result) => {
                 println!("{} Upload complete!", "•".bright_green());
             }
-        }
+            TaskResult::Pending => {
+                println!("{} Upload pending.", "•".bright_yellow());
+            }
+        },
         Err(e) => {
             eprintln!("{} Task failed: {}", "Error:".bright_red(), e);
         }

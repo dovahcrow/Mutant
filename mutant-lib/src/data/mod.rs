@@ -23,7 +23,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 
-use mutant_protocol::{PutCallback, PutEvent, StorageMode};
+use mutant_protocol::{PutCallback, PutEvent, StorageMode, SyncResult};
 
 pub const DATA_ENCODING_MASTER_INDEX: u64 = 0;
 pub const DATA_ENCODING_PRIVATE_DATA: u64 = 1;
@@ -1120,11 +1120,4 @@ fn derive_master_index_info(
     let address = ScratchpadAddress::new(derived_public_key);
     info!("Derived Master Index Address: {}", address);
     Ok((address, derived_key))
-}
-
-pub struct SyncResult {
-    pub nb_keys_added: usize,
-    pub nb_keys_updated: usize,
-    pub nb_free_pads_added: usize,
-    pub nb_pending_pads_added: usize,
 }

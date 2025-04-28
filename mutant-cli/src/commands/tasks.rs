@@ -1,7 +1,7 @@
 use crate::{cli::TasksCommands, connect_to_daemon};
 use anyhow::Result;
 use colored::Colorize;
-use mutant_protocol::TaskProgress;
+use mutant_protocol::{TaskProgress, TaskResult};
 
 pub async fn handle_tasks(command: TasksCommands) -> Result<()> {
     let mut client = connect_to_daemon().await?;
@@ -42,13 +42,20 @@ pub async fn handle_tasks(command: TasksCommands) -> Result<()> {
                     TaskProgress::Get(event) => {
                         println!("  Progress: {:?}", event);
                     }
+                    TaskProgress::Sync(event) => {
+                        println!("  Progress: {:?}", event);
+                    }
                 }
             }
 
-            if let Some(result) = task.result {
-                if let Some(error) = result.error {
+            match task.result {
+                TaskResult::Pending => {
+                    println!("  {}: {}", "Result".bright_yellow(), "Pending");
+                }
+                TaskResult::Error(error) => {
                     println!("  {}: {}", "Error".bright_red(), error);
-                } else {
+                }
+                TaskResult::Result(result) => {
                     println!(
                         "  {}: Completed (result stored on daemon)",
                         "Result".bright_green()

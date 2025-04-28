@@ -4,7 +4,7 @@ use autonomi::ScratchpadAddress;
 use tokio::sync::RwLock;
 
 use crate::{
-    data::{Data, SyncResult},
+    data::Data,
     error::Error,
     events::{GetCallback, PurgeCallback, SyncCallback},
     index::{
@@ -14,7 +14,7 @@ use crate::{
     network::{Network, NetworkChoice, DEV_TESTNET_PRIVATE_KEY_HEX},
 };
 
-use mutant_protocol::{PutCallback, StorageMode};
+use mutant_protocol::{PutCallback, StorageMode, SyncResult};
 
 /// The main entry point for interacting with the MutAnt distributed storage system.
 ///

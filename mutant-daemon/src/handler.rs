@@ -15,9 +15,10 @@ use crate::{error::Error as DaemonError, TaskMap};
 use mutant_protocol::{
     ErrorResponse, GetCallback, GetEvent, GetRequest, KeyDetails, ListKeysRequest,
     ListKeysResponse, ListTasksRequest, PutCallback, PutEvent, PutRequest, QueryTaskRequest,
-    Request, Response, RmRequest, RmSuccessResponse, StatsRequest, StatsResponse, Task,
-    TaskCreatedResponse, TaskListEntry, TaskListResponse, TaskProgress, TaskResult,
-    TaskResultResponse, TaskStatus, TaskType, TaskUpdateResponse,
+    Request, Response, RmRequest, RmSuccessResponse, StatsRequest, StatsResponse, SyncCallback,
+    SyncEvent, SyncRequest, SyncResponse, Task, TaskCreatedResponse, TaskListEntry,
+    TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskResultType, TaskStatus,
+    TaskType, TaskUpdateResponse,
 };
 
 // Helper function to send JSON responses
@@ -133,6 +134,7 @@ async fn handle_request(
             handle_list_keys(list_keys_req, update_tx, mutant).await?
         }
         Request::Stats(stats_req) => handle_stats(stats_req, update_tx, mutant).await?,
+        Request::Sync(sync_req) => handle_sync(sync_req, update_tx, mutant, tasks).await?,
     }
     Ok(())
 }
@@ -163,7 +165,7 @@ async fn handle_put(
         task_type: TaskType::Put,
         status: TaskStatus::Pending,
         progress: None,
-        result: None,
+        result: TaskResult::Pending,
     };
     {
         tasks.write().await.insert(task_id, task.clone());
@@ -225,10 +227,7 @@ async fn handle_put(
                 match result {
                     Ok(_addr) => {
                         task.status = TaskStatus::Completed;
-                        task.result = Some(TaskResult {
-                            // data: None, // Data is no longer part of TaskResult
-                            error: None,
-                        });
+                        task.result = TaskResult::Result(TaskResultType::Put(()));
                         tracing::info!(task_id = %task_id, user_key = %user_key, source_path = %source_path, "PUT task completed successfully");
                         Some(Response::TaskResult(TaskResultResponse {
                             task_id,
@@ -238,10 +237,7 @@ async fn handle_put(
                     }
                     Err(e) => {
                         task.status = TaskStatus::Failed;
-                        task.result = Some(TaskResult {
-                            // data: None, // Data is no longer part of TaskResult
-                            error: Some(e.to_string()),
-                        });
+                        task.result = TaskResult::Error(e.to_string());
                         tracing::error!(task_id = %task_id, user_key = %user_key, source_path = %source_path, error = %e, "PUT task failed");
                         Some(Response::TaskResult(TaskResultResponse {
                             task_id,
@@ -278,7 +274,7 @@ async fn handle_get(
         task_type: TaskType::Get,
         status: TaskStatus::Pending,
         progress: None,
-        result: None,
+        result: TaskResult::Pending,
     };
     {
         tasks.write().await.insert(task_id, task.clone());
@@ -357,7 +353,7 @@ async fn handle_get(
                 match write_result {
                     Ok(data_bytes) => {
                         task.status = TaskStatus::Completed;
-                        task.result = Some(TaskResult { error: None });
+                        task.result = TaskResult::Result(TaskResultType::Get(()));
                         tracing::info!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, bytes_written = data_bytes.len(), "GET task completed successfully");
                         Some(Response::TaskResult(TaskResultResponse {
                             task_id,
@@ -368,9 +364,7 @@ async fn handle_get(
                     Err(e) => {
                         let error_msg = e.to_string();
                         task.status = TaskStatus::Failed;
-                        task.result = Some(TaskResult {
-                            error: Some(error_msg.clone()),
-                        });
+                        task.result = TaskResult::Error(error_msg.clone());
                         tracing::error!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, "GET task failed: {}", error_msg);
                         Some(Response::TaskResult(TaskResultResponse {
                             task_id,
@@ -387,6 +381,112 @@ async fn handle_get(
         if let Some(response) = final_response {
             if update_tx.send(response).is_err() {
                 tracing::debug!(task_id = %task_id, "Client disconnected before final GET result sent");
+            }
+        }
+    });
+
+    Ok(())
+}
+
+async fn handle_sync(
+    req: SyncRequest,
+    update_tx: mpsc::UnboundedSender<Response>,
+    mutant: Arc<MutAnt>,
+    tasks: TaskMap,
+) -> Result<(), DaemonError> {
+    let task_id = Uuid::new_v4();
+
+    let task = Task {
+        id: task_id,
+        task_type: TaskType::Sync,
+        status: TaskStatus::Pending,
+        progress: None,
+        result: TaskResult::Pending,
+    };
+    {
+        tasks.write().await.insert(task_id, task.clone());
+    }
+
+    update_tx
+        .send(Response::TaskCreated(TaskCreatedResponse { task_id }))
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    tokio::spawn(async move {
+        tracing::info!(task_id = %task_id, "Starting SYNC task");
+
+        let mut tasks_guard = tasks.write().await;
+        if let Some(task) = tasks_guard.get_mut(&task_id) {
+            task.status = TaskStatus::InProgress;
+        }
+        drop(tasks_guard);
+
+        // Create a callback that forwards progress events through the WebSocket
+        let update_tx_clone = update_tx.clone();
+        let task_id_clone = task_id;
+        let tasks_clone = tasks.clone();
+        let callback: SyncCallback = Arc::new(move |event: SyncEvent| {
+            let tx = update_tx_clone.clone();
+            let task_id = task_id_clone;
+            let tasks = tasks_clone.clone();
+            Box::pin(async move {
+                let progress = TaskProgress::Sync(event);
+
+                // Update the task's progress in the map
+                let mut tasks_guard = tasks.write().await;
+                if let Some(task) = tasks_guard.get_mut(&task_id) {
+                    task.progress = Some(progress.clone());
+                }
+                drop(tasks_guard);
+
+                let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
+                    task_id,
+                    status: TaskStatus::InProgress,
+                    progress: Some(progress),
+                }));
+
+                Ok(true)
+            })
+        });
+
+        let mut mutant = (*mutant).clone();
+        mutant.set_sync_callback(callback).await;
+
+        let sync_result = mutant.sync(req.push_force).await;
+
+        let final_response = {
+            let mut tasks_guard = tasks.write().await;
+            if let Some(task) = tasks_guard.get_mut(&task_id) {
+                match sync_result {
+                    Ok(sync_result) => {
+                        task.status = TaskStatus::Completed;
+                        task.result = TaskResult::Result(TaskResultType::Sync(sync_result));
+                        tracing::info!(task_id = %task_id, "SYNC task completed successfully");
+                        Some(Response::TaskResult(TaskResultResponse {
+                            task_id,
+                            status: TaskStatus::Completed,
+                            result: task.result.clone(),
+                        }))
+                    }
+                    Err(e) => {
+                        let error_msg = e.to_string();
+                        task.status = TaskStatus::Failed;
+                        task.result = TaskResult::Error(error_msg.clone());
+                        tracing::error!(task_id = %task_id, "SYNC task failed: {}", error_msg);
+                        Some(Response::TaskResult(TaskResultResponse {
+                            task_id,
+                            status: TaskStatus::Failed,
+                            result: task.result.clone(),
+                        }))
+                    }
+                }
+            } else {
+                tracing::warn!(task_id = %task_id, "Task removed before SYNC completion?");
+                None
+            }
+        };
+        if let Some(response) = final_response {
+            if update_tx.send(response).is_err() {
+                tracing::debug!(task_id = %task_id, "Client disconnected before final SYNC result sent");
             }
         }
     });

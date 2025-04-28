@@ -42,6 +42,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: TasksCommands,
     },
+    Sync {
+        #[arg(short, long)]
+        push_force: bool,
+        #[arg(short, long)]
+        background: bool,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]

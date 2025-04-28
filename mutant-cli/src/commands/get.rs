@@ -3,6 +3,7 @@ use crate::connect_to_daemon;
 use anyhow::Result;
 use colored::Colorize;
 use indicatif::MultiProgress;
+use mutant_protocol::TaskResult;
 
 pub async fn handle_get(
     key: String,
@@ -30,17 +31,21 @@ pub async fn handle_get(
     callbacks::get::create_get_progress(progress_rx, &multi_progress);
 
     match start_task.await {
-        Ok(result) => {
-            if let Some(error) = result.error {
+        Ok(result) => match result {
+            TaskResult::Error(error) => {
                 eprintln!("{} {}", "Error:".bright_red(), error);
-            } else {
+            }
+            TaskResult::Result(result) => {
                 println!(
                     "{} Get task completed. Result saved to {} on daemon.",
                     "•".bright_green(),
                     destination_path
                 );
             }
-        }
+            TaskResult::Pending => {
+                println!("{} Get task pending.", "•".bright_yellow());
+            }
+        },
         Err(e) => {
             eprintln!("{} Task failed: {}", "Error:".bright_red(), e);
         }
