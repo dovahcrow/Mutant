@@ -46,7 +46,7 @@ pub fn load_history() -> Vec<FetchHistoryEntry> {
                             history
                         }
                         Err(e) => {
-                            error!(
+                            warn!(
                                 "Failed to deserialize history file {:?}: {}. Returning empty history.",
                                 path, e
                             );

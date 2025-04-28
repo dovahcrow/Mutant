@@ -1,7 +1,8 @@
-use crate::connect_to_daemon;
+use crate::{connect_to_daemon, history::load_history};
 use anyhow::Result;
 use colored::Colorize;
 use humansize::{format_size, BINARY};
+use log::info;
 
 pub async fn handle_ls() -> Result<()> {
     let mut client = connect_to_daemon().await?;
@@ -11,7 +12,7 @@ pub async fn handle_ls() -> Result<()> {
         println!("No keys stored.");
     } else {
         println!(
-            "{: <20} {:>5} {:>10} {: <12} {}",
+            " {: <20} {:>5} {:>10} {: <12} {}",
             "Key", "Pads", "Size", "Status", "Address/Info"
         );
         println!("{}", "-".repeat(70));
@@ -41,13 +42,27 @@ pub async fn handle_ls() -> Result<()> {
             };
 
             println!(
-                "{: <20} {:>5} {:>10} {: <21} {}",
+                " {: <20} {:>5} {:>10} {: <21} {}",
                 detail.key,
                 detail.pad_count,
                 size_str,
                 completion_str.to_string(),
                 address_info
             );
+        }
+    }
+
+    info!("Loading fetch history from file...");
+    let mut history = load_history();
+    if !history.is_empty() {
+        println!("\n--- Fetch History ---");
+        history.sort_by(|a, b| b.fetched_at.cmp(&a.fetched_at));
+
+        for entry in history {
+            let size_str = format_size(entry.size, BINARY);
+            let date_str = entry.fetched_at.format("%b %d %H:%M").to_string();
+
+            println!(" {: <32} {:>10} {}", entry.address, size_str, date_str);
         }
     }
     Ok(())

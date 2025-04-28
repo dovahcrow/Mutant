@@ -3,6 +3,7 @@ use crate::connect_to_daemon;
 use crate::history::append_history_entry;
 use crate::history::FetchHistoryEntry;
 use anyhow::Result;
+use chrono::Utc;
 use colored::Colorize;
 use indicatif::MultiProgress;
 use mutant_protocol::TaskResult;
