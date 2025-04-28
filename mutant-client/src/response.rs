@@ -1,13 +1,13 @@
 use log::{debug, error, warn};
 use mutant_protocol::{
-    ErrorResponse, ListKeysResponse, Response, RmSuccessResponse, StatsResponse, Task,
-    TaskCreatedResponse, TaskListResponse, TaskProgress, TaskResult, TaskResultResponse,
-    TaskStatus, TaskType, TaskUpdateResponse,
+    ErrorResponse, ListKeysResponse, Response, RmSuccessResponse, Task, TaskCreatedResponse,
+    TaskListResponse, TaskProgress, TaskResult, TaskResultResponse, TaskStatus, TaskType,
+    TaskUpdateResponse,
 };
 
 use crate::{
-    error::ClientError, ClientTaskMap, PendingListKeysSender, PendingRmSender, PendingStatsSender,
-    PendingTaskCreationSender, PendingTaskListSender, PendingTaskQuerySender, TaskChannelsMap,
+    error::ClientError, ClientTaskMap, PendingRequestKey, PendingRequestMap, PendingSender,
+    TaskChannelsMap,
 };
 
 use super::MutantClient;
@@ -18,50 +18,39 @@ impl MutantClient {
         response: Response,
         tasks: &ClientTaskMap,
         task_channels: &TaskChannelsMap,
-        pending_task_creation: &PendingTaskCreationSender,
-        pending_task_list: &PendingTaskListSender,
-        pending_task_query: &PendingTaskQuerySender,
-        pending_rm: &PendingRmSender,
-        pending_list_keys: &PendingListKeysSender,
-        pending_stats: &PendingStatsSender,
+        pending_requests: &PendingRequestMap,
     ) {
         match response {
             Response::TaskCreated(TaskCreatedResponse { task_id }) => {
-                let task_type =
-                    if let Some(pending) = pending_task_creation.lock().unwrap().as_ref() {
-                        if pending.channels.is_some() {
-                            TaskType::Put
-                        } else {
-                            TaskType::Get
-                        }
-                    } else {
-                        TaskType::Get
-                    };
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::TaskCreation);
 
-                tasks.lock().unwrap().insert(
-                    task_id,
-                    Task {
-                        id: task_id,
-                        task_type,
-                        status: TaskStatus::Pending,
-                        progress: None,
-                        result: None,
-                    },
-                );
+                if let Some(PendingSender::TaskCreation(sender, channels, task_type)) =
+                    pending_sender
+                {
+                    tasks.lock().unwrap().insert(
+                        task_id,
+                        Task {
+                            id: task_id,
+                            task_type,
+                            status: TaskStatus::Pending,
+                            progress: None,
+                            result: None,
+                        },
+                    );
 
-                if let Some(pending) = pending_task_creation.lock().unwrap().take() {
-                    if let Some((completion_tx, progress_tx)) = pending.channels {
-                        task_channels
-                            .lock()
-                            .unwrap()
-                            .insert(task_id, (completion_tx, progress_tx));
-                    }
-                    if pending.sender.send(Ok(task_id)).is_err() {
+                    task_channels.lock().unwrap().insert(task_id, channels);
+
+                    if sender.send(Ok(task_id)).is_err() {
                         warn!("Failed to send TaskCreated response to waiting future (receiver dropped?)");
+                        tasks.lock().unwrap().remove(&task_id);
+                        task_channels.lock().unwrap().remove(&task_id);
                     }
                 } else {
                     warn!(
-                        "Received TaskCreated ({}) but no request was pending.",
+                        "Received TaskCreated ({}) but no matching request was pending.",
                         task_id
                     );
                 }
@@ -72,22 +61,29 @@ impl MutantClient {
                 progress,
             }) => {
                 let mut tasks_guard = tasks.lock().unwrap();
+                let task_exists = tasks_guard.contains_key(&task_id);
+
                 if let Some(task) = tasks_guard.get_mut(&task_id) {
                     task.status = status;
                     task.progress = progress.clone();
 
-                    if let Some(progress) = progress {
+                    if let Some(progress_update) = progress {
                         if let Some((_, progress_tx)) = task_channels.lock().unwrap().get(&task_id)
                         {
-                            let _ = progress_tx.send(Ok(progress));
+                            if progress_tx.send(Ok(progress_update)).is_err() {
+                                warn!("Failed to send progress update for task {}", task_id);
+                            }
                         }
                     }
                 } else {
+                    warn!(
+                        "Received TaskUpdate for unknown task {}, creating entry.",
+                        task_id
+                    );
                     let task_type = match &progress {
                         Some(TaskProgress::Put(_)) => TaskType::Put,
                         _ => TaskType::Get,
                     };
-
                     tasks_guard.insert(
                         task_id,
                         Task {
@@ -100,11 +96,23 @@ impl MutantClient {
                     );
                 }
 
-                if let Some(sender) = pending_task_query.lock().unwrap().take() {
-                    let task = tasks_guard.get(&task_id).unwrap().clone();
-                    if sender.send(Ok(task)).is_err() {
-                        warn!("Failed to send TaskUpdate response (receiver dropped)");
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::QueryTask);
+                if let Some(PendingSender::QueryTask(sender)) = pending_sender {
+                    if let Some(task) = tasks_guard.get(&task_id) {
+                        if sender.send(Ok(task.clone())).is_err() {
+                            warn!("Failed to send TaskUpdate response to QueryTask request (receiver dropped)");
+                        }
+                    } else {
+                        warn!("Task {} not found when trying to respond to QueryTask request after TaskUpdate.", task_id);
+                        let _ = sender.send(Err(ClientError::TaskNotFound(task_id)));
                     }
+                } else if task_exists {
+                    // No pending query, just updated the task
+                } else {
+                    // No pending query and task was created by this update - already logged warning
                 }
             }
             Response::TaskResult(TaskResultResponse {
@@ -113,22 +121,36 @@ impl MutantClient {
                 result,
             }) => {
                 let mut tasks_guard = tasks.lock().unwrap();
+                let _task_existed = tasks_guard.contains_key(&task_id);
+
                 if let Some(task) = tasks_guard.get_mut(&task_id) {
                     task.status = status;
                     task.result = result.clone();
 
                     if let Some((completion_tx, _)) = task_channels.lock().unwrap().remove(&task_id)
                     {
-                        let _ = completion_tx
-                            .send(Ok(result.unwrap_or_else(|| TaskResult { error: None })));
+                        if completion_tx
+                            .send(Ok(result
+                                .clone()
+                                .unwrap_or_else(|| TaskResult { error: None })))
+                            .is_err()
+                        {
+                            warn!(
+                                "Failed to send final task result for task {} (receiver dropped)",
+                                task_id
+                            );
+                        }
                     }
                 } else {
+                    warn!(
+                        "Received TaskResult for unknown task {}, creating entry.",
+                        task_id
+                    );
                     let task_type = if result.as_ref().map_or(false, |r| r.error.is_some()) {
                         TaskType::Get
                     } else {
                         TaskType::Put
                     };
-
                     tasks_guard.insert(
                         task_id,
                         Task {
@@ -141,68 +163,116 @@ impl MutantClient {
                     );
                 }
 
-                if let Some(sender) = pending_task_query.lock().unwrap().take() {
-                    let task = tasks_guard.get(&task_id).unwrap().clone();
-                    if sender.send(Ok(task)).is_err() {
-                        warn!("Failed to send TaskResult response (receiver dropped)");
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::QueryTask);
+                if let Some(PendingSender::QueryTask(sender)) = pending_sender {
+                    if let Some(task) = tasks_guard.get(&task_id) {
+                        if sender.send(Ok(task.clone())).is_err() {
+                            warn!("Failed to send TaskResult response to QueryTask request (receiver dropped)");
+                        }
+                    } else {
+                        warn!("Task {} not found when trying to respond to QueryTask request after TaskResult.", task_id);
+                        let _ = sender.send(Err(ClientError::TaskNotFound(task_id)));
                     }
                 }
             }
             Response::TaskList(TaskListResponse { tasks: task_list }) => {
-                if let Some(sender) = pending_task_list.lock().unwrap().take() {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::ListTasks);
+                if let Some(PendingSender::ListTasks(sender)) = pending_sender {
                     if sender.send(Ok(task_list)).is_err() {
                         warn!("Failed to send TaskList response (receiver dropped)");
                     }
                 } else {
-                    warn!("Received TaskList but no request was pending");
+                    warn!("Received TaskList but no ListTasks request was pending");
                 }
             }
             Response::Error(ErrorResponse {
                 error,
-                original_request,
+                original_request: _,
             }) => {
                 error!(
-                    "Server error received: {}. Original request: {:?}",
-                    error, original_request
+                    "Server error received: {}. Check server logs for details.",
+                    error
                 );
-                if let Some(sender) = pending_task_creation.lock().unwrap().take() {
+
+                let mut requests = pending_requests.lock().unwrap();
+
+                if let Some(PendingSender::TaskCreation(sender, _, _)) =
+                    requests.remove(&PendingRequestKey::TaskCreation)
+                {
                     error!("Error occurred during task creation: {}", error);
-                    let _ = sender
-                        .sender
-                        .send(Err(ClientError::ServerError(error.clone())));
-                } else if let Some(sender) = pending_task_list.lock().unwrap().take() {
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(PendingSender::ListTasks(sender)) =
+                    requests.remove(&PendingRequestKey::ListTasks)
+                {
                     error!("Error occurred during task list request: {}", error);
                     let _ = sender.send(Err(ClientError::ServerError(error.clone())));
-                } else if let Some(sender) = pending_task_query.lock().unwrap().take() {
+                } else if let Some(PendingSender::QueryTask(sender)) =
+                    requests.remove(&PendingRequestKey::QueryTask)
+                {
                     error!("Error occurred during task query request: {}", error);
                     let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(PendingSender::Rm(sender)) =
+                    requests.remove(&PendingRequestKey::Rm)
+                {
+                    error!("Error occurred during rm request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(PendingSender::ListKeys(sender)) =
+                    requests.remove(&PendingRequestKey::ListKeys)
+                {
+                    error!("Error occurred during list keys request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(PendingSender::Stats(sender)) =
+                    requests.remove(&PendingRequestKey::Stats)
+                {
+                    error!("Error occurred during stats request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error)));
+                } else {
+                    warn!("Received server error, but no matching pending request found.");
                 }
             }
             Response::RmSuccess(RmSuccessResponse { user_key: _ }) => {
-                if let Some(sender) = pending_rm.lock().unwrap().take() {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::Rm);
+                if let Some(PendingSender::Rm(sender)) = pending_sender {
                     if sender.send(Ok(())).is_err() {
                         warn!("Failed to send RM success response (receiver dropped)");
                     }
                 } else {
-                    warn!("Received RM success response but no request was pending");
+                    warn!("Received RM success response but no Rm request was pending");
                 }
             }
             Response::ListKeys(ListKeysResponse { keys }) => {
-                if let Some(sender) = pending_list_keys.lock().unwrap().take() {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::ListKeys);
+                if let Some(PendingSender::ListKeys(sender)) = pending_sender {
                     if sender.send(Ok(keys)).is_err() {
                         warn!("Failed to send ListKeys response (receiver dropped)");
                     }
                 } else {
-                    warn!("Received ListKeys response but no request was pending");
+                    warn!("Received ListKeys response but no ListKeys request was pending");
                 }
             }
             Response::Stats(stats_response) => {
-                if let Some(sender) = pending_stats.lock().unwrap().take() {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::Stats);
+                if let Some(PendingSender::Stats(sender)) = pending_sender {
                     if sender.send(Ok(stats_response)).is_err() {
                         warn!("Failed to send Stats response (receiver dropped)");
                     }
                 } else {
-                    warn!("Received Stats response but no request was pending");
+                    warn!("Received Stats response but no Stats request was pending");
                 }
             }
         }
@@ -221,12 +291,7 @@ impl MutantClient {
                                             response.clone(),
                                             &self.tasks,
                                             &self.task_channels,
-                                            &self.pending_task_creation,
-                                            &self.pending_task_list,
-                                            &self.pending_task_query,
-                                            &self.pending_rm,
-                                            &self.pending_list_keys,
-                                            &self.pending_stats,
+                                            &self.pending_requests,
                                         );
                                         return Some(Ok(response));
                                     }

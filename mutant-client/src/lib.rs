@@ -11,11 +11,12 @@ use url::Url;
 use wasm_bindgen_futures::spawn_local;
 
 use mutant_protocol::{
-    KeyDetails, ListTasksRequest, QueryTaskRequest, Request, StatsRequest, StatsResponse,
-    StorageMode, Task, TaskId, TaskListEntry, TaskProgress, TaskResult, TaskStatus,
+    KeyDetails, Request, StatsResponse, StorageMode, Task, TaskId, TaskListEntry, TaskProgress,
+    TaskResult, TaskStatus, TaskType,
 };
 
 pub mod error;
+mod macros;
 mod request;
 mod response;
 
@@ -24,18 +25,33 @@ use crate::error::ClientError;
 // Shared state for tasks managed by the client (using Arc<Mutex> for thread safety)
 type ClientTaskMap = Arc<Mutex<HashMap<TaskId, Task>>>;
 
-// Remove Ws alias for web_sys::WebSocket
-// type Ws = Rc<WebSocket>;
+// Key for the pending requests map
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PendingRequestKey {
+    TaskCreation,
+    ListTasks,
+    QueryTask,
+    Rm,
+    ListKeys,
+    Stats,
+}
 
-// Type alias for the pending request senders (wrapping Option in Mutex for shared access)
-type PendingTaskCreationSender = Arc<Mutex<Option<PendingTaskCreation>>>;
-type PendingTaskListSender =
-    Arc<Mutex<Option<oneshot::Sender<Result<Vec<TaskListEntry>, ClientError>>>>>;
-type PendingTaskQuerySender = Arc<Mutex<Option<oneshot::Sender<Result<Task, ClientError>>>>>;
-type PendingRmSender = Arc<Mutex<Option<oneshot::Sender<Result<(), ClientError>>>>>;
-type PendingListKeysSender =
-    Arc<Mutex<Option<oneshot::Sender<Result<Vec<KeyDetails>, ClientError>>>>>;
-type PendingStatsSender = Arc<Mutex<Option<oneshot::Sender<Result<StatsResponse, ClientError>>>>>;
+// Enum to hold the different sender types for the pending requests map
+pub enum PendingSender {
+    TaskCreation(
+        oneshot::Sender<Result<TaskId, ClientError>>,
+        TaskChannels,
+        TaskType,
+    ),
+    ListTasks(oneshot::Sender<Result<Vec<TaskListEntry>, ClientError>>),
+    QueryTask(oneshot::Sender<Result<Task, ClientError>>),
+    Rm(oneshot::Sender<Result<(), ClientError>>),
+    ListKeys(oneshot::Sender<Result<Vec<KeyDetails>, ClientError>>),
+    Stats(oneshot::Sender<Result<StatsResponse, ClientError>>),
+}
+
+// The new map type for pending requests
+type PendingRequestMap = Arc<Mutex<HashMap<PendingRequestKey, PendingSender>>>;
 
 pub type CompletionReceiver = oneshot::Receiver<Result<TaskResult, ClientError>>;
 pub type ProgressReceiver = mpsc::UnboundedReceiver<Result<TaskProgress, ClientError>>;
@@ -59,12 +75,7 @@ pub struct MutantClient {
     receiver: Option<ewebsock::WsReceiver>,
     tasks: ClientTaskMap,
     task_channels: TaskChannelsMap,
-    pending_task_creation: PendingTaskCreationSender,
-    pending_task_list: PendingTaskListSender,
-    pending_task_query: PendingTaskQuerySender,
-    pending_rm: PendingRmSender,
-    pending_list_keys: PendingListKeysSender,
-    pending_stats: PendingStatsSender,
+    pending_requests: PendingRequestMap,
     state: Arc<Mutex<ConnectionState>>,
 }
 
@@ -76,12 +87,7 @@ impl MutantClient {
             receiver: None,
             tasks: Arc::new(Mutex::new(HashMap::new())),
             task_channels: Arc::new(Mutex::new(HashMap::new())),
-            pending_task_creation: Arc::new(Mutex::new(None)),
-            pending_task_list: Arc::new(Mutex::new(None)),
-            pending_task_query: Arc::new(Mutex::new(None)),
-            pending_rm: Arc::new(Mutex::new(None)),
-            pending_list_keys: Arc::new(Mutex::new(None)),
-            pending_stats: Arc::new(Mutex::new(None)),
+            pending_requests: Arc::new(Mutex::new(HashMap::new())),
             state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
         }
     }
@@ -146,52 +152,17 @@ impl MutantClient {
         ),
         ClientError,
     > {
-        info!(
-            "Starting put operation for key: {} from path: {}",
-            user_key, source_path
-        );
-
-        let (completion_tx, completion_rx) = oneshot::channel();
-        let (progress_tx, progress_rx) = mpsc::unbounded_channel();
-
-        let (task_creation_tx, task_creation_rx) = oneshot::channel();
-        *self.pending_task_creation.lock().unwrap() = Some(PendingTaskCreation {
-            sender: task_creation_tx,
-            channels: Some((completion_tx, progress_tx)),
-        });
-
-        let req = Request::Put(mutant_protocol::PutRequest {
-            user_key: user_key.to_string(),
-            source_path: source_path.to_string(),
-            mode,
-            public,
-            no_verify,
-        });
-
-        let start_task = async move {
-            match self.send_request(req).await {
-                Ok(_) => {
-                    let task_id = task_creation_rx.await.map_err(|_| {
-                        error!("TaskCreated channel canceled");
-                        ClientError::InternalError("TaskCreated channel canceled".to_string())
-                    })??;
-
-                    info!("Task created with ID: {}", task_id);
-
-                    completion_rx.await.map_err(|_| {
-                        error!("Completion channel canceled");
-                        ClientError::InternalError("Completion channel canceled".to_string())
-                    })?
-                }
-                Err(e) => {
-                    error!("Failed to send put request: {:?}", e);
-                    *self.pending_task_creation.lock().unwrap() = None;
-                    Err(e)
-                }
+        long_request!(
+            self,
+            Put,
+            PutRequest {
+                user_key: user_key.to_string(),
+                source_path: source_path.to_string(),
+                mode,
+                public,
+                no_verify,
             }
-        };
-
-        Ok((start_task, progress_rx))
+        )
     }
 
     pub async fn get(
@@ -206,196 +177,42 @@ impl MutantClient {
         ),
         ClientError,
     > {
-        if self.pending_task_creation.lock().unwrap().is_some() {
-            return Err(ClientError::InternalError(
-                "Another put/get request is already pending".to_string(),
-            ));
-        }
-
-        let (completion_tx, completion_rx) = oneshot::channel();
-        let (progress_tx, progress_rx) = mpsc::unbounded_channel();
-
-        let (task_creation_tx, task_creation_rx) = oneshot::channel();
-        *self.pending_task_creation.lock().unwrap() = Some(PendingTaskCreation {
-            sender: task_creation_tx,
-            channels: Some((completion_tx, progress_tx)),
-        });
-
-        let req = Request::Get(mutant_protocol::GetRequest {
-            user_key: user_key.to_string(),
-            destination_path: destination_path.to_string(),
-            public,
-        });
-
-        let start_task = async move {
-            match self.send_request(req).await {
-                Ok(_) => {
-                    debug!("Get request sent, waiting for TaskCreated response...");
-                    let task_id = task_creation_rx.await.map_err(|_| {
-                        ClientError::InternalError("TaskCreated channel canceled".to_string())
-                    })??;
-
-                    info!("Task created with ID: {}", task_id);
-
-                    completion_rx.await.map_err(|_| {
-                        error!("Completion channel canceled");
-                        ClientError::InternalError("Completion channel canceled".to_string())
-                    })?
-                }
-                Err(e) => {
-                    *self.pending_task_creation.lock().unwrap() = None;
-                    Err(e)
-                }
+        long_request!(
+            self,
+            Get,
+            GetRequest {
+                user_key: user_key.to_string(),
+                destination_path: destination_path.to_string(),
+                public,
             }
-        };
-
-        Ok((start_task, progress_rx))
-    }
-
-    pub async fn rm(&mut self, user_key: &str) -> Result<(), ClientError> {
-        if self.pending_rm.lock().unwrap().is_some() {
-            return Err(ClientError::InternalError(
-                "Another rm request is already pending".to_string(),
-            ));
-        }
-
-        let (sender, receiver) = oneshot::channel();
-        *self.pending_rm.lock().unwrap() = Some(sender);
-
-        let req = Request::Rm(mutant_protocol::RmRequest {
-            user_key: user_key.to_string(),
-        });
-
-        match self.send_request(req).await {
-            Ok(_) => match receiver.await {
-                Ok(result) => {
-                    *self.pending_rm.lock().unwrap() = None;
-                    result
-                }
-                Err(_) => {
-                    *self.pending_rm.lock().unwrap() = None;
-                    Err(ClientError::InternalError(
-                        "Rm response channel canceled".to_string(),
-                    ))
-                }
-            },
-            Err(e) => {
-                *self.pending_rm.lock().unwrap() = None;
-                Err(e)
-            }
-        }
+        )
     }
 
     /// Retrieves a list of all stored keys from the daemon.
     pub async fn list_keys(&mut self) -> Result<Vec<KeyDetails>, ClientError> {
-        if self.pending_list_keys.lock().unwrap().is_some() {
-            return Err(ClientError::InternalError(
-                "Another list_keys request is already pending".to_string(),
-            ));
-        }
+        direct_request!(self, ListKeys, ListKeysRequest)
+    }
 
-        let (sender, receiver): (
-            oneshot::Sender<Result<Vec<KeyDetails>, ClientError>>,
-            oneshot::Receiver<Result<Vec<KeyDetails>, ClientError>>,
-        ) = oneshot::channel();
-        *self.pending_list_keys.lock().unwrap() = Some(sender);
-
-        let req = Request::ListKeys(mutant_protocol::ListKeysRequest);
-
-        match self.send_request(req).await {
-            Ok(_) => {
-                debug!("ListKeys request sent, waiting for response...");
-                match receiver.await {
-                    Ok(result) => {
-                        *self.pending_list_keys.lock().unwrap() = None;
-                        result
-                    }
-                    Err(_) => {
-                        *self.pending_list_keys.lock().unwrap() = None;
-                        error!("ListKeys response channel canceled");
-                        Err(ClientError::InternalError(
-                            "ListKeys response channel canceled".to_string(),
-                        ))
-                    }
-                }
+    pub async fn rm(&mut self, user_key: &str) -> Result<(), ClientError> {
+        direct_request!(
+            self,
+            Rm,
+            RmRequest {
+                user_key: user_key.to_string(),
             }
-            Err(e) => {
-                *self.pending_list_keys.lock().unwrap() = None;
-                error!("Failed to send ListKeys request: {:?}", e);
-                Err(e)
-            }
-        }
+        )
     }
 
     pub async fn list_tasks(&mut self) -> Result<Vec<TaskListEntry>, ClientError> {
-        if self.pending_task_list.lock().unwrap().is_some() {
-            return Err(ClientError::InternalError(
-                "Another list_tasks request is already pending".to_string(),
-            ));
-        }
-
-        let (sender, receiver) = oneshot::channel();
-        *self.pending_task_list.lock().unwrap() = Some(sender);
-
-        let req = Request::ListTasks(ListTasksRequest);
-
-        match self.send_request(req).await {
-            Ok(_) => {
-                debug!("ListTasks request sent, waiting for TaskList response...");
-                receiver.await.map_err(|_| {
-                    ClientError::InternalError("TaskList channel canceled".to_string())
-                })?
-            }
-            Err(e) => {
-                *self.pending_task_list.lock().unwrap() = None;
-                Err(e)
-            }
-        }
+        direct_request!(self, ListTasks, ListTasksRequest)
     }
 
     pub async fn query_task(&mut self, task_id: TaskId) -> Result<Task, ClientError> {
-        if self.pending_task_query.lock().unwrap().is_some() {
-            return Err(ClientError::InternalError(
-                "Another query_task request is already pending".to_string(),
-            ));
-        }
-
-        let (sender, receiver) = oneshot::channel();
-        *self.pending_task_query.lock().unwrap() = Some(sender);
-
-        let req = Request::QueryTask(QueryTaskRequest { task_id });
-
-        match self.send_request(req).await {
-            Ok(_) => {
-                debug!("QueryTask request sent, waiting for response...");
-                receiver.await.map_err(|_| {
-                    ClientError::InternalError("TaskQuery channel canceled".to_string())
-                })?
-            }
-            Err(e) => {
-                *self.pending_task_query.lock().unwrap() = None;
-                Err(e)
-            }
-        }
+        direct_request!(self, QueryTask, QueryTaskRequest { task_id })
     }
 
     pub async fn get_stats(&mut self) -> Result<StatsResponse, ClientError> {
-        if self.pending_stats.lock().unwrap().is_some() {
-            return Err(ClientError::InternalError(
-                "Another stats request is already pending".to_string(),
-            ));
-        }
-
-        let (tx, rx) = oneshot::channel();
-        *self.pending_stats.lock().unwrap() = Some(tx);
-
-        let req = Request::Stats(StatsRequest {});
-
-        self.send_request(req).await?;
-
-        rx.await.map_err(|_| {
-            ClientError::InternalError("Stats response channel canceled".to_string())
-        })?
+        direct_request!(self, Stats, StatsRequest {})
     }
 
     // --- Accessor methods for internal state ---
@@ -424,12 +241,7 @@ impl Clone for MutantClient {
             receiver: None,
             tasks: self.tasks.clone(),
             task_channels: self.task_channels.clone(),
-            pending_task_creation: self.pending_task_creation.clone(),
-            pending_task_list: self.pending_task_list.clone(),
-            pending_task_query: self.pending_task_query.clone(),
-            pending_rm: self.pending_rm.clone(),
-            pending_list_keys: self.pending_list_keys.clone(),
-            pending_stats: self.pending_stats.clone(),
+            pending_requests: self.pending_requests.clone(), // Clone the new map
             state: self.state.clone(),
         }
     }
@@ -448,9 +260,4 @@ impl MutantClient {
 // Need to run this once at the start of the WASM application
 pub fn set_panic_hook() {
     console_error_panic_hook::set_once();
-}
-
-pub struct PendingTaskCreation {
-    pub sender: oneshot::Sender<Result<TaskId, ClientError>>,
-    pub channels: Option<(CompletionSender, ProgressSender)>,
 }

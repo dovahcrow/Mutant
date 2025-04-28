@@ -6,7 +6,7 @@ use futures_util::{
     stream::{SplitSink, StreamExt},
 };
 use mutant_lib::storage::{IndexEntry, PadStatus, ScratchpadAddress};
-use mutant_lib::{storage::StorageMode, MutAnt};
+use mutant_lib::MutAnt;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use warp::ws::{Message, WebSocket};

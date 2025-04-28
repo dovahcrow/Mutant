@@ -39,6 +39,9 @@ pub enum ClientError {
 
     #[error("Internal client error: {0}")]
     InternalError(String),
+
+    #[error("Task with ID {0} not found")]
+    TaskNotFound(mutant_protocol::TaskId),
 }
 
 // Helper to convert JsValue to ClientError
