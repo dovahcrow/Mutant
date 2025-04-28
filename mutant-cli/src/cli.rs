@@ -11,6 +11,7 @@ pub struct Cli {
 
 #[derive(clap::Subcommand)]
 pub enum Commands {
+    #[command(about = "Store a value associated with a key")]
     Put {
         key: String,
         file: String,
@@ -23,6 +24,7 @@ pub enum Commands {
         #[arg(short, long)]
         no_verify: bool,
     },
+    #[command(about = "Retrieve a value associated with a key")]
     Get {
         key: String,
         destination_path: String,
@@ -31,35 +33,40 @@ pub enum Commands {
         #[arg(short, long)]
         public: bool,
     },
-    Rm {
-        key: String,
-    },
+    #[command(about = "Remove a key-value pair")]
+    Rm { key: String },
     #[command(about = "List stored keys")]
     Ls,
     #[command(about = "Show storage statistics")]
     Stats,
+    #[command(about = "Manage background tasks")]
     Tasks {
         #[command(subcommand)]
         command: TasksCommands,
     },
+    #[command(about = "Synchronize local index cache with remote storage")]
     Sync {
         #[arg(short, long)]
         push_force: bool,
         #[arg(short, long)]
         background: bool,
     },
+    #[command(
+        about = "Perform a get check on scratchpads that should have been created but failed at some point. Removes the pads that are not found."
+    )]
     Purge {
         #[arg(short, long)]
         aggressive: bool,
         #[arg(short, long)]
         background: bool,
     },
-    Import {
-        file_path: String,
-    },
-    Export {
-        destination_path: String,
-    },
+    #[command(about = "Import scratchpad private key from a file")]
+    Import { file_path: String },
+    #[command(about = "Export all scratchpad private key to a file")]
+    Export { destination_path: String },
+    #[command(
+        about = "Perform a health check on scratchpads that should have been created but cannot be retrieved. Recycles the pads that are not found."
+    )]
     HealthCheck {
         key_name: String,
         #[arg(short, long)]
@@ -97,6 +104,8 @@ impl From<StorageModeCli> for StorageMode {
 
 #[derive(clap::Subcommand)]
 pub enum TasksCommands {
+    #[command(about = "List all background tasks")]
     List,
+    #[command(about = "Get the status of a background task")]
     Get { task_id: String },
 }
