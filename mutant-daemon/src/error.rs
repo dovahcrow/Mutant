@@ -46,6 +46,12 @@ pub enum Error {
 
     #[error("Failed to get base directories: {0}")]
     BaseDirectories(#[from] xdg::BaseDirectoriesError),
+
+    #[error("Failed to create lock file: {0}")]
+    Lockfile(#[from] lockfile::Error),
+
+    #[error("Failed to join server task: {0}")]
+    JoinError(#[from] tokio::task::JoinError),
 }
 
 // Implement warp::reject::Reject for DaemonError so we can use it in warp filters

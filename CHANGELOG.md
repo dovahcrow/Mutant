@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initialize `PadInfo.last_known_counter` using the `initial_counter` from `PadOrigin` when preparing pads, ensuring accurate initial counter tracking for pads from the free pool.
 - Increase WebSocket maximum message size limit to 2GB in mutant-daemon to handle large data transfers.
 - Fix `mutant-cli ls` command by correctly tagging `Request` enum variants in `mutant-protocol`, preventing misinterpretation of `ListKeysRequest` as `ListTasksRequest` by the daemon.
+- Daemon now correctly handles its lock file, ensuring it's released upon termination.
 
 ### Changed
 - Refactor write pipeline: Replaced two-stage put/confirm tasks with a single processing loop (`process_pads`) using `tokio::select!` and `FuturesUnordered` to manage concurrent `process_pad_task` operations (put -> confirm cycle) for each pad, improving deadlock resilience.

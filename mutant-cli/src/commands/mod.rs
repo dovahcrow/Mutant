@@ -1,3 +1,4 @@
+pub mod daemon;
 pub mod export;
 pub mod get;
 pub mod health_check;

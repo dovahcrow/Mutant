@@ -13,6 +13,8 @@ mod wallet;
 
 use mutant_protocol::{Task, TaskId};
 
+use tokio::signal;
+
 type TaskMap = Arc<RwLock<HashMap<TaskId, Task>>>;
 
 use error::Error;
@@ -84,6 +86,21 @@ impl Config {
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    // check if the daemon is running by checking the /tmp/mutant-daemon.lock file
+    if std::fs::File::open("/tmp/mutant-daemon.lock").is_ok() {
+        println!("Mutant Daemon is already running");
+        return Ok(());
+    }
+
+    // Create the lock file. It will be held until the process exits.
+    let _lock_file =
+        lockfile::Lockfile::create("/tmp/mutant-daemon.lock").map_err(Error::Lockfile)?;
+
+    // put the pid of the daemon in the lock file
+    // Note: The lockfile crate typically manages this implicitly through the file lock.
+    // Writing the PID might be redundant or could be handled differently.
+    std::fs::write("/tmp/mutant-daemon.lock", std::process::id().to_string())?;
+
     let args = Args::parse();
 
     tracing_subscriber::registry()
@@ -158,8 +175,34 @@ async fn main() -> Result<(), Error> {
     let addr: SocketAddr = ([127, 0, 0, 1], 3030).into();
     tracing::info!("WebSocket server listening on {}", addr);
 
-    // Start the server
-    warp::serve(ws_route).run(addr).await;
+    // Create a shutdown signal receiver
+    let shutdown_signal = async {
+        let ctrl_c = signal::ctrl_c();
+        #[cfg(unix)]
+        let sigterm = async {
+            signal::unix::signal(signal::unix::SignalKind::terminate())
+                .expect("failed to install signal handler")
+                .recv()
+                .await;
+        };
+        #[cfg(not(unix))]
+        let sigterm = std::future::pending::<()>(); // No SIGTERM on non-Unix
 
+        tokio::select! {
+            _ = ctrl_c => { tracing::info!("Received Ctrl+C, shutting down."); },
+            _ = sigterm => { tracing::info!("Received SIGTERM, shutting down."); },
+        }
+    };
+
+    // Start the server with graceful shutdown
+    let (_, server) = warp::serve(ws_route).bind_with_graceful_shutdown(addr, shutdown_signal);
+
+    tracing::info!("Starting server task...");
+    // Await the server task. The lock file will be released when the process exits.
+    tokio::task::spawn(server).await.map_err(Error::JoinError)?;
+    tracing::info!("Server task finished.");
+
+    // The lock file (_lock_file) is released automatically when the process exits
+    // because the file descriptor associated with the lock is closed.
     Ok(())
 }

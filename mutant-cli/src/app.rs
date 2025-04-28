@@ -8,6 +8,11 @@ pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Daemon { command: _ } => {}
+        _ => commands::daemon::start_daemon().await?,
+    };
+
+    match cli.command {
         Commands::Put {
             key,
             file,
@@ -38,6 +43,9 @@ pub async fn run() -> Result<()> {
         }
         Commands::Tasks { command } => {
             commands::tasks::handle_tasks(command).await?;
+        }
+        Commands::Daemon { command } => {
+            commands::daemon::handle_daemon(command).await?;
         }
         Commands::Sync {
             background,

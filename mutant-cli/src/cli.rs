@@ -44,6 +44,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: TasksCommands,
     },
+    #[command(about = "Manage the daemon")]
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommands,
+    },
     #[command(about = "Synchronize local index cache with remote storage")]
     Sync {
         #[arg(short, long)]
@@ -108,4 +113,18 @@ pub enum TasksCommands {
     List,
     #[command(about = "Get the status of a background task")]
     Get { task_id: String },
+}
+
+#[derive(clap::Subcommand)]
+pub enum DaemonCommands {
+    #[command(about = "Start the daemon")]
+    Start,
+    #[command(about = "Stop the daemon")]
+    Stop,
+    #[command(about = "Restart the daemon")]
+    Restart,
+    #[command(about = "Get the status of the daemon")]
+    Status,
+    #[command(about = "Get the logs of the daemon")]
+    Logs,
 }
