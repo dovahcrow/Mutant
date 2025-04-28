@@ -1,9 +1,12 @@
 use crate::callbacks;
 use crate::connect_to_daemon;
+use crate::history::append_history_entry;
+use crate::history::FetchHistoryEntry;
 use anyhow::Result;
 use colored::Colorize;
 use indicatif::MultiProgress;
 use mutant_protocol::TaskResult;
+use mutant_protocol::TaskResultType;
 
 pub async fn handle_get(
     key: String,
@@ -35,13 +38,27 @@ pub async fn handle_get(
             TaskResult::Error(error) => {
                 eprintln!("{} {}", "Error:".bright_red(), error);
             }
-            TaskResult::Result(_result) => {
-                println!(
-                    "{} Get task completed. Result saved to {} on daemon.",
-                    "•".bright_green(),
-                    destination_path
-                );
-            }
+            TaskResult::Result(result) => match result {
+                TaskResultType::Get(result) => {
+                    println!(
+                        "{} Get task completed. Result saved to {} on daemon.",
+                        "•".bright_green(),
+                        destination_path
+                    );
+
+                    if public {
+                        let history_entry = FetchHistoryEntry {
+                            address: key,
+                            size: result.size,
+                            fetched_at: Utc::now(),
+                        };
+                        append_history_entry(history_entry);
+                    }
+                }
+                _ => {
+                    eprintln!("{} {}", "Error:".bright_red(), "Unknown task result");
+                }
+            },
             TaskResult::Pending => {
                 println!("{} Get task pending.", "•".bright_yellow());
             }

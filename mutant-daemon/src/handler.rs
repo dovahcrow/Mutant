@@ -14,12 +14,13 @@ use warp::ws::{Message, WebSocket};
 use crate::{error::Error as DaemonError, TaskMap};
 use mutant_protocol::{
     ErrorResponse, ExportRequest, ExportResponse, ExportResult, GetCallback, GetEvent, GetRequest,
-    HealthCheckCallback, HealthCheckEvent, HealthCheckRequest, ImportRequest, ImportResponse,
-    ImportResult, KeyDetails, ListKeysRequest, ListKeysResponse, ListTasksRequest, PurgeCallback,
-    PurgeEvent, PurgeRequest, PutCallback, PutEvent, PutRequest, QueryTaskRequest, Request,
-    Response, RmRequest, RmSuccessResponse, StatsRequest, StatsResponse, SyncCallback, SyncEvent,
-    SyncRequest, Task, TaskCreatedResponse, TaskListEntry, TaskListResponse, TaskProgress,
-    TaskResult, TaskResultResponse, TaskResultType, TaskStatus, TaskType, TaskUpdateResponse,
+    GetResult, HealthCheckCallback, HealthCheckEvent, HealthCheckRequest, ImportRequest,
+    ImportResponse, ImportResult, KeyDetails, ListKeysRequest, ListKeysResponse, ListTasksRequest,
+    PurgeCallback, PurgeEvent, PurgeRequest, PutCallback, PutEvent, PutRequest, QueryTaskRequest,
+    Request, Response, RmRequest, RmSuccessResponse, StatsRequest, StatsResponse, SyncCallback,
+    SyncEvent, SyncRequest, Task, TaskCreatedResponse, TaskListEntry, TaskListResponse,
+    TaskProgress, TaskResult, TaskResultResponse, TaskResultType, TaskStatus, TaskType,
+    TaskUpdateResponse,
 };
 
 // Helper function to send JSON responses
@@ -360,7 +361,9 @@ async fn handle_get(
                 match write_result {
                     Ok(data_bytes) => {
                         task.status = TaskStatus::Completed;
-                        task.result = TaskResult::Result(TaskResultType::Get(()));
+                        task.result = TaskResult::Result(TaskResultType::Get(GetResult {
+                            size: data_bytes.len(),
+                        }));
                         tracing::info!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, bytes_written = data_bytes.len(), "GET task completed successfully");
                         Some(Response::TaskResult(TaskResultResponse {
                             task_id,

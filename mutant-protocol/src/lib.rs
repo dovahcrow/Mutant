@@ -296,7 +296,7 @@ pub enum TaskResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskResultType {
     Put(()),
-    Get(()),
+    Get(GetResult),
     Sync(SyncResult),
     Purge(PurgeResult),
     HealthCheck(HealthCheckResult),
@@ -460,6 +460,11 @@ pub struct SyncResult {
     pub nb_keys_updated: usize,
     pub nb_free_pads_added: usize,
     pub nb_pending_pads_added: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct GetResult {
+    pub size: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
