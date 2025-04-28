@@ -192,7 +192,7 @@ async fn handle_put(
         }
         drop(tasks_guard);
 
-        // Create a callback that forwards progress events through the WebSocket
+        // Create callback *inside* the task
         let update_tx_clone = update_tx.clone();
         let task_id_clone = task_id;
         let tasks_clone = tasks.clone();
@@ -202,31 +202,32 @@ async fn handle_put(
             let tasks = tasks_clone.clone();
             Box::pin(async move {
                 let progress = TaskProgress::Put(event);
-
-                // Update the task's progress in the map
+                // Update task progress in map
                 let mut tasks_guard = tasks.write().await;
                 if let Some(task) = tasks_guard.get_mut(&task_id) {
                     task.progress = Some(progress.clone());
                 }
                 drop(tasks_guard);
-
+                // Send update via channel
                 let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
                     task_id,
                     status: TaskStatus::InProgress,
                     progress: Some(progress),
                 }));
-
                 Ok(true)
             })
         });
 
-        // Set the callback on the mutant instance
-        let mut mutant = (*mutant).clone();
-        mutant.set_put_callback(callback).await;
-
-        // Use the data read from the file
+        // Call put with the callback
         let result = mutant
-            .put(&user_key, &data_bytes, req.mode, req.public, req.no_verify)
+            .put(
+                &user_key,
+                &data_bytes,
+                req.mode,
+                req.public,
+                req.no_verify,
+                Some(callback), // Pass callback here
+            )
             .await;
 
         let final_response = {
@@ -301,7 +302,7 @@ async fn handle_get(
         }
         drop(tasks_guard);
 
-        // Create a callback that forwards progress events through the WebSocket
+        // Create callback *inside* the task
         let update_tx_clone = update_tx.clone();
         let task_id_clone = task_id;
         let tasks_clone = tasks.clone();
@@ -311,32 +312,28 @@ async fn handle_get(
             let tasks = tasks_clone.clone();
             Box::pin(async move {
                 let progress = TaskProgress::Get(event);
-
-                // Update the task's progress in the map
+                // Update task progress
                 let mut tasks_guard = tasks.write().await;
                 if let Some(task) = tasks_guard.get_mut(&task_id) {
                     task.progress = Some(progress.clone());
                 }
                 drop(tasks_guard);
-
+                // Send update via channel
                 let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
                     task_id,
                     status: TaskStatus::InProgress,
                     progress: Some(progress),
                 }));
-
                 Ok(true)
             })
         });
 
-        let mut mutant = (*mutant).clone();
-        mutant.set_get_callback(callback).await;
-
+        // Call get or get_public with the callback
         let get_result = if req.public {
             let address = ScratchpadAddress::from_hex(&user_key).unwrap();
-            mutant.get_public(&address).await
+            mutant.get_public(&address, Some(callback)).await // Pass callback
         } else {
-            mutant.get(&user_key).await
+            mutant.get(&user_key, Some(callback)).await // Pass callback
         };
 
         let write_result = match get_result {
@@ -430,7 +427,7 @@ async fn handle_sync(
         }
         drop(tasks_guard);
 
-        // Create a callback that forwards progress events through the WebSocket
+        // Create callback *inside* the task
         let update_tx_clone = update_tx.clone();
         let task_id_clone = task_id;
         let tasks_clone = tasks.clone();
@@ -440,28 +437,24 @@ async fn handle_sync(
             let tasks = tasks_clone.clone();
             Box::pin(async move {
                 let progress = TaskProgress::Sync(event);
-
-                // Update the task's progress in the map
+                // Update task progress
                 let mut tasks_guard = tasks.write().await;
                 if let Some(task) = tasks_guard.get_mut(&task_id) {
                     task.progress = Some(progress.clone());
                 }
                 drop(tasks_guard);
-
+                // Send update via channel
                 let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
                     task_id,
                     status: TaskStatus::InProgress,
                     progress: Some(progress),
                 }));
-
                 Ok(true)
             })
         });
 
-        let mut mutant = (*mutant).clone();
-        mutant.set_sync_callback(callback).await;
-
-        let sync_result = mutant.sync(req.push_force).await;
+        // Call sync with the callback
+        let sync_result = mutant.sync(req.push_force, Some(callback)).await; // Pass callback
 
         let final_response = {
             let mut tasks_guard = tasks.write().await;
@@ -536,7 +529,7 @@ async fn handle_purge(
         }
         drop(tasks_guard);
 
-        // Create a callback that forwards progress events through the WebSocket
+        // Create callback *inside* the task
         let update_tx_clone = update_tx.clone();
         let task_id_clone = task_id;
         let tasks_clone = tasks.clone();
@@ -546,28 +539,24 @@ async fn handle_purge(
             let tasks = tasks_clone.clone();
             Box::pin(async move {
                 let progress = TaskProgress::Purge(event);
-
-                // Update the task's progress in the map
+                // Update task progress
                 let mut tasks_guard = tasks.write().await;
                 if let Some(task) = tasks_guard.get_mut(&task_id) {
                     task.progress = Some(progress.clone());
                 }
                 drop(tasks_guard);
-
+                // Send update via channel
                 let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
                     task_id,
                     status: TaskStatus::InProgress,
                     progress: Some(progress),
                 }));
-
                 Ok(true)
             })
         });
 
-        let mut mutant = (*mutant).clone();
-        mutant.set_purge_callback(callback).await;
-
-        let purge_result = mutant.purge(req.aggressive).await;
+        // Call purge with the callback
+        let purge_result = mutant.purge(req.aggressive, Some(callback)).await; // Pass callback
 
         let final_response = {
             let mut tasks_guard = tasks.write().await;
@@ -642,7 +631,7 @@ async fn handle_health_check(
         }
         drop(tasks_guard);
 
-        // Create a callback that forwards progress events through the WebSocket
+        // Create callback *inside* the task
         let update_tx_clone = update_tx.clone();
         let task_id_clone = task_id;
         let tasks_clone = tasks.clone();
@@ -652,28 +641,26 @@ async fn handle_health_check(
             let tasks = tasks_clone.clone();
             Box::pin(async move {
                 let progress = TaskProgress::HealthCheck(event);
-
-                // Update the task's progress in the map
+                // Update task progress
                 let mut tasks_guard = tasks.write().await;
                 if let Some(task) = tasks_guard.get_mut(&task_id) {
                     task.progress = Some(progress.clone());
                 }
                 drop(tasks_guard);
-
+                // Send update via channel
                 let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
                     task_id,
                     status: TaskStatus::InProgress,
                     progress: Some(progress),
                 }));
-
                 Ok(true)
             })
         });
 
-        let mut mutant = (*mutant).clone();
-        mutant.set_health_check_callback(callback).await;
-
-        let health_check_result = mutant.health_check(&req.key_name, req.recycle).await;
+        // Call health_check with the callback
+        let health_check_result = mutant
+            .health_check(&req.key_name, req.recycle, Some(callback))
+            .await; // Pass callback
 
         let final_response = {
             let mut tasks_guard = tasks.write().await;

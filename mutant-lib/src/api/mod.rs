@@ -34,15 +34,7 @@ impl MutAnt {
         let network = Arc::new(Network::new(private_key_hex, network_choice)?);
         let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
 
-        let data = Arc::new(RwLock::new(Data::new(
-            network.clone(),
-            index.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )));
+        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone())));
 
         Ok(Self { index, data })
     }
@@ -51,15 +43,7 @@ impl MutAnt {
         let network_choice = NetworkChoice::Mainnet;
         let network = Arc::new(Network::new(DEV_TESTNET_PRIVATE_KEY_HEX, network_choice)?);
         let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
-        let data = Arc::new(RwLock::new(Data::new(
-            network.clone(),
-            index.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )));
+        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone())));
 
         Ok(Self { index, data })
     }
@@ -70,15 +54,7 @@ impl MutAnt {
             NetworkChoice::Devnet,
         )?);
         let index = Arc::new(RwLock::new(MasterIndex::new(NetworkChoice::Devnet)));
-        let data = Arc::new(RwLock::new(Data::new(
-            network.clone(),
-            index.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )));
+        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone())));
 
         Ok(Self { index, data })
     }
@@ -89,15 +65,7 @@ impl MutAnt {
             NetworkChoice::Devnet,
         )?);
         let index = Arc::new(RwLock::new(MasterIndex::new(NetworkChoice::Devnet)));
-        let data = Arc::new(RwLock::new(Data::new(
-            network.clone(),
-            index.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )));
+        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone())));
 
         Ok(Self { index, data })
     }
@@ -106,15 +74,7 @@ impl MutAnt {
         let network_choice = NetworkChoice::Alphanet;
         let network = Arc::new(Network::new(private_key_hex, network_choice)?);
         let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
-        let data = Arc::new(RwLock::new(Data::new(
-            network.clone(),
-            index.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )));
+        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone())));
 
         Ok(Self { index, data })
     }
@@ -123,37 +83,9 @@ impl MutAnt {
         let network_choice = NetworkChoice::Alphanet;
         let network = Arc::new(Network::new(DEV_TESTNET_PRIVATE_KEY_HEX, network_choice)?);
         let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
-        let data = Arc::new(RwLock::new(Data::new(
-            network.clone(),
-            index.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )));
+        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone())));
 
         Ok(Self { index, data })
-    }
-
-    pub async fn set_put_callback(&mut self, callback: PutCallback) {
-        self.data.write().await.set_put_callback(callback);
-    }
-
-    pub async fn set_get_callback(&mut self, callback: GetCallback) {
-        self.data.write().await.set_get_callback(callback);
-    }
-
-    pub async fn set_purge_callback(&mut self, callback: PurgeCallback) {
-        self.data.write().await.set_purge_callback(callback);
-    }
-
-    pub async fn set_sync_callback(&mut self, callback: SyncCallback) {
-        self.data.write().await.set_sync_callback(callback);
-    }
-
-    pub async fn set_health_check_callback(&mut self, callback: HealthCheckCallback) {
-        self.data.write().await.set_health_check_callback(callback);
     }
 
     pub async fn put(
@@ -163,20 +95,33 @@ impl MutAnt {
         mode: StorageMode,
         public: bool,
         no_verify: bool,
+        put_callback: Option<PutCallback>,
     ) -> Result<ScratchpadAddress, Error> {
         self.data
-            .write()
+            .read()
             .await
-            .put(user_key, data_bytes, mode, public, no_verify)
+            .put(user_key, data_bytes, mode, public, no_verify, put_callback)
             .await
     }
 
-    pub async fn get(&self, user_key: &str) -> Result<Vec<u8>, Error> {
-        self.data.write().await.get(user_key).await
+    pub async fn get(
+        &self,
+        user_key: &str,
+        get_callback: Option<GetCallback>,
+    ) -> Result<Vec<u8>, Error> {
+        self.data.read().await.get(user_key, get_callback).await
     }
 
-    pub async fn get_public(&self, address: &ScratchpadAddress) -> Result<Vec<u8>, Error> {
-        self.data.write().await.get_public(address).await
+    pub async fn get_public(
+        &self,
+        address: &ScratchpadAddress,
+        get_callback: Option<GetCallback>,
+    ) -> Result<Vec<u8>, Error> {
+        self.data
+            .read()
+            .await
+            .get_public(address, get_callback)
+            .await
     }
 
     pub async fn rm(&self, user_key: &str) -> Result<(), Error> {
@@ -203,8 +148,16 @@ impl MutAnt {
         Ok(())
     }
 
-    pub async fn purge(&self, aggressive: bool) -> Result<PurgeResult, Error> {
-        self.data.write().await.purge(aggressive).await
+    pub async fn purge(
+        &self,
+        aggressive: bool,
+        purge_callback: Option<PurgeCallback>,
+    ) -> Result<PurgeResult, Error> {
+        self.data
+            .read()
+            .await
+            .purge(aggressive, purge_callback)
+            .await
     }
 
     pub async fn get_storage_stats(&self) -> StorageStats {
@@ -215,16 +168,21 @@ impl MutAnt {
         &self,
         key_name: &str,
         recycle: bool,
+        health_check_callback: Option<HealthCheckCallback>,
     ) -> Result<HealthCheckResult, Error> {
         self.data
-            .write()
+            .read()
             .await
-            .health_check(key_name, recycle)
+            .health_check(key_name, recycle, health_check_callback)
             .await
     }
 
-    pub async fn sync(&self, force: bool) -> Result<SyncResult, Error> {
-        self.data.write().await.sync(force).await
+    pub async fn sync(
+        &self,
+        force: bool,
+        sync_callback: Option<SyncCallback>,
+    ) -> Result<SyncResult, Error> {
+        self.data.read().await.sync(force, sync_callback).await
     }
 }
 
@@ -260,7 +218,14 @@ mod tests {
         let data_bytes = generate_random_bytes(128);
 
         let result = mutant
-            .put(&user_key, &data_bytes, StorageMode::Medium, false, false)
+            .put(
+                &user_key,
+                &data_bytes,
+                StorageMode::Medium,
+                false,
+                false,
+                None,
+            )
             .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
@@ -273,7 +238,7 @@ mod tests {
         assert!(keys.contains_key(&user_key));
 
         // check of the data
-        let data = mutant.get(&user_key).await.unwrap();
+        let data = mutant.get(&user_key, None).await.unwrap();
         assert_eq!(data, data_bytes);
     }
 
@@ -284,7 +249,14 @@ mod tests {
         let data_bytes = generate_random_bytes(128);
 
         let result = mutant
-            .put(&user_key, &data_bytes, StorageMode::Medium, false, false)
+            .put(
+                &user_key,
+                &data_bytes,
+                StorageMode::Medium,
+                false,
+                false,
+                None,
+            )
             .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
@@ -292,12 +264,19 @@ mod tests {
         let data_bytes = generate_random_bytes(128);
 
         let result = mutant
-            .put(&user_key, &data_bytes, StorageMode::Medium, false, false)
+            .put(
+                &user_key,
+                &data_bytes,
+                StorageMode::Medium,
+                false,
+                false,
+                None,
+            )
             .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
 
-        let data = mutant.get(&user_key).await.unwrap();
+        let data = mutant.get(&user_key, None).await.unwrap();
         assert_eq!(data, data_bytes);
     }
 
@@ -308,20 +287,34 @@ mod tests {
         let data_bytes = generate_random_bytes(128);
 
         // Start the first put operation but do not await its completion
-        let first_put = mutant.put(&user_key, &data_bytes, StorageMode::Medium, false, false);
+        let first_put = mutant.put(
+            &user_key,
+            &data_bytes,
+            StorageMode::Medium,
+            false,
+            false,
+            None,
+        );
 
         // Simulate an interruption by dropping the future before it completes
         drop(first_put);
 
         // Now attempt to resume the operation with the same data
         let result = mutant
-            .put(&user_key, &data_bytes, StorageMode::Medium, false, false)
+            .put(
+                &user_key,
+                &data_bytes,
+                StorageMode::Medium,
+                false,
+                false,
+                None,
+            )
             .await;
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
 
         // Verify that the data is correctly stored
-        let data = mutant.get(&user_key).await.unwrap();
+        let data = mutant.get(&user_key, None).await.unwrap();
         assert_eq!(data, data_bytes);
     }
 }

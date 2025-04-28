@@ -10,7 +10,7 @@ use mutant_protocol::{
 use crate::error::Error;
 
 pub async fn invoke_put_callback(
-    callback: &mut Option<ProtocolPutCallback>,
+    callback: &Option<ProtocolPutCallback>,
     event: ProtocolPutEvent,
 ) -> Result<bool, Error> {
     if let Some(cb) = callback {
@@ -24,7 +24,7 @@ pub async fn invoke_put_callback(
 }
 
 pub(crate) async fn invoke_get_callback(
-    callback: &mut Option<ProtocolGetCallback>,
+    callback: &Option<ProtocolGetCallback>,
     event: ProtocolGetEvent,
 ) -> Result<bool, Error> {
     if let Some(cb) = callback {
@@ -38,7 +38,7 @@ pub(crate) async fn invoke_get_callback(
 }
 
 pub(crate) async fn invoke_purge_callback(
-    callback: &mut Option<ProtocolPurgeCallback>,
+    callback: &Option<ProtocolPurgeCallback>,
     event: ProtocolPurgeEvent,
 ) -> Result<bool, Error> {
     if let Some(cb) = callback {
@@ -52,7 +52,7 @@ pub(crate) async fn invoke_purge_callback(
 }
 
 pub(crate) async fn invoke_sync_callback(
-    callback: &mut Option<ProtocolSyncCallback>,
+    callback: &Option<ProtocolSyncCallback>,
     event: ProtocolSyncEvent,
 ) -> Result<bool, Error> {
     if let Some(cb) = callback {
@@ -66,7 +66,7 @@ pub(crate) async fn invoke_sync_callback(
 }
 
 pub(crate) async fn invoke_health_check_callback(
-    callback: &mut Option<ProtocolHealthCheckCallback>,
+    callback: &Option<ProtocolHealthCheckCallback>,
     event: ProtocolHealthCheckEvent,
 ) -> Result<bool, Error> {
     if let Some(cb) = callback {

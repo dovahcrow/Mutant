@@ -47,87 +47,47 @@ struct Context {
     network: Arc<Network>,
     name: Arc<String>,
     chunks: Arc<Vec<Vec<u8>>>,
-    put_callback: Option<PutCallback>,
 }
 
 pub struct Data {
     network: Arc<Network>,
     index: Arc<RwLock<MasterIndex>>,
-    put_callback: Option<PutCallback>,
-    get_callback: Option<GetCallback>,
-    purge_callback: Option<PurgeCallback>,
-    sync_callback: Option<SyncCallback>,
-    health_check_callback: Option<HealthCheckCallback>,
 }
 
 impl Data {
-    pub fn new(
-        network: Arc<Network>,
-        index: Arc<RwLock<MasterIndex>>,
-        put_callback: Option<PutCallback>,
-        get_callback: Option<GetCallback>,
-        purge_callback: Option<PurgeCallback>,
-        sync_callback: Option<SyncCallback>,
-        health_check_callback: Option<HealthCheckCallback>,
-    ) -> Self {
-        Self {
-            network,
-            index,
-            put_callback,
-            get_callback,
-            purge_callback,
-            sync_callback,
-            health_check_callback,
-        }
-    }
-
-    pub fn set_put_callback(&mut self, callback: PutCallback) {
-        self.put_callback = Some(callback);
-    }
-
-    pub fn set_get_callback(&mut self, callback: GetCallback) {
-        self.get_callback = Some(callback);
-    }
-
-    pub fn set_purge_callback(&mut self, callback: PurgeCallback) {
-        self.purge_callback = Some(callback);
-    }
-
-    pub fn set_sync_callback(&mut self, callback: SyncCallback) {
-        self.sync_callback = Some(callback);
-    }
-
-    pub fn set_health_check_callback(&mut self, callback: HealthCheckCallback) {
-        self.health_check_callback = Some(callback);
+    pub fn new(network: Arc<Network>, index: Arc<RwLock<MasterIndex>>) -> Self {
+        Self { network, index }
     }
 
     pub async fn put(
         &self,
-        name: &str,
-        data_bytes: &[u8],
+        key_name: &str,
+        content: &[u8],
         mode: StorageMode,
         public: bool,
         no_verify: bool,
+        put_callback: Option<PutCallback>,
     ) -> Result<ScratchpadAddress, Error> {
-        if self.index.read().await.contains_key(&name) {
+        if self.index.read().await.contains_key(&key_name) {
             if self
                 .index
                 .read()
                 .await
-                .verify_checksum(&name, data_bytes, mode.clone())
+                .verify_checksum(&key_name, content, mode.clone())
             {
-                info!("Resume for {}", name);
-                self.resume(name, data_bytes, mode, public, no_verify).await
+                info!("Resume for {}", key_name);
+                self.resume(key_name, content, mode, public, no_verify, put_callback)
+                    .await
             } else {
-                info!("Update for {}", name);
-                self.index.write().await.remove_key(&name).unwrap();
+                info!("Update for {}", key_name);
+                self.index.write().await.remove_key(&key_name).unwrap();
                 return self
-                    .first_store(name, data_bytes, mode, public, no_verify)
+                    .first_store(key_name, content, mode, public, no_verify, put_callback)
                     .await;
             }
         } else {
-            info!("First store for {}", name);
-            self.first_store(name, data_bytes, mode, public, no_verify)
+            info!("First store for {}", key_name);
+            self.first_store(key_name, content, mode, public, no_verify, put_callback)
                 .await
         }
     }
@@ -139,6 +99,7 @@ impl Data {
         mode: StorageMode,
         public: bool,
         no_verify: bool,
+        put_callback: Option<PutCallback>,
     ) -> Result<ScratchpadAddress, Error> {
         let pads = self.index.read().await.get_pads(name);
 
@@ -146,7 +107,7 @@ impl Data {
         if pads.iter().any(|p| p.size > mode.scratchpad_size()) {
             self.index.write().await.remove_key(name).unwrap();
             return self
-                .first_store(name, data_bytes, mode, public, no_verify)
+                .first_store(name, data_bytes, mode, public, no_verify, put_callback)
                 .await;
         }
 
@@ -157,10 +118,9 @@ impl Data {
             network: self.network.clone(),
             name: Arc::new(name.to_string()),
             chunks: Arc::new(chunks),
-            put_callback: self.put_callback.clone(),
         };
 
-        self.write_pipeline(context, pads.clone(), public, no_verify)
+        self.write_pipeline(context, pads.clone(), public, no_verify, put_callback)
             .await;
 
         Ok(pads[0].address)
@@ -173,6 +133,7 @@ impl Data {
         mode: StorageMode,
         public: bool,
         no_verify: bool,
+        put_callback: Option<PutCallback>,
     ) -> Result<ScratchpadAddress, Error> {
         let (pads, chunks) = self
             .index
@@ -180,18 +141,19 @@ impl Data {
             .await
             .create_key(name, data_bytes, mode, public)?;
 
+        let address = pads[0].address;
+
         let context = Context {
             index: self.index.clone(),
             network: self.network.clone(),
             name: Arc::new(name.to_string()),
             chunks: Arc::new(chunks),
-            put_callback: self.put_callback.clone(),
         };
 
-        self.write_pipeline(context, pads.clone(), public, no_verify)
+        self.write_pipeline(context, pads.clone(), public, no_verify, put_callback)
             .await;
 
-        Ok(pads[0].address)
+        Ok(address)
     }
 
     async fn write_pipeline(
@@ -200,6 +162,7 @@ impl Data {
         pads: Vec<PadInfo>,
         public: bool,
         no_verify: bool,
+        put_callback: Option<PutCallback>,
     ) {
         let (pad_tx, pad_rx) = channel(CHUNK_PROCESSING_QUEUE_SIZE);
 
@@ -213,14 +176,16 @@ impl Data {
             .filter(|p| p.status == PadStatus::Generated)
             .count();
 
-        let process_future = self.process_pads(
-            context.clone(),
+        let process_future = Self::process_pads(
+            context.name.clone(),
+            Arc::new(no_verify),
+            context,
             pad_tx.clone(),
             pad_rx,
             initial_confirmed_count,
             initial_chunks_to_reserve,
             public,
-            no_verify,
+            put_callback.clone(),
         );
 
         for pad in pads {
@@ -233,16 +198,16 @@ impl Data {
     }
 
     async fn process_pads(
-        &self,
-        mut context: Context,
+        key_name: Arc<String>,
+        no_verify: Arc<bool>,
+        context: Context,
         pad_tx: Sender<PadInfo>,
         mut pad_rx: Receiver<PadInfo>,
         initial_confirmed_count: usize,
         initial_chunks_to_reserve: usize,
         public: bool,
-        no_verify: bool,
+        put_callback: Option<PutCallback>,
     ) -> Result<(), tokio::task::JoinError> {
-        let key_name = context.name.clone();
         let total_pads = context.chunks.len();
         let confirmed_pads = Arc::new(AtomicUsize::new(initial_confirmed_count));
 
@@ -263,7 +228,7 @@ impl Data {
         );
 
         invoke_put_callback(
-            &mut context.put_callback,
+            &put_callback,
             PutEvent::Starting {
                 total_chunks: total_pads,
                 initial_written_count: 0,
@@ -283,6 +248,8 @@ impl Data {
                             let task_context = context.clone();
                             let task_confirmed_counter = confirmed_pads.clone();
                             let task_pad_tx = pad_tx.clone();
+                            let task_put_callback = put_callback.clone();
+                            let task_no_verify = no_verify.clone();
                             tasks.push(tokio::spawn(async move {
                                 Self::process_pad_task(
                                     task_context,
@@ -295,7 +262,8 @@ impl Data {
                                     } else {
                                         false
                                     },
-                                    no_verify,
+                                    task_no_verify,
+                                    task_put_callback,
                                 ).await;
                             }));
                         },
@@ -333,7 +301,7 @@ impl Data {
         }
         info!("Finished pad processing pipeline for {}", key_name);
 
-        invoke_put_callback(&mut context.put_callback, PutEvent::Complete)
+        invoke_put_callback(&put_callback, PutEvent::Complete)
             .await
             .unwrap();
 
@@ -341,13 +309,14 @@ impl Data {
     }
 
     async fn process_pad_task(
-        mut context: Context,
+        context: Context,
         confirmed_counter: Arc<AtomicUsize>,
         pad: PadInfo,
         pad_tx: Sender<PadInfo>,
         public: bool,
         is_index: bool,
-        no_verify: bool,
+        no_verify: Arc<bool>,
+        put_callback: Option<PutCallback>,
     ) {
         let current_pad_address = pad.address;
         let key_name = &context.name;
@@ -363,10 +332,10 @@ impl Data {
 
             confirmed_counter.fetch_add(1, Ordering::Relaxed);
 
-            invoke_put_callback(&mut context.put_callback, PutEvent::PadsWritten)
+            invoke_put_callback(&put_callback, PutEvent::PadsWritten)
                 .await
                 .unwrap();
-            invoke_put_callback(&mut context.put_callback, PutEvent::PadsConfirmed)
+            invoke_put_callback(&put_callback, PutEvent::PadsConfirmed)
                 .await
                 .unwrap();
 
@@ -437,20 +406,14 @@ impl Data {
                             None,
                         ) {
                             Ok(updated_pad) => {
-                                invoke_put_callback(
-                                    &mut context.put_callback,
-                                    PutEvent::PadsWritten,
-                                )
-                                .await
-                                .unwrap();
-
-                                if initial_status == PadStatus::Generated {
-                                    invoke_put_callback(
-                                        &mut context.put_callback,
-                                        PutEvent::PadReserved,
-                                    )
+                                invoke_put_callback(&put_callback, PutEvent::PadsWritten)
                                     .await
                                     .unwrap();
+
+                                if initial_status == PadStatus::Generated {
+                                    invoke_put_callback(&put_callback, PutEvent::PadReserved)
+                                        .await
+                                        .unwrap();
                                 }
 
                                 pad_for_confirm = Some(updated_pad);
@@ -486,12 +449,12 @@ impl Data {
         } else if initial_status == PadStatus::Written {
             pad_for_confirm = Some(pad.clone());
 
-            invoke_put_callback(&mut context.put_callback, PutEvent::PadsWritten)
+            invoke_put_callback(&put_callback, PutEvent::PadsWritten)
                 .await
                 .unwrap();
         }
 
-        if no_verify {
+        if *no_verify {
             match context.index.write().await.update_pad_status(
                 key_name,
                 &current_pad_address,
@@ -500,7 +463,7 @@ impl Data {
             ) {
                 Ok(_) => {
                     confirmed_counter.fetch_add(1, Ordering::Relaxed);
-                    invoke_put_callback(&mut context.put_callback, PutEvent::PadsConfirmed)
+                    invoke_put_callback(&put_callback, PutEvent::PadsConfirmed)
                         .await
                         .unwrap();
                 }
@@ -548,12 +511,9 @@ impl Data {
                                 Ok(_) => {
                                     let previous_count =
                                         confirmed_counter.fetch_add(1, Ordering::Relaxed);
-                                    invoke_put_callback(
-                                        &mut context.put_callback,
-                                        PutEvent::PadsConfirmed,
-                                    )
-                                    .await
-                                    .unwrap();
+                                    invoke_put_callback(&put_callback, PutEvent::PadsConfirmed)
+                                        .await
+                                        .unwrap();
                                     debug!(
                                         "Pad {} confirmed. Confirmed count: {}",
                                         current_pad_address,
@@ -590,15 +550,16 @@ impl Data {
     }
 
     async fn fetch_pads_data(
-        &mut self,
+        &self,
         pads: Vec<PadInfo>,
         public: bool,
+        get_callback: Option<GetCallback>,
     ) -> Result<Vec<u8>, Error> {
         let mut data = Vec::new();
         let mut tasks = Vec::new();
 
         for pad in pads {
-            let mut get_callback = self.get_callback.clone();
+            let callback_clone = get_callback.clone();
             let network = self.network.clone();
             tasks.push(tokio::spawn(async move {
                 let mut retries_left = PAD_RECYCLING_RETRIES;
@@ -622,7 +583,7 @@ impl Data {
                                 )));
                             }
 
-                            invoke_get_callback(&mut get_callback, GetEvent::PadsFetched)
+                            invoke_get_callback(&callback_clone, GetEvent::PadsFetched)
                                 .await
                                 .unwrap();
 
@@ -645,7 +606,7 @@ impl Data {
 
         let results = futures::future::join_all(tasks).await;
 
-        invoke_get_callback(&mut self.get_callback, GetEvent::Complete)
+        invoke_get_callback(&get_callback, GetEvent::Complete)
             .await
             .unwrap();
 
@@ -667,8 +628,13 @@ impl Data {
         Ok(data)
     }
 
-    pub async fn get_public(&mut self, address: &ScratchpadAddress) -> Result<Vec<u8>, Error> {
+    pub async fn get_public(
+        &self,
+        address: &ScratchpadAddress,
+        get_callback: Option<GetCallback>,
+    ) -> Result<Vec<u8>, Error> {
         let index_pad_data = self.network.get(address, None).await?;
+        let callback = get_callback.clone();
 
         match index_pad_data.data_encoding {
             DATA_ENCODING_PUBLIC_INDEX => {
@@ -678,7 +644,7 @@ impl Data {
                     })?;
 
                 invoke_get_callback(
-                    &mut self.get_callback,
+                    &callback,
                     GetEvent::Starting {
                         total_chunks: index.len() + 1,
                     },
@@ -686,11 +652,11 @@ impl Data {
                 .await
                 .unwrap();
 
-                invoke_get_callback(&mut self.get_callback, GetEvent::PadsFetched)
+                invoke_get_callback(&callback, GetEvent::PadsFetched)
                     .await
                     .unwrap();
 
-                self.fetch_pads_data(index, true).await
+                self.fetch_pads_data(index, true, callback).await
             }
             DATA_ENCODING_PUBLIC_DATA => Ok(index_pad_data.data),
             _ => Err(Error::Internal(format!(
@@ -700,7 +666,11 @@ impl Data {
         }
     }
 
-    pub async fn get(&mut self, name: &str) -> Result<Vec<u8>, Error> {
+    pub async fn get(
+        &self,
+        name: &str,
+        get_callback: Option<GetCallback>,
+    ) -> Result<Vec<u8>, Error> {
         if !self.index.read().await.is_finished(name) {
             return Err(Error::Internal(format!(
                 "Key {} upload is not finished, cannot get data",
@@ -714,8 +684,10 @@ impl Data {
             return Err(Error::Internal(format!("No pads found for key {}", name)));
         }
 
+        let callback = get_callback.clone();
+
         invoke_get_callback(
-            &mut self.get_callback,
+            &callback,
             GetEvent::Starting {
                 total_chunks: pads.len(),
             },
@@ -725,16 +697,21 @@ impl Data {
 
         let is_public = self.index.read().await.is_public(name);
 
-        let pads = if is_public && pads.len() > 1 {
+        let pads_to_fetch = if is_public && pads.len() > 1 {
             pads[1..].to_vec()
         } else {
             pads
         };
 
-        self.fetch_pads_data(pads, is_public).await
+        self.fetch_pads_data(pads_to_fetch, is_public, callback)
+            .await
     }
 
-    pub async fn purge(&mut self, aggressive: bool) -> Result<PurgeResult, Error> {
+    pub async fn purge(
+        &self,
+        aggressive: bool,
+        purge_callback: Option<PurgeCallback>,
+    ) -> Result<PurgeResult, Error> {
         let pads = self.index.read().await.get_pending_pads();
 
         let nb_verified = Arc::new(AtomicUsize::new(0));
@@ -742,8 +719,10 @@ impl Data {
 
         debug!("Purging {} pads.", pads.len());
 
+        let callback = purge_callback.clone();
+
         invoke_purge_callback(
-            &mut self.purge_callback,
+            &callback,
             PurgeEvent::Starting {
                 total_count: pads.len(),
             },
@@ -761,7 +740,7 @@ impl Data {
             let index = self.index.clone();
             let nb_verified = nb_verified.clone();
             let nb_failed = nb_failed.clone();
-            let mut purge_callback = self.purge_callback.clone();
+            let task_callback = callback.clone();
 
             tasks.push_back(tokio::spawn(async move {
                 match network.get(&pad.address, None).await {
@@ -805,7 +784,7 @@ impl Data {
                     }
                 }
 
-                invoke_purge_callback(&mut purge_callback, PurgeEvent::PadProcessed)
+                invoke_purge_callback(&task_callback, PurgeEvent::PadProcessed)
                     .await
                     .unwrap();
             }));
@@ -821,7 +800,7 @@ impl Data {
         }
 
         invoke_purge_callback(
-            &mut self.purge_callback,
+            &callback,
             PurgeEvent::Complete {
                 verified_count: nb_verified.load(Ordering::Relaxed),
                 failed_count: nb_failed.load(Ordering::Relaxed),
@@ -836,15 +815,18 @@ impl Data {
     }
 
     pub async fn health_check(
-        &mut self,
+        &self,
         key_name: &str,
         recycle: bool,
+        health_check_callback: Option<HealthCheckCallback>,
     ) -> Result<HealthCheckResult, Error> {
         let pads = self.index.read().await.get_pads(key_name);
         let nb_recycled = Arc::new(AtomicUsize::new(0));
         let nb_reset = Arc::new(AtomicUsize::new(0));
+        let callback = health_check_callback.clone();
+
         invoke_health_check_callback(
-            &mut self.health_check_callback,
+            &callback,
             HealthCheckEvent::Starting {
                 total_keys: pads.len(),
             },
@@ -862,7 +844,7 @@ impl Data {
             let nb_reset = nb_reset.clone();
             let key_name = key_name.to_string();
             let network = self.network.clone();
-            let mut health_check_callback = self.health_check_callback.clone();
+            let task_callback = callback.clone();
             let index = self.index.clone();
             let secret_key = if is_public {
                 None
@@ -878,7 +860,7 @@ impl Data {
                 match network.get(&pad.address, secret_key.as_ref()).await {
                     Ok(_) => {
                         invoke_health_check_callback(
-                            &mut health_check_callback,
+                            &task_callback,
                             HealthCheckEvent::KeyProcessed,
                         )
                         .await
@@ -919,7 +901,7 @@ impl Data {
                         }
 
                         invoke_health_check_callback(
-                            &mut health_check_callback,
+                            &task_callback,
                             HealthCheckEvent::KeyProcessed,
                         )
                         .await
@@ -941,7 +923,7 @@ impl Data {
         }
 
         invoke_health_check_callback(
-            &mut self.health_check_callback,
+            &callback,
             HealthCheckEvent::Complete {
                 nb_keys_updated: nb_reset.load(Ordering::Relaxed),
             },
@@ -981,24 +963,23 @@ impl Data {
         })
     }
 
-    /// Get the master index from the network and merge it into a copy of the local index.
-    /// The merge is additive, it will only add or synchronize existing keys and not delete any.
-    /// The merge also synchronize the free and pending pads.
-    /// We take care when adding or synchronizing pads that it does not already exist anywhere.
-    /// If a key exists in the local and the remote, we take the latest version (check the pads counters)
-    pub async fn sync(&mut self, force: bool) -> Result<SyncResult, Error> {
+    pub async fn sync(
+        &self,
+        force: bool,
+        sync_callback: Option<SyncCallback>,
+    ) -> Result<SyncResult, Error> {
         let mut sync_result = SyncResult {
             nb_keys_added: 0,
             nb_keys_updated: 0,
             nb_free_pads_added: 0,
             nb_pending_pads_added: 0,
         };
+        let callback = sync_callback.clone();
 
-        invoke_sync_callback(&mut self.sync_callback, SyncEvent::FetchingRemoteIndex)
+        invoke_sync_callback(&callback, SyncEvent::FetchingRemoteIndex)
             .await
             .unwrap();
 
-        // we need to hash the secret key to avoid overriding the vault that exists at the original secret key location
         let owner_secret_key = self.network.secret_key();
         let (owner_address, owner_secret_key) =
             derive_master_index_info(&owner_secret_key.to_hex())?;
@@ -1020,22 +1001,19 @@ impl Data {
             Err(_e) => (MasterIndex::new(self.network.network_choice()), 0),
         };
 
-        invoke_sync_callback(&mut self.sync_callback, SyncEvent::Merging)
+        invoke_sync_callback(&callback, SyncEvent::Merging)
             .await
             .unwrap();
 
         let mut local_index = self.index.read().await.clone();
 
         if !force {
-            // Merge the remote index into the local index
             for (key, remote_entry) in remote_index.list() {
                 let local_entry = local_index.get_entry(&key);
                 if local_entry.is_none() {
-                    // Key does not exist in local index, add it
                     local_index.add_entry(&key, remote_entry)?;
                     sync_result.nb_keys_added += 1;
                 } else {
-                    // Key exists in local index, update it if the remote entry is newer
                     if local_index.update_entry(&key, remote_entry)? {
                         sync_result.nb_keys_updated += 1;
                     }
@@ -1045,8 +1023,6 @@ impl Data {
             let mut free_pads_to_add = Vec::new();
             let mut pending_pads_to_add = Vec::new();
 
-            // merge the free pads
-            // check if the pad exists anywhere in the local index
             for pad in remote_index.export_raw_pads_private_key()? {
                 if local_index.pad_exists(&pad.address) {
                     continue;
@@ -1064,7 +1040,7 @@ impl Data {
             local_index.import_raw_pads_private_key(pending_pads_to_add)?;
         }
 
-        invoke_sync_callback(&mut self.sync_callback, SyncEvent::PushingRemoteIndex)
+        invoke_sync_callback(&callback, SyncEvent::PushingRemoteIndex)
             .await
             .unwrap();
 
@@ -1080,7 +1056,6 @@ impl Data {
             checksum: 0,
         };
 
-        // push the remote index to the network
         self.network
             .put(
                 &pad_info,
@@ -1090,7 +1065,7 @@ impl Data {
             )
             .await?;
 
-        invoke_sync_callback(&mut self.sync_callback, SyncEvent::VerifyingRemoteIndex)
+        invoke_sync_callback(&callback, SyncEvent::VerifyingRemoteIndex)
             .await
             .unwrap();
 
@@ -1121,7 +1096,7 @@ impl Data {
             retries -= 1;
         }?;
 
-        invoke_sync_callback(&mut self.sync_callback, SyncEvent::Complete)
+        invoke_sync_callback(&callback, SyncEvent::Complete)
             .await
             .unwrap();
 
