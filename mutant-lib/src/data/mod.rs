@@ -2,7 +2,8 @@ use crate::{
     events::{GetCallback, GetEvent, PurgeCallback, PurgeEvent, SyncCallback, SyncEvent},
     index::{master_index::MasterIndex, PadInfo, PadStatus},
     internal_events::{
-        invoke_get_callback, invoke_purge_callback, invoke_put_callback, invoke_sync_callback,
+        invoke_get_callback, invoke_health_check_callback, invoke_purge_callback,
+        invoke_put_callback, invoke_sync_callback,
     },
     network::{Network, NetworkError},
 };
@@ -24,8 +25,8 @@ use tokio::sync::RwLock;
 use tokio::time::Instant;
 
 use mutant_protocol::{
-    HealthCheckCallback, HealthCheckResult, PurgeResult, PutCallback, PutEvent, StorageMode,
-    SyncResult,
+    HealthCheckCallback, HealthCheckEvent, HealthCheckResult, PurgeResult, PutCallback, PutEvent,
+    StorageMode, SyncResult,
 };
 
 pub const DATA_ENCODING_MASTER_INDEX: u64 = 0;
@@ -842,10 +843,10 @@ impl Data {
         let pads = self.index.read().await.get_pads(key_name);
         let nb_recycled = Arc::new(AtomicUsize::new(0));
         let nb_reset = Arc::new(AtomicUsize::new(0));
-        invoke_get_callback(
-            &mut self.get_callback,
-            GetEvent::Starting {
-                total_chunks: pads.len(),
+        invoke_health_check_callback(
+            &mut self.health_check_callback,
+            HealthCheckEvent::Starting {
+                total_keys: pads.len(),
             },
         )
         .await
@@ -861,7 +862,7 @@ impl Data {
             let nb_reset = nb_reset.clone();
             let key_name = key_name.to_string();
             let network = self.network.clone();
-            let mut get_callback = self.get_callback.clone();
+            let mut health_check_callback = self.health_check_callback.clone();
             let index = self.index.clone();
             let secret_key = if is_public {
                 None
@@ -876,9 +877,12 @@ impl Data {
 
                 match network.get(&pad.address, secret_key.as_ref()).await {
                     Ok(_) => {
-                        invoke_get_callback(&mut get_callback, GetEvent::PadsFetched)
-                            .await
-                            .unwrap();
+                        invoke_health_check_callback(
+                            &mut health_check_callback,
+                            HealthCheckEvent::KeyProcessed,
+                        )
+                        .await
+                        .unwrap();
                         return;
                     }
                     Err(e) => {
@@ -914,9 +918,12 @@ impl Data {
                             }
                         }
 
-                        invoke_get_callback(&mut get_callback, GetEvent::PadsFetched)
-                            .await
-                            .unwrap();
+                        invoke_health_check_callback(
+                            &mut health_check_callback,
+                            HealthCheckEvent::KeyProcessed,
+                        )
+                        .await
+                        .unwrap();
                     }
                 }
             }));
@@ -933,9 +940,14 @@ impl Data {
             }
         }
 
-        invoke_get_callback(&mut self.get_callback, GetEvent::Complete)
-            .await
-            .unwrap();
+        invoke_health_check_callback(
+            &mut self.health_check_callback,
+            HealthCheckEvent::Complete {
+                nb_keys_updated: nb_reset.load(Ordering::Relaxed),
+            },
+        )
+        .await
+        .unwrap();
 
         println!(
             "Health check completed. {} pads reset.",
