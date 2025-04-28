@@ -22,8 +22,10 @@ fn get_config(config: Config) -> ClientConfig {
         // client_config.strategy.scratchpad.get_retry = RetryStrategy::Balanced;
         // client_config.strategy.scratchpad.get_quorum = ResponseQuorum::Majority;
 
-        // client_config.strategy.scratchpad.verification_retry = RetryStrategy::Balanced;
-        // client_config.strategy.scratchpad.verification_quorum = ResponseQuorum::Majority;
+        // client_config.strategy.scratchpad.get_retry = RetryStrategy::Persistent;
+        // client_config.strategy.scratchpad.get_quorum = ResponseQuorum::All;
+        // client_config.strategy.scratchpad.verification_retry = RetryStrategy::Persistent;
+        // client_config.strategy.scratchpad.verification_quorum = ResponseQuorum::All;
         // client_config.strategy.scratchpad.put_retry = RetryStrategy::Persistent;
         // client_config.strategy.scratchpad.put_quorum = ResponseQuorum::All;
     }
@@ -59,6 +61,7 @@ pub(crate) async fn create_client(
                 "http://164.90.207.31/bootstrap_cache.json".to_string(),
                 "http://178.62.197.211/bootstrap_cache.json".to_string(),
             ];
+
             let peers_multi_addr = vec![];
             let config = ClientConfig {
                 init_peers_config: InitialPeersConfig {
