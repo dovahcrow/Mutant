@@ -3,7 +3,8 @@ use crate::network::client::Config;
 use crate::network::error::NetworkError;
 use crate::network::{Network, PutResult};
 use autonomi::client::payment::PaymentOption;
-use autonomi::{Bytes, Scratchpad, ScratchpadAddress, SecretKey};
+use autonomi::Client;
+use autonomi::{Bytes, Scratchpad, ScratchpadAddress, SecretKey, Wallet};
 use log::{debug, error, info, trace};
 use tokio::time::{timeout, Duration};
 
@@ -17,10 +18,10 @@ const PUT_TIMEOUT_SECS: u64 = 60 * 60; // 1 hour
 ///
 /// # Arguments
 ///
-/// * `adapter` - A reference to the `AutonomiNetworkAdapter`.
+/// * `client` - A reference to the `AutonomiNetworkAdapter`.
+/// * `payment_wallet` - The payment wallet needed for payment.
 /// * `pad_info` - Information about the pad, including its key, content type, and counter.
 /// * `data` - The raw data bytes to be included in the scratchpad.
-/// * `payment` - The payment option (`Wallet` for new pads, `Receipt` for updates).
 /// * `data_encoding` - The encoding type for the data (e.g., content type).
 /// * `is_public` - Flag indicating if the scratchpad should be public (no encryption).
 ///
@@ -31,7 +32,8 @@ const PUT_TIMEOUT_SECS: u64 = 60 * 60; // 1 hour
 /// - The `SecretKey` cannot be reconstructed from `pad_info`.
 /// - The `scratchpad_put` operation fails.
 pub(super) async fn put(
-    adapter: &Network,
+    client: &Client,
+    payment_wallet: Wallet,
     pad_info: &PadInfo,
     data: &[u8],
     data_encoding: u64,
@@ -42,9 +44,6 @@ pub(super) async fn put(
         pad_info.address,
         data.len()
     );
-    let client = adapter.get_client(Config::Put).await.map_err(|e| {
-        NetworkError::ClientAccessError(format!("Failed to get client from pool: {}", e))
-    })?;
 
     let owner_sk = pad_info.secret_key();
 
@@ -69,7 +68,7 @@ pub(super) async fn put(
     let addr = *scratchpad.address();
     trace!("network::put called for address: {}", addr);
 
-    let payment = PaymentOption::Wallet(adapter.wallet.clone());
+    let payment = PaymentOption::Wallet(payment_wallet);
 
     let put_future = client.scratchpad_put(scratchpad.clone(), payment);
 

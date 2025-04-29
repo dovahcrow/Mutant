@@ -1,3 +1,4 @@
+use crate::network::client::{ClientManager, Config};
 use crate::{
     events::{GetCallback, GetEvent, PurgeCallback, PurgeEvent, SyncCallback, SyncEvent},
     index::{master_index::MasterIndex, PadInfo, PadStatus},
@@ -8,12 +9,15 @@ use crate::{
     network::{Network, NetworkError},
 };
 use ant_networking::GetRecordError;
-use autonomi::ScratchpadAddress;
+use autonomi::{Client, ScratchpadAddress};
 use blsttc::SecretKey;
+use deadpool::managed::Object;
+use futures::stream::FuturesUnordered;
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     SinkExt, StreamExt,
 };
+use futures_util::stream::StreamExt;
 use log::{debug, error, info, warn};
 use sha2::{Digest, Sha256};
 use std::{
@@ -24,7 +28,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::RwLock;
-use tokio::time::Instant;
+use tokio::time::{timeout, Instant};
 
 use mutant_protocol::{
     HealthCheckCallback, HealthCheckEvent, HealthCheckResult, PurgeResult, PutCallback, PutEvent,
@@ -37,6 +41,8 @@ pub const DATA_ENCODING_PUBLIC_INDEX: u64 = 2;
 pub const DATA_ENCODING_PUBLIC_DATA: u64 = 3;
 
 pub const PAD_RECYCLING_RETRIES: usize = 3;
+const WORKER_COUNT: usize = 8;
+const BATCH_SIZE: usize = 20;
 
 const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 20);
 
@@ -168,7 +174,7 @@ impl Data {
         put_callback: Option<PutCallback>,
     ) {
         info!("Writing pipeline for key {}", context.name);
-        let (mut pad_tx, pad_rx) = unbounded();
+        let (pad_tx, pad_rx) = unbounded::<PadInfo>();
 
         let initial_confirmed_count = pads
             .iter()
@@ -186,7 +192,7 @@ impl Data {
         let process_future = Self::process_pads(
             context.name.clone(),
             Arc::new(no_verify),
-            context,
+            context.clone(),
             pad_tx.clone(),
             pad_rx,
             initial_confirmed_count,
@@ -198,16 +204,27 @@ impl Data {
         info!("Sending pads to pipeline");
 
         for pad in pads {
-            let _ = pad_tx.send(pad.clone()).await;
+            if pad.status != PadStatus::Confirmed {
+                if let Err(e) = pad_tx.send(pad.clone()).await {
+                    error!(
+                        "Failed to send initial pad {} to channel: {}",
+                        pad.address, e
+                    );
+                }
+            }
         }
 
-        info!("Dropping pad tx");
-
+        info!("Dropping initial pad tx handle");
         drop(pad_tx);
 
-        info!("Processing future");
-
-        process_future.await.unwrap();
+        info!(
+            "Awaiting pad processing completion for key {}",
+            context.name
+        );
+        if let Err(e) = process_future.await {
+            error!("Error processing pads for key {}: {:?}", context.name, e);
+        }
+        info!("Pad processing finished for key {}", context.name);
     }
 
     async fn process_pads(
@@ -215,106 +232,86 @@ impl Data {
         no_verify: Arc<bool>,
         context: Context,
         pad_tx: UnboundedSender<PadInfo>,
-        mut pad_rx: UnboundedReceiver<PadInfo>,
+        pad_rx: UnboundedReceiver<PadInfo>,
         initial_confirmed_count: usize,
         initial_chunks_to_reserve: usize,
         public: bool,
         put_callback: Option<PutCallback>,
-    ) -> Result<(), tokio::task::JoinError> {
-        info!("Processing pads");
+    ) -> Result<(), Error> {
+        info!("Starting pad processing manager for {}", key_name);
 
         let total_pads = context.chunks.len();
         let confirmed_pads = Arc::new(AtomicUsize::new(initial_confirmed_count));
 
         if initial_confirmed_count == total_pads {
             info!(
-                "All {} pads for key {} were already confirmed. Skipping pipeline.",
+                "All {} pads for key {} already confirmed. Skipping pipeline.",
                 total_pads, key_name
             );
             return Ok(());
         }
-
-        let mut tasks = futures::stream::FuturesUnordered::new();
-        let mut outstanding_tasks = 0u32;
-        let mut channel_closed = false;
-        info!(
-            "Starting pad processing pipeline for {} with {} pads ({} initially confirmed)",
-            key_name, total_pads, initial_confirmed_count
-        );
 
         invoke_put_callback(
             &put_callback,
             PutEvent::Starting {
                 total_chunks: total_pads,
                 initial_written_count: 0,
-                initial_confirmed_count: 0,
+                initial_confirmed_count: initial_confirmed_count,
                 chunks_to_reserve: initial_chunks_to_reserve,
             },
         )
         .await
         .unwrap();
 
-        loop {
-            tokio::select! {
-                res = pad_rx.next(), if !channel_closed => {
-                    match res {
-                        Some(pad) => {
-                            outstanding_tasks += 1;
-                            let task_context = context.clone();
-                            let task_confirmed_counter = confirmed_pads.clone();
-                            let task_pad_tx = pad_tx.clone();
-                            let task_put_callback = put_callback.clone();
-                            let task_no_verify = no_verify.clone();
-                            tasks.push(tokio::spawn(async move {
-                                Self::process_pad_task(
-                                    task_context,
-                                    task_confirmed_counter,
-                                    pad.clone(),
-                                    task_pad_tx,
-                                    public,
-                                    if public && pad.chunk_index == 0 && total_pads > 1 {
-                                        true
-                                    } else {
-                                        false
-                                    },
-                                    task_no_verify,
-                                    task_put_callback,
-                                ).await;
-                            }));
-                        },
-                        None => {
-                            channel_closed = true;
-                            if outstanding_tasks == 0 {
-                                break;
-                            }
-                        }
-                    }
-                },
+        let mut workers = FuturesUnordered::new();
+        let pad_rx_arc = Arc::new(tokio::sync::Mutex::new(pad_rx));
 
-                Some(result) = tasks.next(), if outstanding_tasks > 0 => {
-                    outstanding_tasks -= 1;
-                    if let Err(e) = result {
-                         error!("process_pads: Sub-task panicked: {:?}", e);
-                    }
+        for i in 0..WORKER_COUNT {
+            let worker_context = context.clone();
+            let worker_confirmed_counter = confirmed_pads.clone();
+            let worker_pad_rx = pad_rx_arc.clone();
+            let worker_pad_tx = pad_tx.clone();
+            let worker_put_callback = put_callback.clone();
+            let worker_no_verify = no_verify.clone();
+            let worker_key_name = key_name.clone();
 
-                    if confirmed_pads.load(Ordering::SeqCst) == total_pads {
-                        info!("All {} pads confirmed for key {}", total_pads, key_name);
-                        break;
-                    }
+            workers.push(tokio::spawn(async move {
+                info!("Spawning worker {} for key {}", i, worker_key_name);
+                Self::pad_processing_worker(
+                    i,
+                    worker_context,
+                    worker_confirmed_counter,
+                    worker_pad_rx,
+                    worker_pad_tx,
+                    public,
+                    worker_no_verify,
+                    worker_put_callback,
+                )
+                .await
+            }));
+        }
 
-                    if channel_closed && outstanding_tasks == 0 {
-                         warn!("Pad processing channel closed but not all pads confirmed ({} / {}) for key {}. Exiting loop.", confirmed_pads.load(Ordering::SeqCst), total_pads, key_name);
-                         break;
-                    }
-                },
-
-                else => {
-                     info!("Pad processing loop exiting for key {}", key_name);
-                     break;
-                }
+        info!(
+            "Waiting for {} workers to complete for key {}",
+            WORKER_COUNT, key_name
+        );
+        while let Some(result) = workers.next().await {
+            match result {
+                Ok(Ok(())) => { /* Worker finished successfully */ }
+                Ok(Err(e)) => error!("Worker finished with error for key {}: {}", key_name, e),
+                Err(e) => error!("Worker panicked for key {}: {:?}", key_name, e),
             }
         }
-        info!("Finished pad processing pipeline for {}", key_name);
+
+        info!("All workers finished for key {}", key_name);
+
+        let final_confirmed_count = confirmed_pads.load(Ordering::SeqCst);
+        if final_confirmed_count != total_pads {
+            warn!(
+                "Pad processing finished for key {}, but not all pads confirmed ({} / {}).",
+                key_name, final_confirmed_count, total_pads
+            );
+        }
 
         invoke_put_callback(&put_callback, PutEvent::Complete)
             .await
@@ -323,245 +320,323 @@ impl Data {
         Ok(())
     }
 
-    async fn process_pad_task(
+    async fn pad_processing_worker(
+        worker_id: usize,
         context: Context,
         confirmed_counter: Arc<AtomicUsize>,
-        pad: PadInfo,
-        mut pad_tx: UnboundedSender<PadInfo>,
+        pad_rx: Arc<tokio::sync::Mutex<UnboundedReceiver<PadInfo>>>,
+        pad_tx: UnboundedSender<PadInfo>,
         public: bool,
-        is_index: bool,
         no_verify: Arc<bool>,
         put_callback: Option<PutCallback>,
-    ) {
-        let current_pad_address = pad.address;
+    ) -> Result<(), Error> {
+        info!(
+            "Worker {} acquiring client for key {}",
+            worker_id, context.name
+        );
+        let client_guard = context.network.get_client(Config::Put).await.map_err(|e| {
+            error!("Worker {} failed to get client: {}", worker_id, e);
+            Error::Network(NetworkError::ClientAccessError(format!(
+                "Worker {} failed to get client: {}",
+                worker_id, e
+            )))
+        })?;
+        let client = &*client_guard;
+        info!(
+            "Worker {} acquired client for key {}",
+            worker_id, context.name
+        );
+
+        let mut pads_to_process = Vec::new();
         let key_name = &context.name;
-        let mut pad_for_confirm: Option<PadInfo> = None;
+        let total_pads = context.chunks.len();
 
-        let initial_status = pad.status;
-
-        if initial_status == PadStatus::Confirmed {
-            debug!(
-                "Pad {} already confirmed, skipping processing.",
-                current_pad_address
-            );
-
-            confirmed_counter.fetch_add(1, Ordering::Relaxed);
-
-            invoke_put_callback(&put_callback, PutEvent::PadsWritten)
-                .await
-                .unwrap();
-            invoke_put_callback(&put_callback, PutEvent::PadsConfirmed)
-                .await
-                .unwrap();
-
-            return;
-        }
-
-        let chunk_data_option = context.chunks.get(pad.chunk_index as usize).cloned();
-        let chunk_data = match chunk_data_option {
-            Some(data) => data,
-            None => {
-                error!(
-                    "CRITICAL: Chunk index {} out of bounds for key {}. Pad address: {}. Status: {:?}. Halting processing for this pad.",
-                    pad.chunk_index,
-                    key_name,
-                    current_pad_address,
-                    initial_status
-                );
-                return;
-            }
-        };
-
-        let mut recycle_pad = async || match context
-            .index
-            .write()
-            .await
-            .recycle_errored_pad(key_name, &current_pad_address)
-        {
-            Ok(new_pad) => {
-                if let Err(e) = pad_tx.send(new_pad).await {
-                    error!(
-                        "Failed to send recycled pad back to queue for key {}: {}",
-                        key_name, e
-                    );
-                }
-            }
-            Err(e) => {
-                error!(
-                    "Failed to recycle pad {} for key {}: {}",
-                    current_pad_address, key_name, e
-                );
-            }
-        };
-
-        let encoding = if is_index {
-            DATA_ENCODING_PUBLIC_INDEX
-        } else {
-            if public {
-                DATA_ENCODING_PUBLIC_DATA
-            } else {
-                DATA_ENCODING_PRIVATE_DATA
-            }
-        };
-
-        if initial_status == PadStatus::Generated || initial_status == PadStatus::Free {
-            let mut retries_left = PAD_RECYCLING_RETRIES;
-            loop {
-                let put_result = context
-                    .network
-                    .put(&pad, &chunk_data, encoding, public)
-                    .await;
-
-                match put_result {
-                    Ok(_) => {
-                        match context.index.write().await.update_pad_status(
-                            key_name,
-                            &current_pad_address,
-                            PadStatus::Written,
-                            None,
-                        ) {
-                            Ok(updated_pad) => {
-                                invoke_put_callback(&put_callback, PutEvent::PadsWritten)
-                                    .await
-                                    .unwrap();
-
-                                if initial_status == PadStatus::Generated {
-                                    invoke_put_callback(&put_callback, PutEvent::PadReserved)
-                                        .await
-                                        .unwrap();
-                                }
-
-                                pad_for_confirm = Some(updated_pad);
-
-                                break;
-                            }
-                            Err(e) => {
-                                unimplemented!("Failed to update pad status to Written: {}", e);
-                            }
+        loop {
+            {
+                let mut rx_guard = pad_rx.lock().await;
+                if pads_to_process.is_empty() {
+                    match rx_guard.recv().await {
+                        Some(pad) => pads_to_process.push(pad),
+                        None => {
+                            info!("Worker {} received None, exiting loop.", worker_id);
+                            break;
                         }
                     }
-                    Err(e) => {
-                        error!(
-                            "Error putting pad {} (chunk {}): {}. Retries left: {}",
-                            current_pad_address,
-                            pad.chunk_index,
-                            e,
-                            retries_left - 1
-                        );
-                        retries_left -= 1;
-                        if retries_left == 0 {
-                            warn!(
-                                "Failed to put pad {} (chunk {}) after multiple retries. Recycling.",
-                                current_pad_address, pad.chunk_index
-                            );
-                            recycle_pad().await;
-                            return;
-                        }
-                        continue;
+                }
+                while pads_to_process.len() < BATCH_SIZE {
+                    match rx_guard.try_recv() {
+                        Ok(pad) => pads_to_process.push(pad),
+                        Err(_) => break,
                     }
                 }
             }
-        } else if initial_status == PadStatus::Written {
-            pad_for_confirm = Some(pad.clone());
 
-            invoke_put_callback(&put_callback, PutEvent::PadsWritten)
-                .await
-                .unwrap();
-        }
-
-        if *no_verify {
-            match context.index.write().await.update_pad_status(
-                key_name,
-                &current_pad_address,
-                PadStatus::Confirmed,
-                None,
-            ) {
-                Ok(_) => {
-                    confirmed_counter.fetch_add(1, Ordering::Relaxed);
-                    invoke_put_callback(&put_callback, PutEvent::PadsConfirmed)
-                        .await
-                        .unwrap();
-                }
-                Err(e) => error!(
-                    "Failed to update pad {} status to Confirmed: {}",
-                    current_pad_address, e
-                ),
-            };
-            return;
-        }
-
-        if let Some(pad_to_confirm) = pad_for_confirm {
-            let start_time = Instant::now();
-
-            loop {
-                if start_time.elapsed() >= MAX_CONFIRMATION_DURATION {
-                    warn!(
-                        "Failed to confirm pad {} (chunk {}) within time budget ({:?}). Recycling.",
-                        current_pad_address, pad.chunk_index, MAX_CONFIRMATION_DURATION
-                    );
-                    recycle_pad().await;
-                    return;
-                }
-
-                let secret_key = pad_to_confirm.secret_key();
-
-                let secret_key = if public { None } else { Some(&secret_key) };
-
-                let get_result = context
-                    .network
-                    .get(&pad_to_confirm.address, secret_key)
-                    .await;
-
-                match get_result {
-                    Ok(gotten_pad) => {
-                        if (pad_to_confirm.last_known_counter == 0 && gotten_pad.counter == 0)
-                            || pad_to_confirm.last_known_counter <= gotten_pad.counter
-                        {
-                            match context.index.write().await.update_pad_status(
-                                key_name,
-                                &current_pad_address,
-                                PadStatus::Confirmed,
-                                Some(gotten_pad.counter),
-                            ) {
-                                Ok(_) => {
-                                    let previous_count =
-                                        confirmed_counter.fetch_add(1, Ordering::Relaxed);
-                                    invoke_put_callback(&put_callback, PutEvent::PadsConfirmed)
-                                        .await
-                                        .unwrap();
-                                    debug!(
-                                        "Pad {} confirmed. Confirmed count: {}",
-                                        current_pad_address,
-                                        previous_count + 1
-                                    );
-                                }
-                                Err(e) => error!(
-                                    "Failed to update pad {} status to Confirmed: {}",
-                                    current_pad_address, e
-                                ),
-                            };
-                            return;
-                        } else {
-                            // Counter condition not met, log and retry immediately
-                            debug!(
-                                "Pad {} counter check failed (last_known: {}, gotten: {}). Retrying.",
-                                current_pad_address, pad_to_confirm.last_known_counter, gotten_pad.counter
-                             );
-                        }
-                    }
-                    Err(e) => {
-                        // get_private failed, log and retry immediately
-                        debug!(
-                            "Error getting pad {} for confirmation: {}. Retrying.",
-                            current_pad_address, e
-                        );
-                    }
-                }
-
-                // No sleep here, loop immediately to retry if not confirmed or error occurred
+            if pads_to_process.is_empty() {
                 continue;
             }
+
+            debug!(
+                "Worker {} processing batch of {} pads for key {}",
+                worker_id,
+                pads_to_process.len(),
+                key_name
+            );
+
+            let mut pads_for_put = Vec::new();
+            let mut pads_for_confirm = Vec::new();
+            let mut remaining_pads = Vec::new();
+
+            for pad in pads_to_process.drain(..) {
+                if pad.status == PadStatus::Confirmed {
+                    warn!(
+                        "Worker {} received already confirmed pad {}. Skipping.",
+                        worker_id, pad.address
+                    );
+                    continue;
+                }
+                if pad.status == PadStatus::Generated || pad.status == PadStatus::Free {
+                    pads_for_put.push(pad);
+                } else if pad.status == PadStatus::Written {
+                    pads_for_confirm.push(pad);
+                } else {
+                    warn!(
+                        "Worker {} received pad {} with unexpected status {:?}. Ignoring.",
+                        worker_id, pad.address, pad.status
+                    );
+                }
+            }
+
+            if !pads_for_put.is_empty() {
+                let mut put_futures = FuturesUnordered::new();
+                for pad in pads_for_put {
+                    let chunk_data = match context.chunks.get(pad.chunk_index as usize) {
+                        Some(data) => data.clone(),
+                        None => {
+                            error!(
+                                "CRITICAL (Worker {}): Chunk index {} out of bounds for key {}. Pad {}. Skipping put.",
+                                worker_id, pad.chunk_index, key_name, pad.address
+                            );
+                            remaining_pads.push(pad);
+                            continue;
+                        }
+                    };
+
+                    let is_index = public && pad.chunk_index == 0 && total_pads > 1;
+                    let encoding = if is_index {
+                        DATA_ENCODING_PUBLIC_INDEX
+                    } else if public {
+                        DATA_ENCODING_PUBLIC_DATA
+                    } else {
+                        DATA_ENCODING_PRIVATE_DATA
+                    };
+
+                    let network_ref = context.network.clone();
+                    let put_callback_clone = put_callback.clone();
+                    let initial_status = pad.status;
+
+                    put_futures.push(async move {
+                        match network_ref
+                            .put(client, &pad, &chunk_data, encoding, public)
+                            .await
+                        {
+                            Ok(_) => {
+                                invoke_put_callback(&put_callback_clone, PutEvent::PadsWritten)
+                                    .await
+                                    .unwrap();
+                                if initial_status == PadStatus::Generated {
+                                    invoke_put_callback(&put_callback_clone, PutEvent::PadReserved)
+                                        .await
+                                        .unwrap();
+                                }
+                                Ok(pad)
+                            }
+                            Err(e) => {
+                                error!(
+                                    "Worker {} failed put for pad {} (chunk {}): {}.",
+                                    worker_id, pad.address, pad.chunk_index, e
+                                );
+                                Err((pad, e))
+                            }
+                        }
+                    });
+                }
+
+                while let Some(result) = put_futures.next().await {
+                    match result {
+                        Ok(pad_ready_for_confirm) => {
+                            match context.index.write().await.update_pad_status(
+                                key_name,
+                                &pad_ready_for_confirm.address,
+                                PadStatus::Written,
+                                None,
+                            ) {
+                                Ok(updated_pad) => pads_for_confirm.push(updated_pad),
+                                Err(e) => {
+                                    error!("Worker {} failed to update pad {} status to Written: {}. Pad might be orphaned.", worker_id, pad_ready_for_confirm.address, e);
+                                }
+                            }
+                        }
+                        Err((pad, _e)) => {
+                            warn!(
+                                "Worker {} attempting to recycle pad {} for key {}",
+                                worker_id, pad.address, key_name
+                            );
+                            match context
+                                .index
+                                .write()
+                                .await
+                                .recycle_errored_pad(key_name, &pad.address)
+                            {
+                                Ok(new_pad) => {
+                                    if let Err(send_err) = pad_tx.send(new_pad).await {
+                                        error!("Worker {} failed to send recycled pad {} back to queue: {}", worker_id, pad.address, send_err);
+                                    }
+                                }
+                                Err(recycle_err) => {
+                                    error!(
+                                        "Worker {} failed to recycle pad {}: {}",
+                                        worker_id, pad.address, recycle_err
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !*no_verify && !pads_for_confirm.is_empty() {
+                let mut confirm_futures = FuturesUnordered::new();
+
+                for pad in pads_for_confirm {
+                    let network_ref = context.network.clone();
+                    let put_callback_clone = put_callback.clone();
+                    let index_ref = context.index.clone();
+                    let confirmed_counter_clone = confirmed_counter.clone();
+                    let pad_tx_clone = pad_tx.clone();
+                    let key_name_clone = key_name.clone();
+
+                    confirm_futures.push(async move {
+                        let start_time = Instant::now();
+                        loop {
+                            if start_time.elapsed() >= MAX_CONFIRMATION_DURATION {
+                                warn!(
+                                    "Worker {} failed to confirm pad {} (chunk {}) within time budget ({:?}). Will attempt recycle.",
+                                    worker_id, pad.address, pad.chunk_index, MAX_CONFIRMATION_DURATION
+                                );
+                                return Err(pad);
+                            }
+
+                            let secret_key_owned;
+                            let secret_key_ref = if public { None } else { secret_key_owned = pad.secret_key(); Some(&secret_key_owned) };
+
+                            match network_ref.get(client, &pad.address, secret_key_ref).await {
+                                Ok(gotten_pad) => {
+                                    if (pad.last_known_counter == 0 && gotten_pad.counter == 0) || pad.last_known_counter <= gotten_pad.counter {
+                                        match index_ref.write().await.update_pad_status(
+                                            &key_name_clone,
+                                            &pad.address,
+                                            PadStatus::Confirmed,
+                                            Some(gotten_pad.counter),
+                                        ) {
+                                            Ok(_) => {
+                                                let previous_count =
+                                                    confirmed_counter_clone.fetch_add(1, Ordering::Relaxed);
+                                                invoke_put_callback(&put_callback_clone, PutEvent::PadsConfirmed).await.unwrap();
+                                                debug!(
+                                                    "Worker {} confirmed Pad {}. Total Confirmed: {}",
+                                                    worker_id, pad.address, previous_count + 1
+                                                );
+                                                return Ok(());
+                                            }
+                                            Err(e) => {
+                                                error!("Worker {} failed to update pad {} status to Confirmed: {}. Pad might be orphaned.", worker_id, pad.address, e);
+                                                tokio::time::sleep(Duration::from_secs(1)).await;
+                                            }
+                                        }
+                                    } else {
+                                        debug!(
+                                            "Worker {} Pad {} counter check failed (last_known: {}, gotten: {}). Retrying get.",
+                                           worker_id, pad.address, pad.last_known_counter, gotten_pad.counter
+                                         );
+                                        tokio::time::sleep(Duration::from_secs(1)).await;
+                                    }
+                                }
+                                Err(e) => {
+                                    debug!("Worker {} error getting pad {} for confirmation: {}. Retrying get.", worker_id, pad.address, e);
+                                    tokio::time::sleep(Duration::from_secs(1)).await;
+                                }
+                            }
+                        }
+                    });
+                }
+
+                while let Some(result) = confirm_futures.next().await {
+                    match result {
+                        Ok(()) => { /* Pad confirmed */ }
+                        Err(pad_to_recycle) => {
+                            warn!("Worker {} attempting to recycle pad {} after confirmation failure for key {}", worker_id, pad_to_recycle.address, key_name);
+                            match context
+                                .index
+                                .write()
+                                .await
+                                .recycle_errored_pad(key_name, &pad_to_recycle.address)
+                            {
+                                Ok(new_pad) => {
+                                    if let Err(send_err) = pad_tx.send(new_pad).await {
+                                        error!("Worker {} failed to send recycled pad {} back to queue after confirm fail: {}", worker_id, pad_to_recycle.address, send_err);
+                                    }
+                                }
+                                Err(recycle_err) => {
+                                    error!(
+                                        "Worker {} failed to recycle pad {} after confirm fail: {}",
+                                        worker_id, pad_to_recycle.address, recycle_err
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if *no_verify && !pads_for_confirm.is_empty() {
+                for pad in pads_for_confirm {
+                    match context.index.write().await.update_pad_status(
+                        key_name,
+                        &pad.address,
+                        PadStatus::Confirmed,
+                        None,
+                    ) {
+                        Ok(_) => {
+                            let previous_count = confirmed_counter.fetch_add(1, Ordering::Relaxed);
+                            invoke_put_callback(&put_callback, PutEvent::PadsConfirmed)
+                                .await
+                                .unwrap();
+                            debug!(
+                                "Worker {} marked Pad {} as Confirmed (no_verify). Total Confirmed: {}",
+                                worker_id, pad.address, previous_count + 1
+                            );
+                        }
+                        Err(e) => {
+                            error!("Worker {} failed to update pad {} status to Confirmed (no_verify): {}", worker_id, pad.address, e);
+                        }
+                    }
+                }
+            }
+
+            for pad in remaining_pads {
+                warn!(
+                    "Worker {} requeuing pad {} due to earlier processing issue.",
+                    worker_id, pad.address
+                );
+                if let Err(e) = pad_tx.send(pad).await {
+                    error!("Worker {} failed to requeue pad: {}", worker_id, e);
+                }
+            }
         }
+
+        info!(
+            "Worker {} finished processing for key {}",
+            worker_id, context.name
+        );
+        Ok(())
     }
 
     async fn fetch_pads_data(
@@ -572,6 +647,12 @@ impl Data {
     ) -> Result<Vec<u8>, Error> {
         let mut data = Vec::new();
         let mut tasks = Vec::new();
+        let client_guard = self
+            .network
+            .get_client(Config::Get)
+            .await
+            .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
+        let client = &*client_guard;
 
         for pad in pads {
             let callback_clone = get_callback.clone();
@@ -587,7 +668,7 @@ impl Data {
                 };
 
                 let pad_data = loop {
-                    match network.get(&pad.address, secret_key_ref).await {
+                    match network.get(client, &pad.address, secret_key_ref).await {
                         Ok(pad_result) => {
                             if pad_result.data.len() != pad.size {
                                 return Err(Error::Internal(format!(
@@ -610,6 +691,7 @@ impl Data {
                             if retries_left == 0 {
                                 return Err(Error::Network(e));
                             }
+                            tokio::time::sleep(Duration::from_secs(1)).await;
                             continue;
                         }
                     };
@@ -648,7 +730,13 @@ impl Data {
         address: &ScratchpadAddress,
         get_callback: Option<GetCallback>,
     ) -> Result<Vec<u8>, Error> {
-        let index_pad_data = self.network.get(address, None).await?;
+        let client_guard = self
+            .network
+            .get_client(Config::Get)
+            .await
+            .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
+        let client = &*client_guard;
+        let index_pad_data = self.network.get(client, address, None).await?;
         let callback = get_callback.clone();
 
         match index_pad_data.data_encoding {
@@ -728,12 +816,8 @@ impl Data {
         purge_callback: Option<PurgeCallback>,
     ) -> Result<PurgeResult, Error> {
         let pads = self.index.read().await.get_pending_pads();
-
         let nb_verified = Arc::new(AtomicUsize::new(0));
         let nb_failed = Arc::new(AtomicUsize::new(0));
-
-        debug!("Purging {} pads.", pads.len());
-
         let callback = purge_callback.clone();
 
         invoke_purge_callback(
@@ -746,19 +830,25 @@ impl Data {
         .unwrap();
 
         let mut tasks = futures::stream::FuturesOrdered::new();
+        let client_guard = self
+            .network
+            .get_client(Config::Get)
+            .await
+            .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
+        let client = Arc::new(client_guard);
 
         for pad in pads {
-            debug!("Verifying pad {}", pad.address);
-
             let pad = pad.clone();
             let network = self.network.clone();
             let index = self.index.clone();
-            let nb_verified = nb_verified.clone();
-            let nb_failed = nb_failed.clone();
+            let nb_verified_clone = nb_verified.clone();
+            let nb_failed_clone = nb_failed.clone();
             let task_callback = callback.clone();
+            let client_clone = client.clone();
 
             tasks.push_back(tokio::spawn(async move {
-                match network.get(&pad.address, None).await {
+                let client_ref = &*client_clone;
+                match network.get(client_ref, &pad.address, None).await {
                     Ok(_res) => {
                         debug!("Pad {} verified.", pad.address);
                         if let Ok(mut index_guard) = index.try_write() {
@@ -766,8 +856,7 @@ impl Data {
                         } else {
                             error!("Could not acquire write lock for verifying pad {}", pad.address);
                         }
-
-                        nb_verified.fetch_add(1, Ordering::Relaxed);
+                        nb_verified_clone.fetch_add(1, Ordering::Relaxed);
                     }
                     Err(e) => {
                         if let NetworkError::GetError(GetRecordError::RecordNotFound) = e {
@@ -794,14 +883,10 @@ impl Data {
                         } else {
                             warn!("Pad {} was found but got an error ({}). Leaving in pending until purge is run with aggressive flag", pad.address, e);
                         }
-
-                        nb_failed.fetch_add(1, Ordering::Relaxed);
+                        nb_failed_clone.fetch_add(1, Ordering::Relaxed);
                     }
                 }
-
-                invoke_purge_callback(&task_callback, PurgeEvent::PadProcessed)
-                    .await
-                    .unwrap();
+                invoke_purge_callback(&task_callback, PurgeEvent::PadProcessed).await.unwrap();
             }));
         }
 
@@ -850,29 +935,39 @@ impl Data {
         .unwrap();
 
         let is_public = self.index.read().await.is_public(key_name);
-
         let mut tasks = Vec::new();
+        let client_guard = self
+            .network
+            .get_client(Config::Get)
+            .await
+            .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
+        let client = Arc::new(client_guard);
 
         for pad in pads {
             let pad = pad.clone();
-            let nb_recycled = nb_recycled.clone();
-            let nb_reset = nb_reset.clone();
+            let nb_recycled_clone = nb_recycled.clone();
+            let nb_reset_clone = nb_reset.clone();
             let key_name = key_name.to_string();
             let network = self.network.clone();
             let task_callback = callback.clone();
             let index = self.index.clone();
-            let secret_key = if is_public {
-                None
-            } else {
-                Some(pad.secret_key())
-            };
+            let client_clone = client.clone();
 
             tasks.push(tokio::spawn(async move {
+                let secret_key_owned;
+                let secret_key_ref = if is_public {
+                    None
+                } else {
+                    secret_key_owned = pad.secret_key();
+                    Some(&secret_key_owned)
+                };
+
                 if pad.status != PadStatus::Confirmed {
                     return;
                 }
 
-                match network.get(&pad.address, secret_key.as_ref()).await {
+                let client_ref = &*client_clone;
+                match network.get(client_ref, &pad.address, secret_key_ref).await {
                     Ok(_) => {
                         invoke_health_check_callback(
                             &task_callback,
@@ -887,7 +982,6 @@ impl Data {
                             "Error getting pad {} during health check: {}",
                             pad.address, e
                         );
-
                         match e {
                             NetworkError::GetError(GetRecordError::RecordNotFound)
                             | NetworkError::GetError(GetRecordError::NotEnoughCopies { .. }) => {
@@ -900,8 +994,7 @@ impl Data {
                                         None,
                                     )
                                     .unwrap();
-
-                                nb_reset.fetch_add(1, Ordering::Relaxed);
+                                nb_reset_clone.fetch_add(1, Ordering::Relaxed);
                             }
                             _ => {
                                 if recycle {
@@ -910,11 +1003,9 @@ impl Data {
                                         .recycle_errored_pad(&key_name, &pad.address)
                                         .unwrap();
                                 }
-
-                                nb_recycled.fetch_add(1, Ordering::Relaxed);
+                                nb_recycled_clone.fetch_add(1, Ordering::Relaxed);
                             }
                         }
-
                         invoke_health_check_callback(
                             &task_callback,
                             HealthCheckEvent::KeyProcessed,
@@ -999,9 +1090,16 @@ impl Data {
         let (owner_address, owner_secret_key) =
             derive_master_index_info(&owner_secret_key.to_hex())?;
 
+        let client_guard_get = self
+            .network
+            .get_client(Config::Get)
+            .await
+            .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
+        let client_get = &*client_guard_get;
+
         let (remote_index, remote_index_counter) = match self
             .network
-            .get(&owner_address, Some(&owner_secret_key))
+            .get(client_get, &owner_address, Some(&owner_secret_key))
             .await
         {
             Ok(get_result) => {
@@ -1015,6 +1113,7 @@ impl Data {
             }
             Err(_e) => (MasterIndex::new(self.network.network_choice()), 0),
         };
+        drop(client_guard_get);
 
         invoke_sync_callback(&callback, SyncEvent::Merging)
             .await
@@ -1055,6 +1154,13 @@ impl Data {
             local_index.import_raw_pads_private_key(pending_pads_to_add)?;
         }
 
+        let client_guard_put = self
+            .network
+            .get_client(Config::Put)
+            .await
+            .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
+        let client_put = &*client_guard_put;
+
         invoke_sync_callback(&callback, SyncEvent::PushingRemoteIndex)
             .await
             .unwrap();
@@ -1073,12 +1179,21 @@ impl Data {
 
         self.network
             .put(
+                client_put,
                 &pad_info,
                 &serialized_index,
                 DATA_ENCODING_MASTER_INDEX,
                 false,
             )
             .await?;
+        drop(client_guard_put);
+
+        let client_guard_verify = self
+            .network
+            .get_client(Config::Get)
+            .await
+            .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
+        let client_verify = &*client_guard_verify;
 
         invoke_sync_callback(&callback, SyncEvent::VerifyingRemoteIndex)
             .await
@@ -1089,7 +1204,7 @@ impl Data {
         loop {
             match self
                 .network
-                .get(&owner_address, Some(&owner_secret_key))
+                .get(client_verify, &owner_address, Some(&owner_secret_key))
                 .await
             {
                 Ok(get_result) => {
@@ -1109,7 +1224,10 @@ impl Data {
             }
 
             retries -= 1;
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }?;
+
+        drop(client_guard_verify);
 
         invoke_sync_callback(&callback, SyncEvent::Complete)
             .await

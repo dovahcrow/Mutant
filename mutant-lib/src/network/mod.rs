@@ -16,7 +16,7 @@ use crate::index::PadInfo;
 pub const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-use autonomi::{AttoTokens, ScratchpadAddress, Wallet};
+use autonomi::{AttoTokens, Client, ScratchpadAddress, Wallet};
 use log::debug;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -118,20 +118,30 @@ impl Network {
     /// Requires PadInfo to reconstruct the SecretKey for decryption.
     pub(crate) async fn get(
         &self,
+        client: &Client,
         address: &ScratchpadAddress,
         owner_sk: Option<&SecretKey>,
     ) -> Result<GetResult, NetworkError> {
-        get::get(self, address, owner_sk).await
+        get::get(client, address, owner_sk).await
     }
 
     pub(crate) async fn put(
         &self,
+        client: &Client,
         pad_info: &PadInfo,
         data: &[u8],
         data_encoding: u64,
         is_public: bool,
     ) -> Result<PutResult, NetworkError> {
-        put::put(self, pad_info, data, data_encoding, is_public).await
+        put::put(
+            client,
+            self.wallet.clone(),
+            pad_info,
+            data,
+            data_encoding,
+            is_public,
+        )
+        .await
     }
 
     pub fn secret_key(&self) -> &SecretKey {

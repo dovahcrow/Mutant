@@ -5,7 +5,7 @@ use ant_networking::GetRecordError;
 use ant_networking::NetworkError as AntNetworkError;
 use autonomi::scratchpad::ScratchpadError;
 use autonomi::ScratchpadAddress;
-use autonomi::SecretKey;
+use autonomi::{Client, SecretKey};
 use log::debug;
 use log::error;
 use tokio::time::{timeout, Duration};
@@ -29,14 +29,11 @@ const GET_TIMEOUT_SECS: u64 = 60 * 60; // 1 hour
 ///
 /// Returns `NetworkError` if the client cannot be initialized, fetching fails, or decryption fails.
 pub(super) async fn get(
-    adapter: &Network,
+    client: &Client,
     address: &ScratchpadAddress,
     owner_sk: Option<&SecretKey>,
 ) -> Result<GetResult, NetworkError> {
     debug!("Starting get for pad {}", address);
-    let client = adapter.get_client(Config::Get).await.map_err(|e| {
-        NetworkError::ClientAccessError(format!("Failed to get client from pool: {}", e))
-    })?;
 
     let get_future = client.scratchpad_get(address);
 
