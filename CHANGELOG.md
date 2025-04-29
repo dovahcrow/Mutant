@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made the `get` method in `mutant-client` behave like the `put` method, returning a `Future` and `ProgressReceiver`.
 - Updated `mutant-cli` to handle the new return type of the `client.get` method.
 - Task cancellation support: Implemented `StopTask` request handling in the daemon and client to allow aborting ongoing tasks.
+- Refactored pad processing pipeline to use MPMC channel (`async-channel`), removing mutex bottleneck and enabling concurrent pad dequeuing by workers.
 
 ### Fixed
 - Fix task query WebSocket handling to prevent premature connection closure
@@ -67,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Automatic ANT wallet scanning and selection
   - Interactive wallet selection when multiple wallets are found
 - Added background task in MutantClient to process WebSocket responses continuously
+- **Fetch History:** Keep track of fetched public data addresses for easy re-fetching. This history is displayed with `mutant ls -l`.
 
 ## [0.4.2] - UNRELEASED
 

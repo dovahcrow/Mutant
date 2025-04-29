@@ -4468,6 +4468,7 @@ version = "0.5.1"
 dependencies = [
  "ant-networking",
  "anyhow",
+ "async-channel",
  "async-stream",
  "async-trait",
  "autonomi",
