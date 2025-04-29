@@ -26,6 +26,7 @@ use std::{
     },
     time::Duration,
 };
+use tokio::sync::Notify;
 use tokio::sync::RwLock;
 use tokio::sync::Semaphore;
 use tokio::time::{timeout, Instant};
@@ -265,6 +266,7 @@ impl Data {
 
         let mut workers = FuturesUnordered::new();
         let pad_rx_arc = Arc::new(tokio::sync::Mutex::new(pad_rx));
+        let completion_notifier = Arc::new(Notify::new());
 
         for i in 0..WORKER_COUNT {
             let worker_context = context.clone();
@@ -275,6 +277,7 @@ impl Data {
             let worker_no_verify = no_verify.clone();
             let worker_key_name = key_name.clone();
             let worker_total_pads = total_pads;
+            let worker_completion_notifier = completion_notifier.clone();
 
             workers.push(tokio::spawn(async move {
                 info!("Spawning worker {} for key {}", i, worker_key_name);
@@ -288,6 +291,7 @@ impl Data {
                     worker_no_verify,
                     worker_put_callback,
                     worker_total_pads,
+                    worker_completion_notifier,
                 )
                 .await
             }));
@@ -332,6 +336,7 @@ impl Data {
         no_verify: Arc<bool>,
         put_callback: Option<PutCallback>,
         total_pads: usize,
+        completion_notifier: Arc<Notify>,
     ) -> Result<(), Error> {
         info!(
             "Worker {} (Semaphore) acquiring client for key {}",
@@ -352,18 +357,31 @@ impl Data {
 
         let semaphore = Arc::new(Semaphore::new(BATCH_SIZE));
         let key_name = context.name.clone();
+        let worker_pad_tx = pad_tx;
 
         loop {
-            if confirmed_counter.load(Ordering::Relaxed) >= total_pads {
-                info!("Worker {} detected all pads confirmed. Exiting.", worker_id);
+            if confirmed_counter.load(Ordering::SeqCst) >= total_pads {
+                info!(
+                    "Worker {} detected completion before permit/lock. Exiting.",
+                    worker_id
+                );
                 break;
             }
 
-            let permit = match semaphore.clone().acquire_owned().await {
-                Ok(p) => p,
-                Err(_) => {
-                    info!("Worker {} semaphore closed. Exiting.", worker_id);
-                    break;
+            let permit = tokio::select! {
+                biased;
+                _ = completion_notifier.notified() => {
+                    info!("Worker {} notified of completion while waiting for permit. Exiting.", worker_id);
+                    return Ok(());
+                },
+                permit_result = semaphore.clone().acquire_owned() => {
+                    match permit_result {
+                        Ok(p) => p,
+                        Err(_) => {
+                            info!("Worker {} semaphore closed. Exiting.", worker_id);
+                            return Ok(());
+                        }
+                    }
                 }
             };
             debug!("Worker {} acquired semaphore permit.", worker_id);
@@ -371,8 +389,31 @@ impl Data {
             let pad_option;
             {
                 let mut rx_guard = pad_rx.lock().await;
-                debug!("Worker {} trying to receive pad...", worker_id);
-                pad_option = rx_guard.next().await;
+
+                if confirmed_counter.load(Ordering::SeqCst) >= total_pads {
+                    info!(
+                        "Worker {} detected completion after lock, before select. Exiting.",
+                        worker_id
+                    );
+                    drop(permit);
+                    break;
+                }
+
+                debug!(
+                    "Worker {} selecting between pad receive and completion...",
+                    worker_id
+                );
+                tokio::select! {
+                    biased;
+                    _ = completion_notifier.notified() => {
+                        info!("Worker {} notified of completion while waiting for pad. Exiting.", worker_id);
+                        pad_option = None;
+                    },
+                    next_result = rx_guard.next() => {
+                         debug!("Worker {} received result from pad channel.", worker_id);
+                         pad_option = next_result;
+                    }
+                }
             }
 
             match pad_option {
@@ -385,11 +426,12 @@ impl Data {
                     let task_permit = permit;
                     let task_context = context.clone();
                     let task_confirmed_counter = confirmed_counter.clone();
-                    let task_pad_tx = pad_tx.clone();
+                    let task_pad_tx = worker_pad_tx.clone();
                     let task_put_callback = put_callback.clone();
                     let task_no_verify = no_verify.clone();
                     let task_client_guard = client_guard.clone();
                     let task_key_name = key_name.clone();
+                    let task_completion_notifier = completion_notifier.clone();
 
                     tokio::spawn(async move {
                         Self::process_single_pad_task(
@@ -404,14 +446,16 @@ impl Data {
                             task_client_guard,
                             task_key_name,
                             total_pads,
+                            task_completion_notifier,
                         )
                         .await;
+                        // Permit (task_permit) is dropped when task finishes
                         debug!("Worker {} sub-task finished, permit released.", worker_id);
                     });
                 }
                 None => {
                     info!(
-                        "Worker {} received None from pad channel. Exiting main loop.",
+                        "Worker {} received None or completion signal from pad channel select. Exiting loop.",
                         worker_id
                     );
                     drop(permit);
@@ -439,7 +483,8 @@ impl Data {
         client_guard: Arc<Object<ClientManager>>,
         key_name: Arc<String>,
         total_pads: usize,
-    ) {
+        completion_notifier: Arc<Notify>,
+    ) -> Result<(), Error> {
         let client = &*client_guard;
         let current_pad_address = pad.address;
         let initial_status = pad.status;
@@ -486,7 +531,7 @@ impl Data {
                         "CRITICAL (Worker {}): Chunk index {} out of bounds for key {}. Pad {}. Cannot process.",
                         worker_id, pad.chunk_index, key_name, pad.address
                     );
-                    return;
+                    return Ok(());
                 }
             };
 
@@ -545,7 +590,7 @@ impl Data {
                         retries_left -= 1;
                         if retries_left == 0 {
                             recycle_pad(pad.clone()).await;
-                            return;
+                            return Ok(());
                         }
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
@@ -562,7 +607,8 @@ impl Data {
                     None,
                 ) {
                     Ok(_) => {
-                        let previous_count = confirmed_counter.fetch_add(1, Ordering::Relaxed);
+                        let previous_count = confirmed_counter.fetch_add(1, Ordering::SeqCst);
+                        let current_count = previous_count + 1;
                         invoke_put_callback(&put_callback, PutEvent::PadsConfirmed)
                             .await
                             .unwrap();
@@ -572,6 +618,13 @@ impl Data {
                             current_pad_address,
                             previous_count + 1
                         );
+                        if current_count == total_pads {
+                            info!(
+                                "Worker {} marked LAST Pad {} as Confirmed (no_verify). Notifying.",
+                                worker_id, current_pad_address
+                            );
+                            completion_notifier.notify_waiters();
+                        }
                     }
                     Err(e) => {
                         error!(
@@ -589,7 +642,7 @@ impl Data {
                             worker_id, current_pad_address, pad_after_put.chunk_index, MAX_CONFIRMATION_DURATION
                         );
                         recycle_pad(pad_after_put.clone()).await;
-                        return;
+                        return Ok(());
                     }
 
                     let secret_key_owned;
@@ -617,7 +670,8 @@ impl Data {
                                 ) {
                                     Ok(_) => {
                                         let previous_count =
-                                            confirmed_counter.fetch_add(1, Ordering::Relaxed);
+                                            confirmed_counter.fetch_add(1, Ordering::SeqCst);
+                                        let current_count = previous_count + 1;
                                         invoke_put_callback(&put_callback, PutEvent::PadsConfirmed)
                                             .await
                                             .unwrap();
@@ -627,7 +681,14 @@ impl Data {
                                             current_pad_address,
                                             previous_count + 1
                                         );
-                                        return;
+                                        if current_count == total_pads {
+                                            info!(
+                                                "Worker {} confirmed the LAST pad {}. Notifying waiters.",
+                                                worker_id, current_pad_address
+                                            );
+                                            completion_notifier.notify_waiters();
+                                        }
+                                        return Ok(());
                                     }
                                     Err(e) => {
                                         error!(
@@ -660,6 +721,7 @@ impl Data {
                 worker_id, current_pad_address
             );
         }
+        Ok(())
     }
 
     async fn fetch_pads_data(
