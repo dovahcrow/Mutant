@@ -132,8 +132,17 @@ impl Network {
             network_choice,
             config: Config::Get,
         };
+
+        // get the max_connections from the env
+        let max_connections = std::env::var("MAX_CONNECTIONS")
+            .unwrap_or_else(|_| "20".to_string())
+            .parse::<usize>()
+            .unwrap_or(20);
+
+        debug!("Max connections: {}", max_connections);
+
         let pool = Pool::builder(manager)
-            .max_size(20) // Adjust size as needed
+            .max_size(max_connections) // Adjust size as needed
             .build()
             .map_err(|e| {
                 NetworkError::ClientInitError(format!("Failed to create GET pool: {}", e))

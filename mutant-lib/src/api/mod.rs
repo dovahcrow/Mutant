@@ -29,63 +29,35 @@ pub struct MutAnt {
 }
 
 impl MutAnt {
-    pub async fn init(private_key_hex: &str) -> Result<Self, Error> {
-        let network_choice = NetworkChoice::Mainnet;
+    async fn init_all(private_key_hex: &str, network_choice: NetworkChoice) -> Result<Self, Error> {
         let network = Arc::new(Network::new(private_key_hex, network_choice)?);
         let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
-
         let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone())));
 
         Ok(Self { index, data })
+    }
+    pub async fn init(private_key_hex: &str) -> Result<Self, Error> {
+        Self::init_all(private_key_hex, NetworkChoice::Mainnet).await
     }
 
     pub async fn init_public() -> Result<Self, Error> {
-        let network_choice = NetworkChoice::Mainnet;
-        let network = Arc::new(Network::new(DEV_TESTNET_PRIVATE_KEY_HEX, network_choice)?);
-        let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
-        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone())));
-
-        Ok(Self { index, data })
+        Self::init_all(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Mainnet).await
     }
 
     pub async fn init_local() -> Result<Self, Error> {
-        let network = Arc::new(Network::new(
-            DEV_TESTNET_PRIVATE_KEY_HEX,
-            NetworkChoice::Devnet,
-        )?);
-        let index = Arc::new(RwLock::new(MasterIndex::new(NetworkChoice::Devnet)));
-        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone())));
-
-        Ok(Self { index, data })
+        Self::init_all(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet).await
     }
 
     pub async fn init_public_local() -> Result<Self, Error> {
-        let network = Arc::new(Network::new(
-            DEV_TESTNET_PRIVATE_KEY_HEX,
-            NetworkChoice::Devnet,
-        )?);
-        let index = Arc::new(RwLock::new(MasterIndex::new(NetworkChoice::Devnet)));
-        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone())));
-
-        Ok(Self { index, data })
+        Self::init_all(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet).await
     }
 
     pub async fn init_alphanet(private_key_hex: &str) -> Result<Self, Error> {
-        let network_choice = NetworkChoice::Alphanet;
-        let network = Arc::new(Network::new(private_key_hex, network_choice)?);
-        let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
-        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone())));
-
-        Ok(Self { index, data })
+        Self::init_all(private_key_hex, NetworkChoice::Alphanet).await
     }
 
     pub async fn init_public_alphanet() -> Result<Self, Error> {
-        let network_choice = NetworkChoice::Alphanet;
-        let network = Arc::new(Network::new(DEV_TESTNET_PRIVATE_KEY_HEX, network_choice)?);
-        let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
-        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone())));
-
-        Ok(Self { index, data })
+        Self::init_all(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Alphanet).await
     }
 
     pub async fn put(

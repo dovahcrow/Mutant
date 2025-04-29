@@ -10,7 +10,10 @@ use crate::{
 use ant_networking::GetRecordError;
 use autonomi::ScratchpadAddress;
 use blsttc::SecretKey;
-use futures::StreamExt;
+use futures::{
+    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
+    SinkExt, StreamExt,
+};
 use log::{debug, error, info, warn};
 use sha2::{Digest, Sha256};
 use std::{
@@ -20,7 +23,6 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 
@@ -34,7 +36,6 @@ pub const DATA_ENCODING_PRIVATE_DATA: u64 = 1;
 pub const DATA_ENCODING_PUBLIC_INDEX: u64 = 2;
 pub const DATA_ENCODING_PUBLIC_DATA: u64 = 3;
 
-pub const CHUNK_PROCESSING_QUEUE_SIZE: usize = 256;
 pub const PAD_RECYCLING_RETRIES: usize = 3;
 
 const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 20);
@@ -141,6 +142,8 @@ impl Data {
             .await
             .create_key(name, data_bytes, mode, public)?;
 
+        info!("Created key {} with {} pads", name, pads.len());
+
         let address = pads[0].address;
 
         let context = Context {
@@ -164,7 +167,8 @@ impl Data {
         no_verify: bool,
         put_callback: Option<PutCallback>,
     ) {
-        let (pad_tx, pad_rx) = channel(CHUNK_PROCESSING_QUEUE_SIZE);
+        info!("Writing pipeline for key {}", context.name);
+        let (mut pad_tx, pad_rx) = unbounded();
 
         let initial_confirmed_count = pads
             .iter()
@@ -175,6 +179,9 @@ impl Data {
             .iter()
             .filter(|p| p.status == PadStatus::Generated)
             .count();
+
+        info!("Initial confirmed count: {}", initial_confirmed_count);
+        info!("Initial chunks to reserve: {}", initial_chunks_to_reserve);
 
         let process_future = Self::process_pads(
             context.name.clone(),
@@ -188,11 +195,17 @@ impl Data {
             put_callback.clone(),
         );
 
+        info!("Sending pads to pipeline");
+
         for pad in pads {
             let _ = pad_tx.send(pad.clone()).await;
         }
 
+        info!("Dropping pad tx");
+
         drop(pad_tx);
+
+        info!("Processing future");
 
         process_future.await.unwrap();
     }
@@ -201,13 +214,15 @@ impl Data {
         key_name: Arc<String>,
         no_verify: Arc<bool>,
         context: Context,
-        pad_tx: Sender<PadInfo>,
-        mut pad_rx: Receiver<PadInfo>,
+        pad_tx: UnboundedSender<PadInfo>,
+        mut pad_rx: UnboundedReceiver<PadInfo>,
         initial_confirmed_count: usize,
         initial_chunks_to_reserve: usize,
         public: bool,
         put_callback: Option<PutCallback>,
     ) -> Result<(), tokio::task::JoinError> {
+        info!("Processing pads");
+
         let total_pads = context.chunks.len();
         let confirmed_pads = Arc::new(AtomicUsize::new(initial_confirmed_count));
 
@@ -241,7 +256,7 @@ impl Data {
 
         loop {
             tokio::select! {
-                res = pad_rx.recv(), if !channel_closed => {
+                res = pad_rx.next(), if !channel_closed => {
                     match res {
                         Some(pad) => {
                             outstanding_tasks += 1;
@@ -312,7 +327,7 @@ impl Data {
         context: Context,
         confirmed_counter: Arc<AtomicUsize>,
         pad: PadInfo,
-        pad_tx: Sender<PadInfo>,
+        mut pad_tx: UnboundedSender<PadInfo>,
         public: bool,
         is_index: bool,
         no_verify: Arc<bool>,
@@ -357,7 +372,7 @@ impl Data {
             }
         };
 
-        let recycle_pad = async || match context
+        let mut recycle_pad = async || match context
             .index
             .write()
             .await
