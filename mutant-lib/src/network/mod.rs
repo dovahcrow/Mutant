@@ -133,7 +133,7 @@ impl Network {
             config: Config::Get,
         };
         let pool = Pool::builder(manager)
-            .max_size(50) // Adjust size as needed
+            .max_size(20) // Adjust size as needed
             .build()
             .map_err(|e| {
                 NetworkError::ClientInitError(format!("Failed to create GET pool: {}", e))
