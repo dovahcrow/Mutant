@@ -5,11 +5,10 @@ pub mod put;
 pub mod wallet;
 
 use blsttc::SecretKey;
-use client::Config;
-use deadpool::managed::{self, Pool, PoolError};
+use client::{ClientManager, Config, PoolManagerError};
+use deadpool::managed::{self, Pool};
 pub use error::NetworkError;
 
-use self::client::create_client;
 use self::wallet::create_wallet;
 use crate::index::PadInfo;
 
@@ -17,9 +16,8 @@ use crate::index::PadInfo;
 pub const DEV_TESTNET_PRIVATE_KEY_HEX: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-use autonomi::{AttoTokens, Client, ScratchpadAddress, Wallet};
-use log::{debug, info};
-use thiserror::Error;
+use autonomi::{AttoTokens, ScratchpadAddress, Wallet};
+use log::debug;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum NetworkChoice {
@@ -52,56 +50,6 @@ pub struct PutResult {
     pub cost: AttoTokens,
     /// The address of the scratchpad that was put.
     pub address: ScratchpadAddress,
-}
-
-#[derive(Error, Debug)]
-pub enum PoolManagerError {
-    #[error(transparent)]
-    Network(#[from] NetworkError),
-    #[error("Pool interaction error: {0}")]
-    Pool(String),
-}
-
-impl From<PoolError<PoolManagerError>> for PoolManagerError {
-    fn from(e: PoolError<PoolManagerError>) -> Self {
-        PoolManagerError::Pool(e.to_string())
-    }
-}
-
-#[derive(Debug)]
-pub struct ClientManager {
-    network_choice: NetworkChoice,
-    config: Config,
-}
-
-impl managed::Manager for ClientManager {
-    type Type = Client;
-    type Error = PoolManagerError;
-
-    async fn create(&self) -> Result<Self::Type, Self::Error> {
-        let network_choice = self.network_choice; // Copy values
-        let config = self.config;
-        info!(
-            "Creating new client for pool (Network: {:?}, Config: {:?})",
-            network_choice, config
-        );
-        create_client(network_choice, config)
-            .await
-            .map_err(PoolManagerError::Network)
-    }
-
-    async fn recycle(
-        &self,
-        conn: &mut Self::Type,
-        metrics: &managed::Metrics,
-    ) -> managed::RecycleResult<Self::Error> {
-        // TODO: Implement a proper health check if the Client API supports it.
-        // For now, assume the client is always healthy.
-        // Use args to satisfy borrow checker and avoid unused warnings
-        let _ = conn;
-        let _ = metrics;
-        Ok(())
-    }
 }
 
 /// Provides an interface to interact with the Autonomi network.

@@ -1,6 +1,8 @@
 use crate::network::error::NetworkError;
 use crate::network::NetworkChoice;
 use autonomi::{Client, ClientConfig, InitialPeersConfig};
+use deadpool::managed::{self, PoolError};
+use thiserror::Error;
 // use autonomi::{ResponseQuorum, RetryStrategy}
 use log::info;
 
@@ -92,4 +94,54 @@ pub(crate) async fn create_client(
     );
 
     Ok(client)
+}
+
+#[derive(Error, Debug)]
+pub enum PoolManagerError {
+    #[error(transparent)]
+    Network(#[from] NetworkError),
+    #[error("Pool interaction error: {0}")]
+    Pool(String),
+}
+
+impl From<PoolError<PoolManagerError>> for PoolManagerError {
+    fn from(e: PoolError<PoolManagerError>) -> Self {
+        PoolManagerError::Pool(e.to_string())
+    }
+}
+
+#[derive(Debug)]
+pub struct ClientManager {
+    pub network_choice: NetworkChoice,
+    pub config: Config,
+}
+
+impl managed::Manager for ClientManager {
+    type Type = Client;
+    type Error = PoolManagerError;
+
+    async fn create(&self) -> Result<Self::Type, Self::Error> {
+        let network_choice = self.network_choice; // Copy values
+        let config = self.config;
+        info!(
+            "Creating new client for pool (Network: {:?}, Config: {:?})",
+            network_choice, config
+        );
+        create_client(network_choice, config)
+            .await
+            .map_err(PoolManagerError::Network)
+    }
+
+    async fn recycle(
+        &self,
+        conn: &mut Self::Type,
+        metrics: &managed::Metrics,
+    ) -> managed::RecycleResult<Self::Error> {
+        // TODO: Implement a proper health check if the Client API supports it.
+        // For now, assume the client is always healthy.
+        // Use args to satisfy borrow checker and avoid unused warnings
+        let _ = conn;
+        let _ = metrics;
+        Ok(())
+    }
 }
