@@ -365,29 +365,12 @@ impl Data {
         loop {
             if confirmed_counter.load(Ordering::SeqCst) >= total_pads {
                 info!(
-                    "Worker {} detected completion before permit/lock. Exiting.",
+                    "Worker {} detected completion. Notifying and exiting.",
                     worker_id
                 );
+                completion_notifier.notify_waiters();
                 break;
             }
-
-            let permit = tokio::select! {
-                biased;
-                _ = completion_notifier.notified() => {
-                    info!("Worker {} notified of completion while waiting for permit. Exiting.", worker_id);
-                    return Ok(());
-                },
-                permit_result = semaphore.clone().acquire_owned() => {
-                    match permit_result {
-                        Ok(p) => p,
-                        Err(_) => {
-                            info!("Worker {} semaphore closed. Exiting.", worker_id);
-                            return Ok(());
-                        }
-                    }
-                }
-            };
-            debug!("Worker {} acquired semaphore permit.", worker_id);
 
             let pad_option = tokio::select! {
                 biased;
@@ -398,8 +381,67 @@ impl Data {
                 recv_result = pad_rx.recv() => {
                     match recv_result {
                         Ok(pad) => {
-                            debug!("Worker {} received pad {} from channel.", worker_id, pad.address);
-                            Some(pad)
+                            debug!(
+                                "Worker {} attempting to acquire permit for pad {} ({:?}).",
+                                worker_id, pad.address, pad.status
+                            );
+
+                            let permit = tokio::select! {
+                                biased;
+                                _ = completion_notifier.notified() => {
+                                    info!("Worker {} notified of completion while waiting for permit. Dropping pad {} and exiting.", worker_id, pad.address);
+                                    continue;
+                                },
+                                permit_result = semaphore.clone().acquire_owned() => {
+                                    match permit_result {
+                                        Ok(p) => p,
+                                        Err(_) => {
+                                            info!("Worker {} semaphore closed while acquiring permit. Exiting.", worker_id);
+                                            break;
+                                        }
+                                    }
+                                }
+                            };
+                            debug!("Worker {} acquired permit for pad {}.", worker_id, pad.address);
+
+                            let task_context = context.clone();
+                            let task_confirmed_counter = confirmed_counter.clone();
+                            let task_pad_tx = worker_pad_tx.clone();
+                            let task_no_verify = no_verify.clone();
+                            let task_put_callback = put_callback.clone();
+                            let task_client_guard = client_guard.clone();
+                            let task_key_name = key_name.clone();
+                            let task_completion_notifier = completion_notifier.clone();
+                            let task_worker_id = worker_id;
+
+                            tokio::spawn(async move {
+                                let _permit_guard = permit;
+                                debug!(
+                                    "Task (Worker {}) started processing pad {}.",
+                                    task_worker_id, pad.address
+                                );
+
+                                Self::process_single_pad_task(
+                                    task_worker_id,
+                                    task_context,
+                                    task_confirmed_counter,
+                                    pad,
+                                    task_pad_tx,
+                                    public,
+                                    task_no_verify,
+                                    task_put_callback,
+                                    task_client_guard,
+                                    task_key_name,
+                                    total_pads,
+                                    task_completion_notifier,
+                                )
+                                .await;
+
+                                debug!(
+                                    "Task (Worker {}) finished processing pad {}, permit released.",
+                                    task_worker_id, pad.address
+                                );
+                            });
                         },
                         Err(_) => {
                             info!("Worker {} pad channel closed. Exiting.", worker_id);
@@ -410,47 +452,19 @@ impl Data {
             };
 
             match pad_option {
-                Some(pad) => {
-                    debug!(
-                        "Worker {} received pad {} ({:?}), processing directly.",
-                        worker_id, pad.address, pad.status
-                    );
-
-                    // Process the pad directly within the semaphore permit scope
-                    // The permit will be dropped automatically when this scope ends.
-                    Self::process_single_pad_task(
-                        worker_id,
-                        context.clone(),
-                        confirmed_counter.clone(),
-                        pad,
-                        worker_pad_tx.clone(),
-                        public,
-                        no_verify.clone(),
-                        put_callback.clone(),
-                        client_guard.clone(),
-                        key_name.clone(),
-                        total_pads,
-                        completion_notifier.clone(),
-                    )
-                    .await;
-                    debug!(
-                        "Worker {} finished processing pad, permit released.",
-                        worker_id
-                    );
-                }
+                Some(_) => {}
                 None => {
                     info!(
                         "Worker {} received None or completion signal from pad channel select. Exiting loop.",
                         worker_id
                     );
-                    drop(permit);
                     break;
                 }
             }
         }
 
         info!(
-            "Worker {} (Semaphore) finished processing for key {}",
+            "Worker {} (Semaphore) main loop finished for key {}",
             worker_id, context.name
         );
         Ok(())
@@ -469,7 +483,7 @@ impl Data {
         key_name: Arc<String>,
         total_pads: usize,
         completion_notifier: Arc<Notify>,
-    ) {
+    ) -> Result<(), Error> {
         let result = async {
             let client = &*client_guard;
             let current_pad_address = pad.address;

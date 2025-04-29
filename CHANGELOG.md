@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated `mutant-cli` to handle the new return type of the `client.get` method.
 - Task cancellation support: Implemented `StopTask` request handling in the daemon and client to allow aborting ongoing tasks.
 - Refactored pad processing pipeline to use MPMC channel (`async-channel`), removing mutex bottleneck and enabling concurrent pad dequeuing by workers.
+- Refactored pad processing worker logic to achieve true concurrency by spawning tasks for each pad and managing semaphore permits correctly.
 
 ### Fixed
 - Fix task query WebSocket handling to prevent premature connection closure
@@ -68,7 +69,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Automatic ANT wallet scanning and selection
   - Interactive wallet selection when multiple wallets are found
 - Added background task in MutantClient to process WebSocket responses continuously
-- **Fetch History:** Keep track of fetched public data addresses for easy re-fetching. This history is displayed with `mutant ls -l`.
 
 ## [0.4.2] - UNRELEASED
 
@@ -233,45 +233,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Progress bars for `put`, `get`, `purge` operations.
 - Initialization progress reporting.
 - `Mutant::import_free_pad` to import external pads.
-- `Mutant::purge` to verify pending pads.
-- `Mutant::save_master_index` and `Mutant::reset`.
-- Synchronization commands (`mutant sync`).
-
-### Fixed
-- Store operation now saves the updated index to the local cache, ensuring `ls` reflects recent changes.
-- Remove operation (`rm`) now saves the updated index to the local cache, ensuring `ls` reflects removals.
-- Correctly handle errors during pad release in `IndexManager::remove_key_info_internal`.
-
-### Changed
-- Display completion percentage for incomplete keys in `ls` output (e.g., `*mykey (50.0%)`).
-- Added detailed statistics section for incomplete uploads in `stats` output.
-- Implemented resumable `put` operations. Uploads can now be interrupted and resumed, picking up from the last successfully written chunk.
-- Introduced granular pad statuses (`Generated`, `Written`, `Confirmed`) in the index to track chunk progress accurately.
-- Optimized `put` operation for newly generated pads by skipping unnecessary network existence checks before the initial write.
-- Introduced `PadStatus::Allocated` to explicitly track scratchpads known to exist on the network before data write is confirmed.
-- Moved chunking tests from inline module to `data::integration_tests`.
-- Added integration tests for `DataManager` (`store`, `fetch`, `remove`), including checks for non-existent keys and multi-chunk data.
-- Added specific integration test (`test_store_very_large_data_multi_pad`) for storing 16MiB data, verifying correct multi-pad chunking (5 pads).
-- Changed `rm` key logic: Only `Generated` pads go to pending verification; `Allocated`, `Written`, and `Confirmed` pads go directly to the free pool (counters fetched automatically).
-
-### Changed
-- **Refactor (mutant-lib):** Refactored `data::ops::store::store_op` by:
-    - Moving preparation logic (resume check, existence check, pad acquisition/replacement, index persistence) to `pad_lifecycle::prepare::prepare_pads_for_store`.
-    - Moving confirmation logic (retry loop, counter check, index update, cache save) to an internal helper `confirm_pad_write`.
-    - Moving the concurrent write/confirm execution loop to an internal helper `execute_write_confirm_tasks`.
-    - `store_op` now acts primarily as an orchestrator.
-- **Refactor (mutant-lib):** Moved data operation logic (`store_op`, `fetch_op`, `remove_op`) from `data/ops.rs` into a new `data/ops/` directory with separate files (`store.rs`, `fetch.rs`, `remove.rs`, `common.rs`) for better modularity.
-- Refactored pad state management: `pending_verification_pads` in the index is now only used for pads associated with removed keys whose write status was uncertain (`Generated`).
-- `purge` command is now the sole mechanism responsible for verifying pads in the `pending_verification_pads` list and moving them to the free pool.
-- **Refactored `put` operation in `mutant-lib` to perform chunk writes and network confirmations concurrently, improving upload throughput.**
-- **CLI:** Renamed "Reserving pads..." progress message during `put` to "Acquiring pads..." for clarity when reusing free pads.
-- **CLI:** Refactored `put` progress display to use two bars:
-  - "Creating pads...": Increments on `ChunkWritten` (network create/update success).
-  - "Confirming pads...": Increments on `ChunkConfirmed` (network check success).
-- Modified the `purge` command logic to only discard pending pads if the network explicitly returns a "Record Not Found" status. Pads encountering other network errors during verification are now returned to the pending list for future retries.
-- Store confirmation (`
-
-## [0.5.1] - 2024-08-06
-
-### Fixed
-- Panic in index persistence when file doesn't exist #57 @Champii
+- `Mutant::purge`
