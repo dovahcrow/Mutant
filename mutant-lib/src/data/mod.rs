@@ -647,17 +647,20 @@ impl Data {
     ) -> Result<Vec<u8>, Error> {
         let mut data = Vec::new();
         let mut tasks = Vec::new();
-        let client_guard = self
-            .network
-            .get_client(Config::Get)
-            .await
-            .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
-        let client = &*client_guard;
+        let client_guard = Arc::new(
+            self.network
+                .get_client(Config::Get)
+                .await
+                .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?,
+        );
 
         for pad in pads {
             let callback_clone = get_callback.clone();
             let network = self.network.clone();
+            let client_guard_clone = client_guard.clone();
+
             tasks.push(tokio::spawn(async move {
+                let client = &*client_guard_clone;
                 let mut retries_left = PAD_RECYCLING_RETRIES;
                 let owned_key;
                 let secret_key_ref = if public {
