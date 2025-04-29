@@ -105,7 +105,7 @@ impl Network {
     }
 
     /// Retrieves an Autonomi network client from the appropriate pool.
-    async fn get_client(
+    pub(crate) async fn get_client(
         &self,
         config: Config,
     ) -> Result<managed::Object<ClientManager>, PoolManagerError> {

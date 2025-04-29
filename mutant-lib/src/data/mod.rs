@@ -17,7 +17,6 @@ use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     SinkExt, StreamExt,
 };
-use futures_util::stream::StreamExt;
 use log::{debug, error, info, warn};
 use sha2::{Digest, Sha256};
 use std::{
@@ -205,7 +204,7 @@ impl Data {
 
         for pad in pads {
             if pad.status != PadStatus::Confirmed {
-                if let Err(e) = pad_tx.send(pad.clone()).await {
+                if let Err(e) = pad_tx.unbounded_send(pad.clone()) {
                     error!(
                         "Failed to send initial pad {} to channel: {}",
                         pad.address, e
@@ -355,7 +354,7 @@ impl Data {
             {
                 let mut rx_guard = pad_rx.lock().await;
                 if pads_to_process.is_empty() {
-                    match rx_guard.recv().await {
+                    match rx_guard.next().await {
                         Some(pad) => pads_to_process.push(pad),
                         None => {
                             info!("Worker {} received None, exiting loop.", worker_id);
@@ -364,8 +363,9 @@ impl Data {
                     }
                 }
                 while pads_to_process.len() < BATCH_SIZE {
-                    match rx_guard.try_recv() {
-                        Ok(pad) => pads_to_process.push(pad),
+                    match rx_guard.try_next() {
+                        Ok(Some(pad)) => pads_to_process.push(pad),
+                        Ok(None) => break,
                         Err(_) => break,
                     }
                 }
@@ -488,7 +488,7 @@ impl Data {
                                 .recycle_errored_pad(key_name, &pad.address)
                             {
                                 Ok(new_pad) => {
-                                    if let Err(send_err) = pad_tx.send(new_pad).await {
+                                    if let Err(send_err) = pad_tx.unbounded_send(new_pad) {
                                         error!("Worker {} failed to send recycled pad {} back to queue: {}", worker_id, pad.address, send_err);
                                     }
                                 }
@@ -582,7 +582,7 @@ impl Data {
                                 .recycle_errored_pad(key_name, &pad_to_recycle.address)
                             {
                                 Ok(new_pad) => {
-                                    if let Err(send_err) = pad_tx.send(new_pad).await {
+                                    if let Err(send_err) = pad_tx.unbounded_send(new_pad) {
                                         error!("Worker {} failed to send recycled pad {} back to queue after confirm fail: {}", worker_id, pad_to_recycle.address, send_err);
                                     }
                                 }
@@ -626,7 +626,7 @@ impl Data {
                     "Worker {} requeuing pad {} due to earlier processing issue.",
                     worker_id, pad.address
                 );
-                if let Err(e) = pad_tx.send(pad).await {
+                if let Err(e) = pad_tx.unbounded_send(pad) {
                     error!("Worker {} failed to requeue pad: {}", worker_id, e);
                 }
             }
