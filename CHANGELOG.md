@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Increase WebSocket maximum message size limit to 2GB in mutant-daemon to handle large data transfers.
 - Fix `mutant-cli ls` command by correctly tagging `Request` enum variants in `mutant-protocol`, preventing misinterpretation of `ListKeysRequest` as `ListTasksRequest` by the daemon.
 - Daemon now correctly handles its lock file, ensuring it's released upon termination.
+- Fix linter errors in `pad_processing_worker_semaphore` related to `select!` type inference and `process_single_pad_task` return type after concurrency refactor.
+- Fix borrow checker errors in spawned task logging and error handling within `process_single_pad_task` after concurrency refactor.
 
 ### Changed
 - Refactor write pipeline: Replaced two-stage put/confirm tasks with a single processing loop (`process_pads`) using `tokio::select!` and `FuturesUnordered` to manage concurrent `process_pad_task` operations (put -> confirm cycle) for each pad, improving deadlock resilience.
@@ -196,41 +198,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed `purge` command to be the sole mechanism for verifying `pending_verification_pads`.
 - Refactored `put` operation in `mutant-lib` to perform chunk writes and network confirmations concurrently.
 - Aligned `reserve` logic with `put`, fixing payment errors.
-- Centralized pad reservation logic in `PadLifecycleManager`.
-- Changed `purge` logic to only discard pads on `RecordNotFound`.
-- **CLI:** Renamed "Reserving pads..." progress message to "Acquiring pads..." during `put`.
-- **CLI:** Refactored `put` progress display to use two bars (Create/Confirm).
-- **Refactor:** Removed manager traits (`NetworkAdapter`, `DataManager`, `PadLifecycleManager`, `IndexManager`, `StorageManager`) in `mutant-lib` and replaced their usage with direct calls to the corresponding struct implementations (`AutonomiNetworkAdapter`, `DefaultDataManager`, `DefaultPadLifecycleManager`, `DefaultIndexManager`, `DefaultStorageManager`). This simplifies the internal architecture by removing unnecessary abstraction layers.
-- Refactored pad harvesting logic from `data::ops::remove` into a dedicated `harvest_pads` method in `IndexManager`.
-- Optimized pad harvesting during `rm` operation by removing redundant network existence check.
-- Made pad harvesting during `rm` fully local, moving pads to free/pending lists without network calls.
-- **Refactor:** Consolidated public upload metadata into the main `MasterIndex.index` map using an `IndexEntry` enum (`PrivateKey(KeyInfo)` or `PublicUpload(PublicUploadInfo)`). Removed the separate `MasterIndex.public_uploads` field and `PublicUploadMetadata` struct.
-
-### Removed
-- Removed unused file (`src/unused.rs`? - commit `32e986ff`).
-- Removed redundant pad release functions (`pad_lifecycle::pool::release_pads_to_free`, `pad_lifecycle::manager::release_pads`).
-- Removed `Mutant::reserve_new_pad` function (centralized in manager).
-- Removed unused `IndexManager::update_public_upload_metadata` function.
-
-### Documentation
-- Updated README.md to reflect workspace structure, latest CLI commands/options, and library API changes.
-- Adjusted introductory joke in README.md for subtlety (removed italics).
-
-## [0.2.1] - 2025-04-18
-
-### Added
-- Prompt user for confirmation before creating remote index during sync if it doesn't exist.
-
-## [0.2.0] - 2025-04-15
-
-### Added
-- Initial release with core functionality: put, get, ls, rm, update.
-- Devnet support.
-- Progress bars for long operations.
-- Local index caching.
-- Basic CLI structure and logging.
-- New `mutant reserve` command to pre-allocate empty scratchpads.
-- Progress bars for `put`, `get`, `purge` operations.
-- Initialization progress reporting.
-- `Mutant::import_free_pad` to import external pads.
-- `Mutant::purge`
+- Centralized pad reservation logic in `

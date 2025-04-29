@@ -376,83 +376,93 @@ impl Data {
                 biased;
                 _ = completion_notifier.notified() => {
                     info!("Worker {} notified of completion while waiting for pad. Exiting.", worker_id);
-                    None
+                    None::<PadInfo> // Signal to exit the loop
                 },
                 recv_result = pad_rx.recv() => {
                     match recv_result {
                         Ok(pad) => {
-                            debug!(
-                                "Worker {} attempting to acquire permit for pad {} ({:?}).",
-                                worker_id, pad.address, pad.status
-                            );
-
-                            let permit = tokio::select! {
-                                biased;
-                                _ = completion_notifier.notified() => {
-                                    info!("Worker {} notified of completion while waiting for permit. Dropping pad {} and exiting.", worker_id, pad.address);
-                                    continue;
-                                },
-                                permit_result = semaphore.clone().acquire_owned() => {
-                                    match permit_result {
-                                        Ok(p) => p,
-                                        Err(_) => {
-                                            info!("Worker {} semaphore closed while acquiring permit. Exiting.", worker_id);
-                                            break;
-                                        }
-                                    }
-                                }
-                            };
-                            debug!("Worker {} acquired permit for pad {}.", worker_id, pad.address);
-
-                            let task_context = context.clone();
-                            let task_confirmed_counter = confirmed_counter.clone();
-                            let task_pad_tx = worker_pad_tx.clone();
-                            let task_no_verify = no_verify.clone();
-                            let task_put_callback = put_callback.clone();
-                            let task_client_guard = client_guard.clone();
-                            let task_key_name = key_name.clone();
-                            let task_completion_notifier = completion_notifier.clone();
-                            let task_worker_id = worker_id;
-
-                            tokio::spawn(async move {
-                                let _permit_guard = permit;
-                                debug!(
-                                    "Task (Worker {}) started processing pad {}.",
-                                    task_worker_id, pad.address
-                                );
-
-                                Self::process_single_pad_task(
-                                    task_worker_id,
-                                    task_context,
-                                    task_confirmed_counter,
-                                    pad,
-                                    task_pad_tx,
-                                    public,
-                                    task_no_verify,
-                                    task_put_callback,
-                                    task_client_guard,
-                                    task_key_name,
-                                    total_pads,
-                                    task_completion_notifier,
-                                )
-                                .await;
-
-                                debug!(
-                                    "Task (Worker {}) finished processing pad {}, permit released.",
-                                    task_worker_id, pad.address
-                                );
-                            });
+                            debug!("Worker {} received pad {} from channel.", worker_id, pad.address);
+                            Some(pad)
                         },
                         Err(_) => {
                             info!("Worker {} pad channel closed. Exiting.", worker_id);
-                            None
+                            None::<PadInfo> // Signal to exit the loop
                         }
                     }
                 }
             };
 
             match pad_option {
-                Some(_) => {}
+                Some(pad) => {
+                    debug!(
+                        "Worker {} attempting to acquire permit for pad {} ({:?}).",
+                        worker_id, pad.address, pad.status
+                    );
+
+                    let permit = tokio::select! {
+                        biased;
+                        _ = completion_notifier.notified() => {
+                            info!("Worker {} notified of completion while waiting for permit. Dropping pad {} and exiting.", worker_id, pad.address);
+                            continue;
+                        },
+                        permit_result = semaphore.clone().acquire_owned() => {
+                            match permit_result {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    info!("Worker {} semaphore closed while acquiring permit. Exiting.", worker_id);
+                                    break;
+                                }
+                            }
+                        }
+                    };
+                    debug!(
+                        "Worker {} acquired permit for pad {}.",
+                        worker_id, pad.address
+                    );
+
+                    let task_context = context.clone();
+                    let task_confirmed_counter = confirmed_counter.clone();
+                    let task_pad_tx = worker_pad_tx.clone();
+                    let task_no_verify = no_verify.clone();
+                    let task_put_callback = put_callback.clone();
+                    let task_client_guard = client_guard.clone();
+                    let task_key_name = key_name.clone();
+                    let task_completion_notifier = completion_notifier.clone();
+                    let task_worker_id = worker_id;
+
+                    // Extract address before moving pad
+                    let pad_address_for_log = pad.address;
+
+                    // Spawn the processing task, moving the permit into it
+                    tokio::spawn(async move {
+                        let _permit_guard = permit;
+                        debug!(
+                            "Task (Worker {}) started processing pad {}.",
+                            task_worker_id, pad_address_for_log
+                        );
+
+                        Self::process_single_pad_task(
+                            task_worker_id,
+                            task_context,
+                            task_confirmed_counter,
+                            pad,
+                            task_pad_tx,
+                            public,
+                            task_no_verify,
+                            task_put_callback,
+                            task_client_guard,
+                            task_key_name,
+                            total_pads,
+                            task_completion_notifier,
+                        )
+                        .await;
+
+                        debug!(
+                            "Task (Worker {}) finished processing pad {}, permit released.",
+                            task_worker_id, pad_address_for_log
+                        );
+                    });
+                }
                 None => {
                     info!(
                         "Worker {} received None or completion signal from pad channel select. Exiting loop.",
@@ -724,12 +734,13 @@ impl Data {
             Ok::<(), Error>(())
         }.await;
 
-        if let Err(e) = result {
+        if let Err(e) = &result {
             error!(
                 "Worker {} error processing pad {}: {}",
                 worker_id, pad.address, e
             );
         }
+        result
     }
 
     async fn fetch_pads_data(
