@@ -51,7 +51,7 @@ where
     Context: Send + Sync + 'static + Clone,
     Client: Send + Sync + 'static,
     Task: AsyncTask<Item, Context, Client, T, E> + Send + Sync + 'static + Clone,
-    T: Send + 'static,
+    T: Send + Sync + Clone + 'static,
     E: std::fmt::Debug + Send + Clone + 'static,
 {
     id: usize,
@@ -73,7 +73,7 @@ impl<Item, Context, Client, Task, T, E> Worker<Item, Context, Client, Task, T, E
 where
     Item: Send + 'static,
     Context: Send + Sync + 'static + Clone,
-    Client: Send + Sync + 'static + Clone,
+    Client: Send + Sync + 'static,
     Task: AsyncTask<Item, Context, Client, T, E> + Send + Sync + 'static + Clone,
     T: Send + Sync + Clone + 'static,
     E: std::fmt::Debug + Send + Clone + 'static,
@@ -266,7 +266,7 @@ pub struct WorkerPool<Item, Context, Client, Task, T, E>
 where
     Item: Send + 'static,
     Context: Send + Sync + 'static + Clone,
-    Client: Send + Sync + 'static + Clone,
+    Client: Send + Sync + 'static,
     Task: AsyncTask<Item, Context, Client, T, E> + Send + Sync + 'static + Clone,
     T: Send + Sync + Clone + 'static,
     E: std::fmt::Debug + Send + Clone + 'static,
@@ -290,10 +290,10 @@ impl<Item, Context, Client, Task, T, E> WorkerPool<Item, Context, Client, Task, 
 where
     Item: Send + 'static,
     Context: Send + Sync + 'static + Clone,
-    Client: Send + Sync + 'static + Clone,
+    Client: Send + Sync + 'static,
     Task: AsyncTask<Item, Context, Client, T, E> + Send + Sync + 'static + Clone,
     T: Send + Sync + Clone + 'static,
-    E: std::fmt::Debug + Send + Sync + Clone + 'static,
+    E: std::fmt::Debug + Send + Clone + 'static,
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
