@@ -50,6 +50,7 @@ where
     E: std::fmt::Debug + Send + Clone + 'static + From<tokio::sync::AcquireError>, // Added generic E for AsyncTask's error type
 {
     num_workers: usize,
+    batch_size: usize,
     context: Arc<Context>,
     task: Arc<Task>,
     item_receiver: Receiver<Item>,
@@ -74,6 +75,7 @@ where
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         num_workers: usize,
+        batch_size: usize,
         context: Arc<Context>,
         task: Arc<Task>,
         item_receiver: Receiver<Item>,
@@ -84,6 +86,7 @@ where
     ) -> Self {
         Self {
             num_workers,
+            batch_size,
             context,
             task,
             item_receiver,
@@ -98,7 +101,9 @@ where
 
     pub async fn run(self) -> Result<Vec<(Task::ItemId, T)>, PoolError<E>> {
         // Return PoolError<E>
-        let semaphore = Arc::new(Semaphore::new(self.num_workers));
+        // Calculate total capacity based on workers and batch size per worker
+        let total_capacity = self.num_workers * self.batch_size;
+        let semaphore = Arc::new(Semaphore::new(total_capacity));
         let mut worker_handles: FuturesUnordered<JoinHandle<Result<(), PoolError<E>>>> =
             FuturesUnordered::new();
 
@@ -120,6 +125,8 @@ where
             let worker_errors_collector = errors_collector.clone();
 
             worker_handles.push(tokio::spawn(async move {
+                // Collection to store handles of processing tasks spawned by *this* worker
+                let mut processing_tasks = FuturesUnordered::<JoinHandle<()>>::new();
 
                 loop {
                     // Check completion based on counter and total expected
@@ -194,7 +201,8 @@ where
                              let task_errors_collector = worker_errors_collector.clone();
                              let task_processor_clone = task_processor.clone(); // Clone Arc for the spawned task
 
-                            let _join_handle: JoinHandle<()> = tokio::spawn(async move {
+                            // Spawn the processing task and store its handle
+                            processing_tasks.push(tokio::spawn(async move {
                                 let _permit_guard = permit; // Ensure permit is released when task finishes
                                 debug!("Task (Worker {}) started processing.", worker_id);
 
@@ -228,7 +236,7 @@ where
                                     }
                                 }
                                 debug!("Task (Worker {}) finished, permit released.", worker_id);
-                            });
+                            }));
                             // We don't collect join handles here anymore, just let them run detached.
                             // Pool completion depends on workers finishing their loops.
                         }
@@ -239,9 +247,30 @@ where
                     }
                 }
 
-                // Worker task finished its loop
-                info!("Worker {} main loop finished.", worker_id);
-                Ok(()) // Indicate worker finished ok
+                // Worker task finished its loop, now wait for its spawned processing tasks
+                info!(
+                    "Worker {} main loop finished. Waiting for {} outstanding processing tasks.",
+                    worker_id,
+                    processing_tasks.len()
+                );
+                while let Some(task_result) = processing_tasks.next().await {
+                    if let Err(e) = task_result {
+                        // Log join errors from individual processing tasks
+                        // The main pool error handling might catch logical errors later
+                        error!(
+                            "Worker {} processing task panicked or failed to join: {:?}",
+                            worker_id, e
+                        );
+                        // Consider if this should propagate an error up to the worker_handle
+                        // For now, just logging. If a task panicked, results might be incomplete.
+                    }
+                }
+                info!(
+                    "Worker {} finished waiting for processing tasks.",
+                    worker_id
+                );
+
+                Ok(()) // Indicate worker finished ok (including waiting for its tasks)
             }));
         }
 

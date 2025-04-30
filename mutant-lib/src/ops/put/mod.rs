@@ -586,6 +586,7 @@ async fn write_pipeline(
 
     let pool = WorkerPool::new(
         WORKER_COUNT,
+        crate::ops::BATCH_SIZE,
         put_task_context,
         Arc::new(PutTaskProcessor),
         process_rx,

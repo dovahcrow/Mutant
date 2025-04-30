@@ -257,6 +257,7 @@ async fn fetch_pads_data(
     // Create and configure the worker pool
     let pool = WorkerPool::new(
         WORKER_COUNT,
+        crate::ops::BATCH_SIZE,
         get_context.clone(),
         Arc::new(GetTaskProcessor),
         pad_rx,
