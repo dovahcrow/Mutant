@@ -14,8 +14,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::{Notify, RwLock};
 
 use super::{
-    BATCH_SIZE, DATA_ENCODING_PUBLIC_DATA, DATA_ENCODING_PUBLIC_INDEX, PAD_RECYCLING_RETRIES,
-    WORKER_COUNT,
+    DATA_ENCODING_PUBLIC_DATA, DATA_ENCODING_PUBLIC_INDEX, PAD_RECYCLING_RETRIES, WORKER_COUNT,
 };
 
 pub(super) async fn get_public(
@@ -258,7 +257,6 @@ async fn fetch_pads_data(
     // Create and configure the worker pool
     let pool = WorkerPool::new(
         WORKER_COUNT,
-        BATCH_SIZE,
         get_context.clone(),
         Arc::new(GetTaskProcessor),
         pad_rx,
@@ -329,9 +327,6 @@ async fn fetch_pads_data(
                 }
                 PoolError::SemaphoreClosed => {
                     Error::Internal("Worker semaphore closed unexpectedly".to_string())
-                }
-                PoolError::SendError => {
-                    Error::Internal("Internal pool error sending item to retry queue".to_string())
                 }
             };
             Err(final_error)

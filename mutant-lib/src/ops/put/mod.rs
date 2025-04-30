@@ -586,7 +586,6 @@ async fn write_pipeline(
 
     let pool = WorkerPool::new(
         WORKER_COUNT,
-        BATCH_SIZE,
         put_task_context,
         Arc::new(PutTaskProcessor),
         process_rx,
@@ -639,9 +638,6 @@ async fn write_pipeline(
                 }
                 PoolError::SemaphoreClosed => {
                     Error::Internal("Worker semaphore closed unexpectedly".to_string())
-                }
-                PoolError::SendError => {
-                    Error::Internal("Failed to send item to retry queue".to_string())
                 }
             };
             return Err(final_error);

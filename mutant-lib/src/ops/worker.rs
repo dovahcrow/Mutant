@@ -5,7 +5,7 @@ use log::{debug, error, info, warn};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, Notify, Semaphore};
+use tokio::sync::{Mutex, Notify, Semaphore};
 use tokio::task::JoinHandle;
 
 // Trait for the actual work function
@@ -35,7 +35,6 @@ where
     JoinError(tokio::task::JoinError), // Error joining a task handle
     PoolSetupError(String),            // e.g., failed to get client
     SemaphoreClosed,
-    SendError, // Error sending item to retry channel
 }
 
 // Define the worker pool struct
@@ -51,7 +50,6 @@ where
     E: std::fmt::Debug + Send + Clone + 'static + From<tokio::sync::AcquireError>, // Added generic E for AsyncTask's error type
 {
     num_workers: usize,
-    batch_size: usize,
     context: Arc<Context>,
     task: Arc<Task>,
     item_receiver: Receiver<Item>,
@@ -76,7 +74,6 @@ where
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         num_workers: usize,
-        batch_size: usize,
         context: Arc<Context>,
         task: Arc<Task>,
         item_receiver: Receiver<Item>,
@@ -87,7 +84,6 @@ where
     ) -> Self {
         Self {
             num_workers,
-            batch_size,
             context,
             task,
             item_receiver,
@@ -103,10 +99,6 @@ where
     pub async fn run(self) -> Result<Vec<(Task::ItemId, T)>, PoolError<E>> {
         // Return PoolError<E>
         let semaphore = Arc::new(Semaphore::new(self.num_workers));
-        let (result_tx, result_rx): (
-            mpsc::Sender<(Task::ItemId, T)>,
-            mpsc::Receiver<(Task::ItemId, T)>,
-        ) = mpsc::channel(self.num_workers * self.batch_size);
         let mut worker_handles: FuturesUnordered<JoinHandle<Result<(), PoolError<E>>>> =
             FuturesUnordered::new();
 
