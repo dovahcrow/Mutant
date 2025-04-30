@@ -49,7 +49,11 @@ pub(super) async fn put(
     put_callback: Option<PutCallback>,
 ) -> Result<ScratchpadAddress, Error> {
     if index.read().await.contains_key(key_name) {
-        if index.read().await.verify_checksum(key_name, content, mode) {
+        if index
+            .read()
+            .await
+            .verify_checksum(key_name, content, mode.clone())
+        {
             info!("Resume for {}", key_name);
             resume(
                 index,
@@ -167,6 +171,7 @@ async fn first_store(
     Ok(address)
 }
 
+#[derive(Clone)]
 struct PutTaskContext {
     base_context: Context,
     no_verify: Arc<bool>,
@@ -177,6 +182,7 @@ struct PutTaskContext {
     confirmed_counter: Arc<AtomicUsize>,
 }
 
+#[derive(Clone)]
 struct PutTaskProcessor;
 
 #[async_trait]
@@ -429,7 +435,7 @@ async fn write_pipeline(
 
     let (process_tx, process_rx) = bounded::<PadInfo>(total_pads + WORKER_COUNT * BATCH_SIZE);
     let (recycle_tx, recycle_rx) =
-        bounded::<PadInfo>(total_pads * PAD_RECYCLING_RETRIES + WORKER_COUNT);
+        bounded::<(Error, PadInfo)>(total_pads * PAD_RECYCLING_RETRIES + WORKER_COUNT);
 
     let initial_confirmed_count = pads
         .iter()
@@ -540,8 +546,11 @@ async fn write_pipeline(
                     },
                     recv_result = recycle_rx.recv() => {
                         match recv_result {
-                            Ok(pad_to_recycle) => {
-                                 warn!("Recycling pad {} for key {}", pad_to_recycle.address, key_name_clone);
+                            Ok((error_cause, pad_to_recycle)) => {
+                                 warn!(
+                                     "Recycling pad {} for key {} due to error: {:?}",
+                                     pad_to_recycle.address, key_name_clone, error_cause
+                                 );
                                  recycled_count += 1;
                                  if recycled_count > total_pads * PAD_RECYCLING_RETRIES {
                                       error!("Exceeded maximum recycling attempts for key {}. Aborting recycling.", key_name_clone);
@@ -557,7 +566,12 @@ async fn write_pipeline(
                                          }
                                      },
                                      Err(recycle_err) => {
-                                         error!("Failed to recycle pad {} for key {}: {}", pad_to_recycle.address, key_name_clone, recycle_err);
+                                         error!(
+                                             "Failed to recycle pad {} for key {}: {}",
+                                             pad_to_recycle.address,
+                                             key_name_clone,
+                                             recycle_err
+                                         );
                                      }
                                  }
                              }

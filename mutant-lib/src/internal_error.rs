@@ -2,13 +2,16 @@
 // use crate::index::IndexError;
 use crate::{index::error::IndexError, network::NetworkError};
 // use crate::pad_lifecycle::PadLifecycleError;
+use deadpool::managed::{PoolError, TimeoutType};
+use never::Never;
 use thiserror::Error;
+use tokio::sync::AcquireError;
 
 /// Represents the primary error type returned by `mutant-lib` functions.
 ///
 /// This enum aggregates potential errors from various internal layers (network, storage, etc.)
 /// as well as general operational errors.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum Error {
     /// Errors related to configuration loading or validation.
     #[error("Configuration Error: {0}")]
@@ -58,4 +61,26 @@ pub enum Error {
 
     #[error("Callback error: {0}")]
     CallbackError(String),
+
+    /// Errors related to the worker pool management (e.g., resource acquisition).
+    #[error("Worker Pool Error: {0}")]
+    PoolError(String),
+
+    /// Indicates a timeout occurred during an operation.
+    #[error("Operation timed out: {0}")]
+    Timeout(String),
+}
+
+// Implementation to convert deadpool PoolError into our internal Error::PoolError
+impl From<PoolError<Never>> for Error {
+    fn from(e: PoolError<Never>) -> Self {
+        Error::PoolError(e.to_string())
+    }
+}
+
+// Implementation to convert tokio AcquireError into our internal Error::PoolError
+impl From<AcquireError> for Error {
+    fn from(e: AcquireError) -> Self {
+        Error::PoolError(format!("Worker pool semaphore acquisition failed: {}", e))
+    }
 }

@@ -1,7 +1,7 @@
 use ant_networking::GetRecordError;
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum NetworkError {
     #[error("Failed to initialize Autonomi network: {0}")]
     NetworkInitError(String),

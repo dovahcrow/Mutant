@@ -99,6 +99,7 @@ pub(super) async fn health_check(
                                 let mut index_guard = index_clone.write().await;
                                 index_guard
                                     .recycle_errored_pad(&key_name_clone, &pad.address) // Use cloned key_name
+                                    .await // Add await here
                                     .unwrap();
                             }
                             nb_recycled_clone.fetch_add(1, Ordering::Relaxed);

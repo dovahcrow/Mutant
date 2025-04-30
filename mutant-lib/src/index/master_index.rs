@@ -1,6 +1,7 @@
 use crate::config::NetworkChoice;
+use crate::error::Error;
+use crate::index::pad_info::PadInfo;
 use crate::storage::ScratchpadAddress;
-use crate::{index::pad_info::PadInfo, internal_error::Error};
 use log::{debug, info};
 use mutant_protocol::StorageMode;
 use serde::{Deserialize, Serialize};
@@ -207,7 +208,7 @@ impl MasterIndex {
         data
     }
 
-    pub fn recycle_errored_pad(
+    pub async fn recycle_errored_pad(
         &mut self,
         key_name: &str,
         pad_address: &ScratchpadAddress,

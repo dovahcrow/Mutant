@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::network::NetworkChoice;
 
-#[derive(Error, Debug, PartialEq)]
+#[derive(Error, Debug, PartialEq, Clone)]
 pub enum IndexError {
     #[error("Key already exists: {0}")]
     KeyAlreadyExists(String),

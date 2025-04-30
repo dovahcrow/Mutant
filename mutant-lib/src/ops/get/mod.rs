@@ -298,11 +298,15 @@ async fn fetch_pads_data(
             // Sort results by chunk index (ItemId)
             fetched_results.sort_by_key(|(chunk_index, _)| *chunk_index);
 
+            // Collect into Vec first
+            let collected_data: Vec<Vec<u8>> =
+                fetched_results.into_iter().map(|(_, data)| data).collect();
+
             // Concatenate data in order
-            let final_capacity = fetched_results.iter().map(|(_, data)| data.len()).sum();
-            let mut final_data = Vec::with_capacity(final_capacity);
-            for (_, pad_data) in fetched_results {
-                final_data.extend_from_slice(&pad_data);
+            let final_capacity: usize = collected_data.iter().map(|data| data.len()).sum();
+            let mut final_data: Vec<u8> = Vec::with_capacity(final_capacity);
+            for pad_data in collected_data {
+                final_data.extend(pad_data);
             }
 
             // Send completion event after successful processing
