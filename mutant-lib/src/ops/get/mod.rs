@@ -8,11 +8,11 @@ use crate::ops::worker::{AsyncTask, PoolError, WorkerPool};
 use async_channel::bounded;
 use async_trait::async_trait;
 use autonomi::ScratchpadAddress;
-use log::{debug, error};
-use std::{sync::Arc, time::Duration};
-use std::sync::atomic::Ordering;
-use tokio::sync::{Mutex, Notify, RwLock};
 use deadpool::managed::Object;
+use log::{debug, error};
+use std::sync::atomic::Ordering;
+use std::{sync::Arc, time::Duration};
+use tokio::sync::{Mutex, Notify, RwLock};
 
 use super::{
     DATA_ENCODING_PUBLIC_DATA, DATA_ENCODING_PUBLIC_INDEX, PAD_RECYCLING_RETRIES, WORKER_COUNT,
@@ -125,14 +125,16 @@ struct GetTaskProcessor;
 // We need to use a different approach since Object<autonomi::Client> doesn't implement Clone
 // Let's use Arc<Mutex<Object<autonomi::Client>>> as our client type
 #[async_trait]
-impl AsyncTask<PadInfo, GetContext, Arc<Mutex<Object<crate::network::client::ClientManager>>>, Vec<u8>, Error> for GetTaskProcessor {
+impl AsyncTask<PadInfo, GetContext, Object<crate::network::client::ClientManager>, Vec<u8>, Error>
+    for GetTaskProcessor
+{
     type ItemId = usize; // Use chunk index for ordering
 
     async fn process(
         &self,
         _worker_id: usize,
         context: Arc<GetContext>,
-        client_mutex: &Arc<Mutex<Object<crate::network::client::ClientManager>>>,  // Use the worker's client
+        client: &Object<crate::network::client::ClientManager>, // Changed client type and removed Arc/Mutex
         pad: PadInfo,
     ) -> Result<(Self::ItemId, Vec<u8>), (Error, PadInfo)> {
         let mut retries_left = PAD_RECYCLING_RETRIES; // Use same retry count logic
@@ -145,14 +147,11 @@ impl AsyncTask<PadInfo, GetContext, Arc<Mutex<Object<crate::network::client::Cli
         };
 
         loop {
-            // Acquire the client from the mutex
-            let client_guard = client_mutex.lock().await;
-            let client = &*client_guard;
-
+            // Removed client mutex locking
             // Use the provided client directly
             match context
                 .network
-                .get(&*client, &pad.address, secret_key_ref)
+                .get(client, &pad.address, secret_key_ref) // Pass client directly
                 .await
             {
                 Ok(pad_result) => {
@@ -255,8 +254,10 @@ async fn fetch_pads_data(
             let mut worker_index = 0;
             let total_pads = pads_clone.len();
 
-            debug!("Distributing {} pads to {} workers in round-robin fashion",
-                   total_pads, WORKER_COUNT);
+            debug!(
+                "Distributing {} pads to {} workers in round-robin fashion",
+                total_pads, WORKER_COUNT
+            );
 
             for pad in pads_clone {
                 // Send round-robin to worker channels
@@ -274,7 +275,10 @@ async fn fetch_pads_data(
                 let total_count = total_items_clone.load(Ordering::SeqCst);
 
                 if fetched_count >= total_count {
-                    debug!("All pads fetched ({}/{}), closing channels", fetched_count, total_count);
+                    debug!(
+                        "All pads fetched ({}/{}), closing channels",
+                        fetched_count, total_count
+                    );
                     break;
                 }
 
@@ -310,10 +314,7 @@ async fn fetch_pads_data(
                 worker_id, e
             )))
         })?;
-        // Double Arc wrapping to match the expected type in WorkerPool
-        // The outer Arc is for sharing the client among the worker's task processors
-        // The inner Arc is to match the type expected by the AsyncTask implementation
-        clients.push(Arc::new(Arc::new(Mutex::new(client))));
+        clients.push(Arc::new(client)); // Use Arc<Object> directly, matching put
     }
 
     // Create and configure the worker pool
@@ -322,10 +323,10 @@ async fn fetch_pads_data(
         crate::ops::BATCH_SIZE,
         get_context.clone(),
         Arc::new(GetTaskProcessor),
-        clients,         // Pass clients for each worker
-        worker_rxs,      // Pass worker-specific receivers
-        global_rx,       // Pass global receiver
-        None,            // No retry channel for GET
+        clients,    // Pass Vec<Arc<Object<ClientManager>>>
+        worker_rxs, // Pass worker-specific receivers
+        global_rx,  // Pass global receiver
+        None,       // No retry channel for GET
         get_context.completion_notifier.clone(),
         Some(get_context.total_items.clone()),
         Some(get_context.fetched_items_counter.clone()),
@@ -379,9 +380,7 @@ async fn fetch_pads_data(
                 PoolError::PoolSetupError(msg) => {
                     Error::Internal(format!("Pool setup error: {}", msg))
                 }
-                PoolError::WorkerError(msg) => {
-                    Error::Internal(format!("Worker error: {}", msg))
-                }
+                PoolError::WorkerError(msg) => Error::Internal(format!("Worker error: {}", msg)),
             };
             Err(final_error)
         }
