@@ -6,6 +6,7 @@ mod purge;
 mod put;
 mod sync;
 mod utils;
+pub mod worker;
 
 use crate::{
     events::{GetCallback, PurgeCallback, SyncCallback},
@@ -27,7 +28,7 @@ pub const DATA_ENCODING_PUBLIC_DATA: u64 = 3;
 
 pub const PAD_RECYCLING_RETRIES: usize = 3;
 const WORKER_COUNT: usize = 20;
-const BATCH_SIZE: usize = 10;
+pub const BATCH_SIZE: usize = 16;
 
 const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 20);
 
