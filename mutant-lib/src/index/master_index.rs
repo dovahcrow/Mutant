@@ -492,6 +492,7 @@ impl MasterIndex {
                 pad_info.status = PadStatus::Generated;
                 pad_info.chunk_index = i + 1;
                 pad_info.size = chunk_data_slice.len();
+                pad_info.last_known_counter += 1;
                 pad_info.checksum =
                     Crc::<u32>::new(&CRC_32_ISCSI).checksum(chunk_data_slice) as usize;
                 pad_info
@@ -534,6 +535,7 @@ impl MasterIndex {
             pad_info.chunk_index = i + starting_chunk_index;
             pad_info.size = chunk_data_slice.len();
             pad_info.checksum = Crc::<u32>::new(&CRC_32_ISCSI).checksum(chunk_data_slice) as usize;
+            pad_info.last_known_counter += 1;
             generated_pads.push(pad_info);
         }
 
