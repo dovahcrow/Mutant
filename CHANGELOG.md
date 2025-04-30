@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Daemon now correctly handles its lock file, ensuring it's released upon termination.
 - Fix linter errors in `pad_processing_worker_semaphore` related to `select!` type inference and `process_single_pad_task` return type after concurrency refactor.
 - Fix borrow checker errors in spawned task logging and error handling within `process_single_pad_task` after concurrency refactor.
+- Corrected `Network::put` and `Network::get` calls in integration tests to match updated signatures requiring an explicit client.
 
 ### Changed
 - Refactor write pipeline: Replaced two-stage put/confirm tasks with a single processing loop (`process_pads`) using `tokio::select!` and `FuturesUnordered` to manage concurrent `process_pad_task` operations (put -> confirm cycle) for each pad, improving deadlock resilience.
