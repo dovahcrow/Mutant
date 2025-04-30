@@ -2,20 +2,14 @@ use crate::error::Error;
 use crate::events::{GetCallback, GetEvent};
 use crate::index::{master_index::MasterIndex, PadInfo};
 use crate::internal_events::invoke_get_callback;
-use crate::network::client::{ClientManager, Config};
+use crate::network::client::Config;
 use crate::network::{Network, NetworkError};
-use crate::ops::utils::*;
-use autonomi::{Client, ScratchpadAddress};
-use deadpool::managed::Object;
+use autonomi::ScratchpadAddress;
 use log::{debug, error};
-use std::{
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock;
+
+use super::{DATA_ENCODING_PUBLIC_DATA, DATA_ENCODING_PUBLIC_INDEX, PAD_RECYCLING_RETRIES};
 
 pub(super) async fn get_public(
     network: Arc<Network>,

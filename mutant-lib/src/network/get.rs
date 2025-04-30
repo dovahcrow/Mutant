@@ -1,6 +1,4 @@
-use crate::network::client::Config;
 use crate::network::error::NetworkError;
-use crate::network::Network;
 use ant_networking::GetRecordError;
 use ant_networking::NetworkError as AntNetworkError;
 use autonomi::scratchpad::ScratchpadError;

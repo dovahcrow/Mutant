@@ -1,4 +1,3 @@
-use crate::ops::utils::{derive_master_index_info, DATA_ENCODING_MASTER_INDEX};
 use crate::error::Error;
 use crate::events::{SyncCallback, SyncEvent};
 use crate::index::master_index::MasterIndex;
@@ -6,12 +5,15 @@ use crate::index::{PadInfo, PadStatus};
 use crate::internal_events::invoke_sync_callback;
 use crate::network::client::Config;
 use crate::network::{Network, NetworkError};
+use crate::ops::utils::derive_master_index_info;
 use ant_networking::GetRecordError;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
 use mutant_protocol::SyncResult;
+
+use super::DATA_ENCODING_MASTER_INDEX;
 
 pub(super) async fn sync(
     index: Arc<RwLock<MasterIndex>>,

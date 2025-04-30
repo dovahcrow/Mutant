@@ -7,43 +7,17 @@ mod put;
 mod sync;
 mod utils;
 
-pub use utils::*;
-
-use crate::network::client::{ClientManager, Config};
 use crate::{
-    events::{GetCallback, GetEvent, PurgeCallback, PurgeEvent, SyncCallback, SyncEvent},
-    index::{master_index::MasterIndex, PadInfo, PadStatus},
-    internal_events::{
-        invoke_get_callback, invoke_health_check_callback, invoke_purge_callback,
-        invoke_put_callback, invoke_sync_callback,
-    },
-    network::{Network, NetworkError},
+    events::{GetCallback, PurgeCallback, SyncCallback},
+    index::master_index::MasterIndex,
+    network::Network,
 };
-use ant_networking::GetRecordError;
-use async_channel::{bounded, Receiver, Sender};
-use autonomi::{Client, ScratchpadAddress};
-use blsttc::SecretKey;
-use deadpool::managed::Object;
-use futures::stream::FuturesUnordered;
-use futures::StreamExt;
-use log::{debug, error, info, warn};
-use sha2::{Digest, Sha256};
-use std::{
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
-use tokio::sync::Notify;
+use autonomi::ScratchpadAddress;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock;
-use tokio::sync::Semaphore;
-use tokio::task::JoinHandle;
-use tokio::time::{timeout, Instant};
 
 use mutant_protocol::{
-    HealthCheckCallback, HealthCheckEvent, HealthCheckResult, PurgeResult, PutCallback, PutEvent,
-    StorageMode, SyncResult,
+    HealthCheckCallback, HealthCheckResult, PurgeResult, PutCallback, StorageMode, SyncResult,
 };
 
 pub const DATA_ENCODING_MASTER_INDEX: u64 = 0;
@@ -150,26 +124,26 @@ impl Data {
     }
 }
 
-fn derive_master_index_info(
-    private_key_hex: &str,
-) -> Result<(ScratchpadAddress, SecretKey), Error> {
-    debug!("Deriving master index key and address...");
-    let hex_to_decode = private_key_hex
-        .strip_prefix("0x")
-        .unwrap_or(private_key_hex);
+// fn derive_master_index_info(
+//     private_key_hex: &str,
+// ) -> Result<(ScratchpadAddress, SecretKey), Error> {
+//     debug!("Deriving master index key and address...");
+//     let hex_to_decode = private_key_hex
+//         .strip_prefix("0x")
+//         .unwrap_or(private_key_hex);
 
-    let input_key_bytes = hex::decode(hex_to_decode)
-        .map_err(|e| Error::Config(format!("Failed to decode private key hex: {}", e)))?;
+//     let input_key_bytes = hex::decode(hex_to_decode)
+//         .map_err(|e| Error::Config(format!("Failed to decode private key hex: {}", e)))?;
 
-    let mut hasher = Sha256::new();
-    hasher.update(&input_key_bytes);
-    let hash_result = hasher.finalize();
-    let key_array: [u8; 32] = hash_result.into();
+//     let mut hasher = Sha256::new();
+//     hasher.update(&input_key_bytes);
+//     let hash_result = hasher.finalize();
+//     let key_array: [u8; 32] = hash_result.into();
 
-    let derived_key = SecretKey::from_bytes(key_array)
-        .map_err(|e| Error::Internal(format!("Failed to create SecretKey from HASH: {:?}", e)))?;
-    let derived_public_key = derived_key.public_key();
-    let address = ScratchpadAddress::new(derived_public_key);
-    info!("Derived Master Index Address: {}", address);
-    Ok((address, derived_key))
-}
+//     let derived_key = SecretKey::from_bytes(key_array)
+//         .map_err(|e| Error::Internal(format!("Failed to create SecretKey from HASH: {:?}", e)))?;
+//     let derived_public_key = derived_key.public_key();
+//     let address = ScratchpadAddress::new(derived_public_key);
+//     info!("Derived Master Index Address: {}", address);
+//     Ok((address, derived_key))
+// }

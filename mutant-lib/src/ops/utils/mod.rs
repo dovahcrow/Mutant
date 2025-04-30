@@ -1,24 +1,12 @@
 use crate::error::Error;
 use crate::index::master_index::MasterIndex;
 use crate::network::Network;
-use autonomi::{Client, ScratchpadAddress};
+use autonomi::ScratchpadAddress;
 use blsttc::SecretKey;
 use log::{debug, info};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::RwLock;
-
-pub const DATA_ENCODING_MASTER_INDEX: u64 = 0;
-pub const DATA_ENCODING_PRIVATE_DATA: u64 = 1;
-pub const DATA_ENCODING_PUBLIC_INDEX: u64 = 2;
-pub const DATA_ENCODING_PUBLIC_DATA: u64 = 3;
-
-pub const PAD_RECYCLING_RETRIES: usize = 3;
-pub const WORKER_COUNT: usize = 20;
-pub const BATCH_SIZE: usize = 10;
-
-pub const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 20);
 
 #[derive(Clone)]
 pub struct Context {

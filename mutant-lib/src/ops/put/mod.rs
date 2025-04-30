@@ -1,11 +1,11 @@
-use crate::ops::utils::*;
 use crate::error::Error;
 use crate::index::{PadInfo, PadStatus};
 use crate::internal_events::invoke_put_callback;
 use crate::network::client::{ClientManager, Config};
 use crate::network::{Network, NetworkError};
+use crate::ops::{utils::*, BATCH_SIZE, MAX_CONFIRMATION_DURATION, WORKER_COUNT};
 use async_channel::{bounded, Receiver, Sender};
-use autonomi::{Client, ScratchpadAddress};
+use autonomi::ScratchpadAddress;
 use deadpool::managed::Object;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
@@ -21,6 +21,11 @@ use std::{
 use tokio::sync::{Notify, RwLock, Semaphore};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
+
+use super::{
+    DATA_ENCODING_PRIVATE_DATA, DATA_ENCODING_PUBLIC_DATA, DATA_ENCODING_PUBLIC_INDEX,
+    PAD_RECYCLING_RETRIES,
+};
 
 pub(super) async fn put(
     index: Arc<RwLock<crate::index::master_index::MasterIndex>>,

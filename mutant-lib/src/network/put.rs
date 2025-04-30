@@ -1,7 +1,6 @@
 use crate::index::PadInfo;
-use crate::network::client::Config;
 use crate::network::error::NetworkError;
-use crate::network::{Network, PutResult};
+use crate::network::PutResult;
 use autonomi::client::payment::PaymentOption;
 use autonomi::Client;
 use autonomi::{Bytes, Scratchpad, ScratchpadAddress, SecretKey, Wallet};
