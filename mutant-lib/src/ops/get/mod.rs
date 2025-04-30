@@ -8,7 +8,7 @@ use crate::ops::worker::{AsyncTask, PoolError, WorkerPool};
 use async_channel::bounded;
 use async_trait::async_trait;
 use autonomi::ScratchpadAddress;
-use log::error;
+use log::{debug, error};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, Notify, RwLock};
 use deadpool::managed::Object;
@@ -249,6 +249,11 @@ async fn fetch_pads_data(
 
         tokio::spawn(async move {
             let mut worker_index = 0;
+            let total_pads = pads_clone.len();
+
+            debug!("Distributing {} pads to {} workers in round-robin fashion",
+                   total_pads, WORKER_COUNT);
+
             for pad in pads_clone {
                 // Send round-robin to worker channels
                 let target_tx = &worker_txs_clone[worker_index % WORKER_COUNT];
@@ -257,11 +262,14 @@ async fn fetch_pads_data(
                 }
                 worker_index += 1;
             }
-            // Close all worker channels
+
+            // Close all worker channels - this doesn't prevent workers from processing
+            // items already in their queues or stealing from the global queue
             for tx in worker_txs_clone {
                 tx.close();
             }
-            // Also close the global transmitter
+
+            // Also close the global transmitter after all worker channels are closed
             global_tx_clone.close();
         })
     };

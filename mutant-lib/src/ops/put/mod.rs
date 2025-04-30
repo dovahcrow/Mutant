@@ -581,11 +581,16 @@ async fn write_pipeline(
     let send_pads_task = {
         let pads = pads.clone();
         let worker_txs_clone = worker_txs.clone();
+        let global_tx_clone = global_tx.clone();
 
         tokio::spawn(async move {
             let mut worker_index = 0;
+
+            // First, send unconfirmed pads to worker channels in round-robin fashion
+            let mut unconfirmed_count = 0;
             for pad in pads {
                 if pad.status != PadStatus::Confirmed {
+                    unconfirmed_count += 1;
                     let target_tx = &worker_txs_clone[worker_index % WORKER_COUNT];
                     if let Err(_e) = target_tx.send(pad.clone()).await {
                         break;
@@ -593,9 +598,18 @@ async fn write_pipeline(
                     worker_index += 1;
                 }
             }
+
+            debug!("Distributed {} unconfirmed pads to {} workers in round-robin fashion",
+                   unconfirmed_count, WORKER_COUNT);
+
+            // Close all worker channels - this doesn't prevent workers from processing
+            // items already in their queues or stealing from the global queue
             for tx in worker_txs_clone {
                 tx.close();
             }
+
+            // Close the global transmitter after all worker channels are closed
+            global_tx_clone.close();
         })
     };
 

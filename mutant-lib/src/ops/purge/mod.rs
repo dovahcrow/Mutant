@@ -261,20 +261,27 @@ pub(super) async fn purge(
 
         tokio::spawn(async move {
             let mut worker_index = 0;
+            let total_pads = pads_clone.len();
+
+            debug!("Distributing {} pads to {} workers in round-robin fashion",
+                   total_pads, WORKER_COUNT);
+
             for pad in pads_clone {
                 // Send round-robin
                 let target_tx = &worker_txs_clone[worker_index % WORKER_COUNT];
                 if target_tx.send(pad).await.is_err() {
-                    // error!("Failed to send pad to PURGE worker {} channel, receiver likely closed.", worker_index % WORKER_COUNT);
                     break;
                 }
                 worker_index += 1;
             }
-            // Close worker channels
+
+            // Close all worker channels - this doesn't prevent workers from processing
+            // items already in their queues or stealing from the global queue
             for tx in worker_txs_clone {
                 tx.close();
             }
-            // Close global channel
+
+            // Close global channel after all worker channels are closed
             global_tx_clone.close();
         })
     };

@@ -124,6 +124,12 @@ where
     async fn run_task_processor(self, task_id: usize) -> Result<(), PoolError<E>> {
         trace!("Worker {}: Task processor {} started", self.id, task_id);
 
+        // Counter for consecutive empty queue checks
+        let mut empty_checks = 0;
+        // Set a high value to ensure task processors keep checking for work for a longer time
+        // This helps ensure we fully utilize the capacity of 10 concurrent operations per worker
+        const MAX_EMPTY_CHECKS: usize = 100;
+
         loop {
             // Check if we've completed all work
             if let (Some(counter), Some(total)) = (&self.completed_items_counter, &self.total_items) {
@@ -144,6 +150,7 @@ where
                     match result {
                         Ok(item) => {
                             trace!("Worker {}: Task processor {} got item from local queue", self.id, task_id);
+                            empty_checks = 0; // Reset empty checks counter
                             Some(item)
                         },
                         Err(_) => None,
@@ -155,6 +162,7 @@ where
                     match result {
                         Ok(item) => {
                             trace!("Worker {}: Task processor {} got item from global queue", self.id, task_id);
+                            empty_checks = 0; // Reset empty checks counter
                             Some(item)
                         },
                         Err(_) => None,
@@ -194,6 +202,10 @@ where
                                 }
                             }
                         }
+
+                        // Continue processing - don't exit after completing an item
+                        empty_checks = 0; // Reset empty checks counter after successful processing
+                        continue;
                     },
                     Err((error, failed_item)) => {
                         trace!("Worker {}: Task processor {} encountered error: {:?}", self.id, task_id, error);
@@ -204,6 +216,10 @@ where
                         } else {
                             self.errors_collector.lock().await.push(error);
                         }
+
+                        // Continue processing after error - don't exit
+                        empty_checks = 0; // Reset empty checks counter after processing (even with error)
+                        continue;
                     }
                 }
             } else {
@@ -213,10 +229,21 @@ where
                     break;
                 }
 
-                // If we got here due to completion notification, check if we should exit
+                // If both queues are empty, increment the empty checks counter
                 if self.local_queue.is_empty() && self.global_queue.is_empty() {
-                    trace!("Worker {}: Task processor {} exiting - queues empty", self.id, task_id);
-                    break;
+                    empty_checks += 1;
+
+                    // If we've checked multiple times and still no work, sleep very briefly
+                    // to avoid busy-waiting and then try again
+                    if empty_checks < MAX_EMPTY_CHECKS {
+                        // Use a very short sleep to ensure we check for work frequently
+                        tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+                        continue;
+                    } else {
+                        trace!("Worker {}: Task processor {} exiting - queues empty after {} checks",
+                              self.id, task_id, empty_checks);
+                        break;
+                    }
                 }
             }
         }
