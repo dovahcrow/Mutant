@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix linter errors in `pad_processing_worker_semaphore` related to `select!` type inference and `process_single_pad_task` return type after concurrency refactor.
 - Fix borrow checker errors in spawned task logging and error handling within `process_single_pad_task` after concurrency refactor.
 - Corrected `Network::put` and `Network::get` calls in integration tests to match updated signatures requiring an explicit client.
+- Reduced peak memory usage during large PUT operations by eliminating chunk data duplication. Data is now read into an Arc<Vec<u8>> and chunk ranges are calculated. Network operations process data by slicing the original Arc based on these ranges.
 
 ### Changed
 - Refactor write pipeline: Replaced two-stage put/confirm tasks with a single processing loop (`process_pads`) using `tokio::select!` and `FuturesUnordered` to manage concurrent `process_pad_task` operations (put -> confirm cycle) for each pad, improving deadlock resilience.

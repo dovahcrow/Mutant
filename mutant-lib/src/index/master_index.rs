@@ -2,12 +2,14 @@ use crate::config::NetworkChoice;
 use crate::error::Error;
 use crate::index::pad_info::PadInfo;
 use crate::storage::ScratchpadAddress;
+use crc::{Crc, CRC_32_ISCSI};
 use log::{debug, info};
 use mutant_protocol::StorageMode;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
+use std::ops::Range;
 use std::path::PathBuf;
 use xdg::BaseDirectories;
 
@@ -116,7 +118,7 @@ impl MasterIndex {
         data_bytes: &[u8],
         mode: StorageMode,
         public: bool,
-    ) -> Result<(Vec<PadInfo>, Vec<Vec<u8>>), Error> {
+    ) -> Result<(Vec<PadInfo>, Vec<Range<usize>>), Error> {
         if public {
             self.create_public_key(key_name, data_bytes, mode)
         } else {
@@ -129,21 +131,20 @@ impl MasterIndex {
         key_name: &str,
         data_bytes: &[u8],
         mode: StorageMode,
-    ) -> Result<(Vec<PadInfo>, Vec<Vec<u8>>), Error> {
+    ) -> Result<(Vec<PadInfo>, Vec<Range<usize>>), Error> {
         if self.index.contains_key(key_name) {
             return Err(IndexError::KeyAlreadyExists(key_name.to_string()).into());
         }
 
-        let chunks = self.chunk_data(data_bytes, mode, false); // TODO: dont collect
-
-        let pads = self.aquire_pads(chunks.clone()); // TODO: dont clone here
+        let chunk_ranges = self.chunk_data(data_bytes, mode, false);
+        let pads = self.aquire_pads(data_bytes, &chunk_ranges, false)?;
 
         self.index
             .insert(key_name.to_string(), IndexEntry::PrivateKey(pads.clone()));
 
         self.save(self.network_choice)?;
 
-        Ok((pads, chunks))
+        Ok((pads, chunk_ranges))
     }
 
     pub fn create_public_key(
@@ -151,61 +152,85 @@ impl MasterIndex {
         key_name: &str,
         data_bytes: &[u8],
         mode: StorageMode,
-    ) -> Result<(Vec<PadInfo>, Vec<Vec<u8>>), Error> {
+    ) -> Result<(Vec<PadInfo>, Vec<Range<usize>>), Error> {
         if self.index.contains_key(key_name) {
             return Err(IndexError::KeyAlreadyExists(key_name.to_string()).into());
         }
 
-        let mut chunks = self.chunk_data(data_bytes, mode, true); // TODO: dont collect
+        let chunk_ranges = self.chunk_data(data_bytes, mode, true);
 
-        let all_pads = self.aquire_pads(chunks.clone()); // TODO: dont clone here
+        let index_pad_range = chunk_ranges[0].clone();
+        let data_ranges = &chunk_ranges[1..];
 
-        let mut pads = all_pads.clone();
+        let (index_pad_info, data_pads_info) = self.aquire_public_pads(data_bytes, data_ranges)?;
 
-        let index_pad = pads.remove(0);
+        let index_data = serde_cbor::to_vec(&data_pads_info).map_err(|e| {
+            Error::Index(IndexError::SerializationError(format!(
+                "Failed to serialize public index data: {}",
+                e
+            )))
+        })?;
+        let index_checksum = Crc::<u32>::new(&CRC_32_ISCSI).checksum(&index_data);
 
-        if pads.len() > 0 {
-            let index_data = serde_cbor::to_vec(&pads).unwrap();
-
-            chunks[0] = index_data;
-        }
+        let mut final_index_pad_info = index_pad_info;
+        final_index_pad_info.size = index_data.len();
+        final_index_pad_info.checksum = index_checksum;
+        final_index_pad_info.chunk_index = 0;
 
         self.index.insert(
             key_name.to_string(),
-            IndexEntry::PublicUpload(index_pad, pads.clone()),
+            IndexEntry::PublicUpload(final_index_pad_info.clone(), data_pads_info.clone()),
         );
 
         self.save(self.network_choice)?;
 
-        Ok((all_pads, chunks))
+        let all_pads = vec![final_index_pad_info]
+            .into_iter()
+            .chain(data_pads_info)
+            .collect();
+
+        Ok((all_pads, chunk_ranges))
     }
 
-    /// Chunk the data into pads of the given mode.
     /// If the data is public, the first pad contains the index data and the remaining pads contain the data.
     /// If the data is private, all pads contain the data.
-    pub fn chunk_data(&self, data_bytes: &[u8], mode: StorageMode, public: bool) -> Vec<Vec<u8>> {
-        let data = if public {
-            if data_bytes.len() > mode.scratchpad_size() {
-                let fake_index: Vec<PadInfo> =
-                    Vec::with_capacity((data_bytes.len() / mode.scratchpad_size()) + 1);
-                let index_data = serde_cbor::to_vec(&fake_index).unwrap();
+    /// Returns a vector of byte ranges representing the chunks in the original data_bytes.
+    /// Note: For public data > scratchpad_size, the first range (index 0) will be Range { start: 0, end: 0 }
+    /// as a placeholder for the index pad, whose actual data needs separate handling.
+    pub fn chunk_data(
+        &self,
+        data_bytes: &[u8],
+        mode: StorageMode,
+        public: bool,
+    ) -> Vec<Range<usize>> {
+        let pad_size = mode.scratchpad_size();
+        let mut ranges = Vec::new();
+        let mut current_pos = 0;
 
-                vec![index_data.as_slice()]
-                    .into_iter()
-                    .chain(data_bytes.chunks(mode.scratchpad_size()))
-                    .map(|chunk| chunk.to_vec())
-                    .collect::<Vec<_>>()
+        if public {
+            if data_bytes.len() > pad_size {
+                // Placeholder range for the index pad (which is generated later)
+                ranges.push(0..0);
+                // Calculate ranges for the actual data chunks
+                while current_pos < data_bytes.len() {
+                    let end = std::cmp::min(current_pos + pad_size, data_bytes.len());
+                    ranges.push(current_pos..end);
+                    current_pos = end;
+                }
             } else {
-                vec![data_bytes.to_vec()]
+                // If public data fits in one pad, it's just that range
+                ranges.push(0..data_bytes.len());
             }
         } else {
-            data_bytes
-                .chunks(mode.scratchpad_size())
-                .map(|chunk| chunk.to_vec())
-                .collect::<Vec<_>>()
+            // Calculate ranges for private data chunks
+            while current_pos < data_bytes.len() {
+                let end = std::cmp::min(current_pos + pad_size, data_bytes.len());
+                ranges.push(current_pos..end);
+                current_pos = end;
+            }
         };
 
-        data
+        ranges
     }
 
     pub async fn recycle_errored_pad(
@@ -416,49 +441,105 @@ impl MasterIndex {
         Ok(())
     }
 
-    fn aquire_pads(&mut self, data_bytes: Vec<Vec<u8>>) -> Vec<PadInfo> {
-        let total_length = data_bytes.len();
-
-        let mut pads = Vec::new();
-
-        let to_drain_max = self.free_pads.len().min(total_length);
-
-        let mut chunks = data_bytes.into_iter();
-
-        if !self.free_pads.is_empty() {
-            pads.extend(
-                self.free_pads
-                    .drain(0..to_drain_max)
-                    .enumerate()
-                    .map(|(i, p)| p.update_data(&chunks.next().unwrap(), i))
-                    .collect::<Vec<_>>(),
-            );
+    fn aquire_pads(
+        &mut self,
+        data_bytes: &[u8],
+        chunk_ranges: &[Range<usize>],
+        public: bool,
+    ) -> Result<Vec<PadInfo>, Error> {
+        if public {
+            return Err(Error::Internal(
+                "Use aquire_public_pads for public keys".to_string(),
+            ));
         }
-
-        debug!("Aquired {} pads from free_pads", pads.len());
-
-        if pads.len() < total_length {
-            pads.extend(self.generate_pads(pads.len(), chunks));
-        }
-
-        debug!("Aquired {} pads in total", pads.len());
-
-        pads
+        self.generate_pads(data_bytes, chunk_ranges.iter(), 0)
     }
 
-    fn generate_pads<I: Iterator<Item = Vec<u8>>>(
+    fn aquire_public_pads(
         &mut self,
-        starting_chunk_index: usize,
-        chunks: I,
-    ) -> Vec<PadInfo> {
-        let mut chunk_index = starting_chunk_index;
-        chunks
-            .map(|chunk| {
-                let pad = PadInfo::new(&chunk, chunk_index);
-                chunk_index += 1;
-                pad
+        data_bytes: &[u8],
+        data_ranges: &[Range<usize>],
+    ) -> Result<(PadInfo, Vec<PadInfo>), Error> {
+        let total_pads_needed = data_ranges.len() + 1; // +1 for index pad
+
+        // Aquire enough pads from free list or generate new ones
+        let mut available_pads: Vec<_> = self.free_pads.drain(..).collect();
+        let pads_to_generate = total_pads_needed.saturating_sub(available_pads.len());
+
+        for _ in 0..pads_to_generate {
+            // Create a dummy PadInfo; size and checksum will be set later
+            available_pads.push(PadInfo::new(&[], 0));
+        }
+
+        if available_pads.len() < total_pads_needed {
+            return Err(Error::Internal("Failed to aquire enough pads".to_string()));
+        }
+
+        // Assign the first pad as the index pad (details filled later)
+        let mut index_pad_info = available_pads.remove(0);
+        index_pad_info.status = PadStatus::Generated;
+        index_pad_info.chunk_index = 0;
+        index_pad_info.size = 0; // Placeholder
+        index_pad_info.checksum = 0; // Placeholder
+
+        // Generate PadInfo for data chunks
+        let data_pads_info = data_ranges
+            .iter()
+            .enumerate()
+            .map(|(i, range)| {
+                let chunk_data_slice = &data_bytes[range.clone()];
+                let mut pad_info = available_pads.remove(0);
+                pad_info.status = PadStatus::Generated;
+                pad_info.chunk_index = (i + 1) as u64; // Data chunks start at index 1
+                pad_info.size = chunk_data_slice.len();
+                pad_info.checksum = Crc::<u32>::new(&CRC_32_ISCSI).checksum(chunk_data_slice);
+                pad_info
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+
+        // Add any remaining unused acquired pads back to the free list
+        self.free_pads.extend(available_pads);
+
+        Ok((index_pad_info, data_pads_info))
+    }
+
+    fn generate_pads<'a>(
+        &mut self,
+        data_bytes: &'a [u8],
+        chunk_ranges: impl Iterator<Item = &'a Range<usize>>,
+        starting_chunk_index: usize,
+    ) -> Result<Vec<PadInfo>, Error> {
+        let ranges: Vec<_> = chunk_ranges.cloned().collect();
+        let num_pads_needed = ranges.len();
+
+        // Acquire pads: reuse free ones first, then generate new ones
+        let mut available_pads: Vec<_> = self.free_pads.drain(..).collect();
+        let pads_to_generate = num_pads_needed.saturating_sub(available_pads.len());
+
+        for _ in 0..pads_to_generate {
+            // Create a dummy PadInfo; size and checksum will be set later
+            available_pads.push(PadInfo::new(&[], 0));
+        }
+
+        if available_pads.len() < num_pads_needed {
+            return Err(Error::Internal("Failed to acquire enough pads".to_string()));
+        }
+
+        let mut generated_pads = Vec::with_capacity(num_pads_needed);
+        for (i, range) in ranges.iter().enumerate() {
+            let chunk_data_slice = &data_bytes[range.clone()];
+            let mut pad_info = available_pads.remove(0);
+            pad_info.status = PadStatus::Generated;
+            pad_info.chunk_index = (i + starting_chunk_index) as u64;
+            pad_info.size = chunk_data_slice.len();
+            pad_info.checksum = Crc::<u32>::new(&CRC_32_ISCSI).checksum(chunk_data_slice);
+            generated_pads.push(pad_info);
+        }
+
+        // Add any remaining unused acquired pads back to the free list
+        self.free_pads.extend(available_pads);
+
+        Ok(generated_pads)
     }
 
     pub fn is_finished(&self, key_name: &str) -> bool {

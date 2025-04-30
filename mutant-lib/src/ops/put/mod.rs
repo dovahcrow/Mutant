@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::index::error::IndexError;
 use crate::index::{PadInfo, PadStatus};
 use crate::internal_events::invoke_put_callback;
 use crate::network::client::{ClientManager, Config};
@@ -12,6 +13,7 @@ use deadpool::managed::Object;
 use log::{debug, error, info, warn};
 use mutant_protocol::{PutCallback, PutEvent, StorageMode};
 use std::{
+    ops::Range,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -31,8 +33,10 @@ struct Context {
     index: Arc<RwLock<crate::index::master_index::MasterIndex>>,
     network: Arc<Network>,
     name: Arc<String>,
-    chunks: Arc<Vec<Vec<u8>>>,
+    data: Arc<Vec<u8>>,
+    chunk_ranges: Arc<Vec<Range<usize>>>,
     public: bool,
+    index_pad_data: Option<Arc<Vec<u8>>>,
 }
 
 pub(super) async fn put(
@@ -121,14 +125,24 @@ async fn resume(
         .await;
     }
 
-    let chunks = index.read().await.chunk_data(&data_bytes, mode, public);
+    let index_pad_data = if public && pads.len() > 1 {
+        let data_pads: Vec<_> = pads.iter().skip(1).cloned().collect();
+        Some(Arc::new(serde_cbor::to_vec(&data_pads).map_err(|e| {
+            Error::Index(IndexError::SerializationError(e.to_string()))
+        })?))
+    } else {
+        None
+    };
+    let chunk_ranges = index.read().await.chunk_data(&data_bytes, mode, public);
 
     let context = Context {
         index: index.clone(),
         network: network.clone(),
         name: Arc::new(name.to_string()),
-        chunks: Arc::new(chunks),
+        data: data_bytes.clone(),
+        chunk_ranges: Arc::new(chunk_ranges),
         public,
+        index_pad_data,
     };
 
     write_pipeline(context, pads.clone(), no_verify, put_callback).await?;
@@ -146,10 +160,19 @@ async fn first_store(
     no_verify: bool,
     put_callback: Option<PutCallback>,
 ) -> Result<ScratchpadAddress, Error> {
-    let (pads, chunks) = index
+    let (pads, chunk_ranges) = index
         .write()
         .await
         .create_key(name, &data_bytes, mode, public)?;
+
+    let index_pad_data = if public && pads.len() > 1 {
+        let data_pads: Vec<_> = pads.iter().skip(1).cloned().collect();
+        Some(Arc::new(serde_cbor::to_vec(&data_pads).map_err(|e| {
+            Error::Index(IndexError::SerializationError(e.to_string()))
+        })?))
+    } else {
+        None
+    };
 
     info!("Created key {} with {} pads", name, pads.len());
 
@@ -159,8 +182,10 @@ async fn first_store(
         index: index.clone(),
         network: network.clone(),
         name: Arc::new(name.to_string()),
-        chunks: Arc::new(chunks),
+        chunk_ranges: Arc::new(chunk_ranges),
+        data: data_bytes.clone(),
         public,
+        index_pad_data,
     };
 
     write_pipeline(context, pads.clone(), no_verify, put_callback).await?;
@@ -200,26 +225,49 @@ impl AsyncTask<PadInfo, PutTaskContext, (), Error> for PutTaskProcessor {
         let mut put_succeeded = initial_status == PadStatus::Written;
 
         if initial_status == PadStatus::Generated || initial_status == PadStatus::Free {
-            let chunk_data = match context.base_context.chunks.get(pad.chunk_index as usize) {
-                Some(data) => data.clone(),
-                None => {
-                    error!(
-                        "CRITICAL (Worker {}): Chunk index {} out of bounds for key {}. Pad {}. Cannot process.",
-                        worker_id, pad.chunk_index, context.base_context.name, pad.address
-                    );
-                    return Err((
-                        Error::Internal(format!(
-                            "Chunk index out of bounds for pad {}",
-                            pad.address
-                        )),
-                        pad,
-                    ));
+            let is_index_pad =
+                context.base_context.public && pad.chunk_index == 0 && context.total_pads > 1;
+
+            let chunk_data_slice = {
+                if is_index_pad {
+                    context.base_context.index_pad_data.as_deref().ok_or_else(|| {
+                        error!(
+                            "CRITICAL (Worker {}): Missing index_pad_data for public index pad {}. Key: {}",
+                            worker_id, pad.address, context.base_context.name
+                        );
+                        (Error::Internal("Missing index_pad_data".to_string()), pad.clone())
+                    })?
+                } else {
+                    let range = context.base_context.chunk_ranges.get(pad.chunk_index as usize).ok_or_else(|| {
+                         error!(
+                            "CRITICAL (Worker {}): Chunk range index {} out of bounds for key {}. Pad {}. Cannot process.",
+                            worker_id, pad.chunk_index, context.base_context.name, pad.address
+                         );
+                         (Error::Internal(format!("Chunk range index {} out of bounds", pad.chunk_index)), pad.clone())
+                    })?;
+
+                    if range.end > context.base_context.data.len() {
+                        error!(
+                            "CRITICAL (Worker {}): Chunk range {:?} out of bounds for data length {} for key {}. Pad {}. Cannot process.",
+                            worker_id, range, context.base_context.data.len(), context.base_context.name, pad.address
+                         );
+                        return Err((
+                            Error::Internal(format!("Chunk range {:?} out of bounds", range)),
+                            pad.clone(),
+                        ));
+                    }
+                    &context.base_context.data[range.clone()]
                 }
             };
 
-            let is_index =
-                context.base_context.public && pad.chunk_index == 0 && context.total_pads > 1;
-            let encoding = if is_index {
+            if chunk_data_slice.len() != pad.size {
+                warn!(
+                    "Worker {}: Pad {} (chunk {}) size mismatch. Expected: {}, Got slice len: {}. Key: {}",
+                    worker_id, pad.address, pad.chunk_index, pad.size, chunk_data_slice.len(), context.base_context.name
+                 );
+            }
+
+            let encoding = if is_index_pad {
                 DATA_ENCODING_PUBLIC_INDEX
             } else if context.base_context.public {
                 DATA_ENCODING_PUBLIC_DATA
@@ -233,7 +281,7 @@ impl AsyncTask<PadInfo, PutTaskContext, (), Error> for PutTaskProcessor {
                 .put(
                     client,
                     &pad,
-                    &chunk_data,
+                    chunk_data_slice,
                     encoding,
                     context.base_context.public,
                 )
@@ -423,7 +471,7 @@ async fn write_pipeline(
 ) -> Result<(), Error> {
     let key_name = context.name.clone();
     info!("Writing pipeline for key {}", key_name);
-    let total_pads = context.chunks.len();
+    let total_pads = context.chunk_ranges.len();
 
     if total_pads == 0 {
         info!("No pads to process for key {}", key_name);

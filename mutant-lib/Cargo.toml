@@ -46,6 +46,7 @@ xdg = "2.5.2"
 mutant-protocol = { path = "../mutant-protocol" }
 async-channel = "2.3.1"
 never = "0.1.0"
+crc = "3.2.1"
 
 [dev-dependencies]
 # assert_matches = "1.5" # Removed
