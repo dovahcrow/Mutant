@@ -20,7 +20,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock};
 use tokio::time::Instant;
 
 use super::{
@@ -199,7 +199,6 @@ struct PutTaskContext {
     no_verify: Arc<bool>,
     put_callback: Option<PutCallback>,
     total_pads: usize,
-    client_manager: Arc<Object<ClientManager>>,
     completion_notifier: Arc<Notify>,
     confirmed_counter: Arc<AtomicUsize>,
 }
@@ -208,16 +207,18 @@ struct PutTaskContext {
 struct PutTaskProcessor;
 
 #[async_trait]
-impl AsyncTask<PadInfo, PutTaskContext, (), Error> for PutTaskProcessor {
+impl AsyncTask<PadInfo, PutTaskContext, Arc<Mutex<Object<ClientManager>>>, (), Error> for PutTaskProcessor {
     type ItemId = usize;
 
     async fn process(
         &self,
         worker_id: usize,
         context: Arc<PutTaskContext>,
+        client_mutex: &Arc<Mutex<Object<ClientManager>>>,
         pad: PadInfo,
     ) -> Result<(Self::ItemId, ()), (Error, PadInfo)> {
-        let client = &*context.client_manager;
+        let client_guard = client_mutex.lock().await;
+        let client = &*client_guard;
         let current_pad_address = pad.address;
         let initial_status = pad.status;
 
@@ -372,7 +373,18 @@ impl AsyncTask<PadInfo, PutTaskContext, (), Error> for PutTaskProcessor {
                 }
             } else {
                 let start_time = Instant::now();
+                log::trace!(
+                    "Worker {} starting confirmation loop for pad {}",
+                    worker_id,
+                    current_pad_address
+                );
                 loop {
+                    log::trace!(
+                        "Worker {} checking timeout for pad {}. Elapsed: {:?}",
+                        worker_id,
+                        current_pad_address,
+                        start_time.elapsed()
+                    );
                     if start_time.elapsed() >= MAX_CONFIRMATION_DURATION {
                         warn!(
                             "Worker {} failed to confirm pad {} (chunk {}) within time budget ({:?}). Will trigger recycling.",
@@ -395,6 +407,11 @@ impl AsyncTask<PadInfo, PutTaskContext, (), Error> for PutTaskProcessor {
                         Some(&secret_key_owned)
                     };
 
+                    log::trace!(
+                        "Worker {} attempting network.get for confirmation of pad {}",
+                        worker_id,
+                        current_pad_address
+                    );
                     match context
                         .base_context
                         .network
@@ -402,6 +419,7 @@ impl AsyncTask<PadInfo, PutTaskContext, (), Error> for PutTaskProcessor {
                         .await
                     {
                         Ok(gotten_pad) => {
+                            log::trace!("Worker {} network.get successful for pad {}. Counter: {}, Expected >= {}", worker_id, current_pad_address, gotten_pad.counter, pad_after_put.last_known_counter);
                             if (pad_after_put.last_known_counter == 0 && gotten_pad.counter == 0)
                                 || pad_after_put.last_known_counter <= gotten_pad.counter
                             {
@@ -447,9 +465,14 @@ impl AsyncTask<PadInfo, PutTaskContext, (), Error> for PutTaskProcessor {
                             }
                         }
                         Err(e) => {
-                            warn!("Worker {} failed GET during confirmation for pad {}: {}. Retrying check.", worker_id, current_pad_address, e);
+                            log::warn!("Worker {} network.get failed during confirmation for pad {}: {}. Retrying check.", worker_id, current_pad_address, e);
                         }
                     }
+                    log::trace!(
+                        "Worker {} sleeping before next confirmation check for pad {}",
+                        worker_id,
+                        current_pad_address
+                    );
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
             }
@@ -515,20 +538,27 @@ async fn write_pipeline(
     let completion_notifier = Arc::new(Notify::new());
     let total_pads_atomic = Arc::new(AtomicUsize::new(total_pads));
 
-    let client_guard = Arc::new(context.network.get_client(Config::Put).await.map_err(|e| {
-        error!("Failed to get client for pool: {}", e);
-        Error::Network(NetworkError::ClientAccessError(format!(
-            "Failed to get client for pool: {}",
-            e
-        )))
-    })?);
+    // Create clients for each worker - EXACTLY ONE client per worker
+    let mut clients = Vec::with_capacity(WORKER_COUNT);
+    for worker_id in 0..WORKER_COUNT {
+        let client = context.network.get_client(Config::Put).await.map_err(|e| {
+            error!("Failed to get client for worker {}: {}", worker_id, e);
+            Error::Network(NetworkError::ClientAccessError(format!(
+                "Failed to get client for worker {}: {}",
+                worker_id, e
+            )))
+        })?;
+        // Double Arc wrapping to match the expected type in WorkerPool
+        // The outer Arc is for sharing the client among the worker's task processors
+        // The inner Arc is to match the type expected by the AsyncTask implementation
+        clients.push(Arc::new(Arc::new(Mutex::new(client))));
+    }
 
     let put_task_context = Arc::new(PutTaskContext {
         base_context: context.clone(),
         no_verify: Arc::new(no_verify),
         put_callback: put_callback.clone(),
         total_pads,
-        client_manager: client_guard,
         completion_notifier: completion_notifier.clone(),
         confirmed_counter: confirmed_pads_counter.clone(),
     });
@@ -632,6 +662,7 @@ async fn write_pipeline(
         crate::ops::BATCH_SIZE,
         put_task_context,
         Arc::new(PutTaskProcessor),
+        clients,         // Pass clients for each worker
         worker_rxs,
         global_rx,
         Some(recycle_tx),
@@ -663,8 +694,8 @@ async fn write_pipeline(
                 PoolError::PoolSetupError(msg) => {
                     Error::Internal(format!("Pool setup error: {}", msg))
                 }
-                PoolError::SemaphoreClosed => {
-                    Error::Internal("Worker semaphore closed unexpectedly".to_string())
+                PoolError::WorkerError(msg) => {
+                    Error::Internal(format!("Worker error: {}", msg))
                 }
             };
             return Err(final_error);

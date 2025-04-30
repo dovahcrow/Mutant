@@ -2,16 +2,16 @@ use crate::error::Error;
 use crate::events::{GetCallback, GetEvent};
 use crate::index::{master_index::MasterIndex, PadInfo};
 use crate::internal_events::invoke_get_callback;
-use crate::network::client::{ClientManager, Config};
+use crate::network::client::Config;
 use crate::network::{Network, NetworkError};
 use crate::ops::worker::{AsyncTask, PoolError, WorkerPool};
 use async_channel::bounded;
 use async_trait::async_trait;
 use autonomi::ScratchpadAddress;
-use deadpool::managed::Object;
-use log::{error, info, warn};
+use log::error;
 use std::{sync::Arc, time::Duration};
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock};
+use deadpool::managed::Object;
 
 use super::{
     DATA_ENCODING_PUBLIC_DATA, DATA_ENCODING_PUBLIC_INDEX, PAD_RECYCLING_RETRIES, WORKER_COUNT,
@@ -111,7 +111,6 @@ struct GetContext {
     network: Arc<Network>,
     public: bool,
     get_callback: Option<GetCallback>,
-    client_manager: Arc<Object<ClientManager>>, // Pre-fetched client
     // These are needed by the pool but less critical for GET's logic itself
     completion_notifier: Arc<Notify>,
     total_items: Arc<std::sync::atomic::AtomicUsize>,
@@ -122,18 +121,19 @@ struct GetContext {
 #[derive(Clone)] // Required by WorkerPool
 struct GetTaskProcessor;
 
+// We need to use a different approach since Object<autonomi::Client> doesn't implement Clone
+// Let's use Arc<Mutex<Object<autonomi::Client>>> as our client type
 #[async_trait]
-impl AsyncTask<PadInfo, GetContext, Vec<u8>, Error> for GetTaskProcessor {
+impl AsyncTask<PadInfo, GetContext, Arc<Mutex<Object<crate::network::client::ClientManager>>>, Vec<u8>, Error> for GetTaskProcessor {
     type ItemId = usize; // Use chunk index for ordering
 
     async fn process(
         &self,
-        worker_id: usize,
+        _worker_id: usize,
         context: Arc<GetContext>,
+        client_mutex: &Arc<Mutex<Object<crate::network::client::ClientManager>>>,  // Use the worker's client
         pad: PadInfo,
     ) -> Result<(Self::ItemId, Vec<u8>), (Error, PadInfo)> {
-        // Return (chunk_index, data) on success
-        let client = &*context.client_manager;
         let mut retries_left = PAD_RECYCLING_RETRIES; // Use same retry count logic
         let owned_key;
         let secret_key_ref = if context.public {
@@ -144,9 +144,14 @@ impl AsyncTask<PadInfo, GetContext, Vec<u8>, Error> for GetTaskProcessor {
         };
 
         loop {
+            // Acquire the client from the mutex
+            let client_guard = client_mutex.lock().await;
+            let client = &*client_guard;
+
+            // Use the provided client directly
             match context
                 .network
-                .get(client, &pad.address, secret_key_ref)
+                .get(&*client, &pad.address, secret_key_ref)
                 .await
             {
                 Ok(pad_result) => {
@@ -183,16 +188,8 @@ impl AsyncTask<PadInfo, GetContext, Vec<u8>, Error> for GetTaskProcessor {
                     return Ok((pad.chunk_index, pad_result.data));
                 }
                 Err(e) => {
-                    // warn!(
-                    //     "Worker {} error getting pad {}: {}. Retries left: {}",
-                    //     worker_id, pad.address, e, retries_left
-                    // );
                     retries_left -= 1;
                     if retries_left == 0 {
-                        // error!(
-                        //     "Worker {} failed to get pad {} after multiple retries.",
-                        //     worker_id, pad.address
-                        // );
                         return Err((Error::Network(e), pad)); // Return error and pad after retries
                     }
                     tokio::time::sleep(Duration::from_secs(1)).await; // Wait before retrying
@@ -233,20 +230,11 @@ async fn fetch_pads_data(
     let (global_tx, global_rx) =
         bounded::<PadInfo>(total_pads_to_fetch + WORKER_COUNT * crate::ops::BATCH_SIZE); // Generous buffer
 
-    // Pre-fetch client guard
-    let client_guard = Arc::new(
-        network
-            .get_client(Config::Get)
-            .await
-            .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?,
-    );
-
     // Create context for the worker pool
     let get_context = Arc::new(GetContext {
         network: network.clone(),
         public,
         get_callback: get_callback.clone(),
-        client_manager: client_guard,
         completion_notifier: Arc::new(Notify::new()),
         total_items: Arc::new(std::sync::atomic::AtomicUsize::new(total_pads_to_fetch)),
         fetched_items_counter: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -265,7 +253,6 @@ async fn fetch_pads_data(
                 // Send round-robin to worker channels
                 let target_tx = &worker_txs_clone[worker_index % WORKER_COUNT];
                 if target_tx.send(pad).await.is_err() {
-                    // error!("Failed to send pad to GET worker {} channel, receiver closed.", worker_index % WORKER_COUNT);
                     break;
                 }
                 worker_index += 1;
@@ -279,15 +266,32 @@ async fn fetch_pads_data(
         })
     };
 
+    // Create clients for each worker - EXACTLY ONE client per worker
+    let mut clients = Vec::with_capacity(WORKER_COUNT);
+    for worker_id in 0..WORKER_COUNT {
+        let client = network.get_client(Config::Get).await.map_err(|e| {
+            error!("Failed to get client for worker {}: {}", worker_id, e);
+            Error::Network(NetworkError::ClientAccessError(format!(
+                "Failed to get client for worker {}: {}",
+                worker_id, e
+            )))
+        })?;
+        // Double Arc wrapping to match the expected type in WorkerPool
+        // The outer Arc is for sharing the client among the worker's task processors
+        // The inner Arc is to match the type expected by the AsyncTask implementation
+        clients.push(Arc::new(Arc::new(Mutex::new(client))));
+    }
+
     // Create and configure the worker pool
     let pool = WorkerPool::new(
         WORKER_COUNT,
         crate::ops::BATCH_SIZE,
         get_context.clone(),
         Arc::new(GetTaskProcessor),
-        worker_rxs, // Pass worker-specific receivers
-        global_rx,  // Pass global receiver
-        None,       // No retry channel for GET
+        clients,         // Pass clients for each worker
+        worker_rxs,      // Pass worker-specific receivers
+        global_rx,       // Pass global receiver
+        None,            // No retry channel for GET
         get_context.completion_notifier.clone(),
         Some(get_context.total_items.clone()),
         Some(get_context.fetched_items_counter.clone()),
@@ -304,17 +308,7 @@ async fn fetch_pads_data(
     // Process the results from the pool
     match pool_run_result {
         Ok(mut fetched_results) => {
-            // info!(
-            //     "GET worker pool finished. Fetched {} pads.",
-            //     fetched_results.len()
-            // );
-
             if fetched_results.len() != total_pads_to_fetch {
-                // error!(
-                //     "GET worker pool finished but fetched {} pads, expected {}",
-                //     fetched_results.len(),
-                //     total_pads_to_fetch
-                // );
                 return Err(Error::Internal(
                     "Mismatch between expected and fetched pad count".to_string(),
                 ));
@@ -342,7 +336,6 @@ async fn fetch_pads_data(
             Ok(final_data)
         }
         Err(pool_error) => {
-            // error!("GET worker pool failed: {:?}", pool_error);
             // Convert PoolError to crate::Error
             let final_error = match pool_error {
                 PoolError::TaskError(task_err) => task_err,
@@ -352,8 +345,8 @@ async fn fetch_pads_data(
                 PoolError::PoolSetupError(msg) => {
                     Error::Internal(format!("Pool setup error: {}", msg))
                 }
-                PoolError::SemaphoreClosed => {
-                    Error::Internal("Worker semaphore closed unexpectedly".to_string())
+                PoolError::WorkerError(msg) => {
+                    Error::Internal(format!("Worker error: {}", msg))
                 }
             };
             Err(final_error)

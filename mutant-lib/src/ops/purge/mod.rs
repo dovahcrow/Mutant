@@ -13,7 +13,7 @@ use deadpool::managed::Object;
 use log::{debug, error, info, warn};
 use mutant_protocol::PurgeResult;
 use std::sync::Arc;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock};
 
 use super::{BATCH_SIZE, WORKER_COUNT};
 
@@ -32,7 +32,6 @@ struct PurgeContext {
     network: Arc<Network>,
     aggressive: bool,
     purge_callback: Option<PurgeCallback>,
-    client_manager: Arc<Object<ClientManager>>,
     processed_items_counter: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -40,16 +39,18 @@ struct PurgeContext {
 struct PurgeTaskProcessor;
 
 #[async_trait]
-impl AsyncTask<PadInfo, PurgeContext, PurgeTaskOutcome, Error> for PurgeTaskProcessor {
+impl AsyncTask<PadInfo, PurgeContext, Arc<Mutex<Object<ClientManager>>>, PurgeTaskOutcome, Error> for PurgeTaskProcessor {
     type ItemId = ();
 
     async fn process(
         &self,
         worker_id: usize,
         context: Arc<PurgeContext>,
+        client_mutex: &Arc<Mutex<Object<ClientManager>>>,
         pad: PadInfo,
     ) -> Result<(Self::ItemId, PurgeTaskOutcome), (Error, PadInfo)> {
-        let client = &*context.client_manager;
+        let client_guard = client_mutex.lock().await;
+        let client = &*client_guard;
 
         let get_result = context.network.get(client, &pad.address, None).await;
 
@@ -225,12 +226,21 @@ pub(super) async fn purge(
     }
     let (global_tx, global_rx) = bounded::<PadInfo>(total_pads + WORKER_COUNT * BATCH_SIZE); // Generous buffer
 
-    let client_guard = Arc::new(
-        network
-            .get_client(Config::Get)
-            .await
-            .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?,
-    );
+    // Create clients for each worker - EXACTLY ONE client per worker
+    let mut clients = Vec::with_capacity(WORKER_COUNT);
+    for worker_id in 0..WORKER_COUNT {
+        let client = network.get_client(Config::Get).await.map_err(|e| {
+            error!("Failed to get client for worker {}: {}", worker_id, e);
+            Error::Network(NetworkError::ClientAccessError(format!(
+                "Failed to get client for worker {}: {}",
+                worker_id, e
+            )))
+        })?;
+        // Double Arc wrapping to match the expected type in WorkerPool
+        // The outer Arc is for sharing the client among the worker's task processors
+        // The inner Arc is to match the type expected by the AsyncTask implementation
+        clients.push(Arc::new(Arc::new(Mutex::new(client))));
+    }
 
     let completion_notifier = Arc::new(Notify::new());
     let total_items_atomic = Arc::new(std::sync::atomic::AtomicUsize::new(total_pads));
@@ -241,7 +251,6 @@ pub(super) async fn purge(
         network: network.clone(),
         aggressive,
         purge_callback: callback.clone(),
-        client_manager: client_guard,
         processed_items_counter: processed_items_counter_atomic.clone(),
     });
 
@@ -275,9 +284,10 @@ pub(super) async fn purge(
         BATCH_SIZE,
         purge_context.clone(),
         Arc::new(PurgeTaskProcessor),
-        worker_rxs, // Pass worker receivers
-        global_rx,  // Pass global receiver
-        None,       // No retry channel needed for purge
+        clients,         // Pass clients for each worker
+        worker_rxs,      // Pass worker receivers
+        global_rx,       // Pass global receiver
+        None,            // No retry channel needed for purge
         completion_notifier.clone(),
         Some(total_items_atomic.clone()),
         Some(processed_items_counter_atomic.clone()),
@@ -351,9 +361,9 @@ pub(super) async fn purge(
                 PoolError::PoolSetupError(msg) => {
                     Err(Error::Internal(format!("Pool setup error: {}", msg)))
                 }
-                PoolError::SemaphoreClosed => Err(Error::Internal(
-                    "Worker semaphore closed unexpectedly".to_string(),
-                )),
+                PoolError::WorkerError(msg) => {
+                    Err(Error::Internal(format!("Worker error: {}", msg)))
+                }
             }
         }
     }
