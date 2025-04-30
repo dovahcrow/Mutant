@@ -230,27 +230,32 @@ impl AsyncTask<PadInfo, PutTaskContext, (), Error> for PutTaskProcessor {
 
             let chunk_data_slice = {
                 if is_index_pad {
-                    context.base_context.index_pad_data.as_deref().ok_or_else(|| {
-                        error!(
-                            "CRITICAL (Worker {}): Missing index_pad_data for public index pad {}. Key: {}",
-                            worker_id, pad.address, context.base_context.name
-                        );
-                        (Error::Internal("Missing index_pad_data".to_string()), pad.clone())
-                    })?
+                    context
+                        .base_context
+                        .index_pad_data
+                        .as_deref()
+                        .ok_or_else(|| {
+                            (
+                                Error::Internal("Missing index_pad_data".to_string()),
+                                pad.clone(),
+                            )
+                        })?
                 } else {
-                    let range = context.base_context.chunk_ranges.get(pad.chunk_index as usize).ok_or_else(|| {
-                         error!(
-                            "CRITICAL (Worker {}): Chunk range index {} out of bounds for key {}. Pad {}. Cannot process.",
-                            worker_id, pad.chunk_index, context.base_context.name, pad.address
-                         );
-                         (Error::Internal(format!("Chunk range index {} out of bounds", pad.chunk_index)), pad.clone())
-                    })?;
+                    let range = context
+                        .base_context
+                        .chunk_ranges
+                        .get(pad.chunk_index as usize)
+                        .ok_or_else(|| {
+                            (
+                                Error::Internal(format!(
+                                    "Chunk range index {} out of bounds",
+                                    pad.chunk_index
+                                )),
+                                pad.clone(),
+                            )
+                        })?;
 
                     if range.end > context.base_context.data.len() {
-                        error!(
-                            "CRITICAL (Worker {}): Chunk range {:?} out of bounds for data length {} for key {}. Pad {}. Cannot process.",
-                            worker_id, range, context.base_context.data.len(), context.base_context.name, pad.address
-                         );
                         return Err((
                             Error::Internal(format!("Chunk range {:?} out of bounds", range)),
                             pad.clone(),
@@ -470,15 +475,21 @@ async fn write_pipeline(
     put_callback: Option<PutCallback>,
 ) -> Result<(), Error> {
     let key_name = context.name.clone();
-    info!("Writing pipeline for key {}", key_name);
     let total_pads = context.chunk_ranges.len();
 
     if total_pads == 0 {
-        info!("No pads to process for key {}", key_name);
         return Ok(());
     }
 
-    let (process_tx, process_rx) = bounded::<PadInfo>(total_pads + WORKER_COUNT * BATCH_SIZE);
+    let mut worker_txs = Vec::with_capacity(WORKER_COUNT);
+    let mut worker_rxs = Vec::with_capacity(WORKER_COUNT);
+    for _ in 0..WORKER_COUNT {
+        let (tx, rx) = bounded::<PadInfo>(total_pads.saturating_add(1) / WORKER_COUNT + BATCH_SIZE);
+        worker_txs.push(tx);
+        worker_rxs.push(rx);
+    }
+    let (global_tx, global_rx) = bounded::<PadInfo>(total_pads + WORKER_COUNT * BATCH_SIZE);
+
     let (recycle_tx, recycle_rx) =
         bounded::<(Error, PadInfo)>(total_pads * PAD_RECYCLING_RETRIES + WORKER_COUNT);
 
@@ -492,16 +503,9 @@ async fn write_pipeline(
         .filter(|p| p.status == PadStatus::Generated)
         .count();
 
-    info!("Initial confirmed count: {}", initial_confirmed_count);
-    info!("Initial chunks to reserve: {}", initial_chunks_to_reserve);
-
     let confirmed_pads_counter = Arc::new(AtomicUsize::new(initial_confirmed_count));
 
     if initial_confirmed_count == total_pads {
-        info!(
-            "All {} pads for key {} already confirmed. Skipping pipeline.",
-            total_pads, key_name
-        );
         invoke_put_callback(&put_callback, PutEvent::Complete)
             .await
             .unwrap();
@@ -546,20 +550,22 @@ async fn write_pipeline(
 
     let send_pads_task = {
         let pads = pads.clone();
-        let pad_tx = process_tx.clone();
+        let worker_txs_clone = worker_txs.clone();
+
         tokio::spawn(async move {
+            let mut worker_index = 0;
             for pad in pads {
                 if pad.status != PadStatus::Confirmed {
-                    if let Err(e) = pad_tx.send(pad.clone()).await {
-                        error!(
-                            "Failed to send initial pad {} to channel: {}",
-                            pad.address, e
-                        );
+                    let target_tx = &worker_txs_clone[worker_index % WORKER_COUNT];
+                    if let Err(_e) = target_tx.send(pad.clone()).await {
                         break;
                     }
+                    worker_index += 1;
                 }
             }
-            pad_tx.close();
+            for tx in worker_txs_clone {
+                tx.close();
+            }
         })
     };
 
@@ -567,68 +573,57 @@ async fn write_pipeline(
         let index = context.index.clone();
         let key_name_clone = key_name.clone();
         let recycle_rx = recycle_rx.clone();
-        let pad_tx = process_tx.clone();
+        let global_pad_tx = global_tx.clone();
         let completion_notifier_clone = completion_notifier.clone();
         let confirmed_pads_counter_clone = confirmed_pads_counter.clone();
+        let total_pads_for_recycler = total_pads;
 
         tokio::spawn(async move {
-            info!("Starting recycler task for key {}", key_name_clone);
             let mut recycled_count = 0;
+            let max_recycles = total_pads_for_recycler * PAD_RECYCLING_RETRIES;
+
             loop {
-                if confirmed_pads_counter_clone.load(Ordering::SeqCst) >= total_pads {
-                    info!(
-                        "Recycler detected completion for key {}. Exiting.",
-                        key_name_clone
-                    );
+                if confirmed_pads_counter_clone.load(Ordering::SeqCst) >= total_pads_for_recycler {
                     break;
                 }
 
                 tokio::select! {
                     biased;
                     _ = completion_notifier_clone.notified() => {
-                        info!("Recycler received completion notification for key {}. Exiting.", key_name_clone);
                         break;
                     },
                     recv_result = recycle_rx.recv() => {
                         match recv_result {
-                            Ok((error_cause, pad_to_recycle)) => {
-                                 warn!(
-                                     "Recycling pad {} for key {} due to error: {:?}",
-                                     pad_to_recycle.address, key_name_clone, error_cause
-                                 );
-                                 recycled_count += 1;
-                                 if recycled_count > total_pads * PAD_RECYCLING_RETRIES {
-                                      error!("Exceeded maximum recycling attempts for key {}. Aborting recycling.", key_name_clone);
-                                      break;
-                                 }
+                            Ok((_error_cause, pad_to_recycle)) => {
+                                recycled_count += 1;
+                                if recycled_count > max_recycles {
+                                    continue;
+                                }
 
-                                 match index.write().await.recycle_errored_pad(&key_name_clone, &pad_to_recycle.address).await {
-                                     Ok(new_pad) => {
-                                         info!("Successfully recycled pad {} -> {} for key {}", pad_to_recycle.address, new_pad.address, key_name_clone);
-                                         if let Err(send_err) = pad_tx.send(new_pad).await {
-                                             error!("Failed to send recycled pad {} back to processing queue: {}", key_name_clone, send_err);
-                                             break;
-                                         }
-                                     },
-                                     Err(recycle_err) => {
-                                         error!(
-                                             "Failed to recycle pad {} for key {}: {}",
-                                             pad_to_recycle.address,
-                                             key_name_clone,
-                                             recycle_err
-                                         );
-                                     }
-                                 }
-                             }
+                                match index.write().await.recycle_errored_pad(&key_name_clone, &pad_to_recycle.address).await {
+                                    Ok(new_pad) => {
+                                        if let Err(_send_err) = global_pad_tx.send(new_pad).await {
+                                            break;
+                                        }
+                                    },
+                                    Err(recycle_err) => {
+                                        error!(
+                                            "Failed to recycle pad {} for key {}: {}",
+                                            pad_to_recycle.address,
+                                            key_name_clone,
+                                            recycle_err
+                                        );
+                                    }
+                                }
+                            }
                             Err(_) => {
-                                info!("Recycle channel closed for key {}. Exiting recycler.", key_name_clone);
                                 break;
                             }
                         }
                     }
                 }
             }
-            info!("Recycler task finished for key {}", key_name_clone);
+            global_pad_tx.close();
         })
     };
 
@@ -637,50 +632,33 @@ async fn write_pipeline(
         crate::ops::BATCH_SIZE,
         put_task_context,
         Arc::new(PutTaskProcessor),
-        process_rx,
+        worker_rxs,
+        global_rx,
         Some(recycle_tx),
         completion_notifier.clone(),
         Some(total_pads_atomic),
         Some(confirmed_pads_counter.clone()),
     );
 
-    info!("Starting worker pool for key {}", key_name);
     let pool_result = pool.run().await;
 
-    if let Err(e) = send_pads_task.await {
-        error!(
-            "Initial pad sending task panicked for key {}: {:?}",
-            key_name, e
-        );
-    }
+    if let Err(_e) = send_pads_task.await {}
 
-    if let Err(e) = recycler_task.await {
-        error!("Recycler task panicked for key {}: {:?}", key_name, e);
+    if let Err(_e) = recycler_task.await {
     } else {
-        info!("Recycler task joined for key {}", key_name);
     }
 
     match pool_result {
-        Ok(results) => {
-            info!("Worker pool run completed successfully for key {}. Processed results for {} items.", key_name, results.len());
+        Ok(_results) => {
             let final_confirmed_count = confirmed_pads_counter.load(Ordering::SeqCst);
-            if final_confirmed_count != total_pads {
-                warn!(
-                      "Pad processing finished for key {}, but not all pads confirmed ({} / {}). Some pads might have been lost during recycling.",
-                      key_name, final_confirmed_count, total_pads
-                  );
-            }
+            if final_confirmed_count != total_pads {}
         }
         Err(pool_error) => {
-            error!(
-                "Worker pool run failed for key {}: {:?}",
-                key_name, pool_error
-            );
             completion_notifier.notify_waiters();
             let final_error = match pool_error {
                 PoolError::TaskError(task_err) => task_err,
-                PoolError::JoinError(join_err) => {
-                    Error::Internal(format!("Worker task join error: {:?}", join_err))
+                PoolError::JoinError(_join_err) => {
+                    Error::Internal("Worker task join error".to_string())
                 }
                 PoolError::PoolSetupError(msg) => {
                     Error::Internal(format!("Pool setup error: {}", msg))
@@ -694,17 +672,17 @@ async fn write_pipeline(
     }
 
     let final_confirmed_count = confirmed_pads_counter.load(Ordering::SeqCst);
-    if final_confirmed_count == total_pads {
-        invoke_put_callback(&put_callback, PutEvent::Complete)
-            .await
-            .unwrap();
-        info!("Pad processing fully completed for key {}", key_name);
-    } else {
-        warn!(
-            "Pad processing finished for key {} with incomplete confirmation ({} / {}).",
+    if final_confirmed_count != total_pads {
+        return Err(Error::Internal(format!(
+            "Put operation finished for key {}, but final confirmed count ({}) does not match total pads ({}).",
             key_name, final_confirmed_count, total_pads
-        );
+        )));
     }
+
+    let _final_pad_status = pads.last().map(|p| p.status);
+    invoke_put_callback(&put_callback, PutEvent::Complete)
+        .await
+        .unwrap();
 
     Ok(())
 }

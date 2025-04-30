@@ -215,7 +215,15 @@ pub(super) async fn purge(
         return Ok(PurgeResult { nb_pads_purged: 0 });
     }
 
-    let (pad_tx, pad_rx) = bounded::<PadInfo>(total_pads + WORKER_COUNT);
+    // Create worker-specific and global channels
+    let mut worker_txs = Vec::with_capacity(WORKER_COUNT);
+    let mut worker_rxs = Vec::with_capacity(WORKER_COUNT);
+    for _ in 0..WORKER_COUNT {
+        let (tx, rx) = bounded::<PadInfo>(total_pads.saturating_add(1) / WORKER_COUNT + BATCH_SIZE);
+        worker_txs.push(tx);
+        worker_rxs.push(rx);
+    }
+    let (global_tx, global_rx) = bounded::<PadInfo>(total_pads + WORKER_COUNT * BATCH_SIZE); // Generous buffer
 
     let client_guard = Arc::new(
         network
@@ -239,16 +247,26 @@ pub(super) async fn purge(
 
     let send_pads_task = {
         let pads_clone = pads;
-        let pad_tx_clone = pad_tx.clone();
+        let worker_txs_clone = worker_txs.clone();
+        let global_tx_clone = global_tx.clone(); // To close later
+
         tokio::spawn(async move {
+            let mut worker_index = 0;
             for pad in pads_clone {
-                if pad_tx_clone.send(pad).await.is_err() {
-                    error!("Failed to send pad to PURGE worker channel, receiver likely closed.");
+                // Send round-robin
+                let target_tx = &worker_txs_clone[worker_index % WORKER_COUNT];
+                if target_tx.send(pad).await.is_err() {
+                    // error!("Failed to send pad to PURGE worker {} channel, receiver likely closed.", worker_index % WORKER_COUNT);
                     break;
                 }
+                worker_index += 1;
             }
-            pad_tx_clone.close();
-            debug!("Finished sending all pads to purge workers.");
+            // Close worker channels
+            for tx in worker_txs_clone {
+                tx.close();
+            }
+            // Close global channel
+            global_tx_clone.close();
         })
     };
 
@@ -257,39 +275,40 @@ pub(super) async fn purge(
         BATCH_SIZE,
         purge_context.clone(),
         Arc::new(PurgeTaskProcessor),
-        pad_rx,
-        None,
+        worker_rxs, // Pass worker receivers
+        global_rx,  // Pass global receiver
+        None,       // No retry channel needed for purge
         completion_notifier.clone(),
         Some(total_items_atomic.clone()),
         Some(processed_items_counter_atomic.clone()),
     );
 
-    info!(
-        "Starting purge worker pool with {} workers for {} pads.",
-        WORKER_COUNT, total_pads
-    );
+    // info!(
+    //     "Starting purge worker pool with {} workers for {} pads.",
+    //     WORKER_COUNT, total_pads
+    // );
 
     let pool_run_result = pool.run().await;
 
-    if let Err(e) = send_pads_task.await {
-        error!("Send pads task panicked: {:?}", e);
+    if let Err(_e) = send_pads_task.await {
+        // error!("Send pads task panicked: {:?}", e);
     } else {
-        debug!("Send pads task completed successfully.");
+        // debug!("Send pads task completed successfully.");
     }
 
     match pool_run_result {
         Ok(purge_outcomes) => {
-            info!(
-                "Purge worker pool finished. Processed outcomes for {} pads.",
-                purge_outcomes.len()
-            );
+            // info!(
+            //     "Purge worker pool finished. Processed outcomes for {} pads.",
+            //     purge_outcomes.len()
+            // );
 
             if purge_outcomes.len() != total_pads {
-                warn!(
-                     "Purge pool finished OK, but outcome count ({}) doesn't match total pads ({}). This might indicate an issue with worker error handling or counters.",
-                     purge_outcomes.len(),
-                     total_pads
-                 );
+                // warn!(
+                //      "Purge pool finished OK, but outcome count ({}) doesn't match total pads ({}). This might indicate an issue with worker error handling or counters.",
+                //      purge_outcomes.len(),
+                //      total_pads
+                //  );
             }
 
             let mut verified_count = 0;
@@ -322,7 +341,7 @@ pub(super) async fn purge(
             })
         }
         Err(pool_error) => {
-            error!("Purge worker pool failed: {:?}", pool_error);
+            // error!("Purge worker pool failed: {:?}", pool_error);
             match pool_error {
                 PoolError::TaskError(task_err) => Err(task_err),
                 PoolError::JoinError(join_err) => Err(Error::Internal(format!(

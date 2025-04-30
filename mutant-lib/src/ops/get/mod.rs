@@ -183,16 +183,16 @@ impl AsyncTask<PadInfo, GetContext, Vec<u8>, Error> for GetTaskProcessor {
                     return Ok((pad.chunk_index, pad_result.data));
                 }
                 Err(e) => {
-                    warn!(
-                        "Worker {} error getting pad {}: {}. Retries left: {}",
-                        worker_id, pad.address, e, retries_left
-                    );
+                    // warn!(
+                    //     "Worker {} error getting pad {}: {}. Retries left: {}",
+                    //     worker_id, pad.address, e, retries_left
+                    // );
                     retries_left -= 1;
                     if retries_left == 0 {
-                        error!(
-                            "Worker {} failed to get pad {} after multiple retries.",
-                            worker_id, pad.address
-                        );
+                        // error!(
+                        //     "Worker {} failed to get pad {} after multiple retries.",
+                        //     worker_id, pad.address
+                        // );
                         return Err((Error::Network(e), pad)); // Return error and pad after retries
                     }
                     tokio::time::sleep(Duration::from_secs(1)).await; // Wait before retrying
@@ -218,7 +218,20 @@ async fn fetch_pads_data(
     }
 
     // Create channels for the worker pool
-    let (pad_tx, pad_rx) = bounded::<PadInfo>(total_pads_to_fetch + WORKER_COUNT);
+    // Create worker-specific channels and a global queue channel
+    let mut worker_txs = Vec::with_capacity(WORKER_COUNT);
+    let mut worker_rxs = Vec::with_capacity(WORKER_COUNT);
+    for _ in 0..WORKER_COUNT {
+        // Bounded channel for each worker's initial tasks
+        let (tx, rx) = bounded::<PadInfo>(
+            total_pads_to_fetch.saturating_add(1) / WORKER_COUNT + crate::ops::BATCH_SIZE,
+        );
+        worker_txs.push(tx);
+        worker_rxs.push(rx);
+    }
+    // Global queue - might not be strictly necessary for GET if no recycling
+    let (global_tx, global_rx) =
+        bounded::<PadInfo>(total_pads_to_fetch + WORKER_COUNT * crate::ops::BATCH_SIZE); // Generous buffer
 
     // Pre-fetch client guard
     let client_guard = Arc::new(
@@ -242,15 +255,27 @@ async fn fetch_pads_data(
     // Task to send pads to the pool
     let send_pads_task = {
         let pads_clone = pads.clone();
-        let pad_tx_clone = pad_tx.clone();
+        // Clone worker transmitters
+        let worker_txs_clone = worker_txs.clone();
+        let global_tx_clone = global_tx.clone(); // Need to close this later
+
         tokio::spawn(async move {
+            let mut worker_index = 0;
             for pad in pads_clone {
-                if pad_tx_clone.send(pad).await.is_err() {
-                    error!("Failed to send pad to GET worker channel, receiver closed.");
+                // Send round-robin to worker channels
+                let target_tx = &worker_txs_clone[worker_index % WORKER_COUNT];
+                if target_tx.send(pad).await.is_err() {
+                    // error!("Failed to send pad to GET worker {} channel, receiver closed.", worker_index % WORKER_COUNT);
                     break;
                 }
+                worker_index += 1;
             }
-            pad_tx_clone.close();
+            // Close all worker channels
+            for tx in worker_txs_clone {
+                tx.close();
+            }
+            // Also close the global transmitter
+            global_tx_clone.close();
         })
     };
 
@@ -260,8 +285,9 @@ async fn fetch_pads_data(
         crate::ops::BATCH_SIZE,
         get_context.clone(),
         Arc::new(GetTaskProcessor),
-        pad_rx,
-        None, // No retry channel for GET
+        worker_rxs, // Pass worker-specific receivers
+        global_rx,  // Pass global receiver
+        None,       // No retry channel for GET
         get_context.completion_notifier.clone(),
         Some(get_context.total_items.clone()),
         Some(get_context.fetched_items_counter.clone()),
@@ -278,17 +304,17 @@ async fn fetch_pads_data(
     // Process the results from the pool
     match pool_run_result {
         Ok(mut fetched_results) => {
-            info!(
-                "GET worker pool finished. Fetched {} pads.",
-                fetched_results.len()
-            );
+            // info!(
+            //     "GET worker pool finished. Fetched {} pads.",
+            //     fetched_results.len()
+            // );
 
             if fetched_results.len() != total_pads_to_fetch {
-                error!(
-                    "GET worker pool finished but fetched {} pads, expected {}",
-                    fetched_results.len(),
-                    total_pads_to_fetch
-                );
+                // error!(
+                //     "GET worker pool finished but fetched {} pads, expected {}",
+                //     fetched_results.len(),
+                //     total_pads_to_fetch
+                // );
                 return Err(Error::Internal(
                     "Mismatch between expected and fetched pad count".to_string(),
                 ));
@@ -316,7 +342,7 @@ async fn fetch_pads_data(
             Ok(final_data)
         }
         Err(pool_error) => {
-            error!("GET worker pool failed: {:?}", pool_error);
+            // error!("GET worker pool failed: {:?}", pool_error);
             // Convert PoolError to crate::Error
             let final_error = match pool_error {
                 PoolError::TaskError(task_err) => task_err,
