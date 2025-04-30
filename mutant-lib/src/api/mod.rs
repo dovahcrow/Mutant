@@ -192,7 +192,7 @@ mod tests {
         let result = mutant
             .put(
                 &user_key,
-                Arc::new(data_bytes),
+                Arc::new(data_bytes.clone()),
                 StorageMode::Medium,
                 false,
                 false,
@@ -218,12 +218,12 @@ mod tests {
     async fn test_store_update() {
         let mutant = setup_mutant().await;
         let user_key = generate_random_string(10);
-        let data_bytes = generate_random_bytes(128);
+        let data_bytes_initial = generate_random_bytes(128);
 
         let result = mutant
             .put(
                 &user_key,
-                Arc::new(data_bytes),
+                Arc::new(data_bytes_initial),
                 StorageMode::Medium,
                 false,
                 false,
@@ -233,12 +233,12 @@ mod tests {
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
 
-        let data_bytes = generate_random_bytes(128);
+        let data_bytes_updated = generate_random_bytes(128);
 
         let result = mutant
             .put(
                 &user_key,
-                Arc::new(data_bytes),
+                Arc::new(data_bytes_updated.clone()),
                 StorageMode::Medium,
                 false,
                 false,
@@ -249,7 +249,7 @@ mod tests {
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
 
         let data = mutant.get(&user_key, None).await.unwrap();
-        assert_eq!(data, data_bytes);
+        assert_eq!(data, data_bytes_updated);
     }
 
     #[tokio::test]
@@ -257,11 +257,12 @@ mod tests {
         let mutant = setup_mutant().await;
         let user_key = generate_random_string(10);
         let data_bytes = generate_random_bytes(128);
+        let data_bytes_clone_for_put = data_bytes.clone();
 
         // Start the first put operation but do not await its completion
         let first_put = mutant.put(
             &user_key,
-            Arc::new(data_bytes),
+            Arc::new(data_bytes_clone_for_put),
             StorageMode::Medium,
             false,
             false,
@@ -275,7 +276,7 @@ mod tests {
         let result = mutant
             .put(
                 &user_key,
-                Arc::new(data_bytes),
+                Arc::new(data_bytes.clone()),
                 StorageMode::Medium,
                 false,
                 false,

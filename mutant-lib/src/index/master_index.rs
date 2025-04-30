@@ -159,7 +159,7 @@ impl MasterIndex {
 
         let chunk_ranges = self.chunk_data(data_bytes, mode, true);
 
-        let index_pad_range = chunk_ranges[0].clone();
+        let _index_pad_range = chunk_ranges[0].clone();
         let data_ranges = &chunk_ranges[1..];
 
         let (index_pad_info, data_pads_info) = self.aquire_public_pads(data_bytes, data_ranges)?;
@@ -174,7 +174,7 @@ impl MasterIndex {
 
         let mut final_index_pad_info = index_pad_info;
         final_index_pad_info.size = index_data.len();
-        final_index_pad_info.checksum = index_checksum;
+        final_index_pad_info.checksum = index_checksum as usize;
         final_index_pad_info.chunk_index = 0;
 
         self.index.insert(
@@ -490,9 +490,10 @@ impl MasterIndex {
                 let chunk_data_slice = &data_bytes[range.clone()];
                 let mut pad_info = available_pads.remove(0);
                 pad_info.status = PadStatus::Generated;
-                pad_info.chunk_index = (i + 1) as u64; // Data chunks start at index 1
+                pad_info.chunk_index = i + 1;
                 pad_info.size = chunk_data_slice.len();
-                pad_info.checksum = Crc::<u32>::new(&CRC_32_ISCSI).checksum(chunk_data_slice);
+                pad_info.checksum =
+                    Crc::<u32>::new(&CRC_32_ISCSI).checksum(chunk_data_slice) as usize;
                 pad_info
             })
             .collect::<Vec<_>>();
@@ -530,9 +531,9 @@ impl MasterIndex {
             let chunk_data_slice = &data_bytes[range.clone()];
             let mut pad_info = available_pads.remove(0);
             pad_info.status = PadStatus::Generated;
-            pad_info.chunk_index = (i + starting_chunk_index) as u64;
+            pad_info.chunk_index = i + starting_chunk_index;
             pad_info.size = chunk_data_slice.len();
-            pad_info.checksum = Crc::<u32>::new(&CRC_32_ISCSI).checksum(chunk_data_slice);
+            pad_info.checksum = Crc::<u32>::new(&CRC_32_ISCSI).checksum(chunk_data_slice) as usize;
             generated_pads.push(pad_info);
         }
 
