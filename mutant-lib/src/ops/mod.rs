@@ -45,7 +45,7 @@ impl Data {
     pub async fn put(
         &self,
         key_name: &str,
-        content: &[u8],
+        content: Arc<Vec<u8>>,
         mode: StorageMode,
         public: bool,
         no_verify: bool,

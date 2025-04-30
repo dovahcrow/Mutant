@@ -160,16 +160,14 @@ async fn handle_put(
     let user_key = req.user_key.clone();
     let source_path = req.source_path.clone(); // Keep path for logging
 
-    // Read data from the local source path instead of decoding base64
-    // let data_bytes = BASE64_STANDARD
-    //     .decode(&req.data_b64)
-    //     .map_err(DaemonError::Base64Decode)?;
-    let data_bytes = fs::read(&req.source_path).await.map_err(|e| {
+    // Read data into an Arc<Vec<u8>> to avoid cloning the whole data later.
+    let data_bytes_vec = fs::read(&req.source_path).await.map_err(|e| {
         DaemonError::IoError(format!(
             "Failed to read source file {}: {}",
             req.source_path, e
         ))
     })?;
+    let data_arc = Arc::new(data_bytes_vec); // Wrap in Arc
 
     let task = Task {
         id: task_id,
@@ -188,12 +186,14 @@ async fn handle_put(
     let tasks_clone = tasks.clone();
     let mutant_clone = mutant.clone();
     let update_tx_clone_for_spawn = update_tx.clone();
+    let data_arc_clone = data_arc.clone(); // Clone the Arc for the task
 
     let task_handle = tokio::spawn(async move {
         // Use the cloned handles inside the spawned task
         let tasks = tasks_clone;
         let mutant = mutant_clone;
         let update_tx = update_tx_clone_for_spawn;
+        let data_to_put = data_arc_clone; // Use the cloned Arc
 
         tracing::info!(task_id = %task_id, user_key = %user_key, source_path = %source_path, "Starting PUT task");
 
@@ -241,7 +241,7 @@ async fn handle_put(
         let result = mutant
             .put(
                 &user_key,
-                &data_bytes,
+                data_to_put, // Pass the Arc<Vec<u8>>
                 req.mode,
                 req.public,
                 req.no_verify,

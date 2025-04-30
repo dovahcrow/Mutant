@@ -39,7 +39,7 @@ pub(super) async fn put(
     index: Arc<RwLock<crate::index::master_index::MasterIndex>>,
     network: Arc<Network>,
     key_name: &str,
-    content: &[u8],
+    content: Arc<Vec<u8>>,
     mode: StorageMode,
     public: bool,
     no_verify: bool,
@@ -49,7 +49,7 @@ pub(super) async fn put(
         if index
             .read()
             .await
-            .verify_checksum(key_name, content, mode.clone())
+            .verify_checksum(key_name, &content, mode.clone())
         {
             info!("Resume for {}", key_name);
             resume(
@@ -98,7 +98,7 @@ async fn resume(
     index: Arc<RwLock<crate::index::master_index::MasterIndex>>,
     network: Arc<Network>,
     name: &str,
-    data_bytes: &[u8],
+    data_bytes: Arc<Vec<u8>>,
     mode: StorageMode,
     public: bool,
     no_verify: bool,
@@ -121,7 +121,7 @@ async fn resume(
         .await;
     }
 
-    let chunks = index.read().await.chunk_data(data_bytes, mode, public);
+    let chunks = index.read().await.chunk_data(&data_bytes, mode, public);
 
     let context = Context {
         index: index.clone(),
@@ -140,7 +140,7 @@ async fn first_store(
     index: Arc<RwLock<crate::index::master_index::MasterIndex>>,
     network: Arc<Network>,
     name: &str,
-    data_bytes: &[u8],
+    data_bytes: Arc<Vec<u8>>,
     mode: StorageMode,
     public: bool,
     no_verify: bool,
@@ -149,7 +149,7 @@ async fn first_store(
     let (pads, chunks) = index
         .write()
         .await
-        .create_key(name, data_bytes, mode, public)?;
+        .create_key(name, &data_bytes, mode, public)?;
 
     info!("Created key {} with {} pads", name, pads.len());
 

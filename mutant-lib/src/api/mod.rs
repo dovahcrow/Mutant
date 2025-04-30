@@ -4,7 +4,6 @@ use autonomi::ScratchpadAddress;
 use tokio::sync::RwLock;
 
 use crate::{
-    ops::Data,
     error::Error,
     events::{GetCallback, PurgeCallback, SyncCallback},
     index::{
@@ -12,6 +11,7 @@ use crate::{
         PadInfo,
     },
     network::{Network, NetworkChoice, DEV_TESTNET_PRIVATE_KEY_HEX},
+    ops::Data,
 };
 
 use mutant_protocol::{
@@ -63,7 +63,7 @@ impl MutAnt {
     pub async fn put(
         &self,
         user_key: &str,
-        data_bytes: &[u8],
+        data_bytes: Arc<Vec<u8>>,
         mode: StorageMode,
         public: bool,
         no_verify: bool,
@@ -192,7 +192,7 @@ mod tests {
         let result = mutant
             .put(
                 &user_key,
-                &data_bytes,
+                Arc::new(data_bytes),
                 StorageMode::Medium,
                 false,
                 false,
@@ -223,7 +223,7 @@ mod tests {
         let result = mutant
             .put(
                 &user_key,
-                &data_bytes,
+                Arc::new(data_bytes),
                 StorageMode::Medium,
                 false,
                 false,
@@ -238,7 +238,7 @@ mod tests {
         let result = mutant
             .put(
                 &user_key,
-                &data_bytes,
+                Arc::new(data_bytes),
                 StorageMode::Medium,
                 false,
                 false,
@@ -261,7 +261,7 @@ mod tests {
         // Start the first put operation but do not await its completion
         let first_put = mutant.put(
             &user_key,
-            &data_bytes,
+            Arc::new(data_bytes),
             StorageMode::Medium,
             false,
             false,
@@ -275,7 +275,7 @@ mod tests {
         let result = mutant
             .put(
                 &user_key,
-                &data_bytes,
+                Arc::new(data_bytes),
                 StorageMode::Medium,
                 false,
                 false,
