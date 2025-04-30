@@ -41,9 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected `Network::put` and `Network::get` calls in integration tests to match updated signatures requiring an explicit client.
 - Reduced peak memory usage during large PUT operations by eliminating chunk data duplication. Data is now read into an Arc<Vec<u8>> and chunk ranges are calculated. Network operations process data by slicing the original Arc based on these ranges.
 - Resolved worker concurrency issue in `put` operation by removing unnecessary Mutex around client, allowing each worker to process tasks up to its `batch_size` concurrently.
+- Fixed double counting of confirmed pads during `put` operation, preventing incorrect final count mismatch errors.
 
 ### Changed
-- Refactor write pipeline: Replaced two-stage put/confirm tasks with a single processing loop (`process_pads`) using `tokio::select!` and `FuturesUnordered` to manage concurrent `process_pad_task` operations (put -> confirm cycle) for each pad, improving deadlock resilience.
+- Refactored write pipeline: Replaced two-stage put/confirm tasks with a single processing loop (`process_pads`) using `tokio::select!` and `FuturesUnordered` to manage concurrent `process_pad_task` operations (put -> confirm cycle) for each pad, improving deadlock resilience.
 - Refactored pad preparation logic to use a single `match` statement for determining initial status and counter based on `PadOrigin`.
 - Optimized resume preparation: Removed upfront concurrent `check_existence` calls for `Generated` pads. `put_raw` now attempts creation and falls back to update if the pad already exists.
 - Refactored `mutant-lib::data::Data::put` method to extract private pad putting and confirmation logic into helper functions.
@@ -203,5 +204,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved data operations logic (`store_op`, `fetch_op`, `remove_op`) into dedicated modules (`data/ops/`).
 - Changed `purge` command to be the sole mechanism for verifying `pending_verification_pads`.
 - Refactored `put` operation in `mutant-lib` to perform chunk writes and network confirmations concurrently.
-- Aligned `reserve` logic with `put`, fixing payment errors.
-- Centralized pad reservation logic in `
+- Aligned `reserve`

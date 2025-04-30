@@ -227,11 +227,6 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
             PadStatus::Generated => true,
             PadStatus::Written | PadStatus::Free => false,
             PadStatus::Confirmed => {
-                let previous_count = context.confirmed_counter.fetch_add(1, Ordering::SeqCst);
-                let current_count = previous_count + 1;
-                if current_count == context.total_pads {
-                    context.completion_notifier.notify_waiters();
-                }
                 return Ok((pad.chunk_index, ()));
             }
         };
