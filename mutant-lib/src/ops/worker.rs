@@ -4,8 +4,8 @@ use futures::StreamExt;
 use log::{debug, trace};
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
 
 // Trait for the actual work function
@@ -25,7 +25,7 @@ where
         &self,
         worker_id: usize,
         context: Arc<Context>,
-        client: &Client,  // Pass client by reference
+        client: &Client, // Pass client by reference
         item: Item,
     ) -> Result<(Self::ItemId, TaskResult), (TaskError, Item)>; // Return (ID, Result) on success
 }
@@ -40,7 +40,7 @@ where
     JoinError(tokio::task::JoinError), // Error joining a task handle
     PoolSetupError(String),            // e.g., failed to get client
     #[allow(dead_code)]
-    WorkerError(String),               // Error from a worker
+    WorkerError(String), // Error from a worker
 }
 
 // Worker structure to manage a set of task processors
@@ -57,7 +57,7 @@ where
     id: usize,
     batch_size: usize,
     context: Arc<Context>,
-    client: Arc<Client>,  // Each worker has its own client, shared among its task processors
+    client: Arc<Client>, // Each worker has its own client, shared among its task processors
     task_processor: Arc<Task>,
     local_queue: Receiver<Item>,
     global_queue: Receiver<Item>,
@@ -79,8 +79,6 @@ where
     E: std::fmt::Debug + Send + Clone + 'static,
 {
     async fn run(self) -> Result<(), PoolError<E>> {
-        debug!("Worker {} starting with batch_size {}", self.id, self.batch_size);
-
         // Create a set of task processors
         let mut task_handles = FuturesUnordered::new();
 
@@ -91,7 +89,7 @@ where
                 id: self.id,
                 batch_size: self.batch_size,
                 context: self.context.clone(),
-                client: self.client.clone(),  // Share the worker's client among task processors
+                client: self.client.clone(), // Share the worker's client among task processors
                 task_processor: self.task_processor.clone(),
                 local_queue: self.local_queue.clone(),
                 global_queue: self.global_queue.clone(),
@@ -117,76 +115,99 @@ where
             }
         }
 
-        debug!("Worker {} completed all task processors", self.id);
         Ok(())
     }
 
     async fn run_task_processor(self, task_id: usize) -> Result<(), PoolError<E>> {
-        trace!("Worker {}: Task processor {} started", self.id, task_id);
+        // Create a channel for signaling completion
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
-        // Counter for consecutive empty queue checks
-        let mut empty_checks = 0;
-        // Set a high value to ensure task processors keep checking for work for a longer time
-        // This helps ensure we fully utilize the capacity of 10 concurrent operations per worker
-        const MAX_EMPTY_CHECKS: usize = 100;
+        // Clone all the values we need to move into the monitor task
+        let worker_id = self.id;
+        let completion_notifier_clone = self.completion_notifier.clone();
+        let completed_items_counter_clone = self.completed_items_counter.clone();
+        let total_items_clone = self.total_items.clone();
+        let local_queue_clone = self.local_queue.clone();
+        let global_queue_clone = self.global_queue.clone();
 
-        loop {
-            // Check if we've completed all work
-            if let (Some(counter), Some(total)) = (&self.completed_items_counter, &self.total_items) {
-                let current_count = counter.load(Ordering::SeqCst);
-                let total_count = total.load(Ordering::SeqCst);
-                if total_count > 0 && current_count >= total_count {
-                    trace!("Worker {}: Task processor {} detected completion ({}/{})",
-                          self.id, task_id, current_count, total_count);
+        // Spawn a task to monitor for completion and signal shutdown
+        let monitor_task = tokio::spawn(async move {
+            loop {
+                // Wait for completion notification
+                completion_notifier_clone.notified().await;
+
+                // Check if we've completed all work
+                if let (Some(counter), Some(total)) =
+                    (&completed_items_counter_clone, &total_items_clone)
+                {
+                    let current_count = counter.load(Ordering::SeqCst);
+                    let total_count = total.load(Ordering::SeqCst);
+                    if total_count > 0 && current_count >= total_count {
+                        // Signal shutdown to the task processor
+                        let _ = shutdown_tx.send(()).await;
+                        break;
+                    }
+                }
+
+                // If both queues are closed, signal shutdown
+                if local_queue_clone.is_closed() && global_queue_clone.is_closed() {
+                    let _ = shutdown_tx.send(()).await;
                     break;
                 }
-            }
 
-            // Try to get work from local queue first, then global queue
+                // Sleep briefly to avoid busy-waiting
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            }
+        });
+
+        // Main processing loop
+        loop {
+            // Try to get work from local queue first, then global queue, or wait for shutdown
             let item = tokio::select! {
                 biased;
 
                 result = self.local_queue.recv() => {
                     match result {
                         Ok(item) => {
-                            trace!("Worker {}: Task processor {} got item from local queue", self.id, task_id);
-                            empty_checks = 0; // Reset empty checks counter
                             Some(item)
                         },
-                        Err(_) => None,
+                        Err(_) => {
+                            None
+                        },
                     }
                 },
 
                 // If local queue is empty, try global queue
-                result = self.global_queue.recv(), if self.local_queue.is_empty() => {
+                result = self.global_queue.recv() => {
                     match result {
                         Ok(item) => {
-                            trace!("Worker {}: Task processor {} got item from global queue", self.id, task_id);
-                            empty_checks = 0; // Reset empty checks counter
                             Some(item)
                         },
-                        Err(_) => None,
+                        Err(_) => {
+                            None
+                        },
                     }
                 },
 
-                // Check for completion notification
-                _ = self.completion_notifier.notified(), if self.local_queue.is_empty() && self.global_queue.is_empty() => {
-                    trace!("Worker {}: Task processor {} received completion notification", self.id, task_id);
+                // Check for shutdown signal
+                _ = shutdown_rx.recv() => {
                     None
                 }
             };
 
             if let Some(item) = item {
                 // Process the item
-                trace!("Worker {}: Task processor {} processing item", self.id, task_id);
-                match self.task_processor.process(
-                    self.id,
-                    self.context.clone(),
-                    &self.client,  // Pass client by reference
-                    item
-                ).await {
+                match self
+                    .task_processor
+                    .process(
+                        self.id,
+                        self.context.clone(),
+                        &self.client, // Pass client by reference
+                        item,
+                    )
+                    .await
+                {
                     Ok((item_id, result)) => {
-                        trace!("Worker {}: Task processor {} completed item {:?}", self.id, task_id, item_id);
                         self.results_collector.lock().await.push((item_id, result));
 
                         if let Some(counter) = &self.completed_items_counter {
@@ -196,19 +217,12 @@ where
                             if let Some(total) = &self.total_items {
                                 let total_count = total.load(Ordering::SeqCst);
                                 if total_count > 0 && current >= total_count {
-                                    trace!("Worker {}: Task processor {} notifying completion ({}/{})",
-                                          self.id, task_id, current, total_count);
                                     self.completion_notifier.notify_waiters();
                                 }
                             }
                         }
-
-                        // Continue processing - don't exit after completing an item
-                        empty_checks = 0; // Reset empty checks counter after successful processing
-                        continue;
-                    },
+                    }
                     Err((error, failed_item)) => {
-                        trace!("Worker {}: Task processor {} encountered error: {:?}", self.id, task_id, error);
                         if let Some(retry_tx) = &self.retry_sender {
                             if retry_tx.send((error.clone(), failed_item)).await.is_err() {
                                 self.errors_collector.lock().await.push(error);
@@ -216,39 +230,30 @@ where
                         } else {
                             self.errors_collector.lock().await.push(error);
                         }
-
-                        // Continue processing after error - don't exit
-                        empty_checks = 0; // Reset empty checks counter after processing (even with error)
-                        continue;
                     }
                 }
             } else {
-                // No more work and all queues are empty or closed
+                // No more work and all queues are empty or closed, or we received a shutdown signal
                 if self.local_queue.is_closed() && self.global_queue.is_closed() {
-                    trace!("Worker {}: Task processor {} exiting - queues closed", self.id, task_id);
                     break;
                 }
 
-                // If both queues are empty, increment the empty checks counter
-                if self.local_queue.is_empty() && self.global_queue.is_empty() {
-                    empty_checks += 1;
-
-                    // If we've checked multiple times and still no work, sleep very briefly
-                    // to avoid busy-waiting and then try again
-                    if empty_checks < MAX_EMPTY_CHECKS {
-                        // Use a very short sleep to ensure we check for work frequently
-                        tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-                        continue;
-                    } else {
-                        trace!("Worker {}: Task processor {} exiting - queues empty after {} checks",
-                              self.id, task_id, empty_checks);
+                // Check if we've completed all work
+                if let (Some(counter), Some(total)) =
+                    (&self.completed_items_counter, &self.total_items)
+                {
+                    let current_count = counter.load(Ordering::SeqCst);
+                    let total_count = total.load(Ordering::SeqCst);
+                    if total_count > 0 && current_count >= total_count {
                         break;
                     }
                 }
             }
         }
 
-        debug!("Worker {}: Task processor {} completed", self.id, task_id);
+        // Cancel the monitor task
+        monitor_task.abort();
+
         Ok(())
     }
 }
@@ -270,7 +275,7 @@ where
     batch_size: usize,
     context: Arc<Context>,
     task: Arc<Task>,
-    clients: Vec<Arc<Client>>,  // EXACTLY ONE client per worker (critical requirement)
+    clients: Vec<Arc<Client>>, // EXACTLY ONE client per worker (critical requirement)
     worker_item_receivers: Vec<Receiver<Item>>,
     global_item_receiver: Receiver<Item>,
     retry_sender: Option<Sender<(E, Item)>>,
@@ -296,7 +301,7 @@ where
         batch_size: usize,
         context: Arc<Context>,
         task: Arc<Task>,
-        clients: Vec<Arc<Client>>,  // EXACTLY ONE client per worker (critical requirement)
+        clients: Vec<Arc<Client>>, // EXACTLY ONE client per worker (critical requirement)
         worker_item_receivers: Vec<Receiver<Item>>,
         global_item_receiver: Receiver<Item>,
         retry_sender: Option<Sender<(E, Item)>>,
@@ -332,9 +337,8 @@ where
     }
 
     pub async fn run(mut self) -> Result<Vec<(Task::ItemId, T)>, PoolError<E>> {
-        debug!("Starting WorkerPool with {} workers, {} batch size", self.num_workers, self.batch_size);
-
-        let results_collector: Arc<Mutex<Vec<(Task::ItemId, T)>>> = Arc::new(Mutex::new(Vec::new()));
+        let results_collector: Arc<Mutex<Vec<(Task::ItemId, T)>>> =
+            Arc::new(Mutex::new(Vec::new()));
         let errors_collector: Arc<Mutex<Vec<E>>> = Arc::new(Mutex::new(Vec::new()));
 
         let worker_rxs = std::mem::take(&mut self.worker_item_receivers);
@@ -343,12 +347,14 @@ where
 
         // Create workers with EXACTLY ONE client per worker
         // Each worker will spawn batch_size task processors that share the worker's client
-        for ((worker_id, worker_rx), client) in worker_rxs.into_iter().enumerate().zip(clients.into_iter()) {
+        for ((worker_id, worker_rx), client) in
+            worker_rxs.into_iter().enumerate().zip(clients.into_iter())
+        {
             let worker = Worker {
                 id: worker_id,
                 batch_size: self.batch_size,
                 context: self.context.clone(),
-                client,  // Assign exactly ONE client to each worker
+                client, // Assign exactly ONE client to each worker
                 task_processor: self.task.clone(),
                 local_queue: worker_rx,
                 global_queue: self.global_item_receiver.clone(),
@@ -360,9 +366,7 @@ where
                 completed_items_counter: self.completed_items_counter.clone(),
             };
 
-            worker_handles.push(tokio::spawn(async move {
-                worker.run().await
-            }));
+            worker_handles.push(tokio::spawn(async move { worker.run().await }));
         }
 
         // Wait for all workers to complete
@@ -374,8 +378,6 @@ where
             }
         }
 
-        debug!("All workers completed, checking for errors");
-
         // Check for errors
         let errors = errors_collector.lock().await;
         if !errors.is_empty() {
@@ -383,7 +385,6 @@ where
         }
 
         // Return results
-        debug!("WorkerPool completed successfully");
         match Arc::try_unwrap(results_collector) {
             Ok(mutex) => Ok(mutex.into_inner()),
             Err(_) => Err(PoolError::PoolSetupError(

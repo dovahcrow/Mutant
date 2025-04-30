@@ -207,59 +207,62 @@ struct PutTaskContext {
 struct PutTaskProcessor;
 
 #[async_trait]
-impl AsyncTask<PadInfo, PutTaskContext, Arc<Mutex<Object<ClientManager>>>, (), Error> for PutTaskProcessor {
+impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for PutTaskProcessor {
     type ItemId = usize;
 
     async fn process(
         &self,
         worker_id: usize,
         context: Arc<PutTaskContext>,
-        client_mutex: &Arc<Mutex<Object<ClientManager>>>,
+        client: &Object<ClientManager>,
         pad: PadInfo,
     ) -> Result<(Self::ItemId, ()), (Error, PadInfo)> {
-        let client_guard = client_mutex.lock().await;
-        let client = &*client_guard;
+        let mut pad = pad;
         let current_pad_address = pad.address;
         let initial_status = pad.status;
-
+        let mut put_succeeded = false;
         let mut pad_after_put = pad.clone();
-        let mut put_succeeded = initial_status == PadStatus::Written;
 
-        if initial_status == PadStatus::Generated || initial_status == PadStatus::Free {
+        let should_put = match initial_status {
+            PadStatus::Generated => true,
+            PadStatus::Written => false,
+            PadStatus::Confirmed => {
+                let previous_count = context.confirmed_counter.fetch_add(1, Ordering::SeqCst);
+                let current_count = previous_count + 1;
+                if current_count == context.total_pads {
+                    context.completion_notifier.notify_waiters();
+                }
+                return Ok((pad.chunk_index, ()));
+            }
+            PadStatus::Recycled => true,
+        };
+
+        if should_put {
             let is_index_pad =
                 context.base_context.public && pad.chunk_index == 0 && context.total_pads > 1;
-
-            let chunk_data_slice = {
-                if is_index_pad {
-                    context
-                        .base_context
-                        .index_pad_data
-                        .as_deref()
-                        .ok_or_else(|| {
-                            (
-                                Error::Internal("Missing index_pad_data".to_string()),
-                                pad.clone(),
-                            )
-                        })?
-                } else {
-                    let range = context
-                        .base_context
-                        .chunk_ranges
-                        .get(pad.chunk_index as usize)
-                        .ok_or_else(|| {
-                            (
-                                Error::Internal(format!(
-                                    "Chunk range index {} out of bounds",
-                                    pad.chunk_index
-                                )),
-                                pad.clone(),
-                            )
-                        })?;
-
+            let chunk_data_slice = match (is_index_pad, &context.base_context.index_pad_data) {
+                (true, Some(index_data)) => &index_data[..],
+                (true, None) => {
+                    error!(
+                        "Worker {} missing index pad data for pad {}",
+                        worker_id, current_pad_address
+                    );
+                    return Err((Error::Internal("Missing index pad data".to_string()), pad));
+                }
+                (false, _) => {
+                    let chunk_index = pad.chunk_index;
+                    let range = context.base_context.chunk_ranges[chunk_index].clone();
                     if range.end > context.base_context.data.len() {
+                        error!(
+                            "Worker {} found invalid range {:?} for chunk {} (data len: {}) in pad {}",
+                            worker_id, range, chunk_index, context.base_context.data.len(), current_pad_address
+                        );
                         return Err((
-                            Error::Internal(format!("Chunk range {:?} out of bounds", range)),
-                            pad.clone(),
+                            Error::Internal(format!(
+                                "Invalid data range for chunk {} (pad {}). Range: {:?}, Data Len: {}",
+                                chunk_index, current_pad_address, range, context.base_context.data.len()
+                            )),
+                            pad,
                         ));
                     }
                     &context.base_context.data[range.clone()]
@@ -373,18 +376,7 @@ impl AsyncTask<PadInfo, PutTaskContext, Arc<Mutex<Object<ClientManager>>>, (), E
                 }
             } else {
                 let start_time = Instant::now();
-                log::trace!(
-                    "Worker {} starting confirmation loop for pad {}",
-                    worker_id,
-                    current_pad_address
-                );
                 loop {
-                    log::trace!(
-                        "Worker {} checking timeout for pad {}. Elapsed: {:?}",
-                        worker_id,
-                        current_pad_address,
-                        start_time.elapsed()
-                    );
                     if start_time.elapsed() >= MAX_CONFIRMATION_DURATION {
                         warn!(
                             "Worker {} failed to confirm pad {} (chunk {}) within time budget ({:?}). Will trigger recycling.",
@@ -407,11 +399,6 @@ impl AsyncTask<PadInfo, PutTaskContext, Arc<Mutex<Object<ClientManager>>>, (), E
                         Some(&secret_key_owned)
                     };
 
-                    log::trace!(
-                        "Worker {} attempting network.get for confirmation of pad {}",
-                        worker_id,
-                        current_pad_address
-                    );
                     match context
                         .base_context
                         .network
@@ -419,7 +406,6 @@ impl AsyncTask<PadInfo, PutTaskContext, Arc<Mutex<Object<ClientManager>>>, (), E
                         .await
                     {
                         Ok(gotten_pad) => {
-                            log::trace!("Worker {} network.get successful for pad {}. Counter: {}, Expected >= {}", worker_id, current_pad_address, gotten_pad.counter, pad_after_put.last_known_counter);
                             if (pad_after_put.last_known_counter == 0 && gotten_pad.counter == 0)
                                 || pad_after_put.last_known_counter <= gotten_pad.counter
                             {
@@ -451,11 +437,6 @@ impl AsyncTask<PadInfo, PutTaskContext, Arc<Mutex<Object<ClientManager>>>, (), E
                                         )
                                     })?;
 
-                                debug!(
-                                    "Worker {} confirmed Pad {}. Total Confirmed: {}",
-                                    worker_id, current_pad_address, current_count
-                                );
-
                                 if current_count == context.total_pads {
                                     context.completion_notifier.notify_waiters();
                                 }
@@ -465,29 +446,25 @@ impl AsyncTask<PadInfo, PutTaskContext, Arc<Mutex<Object<ClientManager>>>, (), E
                             }
                         }
                         Err(e) => {
-                            log::warn!("Worker {} network.get failed during confirmation for pad {}: {}. Retrying check.", worker_id, current_pad_address, e);
+                            warn!("Worker {} network.get failed during confirmation for pad {}: {}. Retrying check.", worker_id, current_pad_address, e);
                         }
                     }
-                    log::trace!(
-                        "Worker {} sleeping before next confirmation check for pad {}",
-                        worker_id,
-                        current_pad_address
-                    );
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
             }
         } else {
-            error!("Worker {} reached unexpected state for pad {} (Put skipped/failed, but no error returned earlier).", worker_id, current_pad_address);
-            return Err((
+            error!(
+                "Worker {} reached unexpected end of process for pad {} (Status: {:?})",
+                worker_id, current_pad_address, pad_after_put.status
+            );
+            Err((
                 Error::Internal(format!(
-                    "Inconsistent state for pad {}",
+                    "Inconsistent state at end of processing for pad {}",
                     current_pad_address
                 )),
-                pad,
-            ));
+                pad_after_put,
+            ))
         }
-
-        Ok((pad.chunk_index, ()))
     }
 }
 
@@ -538,7 +515,6 @@ async fn write_pipeline(
     let completion_notifier = Arc::new(Notify::new());
     let total_pads_atomic = Arc::new(AtomicUsize::new(total_pads));
 
-    // Create clients for each worker - EXACTLY ONE client per worker
     let mut clients = Vec::with_capacity(WORKER_COUNT);
     for worker_id in 0..WORKER_COUNT {
         let client = context.network.get_client(Config::Put).await.map_err(|e| {
@@ -548,10 +524,7 @@ async fn write_pipeline(
                 worker_id, e
             )))
         })?;
-        // Double Arc wrapping to match the expected type in WorkerPool
-        // The outer Arc is for sharing the client among the worker's task processors
-        // The inner Arc is to match the type expected by the AsyncTask implementation
-        clients.push(Arc::new(Arc::new(Mutex::new(client))));
+        clients.push(Arc::new(client));
     }
 
     let put_task_context = Arc::new(PutTaskContext {
@@ -582,11 +555,13 @@ async fn write_pipeline(
         let pads = pads.clone();
         let worker_txs_clone = worker_txs.clone();
         let global_tx_clone = global_tx.clone();
+        let completion_notifier_clone = completion_notifier.clone();
+        let confirmed_pads_counter_clone = confirmed_pads_counter.clone();
+        let total_pads_atomic_clone = total_pads_atomic.clone();
 
         tokio::spawn(async move {
             let mut worker_index = 0;
 
-            // First, send unconfirmed pads to worker channels in round-robin fashion
             let mut unconfirmed_count = 0;
             for pad in pads {
                 if pad.status != PadStatus::Confirmed {
@@ -599,16 +574,28 @@ async fn write_pipeline(
                 }
             }
 
-            debug!("Distributed {} unconfirmed pads to {} workers in round-robin fashion",
-                   unconfirmed_count, WORKER_COUNT);
+            loop {
+                let confirmed_count = confirmed_pads_counter_clone.load(Ordering::SeqCst);
+                let total_count = total_pads_atomic_clone.load(Ordering::SeqCst);
 
-            // Close all worker channels - this doesn't prevent workers from processing
-            // items already in their queues or stealing from the global queue
+                if confirmed_count >= total_count {
+                    break;
+                }
+
+                tokio::select! {
+                    _ = completion_notifier_clone.notified() => {
+                        break;
+                    }
+                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
+                        // Continue checking
+                    }
+                }
+            }
+
             for tx in worker_txs_clone {
                 tx.close();
             }
 
-            // Close the global transmitter after all worker channels are closed
             global_tx_clone.close();
         })
     };
@@ -671,12 +658,19 @@ async fn write_pipeline(
         })
     };
 
-    let pool = WorkerPool::new(
+    let pool: WorkerPool<
+        PadInfo,
+        PutTaskContext,
+        Object<ClientManager>,
+        PutTaskProcessor,
+        (),
+        Error,
+    > = WorkerPool::new(
         WORKER_COUNT,
         crate::ops::BATCH_SIZE,
         put_task_context,
         Arc::new(PutTaskProcessor),
-        clients,         // Pass clients for each worker
+        clients,
         worker_rxs,
         global_rx,
         Some(recycle_tx),
@@ -708,9 +702,7 @@ async fn write_pipeline(
                 PoolError::PoolSetupError(msg) => {
                     Error::Internal(format!("Pool setup error: {}", msg))
                 }
-                PoolError::WorkerError(msg) => {
-                    Error::Internal(format!("Worker error: {}", msg))
-                }
+                PoolError::WorkerError(msg) => Error::Internal(format!("Worker error: {}", msg)),
             };
             return Err(final_error);
         }

@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix borrow checker errors in spawned task logging and error handling within `process_single_pad_task` after concurrency refactor.
 - Corrected `Network::put` and `Network::get` calls in integration tests to match updated signatures requiring an explicit client.
 - Reduced peak memory usage during large PUT operations by eliminating chunk data duplication. Data is now read into an Arc<Vec<u8>> and chunk ranges are calculated. Network operations process data by slicing the original Arc based on these ranges.
+- Resolved worker concurrency issue in `put` operation by removing unnecessary Mutex around client, allowing each worker to process tasks up to its `batch_size` concurrently.
 
 ### Changed
 - Refactor write pipeline: Replaced two-stage put/confirm tasks with a single processing loop (`process_pads`) using `tokio::select!` and `FuturesUnordered` to manage concurrent `process_pad_task` operations (put -> confirm cycle) for each pad, improving deadlock resilience.
@@ -55,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Better organization of task-related operations
 - Removed unused tokio-tungstenite and futures-util dependencies from mutant-client
 - Enhanced logging in mutant-client for better visibility of operations and task progress
+- Added a new health check endpoint to verify the connection to the network.
 
 ### Added
 - Added integration test (`test_generated_pad_counter_increment`) to verify scratchpad counter increments correctly on successive writes to generated pads.

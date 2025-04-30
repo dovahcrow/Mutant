@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use autonomi::ScratchpadAddress;
 use log::{debug, error};
 use std::{sync::Arc, time::Duration};
+use std::sync::atomic::Ordering;
 use tokio::sync::{Mutex, Notify, RwLock};
 use deadpool::managed::Object;
 
@@ -246,6 +247,9 @@ async fn fetch_pads_data(
         // Clone worker transmitters
         let worker_txs_clone = worker_txs.clone();
         let global_tx_clone = global_tx.clone(); // Need to close this later
+        let completion_notifier_clone = get_context.completion_notifier.clone();
+        let fetched_items_counter_clone = get_context.fetched_items_counter.clone();
+        let total_items_clone = get_context.total_items.clone();
 
         tokio::spawn(async move {
             let mut worker_index = 0;
@@ -263,8 +267,30 @@ async fn fetch_pads_data(
                 worker_index += 1;
             }
 
-            // Close all worker channels - this doesn't prevent workers from processing
-            // items already in their queues or stealing from the global queue
+            // Wait for all pads to be fetched before closing channels
+            // This ensures that all task processors stay alive until all work is done
+            loop {
+                let fetched_count = fetched_items_counter_clone.load(Ordering::SeqCst);
+                let total_count = total_items_clone.load(Ordering::SeqCst);
+
+                if fetched_count >= total_count {
+                    debug!("All pads fetched ({}/{}), closing channels", fetched_count, total_count);
+                    break;
+                }
+
+                // Wait for completion notification or check again after a delay
+                tokio::select! {
+                    _ = completion_notifier_clone.notified() => {
+                        debug!("Received completion notification, closing channels");
+                        break;
+                    }
+                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
+                        // Continue checking
+                    }
+                }
+            }
+
+            // Only close channels after all work is done
             for tx in worker_txs_clone {
                 tx.close();
             }
