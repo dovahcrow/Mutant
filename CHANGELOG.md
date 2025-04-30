@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactored pad processing pipeline to use MPMC channel (`async-channel`), removing mutex bottleneck and enabling concurrent pad dequeuing by workers.
 - Refactored pad processing worker logic to achieve true concurrency by spawning tasks for each pad and managing semaphore permits correctly.
 - Refactor PUT/GET operations to use generic `ops::worker::WorkerPool`.
+- Refactored the `purge` operation to use the worker pool for concurrent pad processing.
 
 ### Fixed
 - Fix task query WebSocket handling to prevent premature connection closure
