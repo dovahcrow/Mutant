@@ -324,20 +324,7 @@ async fn process_pads(
         task_handles.len()
     );
 
-    while let Some(task_result) = task_handles.next().await {
-        match task_result {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => {
-                error!(
-                    "Spawned pad task finished with error for key {}: {}",
-                    key_name, e
-                );
-            }
-            Err(e) => {
-                error!("Spawned pad task panicked for key {}: {:?}", key_name, e);
-            }
-        }
-    }
+    while let Some(_) = task_handles.next().await {}
 
     info!("All spawned pad tasks finished for key {}", key_name);
 
@@ -368,10 +355,6 @@ async fn pad_processing_worker_semaphore(
     total_pads: usize,
     completion_notifier: Arc<Notify>,
 ) -> Result<Vec<JoinHandle<Result<(), Error>>>, Error> {
-    info!(
-        "Worker {} (Semaphore) acquiring client for key {}",
-        worker_id, context.name
-    );
     let client_guard = Arc::new(context.network.get_client(Config::Put).await.map_err(|e| {
         error!("Worker {} failed to get client: {}", worker_id, e);
         Error::Network(NetworkError::ClientAccessError(format!(
@@ -379,10 +362,6 @@ async fn pad_processing_worker_semaphore(
             worker_id, e
         )))
     })?);
-    info!(
-        "Worker {} (Semaphore) acquired client for key {}",
-        worker_id, context.name
-    );
 
     let semaphore = Arc::new(Semaphore::new(BATCH_SIZE));
     let key_name = context.name.clone();
@@ -392,10 +371,6 @@ async fn pad_processing_worker_semaphore(
 
     loop {
         if confirmed_counter.load(Ordering::SeqCst) >= total_pads {
-            info!(
-                "Worker {} detected completion. Notifying and exiting.",
-                worker_id
-            );
             completion_notifier.notify_waiters();
             break;
         }
@@ -403,41 +378,24 @@ async fn pad_processing_worker_semaphore(
         let pad_option = tokio::select! {
             biased;
             _ = completion_notifier.notified() => {
-                info!("Worker {} notified of completion while waiting for pad. Exiting.", worker_id);
                 None::<PadInfo>
             },
             recv_result = pad_rx.recv() => {
-                match recv_result {
-                    Ok(pad) => {
-                        debug!("Worker {} received pad {} from channel.", worker_id, pad.address);
-                        Some(pad)
-                    },
-                    Err(_) => {
-                        info!("Worker {} pad channel closed. Exiting.", worker_id);
-                        None::<PadInfo>
-                    }
-                }
+                recv_result.ok()
             }
         };
 
         match pad_option {
             Some(pad) => {
-                debug!(
-                    "Worker {} attempting to acquire permit for pad {} ({:?}).",
-                    worker_id, pad.address, pad.status
-                );
-
                 let permit = tokio::select! {
                     biased;
                     _ = completion_notifier.notified() => {
-                        info!("Worker {} notified of completion while waiting for permit. Dropping pad {} and exiting.", worker_id, pad.address);
                         continue;
                     },
                     permit_result = semaphore.clone().acquire_owned() => {
                         match permit_result {
                             Ok(p) => p,
                             Err(_) => {
-                                info!("Worker {} semaphore closed while acquiring permit. Exiting.", worker_id);
                                 break;
                             }
                         }
@@ -620,12 +578,6 @@ async fn process_single_pad_task(
                                 break;
                             }
                             Err(e) => {
-                                error!(
-                                    "Worker {} failed to update pad {} status to Written: {}. Pad might be orphaned.",
-                                    worker_id,
-                                    current_pad_address,
-                                    e
-                                );
                                 put_succeeded = false;
                                 break;
                             }
@@ -665,28 +617,11 @@ async fn process_single_pad_task(
                         invoke_put_callback(&put_callback, PutEvent::PadsConfirmed)
                             .await
                             .unwrap();
-                        debug!(
-                            "Worker {} marked Pad {} as Confirmed (no_verify). Total Confirmed: {}",
-                            worker_id,
-                            current_pad_address,
-                            previous_count + 1
-                        );
                         if current_count == total_pads {
-                            info!(
-                                "Worker {} marked LAST Pad {} as Confirmed (no_verify). Notifying.",
-                                worker_id,
-                                current_pad_address
-                            );
                             completion_notifier.notify_waiters();
                         }
                     }
                     Err(e) => {
-                        error!(
-                            "Worker {} failed to update pad {} status to Confirmed (no_verify): {}",
-                            worker_id,
-                            current_pad_address,
-                            e
-                        );
                     }
                 }
             } else {
@@ -701,7 +636,7 @@ async fn process_single_pad_task(
                             MAX_CONFIRMATION_DURATION
                         );
                         recycle_pad(pad_after_put.clone()).await;
-                        return Ok::<(), Error>(());
+                        return Ok(());
                     }
 
                     let secret_key_owned;
@@ -738,48 +673,27 @@ async fn process_single_pad_task(
                                         )
                                         .await
                                         .unwrap();
+
                                         debug!(
                                             "Worker {} confirmed Pad {}. Total Confirmed: {}",
                                             worker_id,
                                             current_pad_address,
                                             previous_count + 1
                                         );
+
                                         if current_count == total_pads {
-                                            info!(
-                                                "Worker {} confirmed the LAST pad {}. Notifying waiters.",
-                                                worker_id,
-                                                current_pad_address
-                                            );
                                             completion_notifier.notify_waiters();
                                         }
-                                        return Ok::<(), Error>(());
+
+                                        return Ok(());
                                     }
                                     Err(e) => {
-                                        error!(
-                                            "Worker {} failed to update pad {} status to Confirmed after get: {}. Retrying confirm loop.",
-                                            worker_id,
-                                            current_pad_address,
-                                            e
-                                        );
                                     }
                                 }
                             } else {
-                                debug!(
-                                    "Worker {} Pad {} counter check failed (last_known: {}, gotten: {}). Retrying get.",
-                                    worker_id,
-                                    current_pad_address,
-                                    pad_after_put.last_known_counter,
-                                    gotten_pad.counter
-                                );
                             }
                         }
                         Err(e) => {
-                            debug!(
-                                "Worker {} error getting pad {} for confirmation: {}. Retrying get.",
-                                worker_id,
-                                current_pad_address,
-                                e
-                            );
                         }
                     }
 
@@ -787,21 +701,11 @@ async fn process_single_pad_task(
                 }
             }
         } else {
-            warn!(
-                "Worker {} skipping confirmation for pad {} because put did not succeed.",
-                worker_id,
-                current_pad_address
-            );
         }
-        Ok::<(), Error>(())
+
+        Ok(())
     }
     .await;
 
-    if let Err(e) = &result {
-        error!(
-            "Worker {} error processing pad {}: {}",
-            worker_id, pad.address, e
-        );
-    }
     result
 }
