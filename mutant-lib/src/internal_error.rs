@@ -1,8 +1,5 @@
-// use crate::data::DataError;
-// use crate::index::IndexError;
 use crate::{index::error::IndexError, network::NetworkError};
-// use crate::pad_lifecycle::PadLifecycleError;
-use deadpool::managed::{PoolError, TimeoutType};
+use deadpool::managed::PoolError;
 use never::Never;
 use thiserror::Error;
 use tokio::sync::AcquireError;

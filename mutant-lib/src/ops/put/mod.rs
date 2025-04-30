@@ -4,13 +4,11 @@ use crate::internal_events::invoke_put_callback;
 use crate::network::client::{ClientManager, Config};
 use crate::network::{Network, NetworkError};
 use crate::ops::worker::{AsyncTask, PoolError, WorkerPool};
-use crate::ops::{utils::*, BATCH_SIZE, MAX_CONFIRMATION_DURATION, WORKER_COUNT};
-use async_channel::{bounded, Receiver, Sender};
+use crate::ops::{BATCH_SIZE, MAX_CONFIRMATION_DURATION, WORKER_COUNT};
+use async_channel::bounded;
 use async_trait::async_trait;
 use autonomi::ScratchpadAddress;
 use deadpool::managed::Object;
-use futures::StreamExt;
-use futures::{stream::FuturesUnordered, FutureExt};
 use log::{debug, error, info, warn};
 use mutant_protocol::{PutCallback, PutEvent, StorageMode};
 use std::{
@@ -21,7 +19,6 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{Notify, RwLock};
-use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use super::{

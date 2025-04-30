@@ -9,7 +9,7 @@ use async_channel::bounded;
 use async_trait::async_trait;
 use autonomi::ScratchpadAddress;
 use deadpool::managed::Object;
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{Notify, RwLock};
 

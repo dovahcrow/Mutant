@@ -1,20 +1,8 @@
 use crate::error::Error;
-use crate::index::master_index::MasterIndex;
-use crate::network::Network;
 use autonomi::ScratchpadAddress;
 use blsttc::SecretKey;
 use log::{debug, info};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-
-#[derive(Clone)]
-pub struct Context {
-    pub index: Arc<RwLock<MasterIndex>>,
-    pub network: Arc<Network>,
-    pub name: Arc<String>,
-    pub chunks: Arc<Vec<Vec<u8>>>,
-}
 
 pub fn derive_master_index_info(
     private_key_hex: &str,
