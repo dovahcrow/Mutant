@@ -27,6 +27,7 @@ use std::{
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
 use tokio::sync::Semaphore;
+use tokio::task::JoinHandle;
 use tokio::time::{timeout, Instant};
 
 use mutant_protocol::{
@@ -304,15 +305,51 @@ impl Data {
             "Waiting for {} workers to complete for key {}",
             WORKER_COUNT, key_name
         );
+
+        let mut task_handles = FuturesUnordered::new();
+
         while let Some(result) = workers.next().await {
             match result {
-                Ok(Ok(())) => { /* Worker finished successfully */ }
-                Ok(Err(e)) => error!("Worker finished with error for key {}: {}", key_name, e),
-                Err(e) => error!("Worker panicked for key {}: {:?}", key_name, e),
+                Ok(Ok(worker_task_handles)) => {
+                    // Worker finished successfully, collect its spawned task handles
+                    for handle in worker_task_handles {
+                        task_handles.push(handle);
+                    }
+                }
+                Ok(Err(e)) => error!(
+                    "Worker main loop finished with error for key {}: {}",
+                    key_name, e
+                ),
+                Err(e) => error!("Worker main loop panicked for key {}: {:?}", key_name, e),
             }
         }
 
-        info!("All workers finished for key {}", key_name);
+        info!(
+            "All {} worker main loops finished for key {}. Waiting for {} spawned pad tasks...",
+            WORKER_COUNT,
+            key_name,
+            task_handles.len()
+        );
+
+        // Now wait for all the spawned pad processing tasks to complete
+        while let Some(task_result) = task_handles.next().await {
+            match task_result {
+                Ok(Ok(())) => { /* Pad task completed successfully */ }
+                Ok(Err(e)) => {
+                    error!(
+                        "Spawned pad task finished with error for key {}: {}",
+                        key_name, e
+                    );
+                    // Decide if we need to propagate this error or just log it
+                }
+                Err(e) => {
+                    error!("Spawned pad task panicked for key {}: {:?}", key_name, e);
+                    // Decide if we need to propagate this error or just log it
+                }
+            }
+        }
+
+        info!("All spawned pad tasks finished for key {}", key_name);
 
         let final_confirmed_count = confirmed_pads.load(Ordering::SeqCst);
         if final_confirmed_count != total_pads {
@@ -340,7 +377,7 @@ impl Data {
         put_callback: Option<PutCallback>,
         total_pads: usize,
         completion_notifier: Arc<Notify>,
-    ) -> Result<(), Error> {
+    ) -> Result<Vec<JoinHandle<Result<(), Error>>>, Error> {
         info!(
             "Worker {} (Semaphore) acquiring client for key {}",
             worker_id, context.name
@@ -361,6 +398,8 @@ impl Data {
         let semaphore = Arc::new(Semaphore::new(BATCH_SIZE));
         let key_name = context.name.clone();
         let worker_pad_tx = pad_tx;
+
+        let mut handles: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
 
         loop {
             if confirmed_counter.load(Ordering::SeqCst) >= total_pads {
@@ -434,23 +473,24 @@ impl Data {
                     let pad_address_for_log = pad.address;
 
                     // Spawn the processing task, moving the permit into it
-                    tokio::spawn(async move {
+                    let handle = tokio::spawn(async move {
+                        // The permit's lifetime is tied to this task scope
                         let _permit_guard = permit;
                         debug!(
                             "Task (Worker {}) started processing pad {}.",
                             task_worker_id, pad_address_for_log
                         );
 
-                        Self::process_single_pad_task(
+                        let task_result = Self::process_single_pad_task(
                             task_worker_id,
                             task_context,
                             task_confirmed_counter,
-                            pad,
+                            pad, // Move the pad into the task
                             task_pad_tx,
                             public,
                             task_no_verify,
                             task_put_callback,
-                            task_client_guard,
+                            task_client_guard, // Use the cloned client guard Arc
                             task_key_name,
                             total_pads,
                             task_completion_notifier,
@@ -459,9 +499,13 @@ impl Data {
 
                         debug!(
                             "Task (Worker {}) finished processing pad {}, permit released.",
-                            task_worker_id, pad_address_for_log
+                            task_worker_id,
+                            pad_address_for_log // Use extracted address
                         );
+                        // Permit is dropped automatically when the task finishes
+                        task_result // Explicitly return the result
                     });
+                    handles.push(handle); // Store the handle
                 }
                 None => {
                     info!(
@@ -477,7 +521,7 @@ impl Data {
             "Worker {} (Semaphore) main loop finished for key {}",
             worker_id, context.name
         );
-        Ok(())
+        Ok(handles)
     }
 
     async fn process_single_pad_task(
