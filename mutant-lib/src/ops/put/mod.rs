@@ -133,7 +133,32 @@ async fn resume(
     } else {
         None
     };
-    let chunk_ranges = index.read().await.chunk_data(&data_bytes, mode, public);
+
+    let chunk_ranges = index
+        .read()
+        .await
+        .chunk_data(&data_bytes, mode.clone(), public);
+
+    if pads.len() != chunk_ranges.len() {
+        warn!(
+            "Resuming key '{}' with data size mismatch. Index has {} pads, current data requires {}. Forcing rewrite.",
+            name,
+            pads.len(),
+            chunk_ranges.len()
+        );
+        index.write().await.remove_key(name)?;
+        return first_store(
+            index,
+            network,
+            name,
+            data_bytes,
+            mode,
+            public,
+            no_verify,
+            put_callback,
+        )
+        .await;
+    }
 
     let context = Context {
         index: index.clone(),
@@ -335,6 +360,9 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
                     return Err((Error::Network(e), pad));
                 }
             }
+        } else {
+            pad_after_put = pad.clone();
+            put_succeeded = true;
         }
 
         if put_succeeded {
@@ -447,19 +475,14 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
             }
-        } else {
-            error!(
-                "Worker {} reached unexpected end of process for pad {} (Status: {:?})",
-                worker_id, current_pad_address, pad_after_put.status
-            );
-            Err((
-                Error::Internal(format!(
-                    "Inconsistent state at end of processing for pad {}",
-                    current_pad_address
-                )),
-                pad_after_put,
-            ))
         }
+        Err((
+            Error::Internal(format!(
+                "Reached unexpected end of process function for pad {}",
+                current_pad_address
+            )),
+            pad_after_put,
+        ))
     }
 }
 
