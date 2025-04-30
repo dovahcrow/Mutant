@@ -4,7 +4,7 @@ use autonomi::ScratchpadAddress;
 use tokio::sync::RwLock;
 
 use crate::{
-    data::Data,
+    ops::Data,
     error::Error,
     events::{GetCallback, PurgeCallback, SyncCallback},
     index::{

@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::data::{DATA_ENCODING_PRIVATE_DATA, DATA_ENCODING_PUBLIC_DATA};
+use crate::ops::{DATA_ENCODING_PRIVATE_DATA, DATA_ENCODING_PUBLIC_DATA};
 use crate::index::{PadInfo, PadStatus};
 use crate::network::{Network, NetworkChoice};
 use autonomi::{AttoTokens, ScratchpadAddress, SecretKey};

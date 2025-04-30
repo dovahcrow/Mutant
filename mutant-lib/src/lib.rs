@@ -87,12 +87,12 @@
 
 /// Provides the main API entry point for interacting with MutAnt.
 mod api;
-/// Handles data structures and serialization/deserialization logic.
-mod data;
 /// Manages indexing and search functionality for stored data.
 mod index;
 /// Contains network-related functionalities, including data persistence via scratchpads.
 mod network;
+/// Handles data structures and serialization/deserialization logic.
+mod ops;
 // /// Manages the lifecycle of pads, including creation, deletion, and updates.
 // mod pad_lifecycle;
 
