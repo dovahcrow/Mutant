@@ -101,9 +101,7 @@ where
 
     pub async fn run(self) -> Result<Vec<(Task::ItemId, T)>, PoolError<E>> {
         // Return PoolError<E>
-        // Calculate total capacity based on workers and batch size per worker
-        let total_capacity = self.num_workers * self.batch_size;
-        let semaphore = Arc::new(Semaphore::new(total_capacity));
+        // Removed global semaphore calculation and creation
         let mut worker_handles: FuturesUnordered<JoinHandle<Result<(), PoolError<E>>>> =
             FuturesUnordered::new();
 
@@ -113,10 +111,13 @@ where
         let errors_collector: Arc<Mutex<Vec<E>>> = Arc::new(Mutex::new(Vec::new()));
 
         for worker_id in 0..self.num_workers {
+            // Create a semaphore specific to this worker
+            let worker_semaphore = Arc::new(Semaphore::new(self.batch_size));
             let worker_context = self.context.clone();
             let worker_item_rx = self.item_receiver.clone();
             let worker_retry_tx = self.retry_sender.clone();
-            let worker_semaphore = semaphore.clone();
+            // Clone the worker-specific semaphore for the task
+            let worker_semaphore_clone = worker_semaphore.clone();
             let task_processor = self.task.clone(); // Clone Arc for task processor
             let worker_completion_notifier = self.completion_notifier.clone();
             let worker_total_items = self.total_items.clone();
@@ -182,7 +183,7 @@ where
                                      info!("Worker {} received completion signal while waiting for permit. Exiting loop.", worker_id);
                                     continue; // Go back to check notification / channel
                                 },
-                                permit_result = worker_semaphore.clone().acquire_owned() => { // Note: cloning semaphore Arc is cheap
+                                permit_result = worker_semaphore_clone.clone().acquire_owned() => { // Note: cloning semaphore Arc is cheap
                                      match permit_result {
                                          Ok(p) => p,
                                          Err(_) => {
