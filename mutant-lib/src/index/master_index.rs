@@ -462,39 +462,8 @@ impl MasterIndex {
     ) -> Result<(PadInfo, Vec<PadInfo>), Error> {
         let total_pads_needed = data_ranges.len() + 1; // +1 for index pad
 
-        // Calculate how many pads to generate and how many to take from the free list
-        let free_pads_count = self.free_pads.len();
-        let pads_to_generate = total_pads_needed.saturating_sub(free_pads_count);
-        let pads_to_take_from_free = total_pads_needed - pads_to_generate;
-
-        // Generate the required new pads first
-        let mut generated_new_pads = Vec::with_capacity(pads_to_generate);
-        for _ in 0..pads_to_generate {
-            // Create a dummy PadInfo; size and checksum will be set later
-            generated_new_pads.push(PadInfo::new(&[], 0));
-        }
-
-        // Then, take the remaining needed pads from the free list
-        if self.free_pads.len() < pads_to_take_from_free {
-            return Err(Error::Internal(format!(
-                "Insufficient free pads available. Needed {}, have {}",
-                pads_to_take_from_free,
-                self.free_pads.len()
-            )));
-        }
-        let mut taken_free_pads: Vec<_> = self.free_pads.drain(..pads_to_take_from_free).collect();
-
-        // Combine generated and taken pads
-        let mut available_pads = generated_new_pads;
-        available_pads.append(&mut taken_free_pads);
-
-        if available_pads.len() < total_pads_needed {
-            return Err(Error::Internal(format!(
-                "Failed to aquire enough pads. Needed {}, got {}",
-                total_pads_needed,
-                available_pads.len()
-            )));
-        }
+        // Acquire pads using the internal helper
+        let mut available_pads = self._acquire_pads_internal(total_pads_needed)?;
 
         // Assign the first pad as the index pad (details filled later)
         let mut index_pad_info = available_pads.remove(0);
@@ -533,39 +502,8 @@ impl MasterIndex {
         let ranges: Vec<_> = chunk_ranges.cloned().collect();
         let num_pads_needed = ranges.len();
 
-        // Calculate how many pads to generate and how many to take from the free list
-        let free_pads_count = self.free_pads.len();
-        let pads_to_generate = num_pads_needed.saturating_sub(free_pads_count);
-        let pads_to_take_from_free = num_pads_needed - pads_to_generate;
-
-        // Generate the required new pads first
-        let mut generated_new_pads = Vec::with_capacity(pads_to_generate);
-        for _ in 0..pads_to_generate {
-            // Create a dummy PadInfo; size and checksum will be set later
-            generated_new_pads.push(PadInfo::new(&[], 0));
-        }
-
-        // Then, take the remaining needed pads from the free list
-        if self.free_pads.len() < pads_to_take_from_free {
-            return Err(Error::Internal(format!(
-                "Insufficient free pads available. Needed {}, have {}",
-                pads_to_take_from_free,
-                self.free_pads.len()
-            )));
-        }
-        let mut taken_free_pads: Vec<_> = self.free_pads.drain(..pads_to_take_from_free).collect();
-
-        // Combine generated and taken pads
-        let mut available_pads = generated_new_pads;
-        available_pads.append(&mut taken_free_pads);
-
-        if available_pads.len() < num_pads_needed {
-            return Err(Error::Internal(format!(
-                "Failed to acquire enough pads. Needed {}, got {}",
-                num_pads_needed,
-                available_pads.len()
-            )));
-        }
+        // Acquire pads using the internal helper
+        let mut available_pads = self._acquire_pads_internal(num_pads_needed)?;
 
         let mut generated_pads = Vec::with_capacity(num_pads_needed);
         for (i, range) in ranges.iter().enumerate() {
@@ -741,6 +679,46 @@ impl MasterIndex {
         stats.total_pads = stats.occupied_pads + stats.free_pads + stats.pending_verification_pads;
 
         stats
+    }
+
+    /// Internal helper function to acquire a specified number of pads,
+    /// prioritizing generation of new pads before using free ones.
+    fn _acquire_pads_internal(&mut self, num_pads_needed: usize) -> Result<Vec<PadInfo>, Error> {
+        // Calculate how many pads to generate and how many to take from the free list
+        let free_pads_count = self.free_pads.len();
+        let pads_to_generate = num_pads_needed.saturating_sub(free_pads_count);
+        let pads_to_take_from_free = num_pads_needed - pads_to_generate;
+
+        // Generate the required new pads first
+        let mut generated_new_pads = Vec::with_capacity(pads_to_generate);
+        for _ in 0..pads_to_generate {
+            // Create a dummy PadInfo; size and checksum will be set later
+            generated_new_pads.push(PadInfo::new(&[], 0));
+        }
+
+        // Then, take the remaining needed pads from the free list
+        if self.free_pads.len() < pads_to_take_from_free {
+            return Err(Error::Internal(format!(
+                "Insufficient free pads available. Needed {}, have {}",
+                pads_to_take_from_free,
+                self.free_pads.len()
+            )));
+        }
+        let mut taken_free_pads: Vec<_> = self.free_pads.drain(..pads_to_take_from_free).collect();
+
+        // Combine generated and taken pads
+        let mut available_pads = generated_new_pads;
+        available_pads.append(&mut taken_free_pads);
+
+        if available_pads.len() < num_pads_needed {
+            return Err(Error::Internal(format!(
+                "Failed to acquire enough pads. Needed {}, got {}",
+                num_pads_needed,
+                available_pads.len()
+            )));
+        }
+
+        Ok(available_pads)
     }
 }
 
