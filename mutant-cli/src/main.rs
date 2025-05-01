@@ -7,9 +7,14 @@ mod commands;
 mod history;
 
 pub use app::connect_to_daemon;
+use log::LevelFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
+    env_logger::builder()
+        .filter_level(LevelFilter::Off)
+        .parse_default_env()
+        .init();
+
     app::run().await
 }

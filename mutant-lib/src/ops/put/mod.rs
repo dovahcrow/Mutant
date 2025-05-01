@@ -249,8 +249,8 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
         let mut pad_after_put = pad.clone();
 
         let should_put = match initial_status {
-            PadStatus::Generated => true,
-            PadStatus::Written | PadStatus::Free => false,
+            PadStatus::Generated | PadStatus::Free => true,
+            PadStatus::Written => false,
             PadStatus::Confirmed => {
                 return Ok((pad.chunk_index, ()));
             }
