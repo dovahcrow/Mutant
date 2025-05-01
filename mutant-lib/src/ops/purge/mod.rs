@@ -39,19 +39,18 @@ struct PurgeContext {
 struct PurgeTaskProcessor;
 
 #[async_trait]
-impl AsyncTask<PadInfo, PurgeContext, Arc<Mutex<Object<ClientManager>>>, PurgeTaskOutcome, Error> for PurgeTaskProcessor {
+impl AsyncTask<PadInfo, PurgeContext, Object<ClientManager>, PurgeTaskOutcome, Error>
+    for PurgeTaskProcessor
+{
     type ItemId = ();
 
     async fn process(
         &self,
         worker_id: usize,
         context: Arc<PurgeContext>,
-        client_mutex: &Arc<Mutex<Object<ClientManager>>>,
+        client: &Object<ClientManager>,
         pad: PadInfo,
     ) -> Result<(Self::ItemId, PurgeTaskOutcome), (Error, PadInfo)> {
-        let client_guard = client_mutex.lock().await;
-        let client = &*client_guard;
-
         let get_result = context.network.get(client, &pad.address, None).await;
 
         let outcome: PurgeTaskOutcome;
@@ -239,7 +238,7 @@ pub(super) async fn purge(
         // Double Arc wrapping to match the expected type in WorkerPool
         // The outer Arc is for sharing the client among the worker's task processors
         // The inner Arc is to match the type expected by the AsyncTask implementation
-        clients.push(Arc::new(Arc::new(Mutex::new(client))));
+        clients.push(Arc::new(client));
     }
 
     let completion_notifier = Arc::new(Notify::new());
@@ -263,8 +262,10 @@ pub(super) async fn purge(
             let mut worker_index = 0;
             let total_pads = pads_clone.len();
 
-            debug!("Distributing {} pads to {} workers in round-robin fashion",
-                   total_pads, WORKER_COUNT);
+            debug!(
+                "Distributing {} pads to {} workers in round-robin fashion",
+                total_pads, WORKER_COUNT
+            );
 
             for pad in pads_clone {
                 // Send round-robin
@@ -291,10 +292,10 @@ pub(super) async fn purge(
         BATCH_SIZE,
         purge_context.clone(),
         Arc::new(PurgeTaskProcessor),
-        clients,         // Pass clients for each worker
-        worker_rxs,      // Pass worker receivers
-        global_rx,       // Pass global receiver
-        None,            // No retry channel needed for purge
+        clients,    // Pass clients for each worker
+        worker_rxs, // Pass worker receivers
+        global_rx,  // Pass global receiver
+        None,       // No retry channel needed for purge
         completion_notifier.clone(),
         Some(total_items_atomic.clone()),
         Some(processed_items_counter_atomic.clone()),

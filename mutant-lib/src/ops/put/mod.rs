@@ -303,70 +303,110 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
                 DATA_ENCODING_PRIVATE_DATA
             };
 
-            match context
-                .base_context
-                .network
-                .put(
-                    client,
-                    &pad,
-                    chunk_data_slice,
-                    encoding,
-                    context.base_context.public,
-                )
-                .await
-            {
-                Ok(_) => {
-                    invoke_put_callback(&context.put_callback, PutEvent::PadsWritten)
-                        .await
-                        .map_err(|e| {
-                            (
-                                Error::Internal(format!("Callback error (PadsWritten): {:?}", e)),
-                                pad.clone(),
-                            )
-                        })?;
-                    if initial_status == PadStatus::Generated {
-                        invoke_put_callback(&context.put_callback, PutEvent::PadReserved)
+            // --- Start: Retry logic for network.put ---
+            let max_put_retries = 3;
+            let mut last_put_error: Option<Error> = None;
+
+            for attempt in 1..=max_put_retries {
+                match context
+                    .base_context
+                    .network
+                    .put(
+                        client,
+                        &pad, // Use original pad info for put attempt
+                        chunk_data_slice,
+                        encoding,
+                        context.base_context.public,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        // Put succeeded, call callbacks and update status in the index
+                        invoke_put_callback(&context.put_callback, PutEvent::PadsWritten)
                             .await
                             .map_err(|e| {
                                 (
                                     Error::Internal(format!(
-                                        "Callback error (PadReserved): {:?}",
+                                        "Callback error (PadsWritten): {:?}",
                                         e
                                     )),
-                                    pad.clone(),
+                                    pad.clone(), // Return original pad on callback error
                                 )
                             })?;
-                    }
+                        if initial_status == PadStatus::Generated {
+                            invoke_put_callback(&context.put_callback, PutEvent::PadReserved)
+                                .await
+                                .map_err(|e| {
+                                    (
+                                        Error::Internal(format!(
+                                            "Callback error (PadReserved): {:?}",
+                                            e
+                                        )),
+                                        pad.clone(), // Return original pad on callback error
+                                    )
+                                })?;
+                        }
 
-                    pad_after_put = context
-                        .base_context
-                        .index
-                        .write()
-                        .await
-                        .update_pad_status(
-                            &context.base_context.name,
-                            &current_pad_address,
-                            PadStatus::Written,
-                            None,
-                        )
-                        .map_err(|e| (e, pad.clone()))?;
-                    put_succeeded = true;
-                }
-                Err(e) => {
-                    error!(
-                        "Worker {} failed put for pad {} (chunk {}): {}",
-                        worker_id, current_pad_address, pad.chunk_index, e
-                    );
-                    return Err((Error::Network(e), pad));
+                        // Attempt to update status immediately after successful put
+                        pad_after_put = context
+                            .base_context
+                            .index
+                            .write()
+                            .await
+                            .update_pad_status(
+                                &context.base_context.name,
+                                &current_pad_address,
+                                PadStatus::Written,
+                                None,
+                            )
+                            .map_err(|e| (e, pad.clone()))?; // Return original pad if update fails
+
+                        // Mark as succeeded and break the retry loop
+                        put_succeeded = true;
+                        last_put_error = None; // Clear last error
+                        break;
+                    }
+                    Err(e) => {
+                        // Put attempt failed
+                        warn!(
+                            "Worker {} failed put attempt {}/{} for pad {} (chunk {}): {}. Retrying...",
+                            worker_id, attempt, max_put_retries, current_pad_address, pad.chunk_index, e
+                        );
+                        last_put_error = Some(Error::Network(e)); // Store the error
+                        if attempt < max_put_retries {
+                            // Wait before retrying
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                        }
+                    }
                 }
             }
+            // --- End: Retry logic for network.put ---
+
+            // Check if put ultimately failed after all retries
+            if !put_succeeded {
+                error!(
+                    "Worker {} failed put for pad {} (chunk {}) after {} retries: {}",
+                    worker_id,
+                    current_pad_address,
+                    pad.chunk_index,
+                    max_put_retries,
+                    last_put_error.as_ref().unwrap() // Safe unwrap: error is Some if put_succeeded is false
+                );
+                // Return the last encountered error and the original pad state
+                return Err((last_put_error.unwrap(), pad));
+            }
+            // If we reach here, put_succeeded is true, and pad_after_put holds the pad with status Written.
+            // The confirmation logic (if !no_verify) will run outside the 'if should_put' block.
         } else {
+            // Pad status was already Written or Free, no put needed. Mark as succeeded.
             pad_after_put = pad.clone();
             put_succeeded = true;
         }
 
+        // --- Start: Confirmation logic (only runs if put_succeeded is true) ---
         if put_succeeded {
             if *context.no_verify {
+                // Update status directly to Confirmed if no verification is needed
                 context
                     .base_context
                     .index
@@ -476,12 +516,20 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
                 }
             }
         }
+        // --- End: Confirmation logic ---
+
+        // This path should theoretically not be reached if logic is correct.
+        // It implies put_succeeded remained false without returning an error from the retry loop.
+        error!(
+            "Worker {} reached unexpected end of process function for pad {}",
+            worker_id, current_pad_address
+        );
         Err((
             Error::Internal(format!(
                 "Reached unexpected end of process function for pad {}",
                 current_pad_address
             )),
-            pad_after_put,
+            pad_after_put, // Use the state after potential put attempt
         ))
     }
 }
