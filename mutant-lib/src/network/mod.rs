@@ -83,9 +83,9 @@ impl Network {
 
         // get the max_connections from the env
         let max_connections = std::env::var("MAX_CONNECTIONS")
-            .unwrap_or_else(|_| "20".to_string())
+            .unwrap_or_else(|_| "10".to_string())
             .parse::<usize>()
-            .unwrap_or(20);
+            .unwrap_or(10);
 
         debug!("Max connections: {}", max_connections);
 
