@@ -477,7 +477,6 @@ impl MasterIndex {
 
         // Assign the first pad as the index pad (details filled later)
         let mut index_pad_info = available_pads.remove(0);
-        index_pad_info.status = PadStatus::Generated;
         index_pad_info.chunk_index = 0;
         index_pad_info.size = 0; // Placeholder
         index_pad_info.checksum = 0; // Placeholder
@@ -489,7 +488,6 @@ impl MasterIndex {
             .map(|(i, range)| {
                 let chunk_data_slice = &data_bytes[range.clone()];
                 let mut pad_info = available_pads.remove(0);
-                pad_info.status = PadStatus::Generated;
                 pad_info.chunk_index = i + 1;
                 pad_info.size = chunk_data_slice.len();
                 pad_info.last_known_counter += 1;
@@ -531,7 +529,6 @@ impl MasterIndex {
         for (i, range) in ranges.iter().enumerate() {
             let chunk_data_slice = &data_bytes[range.clone()];
             let mut pad_info = available_pads.remove(0);
-            pad_info.status = PadStatus::Generated;
             pad_info.chunk_index = i + starting_chunk_index;
             pad_info.size = chunk_data_slice.len();
             pad_info.checksum = Crc::<u32>::new(&CRC_32_ISCSI).checksum(chunk_data_slice) as usize;
