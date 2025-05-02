@@ -724,8 +724,11 @@ async fn write_pipeline(
                 "Recycler task join error for key {}: {:?}",
                 key_name, join_err
             );
-            // Optionally, return an error here, as a panicked recycler might leave the state inconsistent
-            // return Err(Error::Internal(format!("Recycler task panicked for key {}", key_name)));
+            // Return an error, as a panicked recycler likely means the process is incomplete.
+            return Err(Error::Internal(format!(
+                "Recycler task panicked for key {}",
+                key_name
+            )));
         }
     }
     // --- End Modification ---

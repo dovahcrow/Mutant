@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevent `resume` operation from proceeding if the number of pads in the index mismatches the number required for the current data size, forcing a rewrite instead.
 - Fix resumed `put` operations incorrectly reporting missing chunks by accounting for previously confirmed chunks in the final check.
 - Propagate errors from pad recycling during `put` operation to prevent incorrect 'incomplete' errors when recycling fails.
+- Return error immediately if the pad recycler task panics during `put` operation, preventing potential incorrect 'incomplete' errors.
 
 ### Changed
 - Refactored write pipeline: Replaced two-stage put/confirm tasks with a single processing loop (`process_pads`) using `tokio::select!` and `FuturesUnordered` to manage concurrent `process_pad_task` operations (put -> confirm cycle) for each pad, improving deadlock resilience.
