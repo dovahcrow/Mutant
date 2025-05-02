@@ -662,21 +662,10 @@ async fn write_pipeline(
                         }
                     }
                     Err(recycle_err) => {
-                        // --- Start Modification: Add specific log for NoFreePadsAvailable ---
-                        if let Some(IndexError::NoFreePadsAvailable) =
-                            recycle_err.downcast_ref::<IndexError>()
-                        {
-                            error!(
-                                "Failed to recycle pad {} for key {}: No free pads available. Aborting recycler task.",
-                                pad_to_recycle.address, key_name_clone
-                            );
-                        } else {
-                            error!(
-                                "Failed to recycle pad {} for key {}: {}. Aborting recycler task.",
-                                pad_to_recycle.address, key_name_clone, recycle_err
-                            );
-                        }
-                        // --- End Modification ---
+                        error!(
+                            "Failed to recycle pad {} for key {}: {}. Aborting recycler task.",
+                            pad_to_recycle.address, key_name_clone, recycle_err
+                        );
                         // Return the error immediately, stopping the recycler task
                         return Err(recycle_err);
                     }

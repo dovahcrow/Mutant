@@ -10,9 +10,6 @@ pub enum IndexError {
     #[error("Key not found: {0}")]
     KeyNotFound(String),
 
-    #[error("No free pads available for recycling.")]
-    NoFreePadsAvailable,
-
     #[error("Cannot remove public upload key: {0}")]
     CannotRemovePublicUpload(String),
 
@@ -27,7 +24,4 @@ pub enum IndexError {
 
     #[error("Network mismatch: {x:?} != {y:?}")]
     NetworkMismatch { x: NetworkChoice, y: NetworkChoice },
-
-    #[error("Pad not found: {0}")]
-    PadNotFound(String),
 }
