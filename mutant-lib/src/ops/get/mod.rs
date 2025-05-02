@@ -30,6 +30,7 @@ pub(super) async fn get_public(
     let client = &*client_guard;
     let index_pad_data = network.get(client, address, None).await?;
     let callback = get_callback.clone();
+    drop(client_guard);
 
     match index_pad_data.data_encoding {
         DATA_ENCODING_PUBLIC_INDEX => {

@@ -10,7 +10,7 @@ use tokio::time::{timeout, Duration};
 
 use super::GetResult;
 
-const GET_TIMEOUT_SECS: u64 = 60 * 60; // 1 hour
+const GET_TIMEOUT_SECS: u64 = 60 * 5; // 5 minutes
 
 /// Retrieves the raw content of a scratchpad from the network.
 ///

@@ -30,7 +30,7 @@ pub const PAD_RECYCLING_RETRIES: usize = 3;
 const WORKER_COUNT: usize = 10;
 pub const BATCH_SIZE: usize = 10;
 
-const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 10);
+const MAX_CONFIRMATION_DURATION: Duration = Duration::from_secs(60 * 5);
 
 pub struct Data {
     network: Arc<Network>,

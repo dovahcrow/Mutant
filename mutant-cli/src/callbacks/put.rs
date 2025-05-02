@@ -55,7 +55,7 @@ pub fn create_put_progress(mut progress_rx: ProgressReceiver, multi_progress: Mu
                         let res_pb = res_pb_guard.get_or_insert_with(|| {
                             info!("Creating reservation progress bar");
                             let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
-                            pb.set_message("Acquiring pads...".to_string());
+                            pb.set_message("Buying new pads...".to_string());
                             pb
                         });
                         info!("Setting reservation bar length to {}", chunks_to_reserve);
@@ -68,7 +68,7 @@ pub fn create_put_progress(mut progress_rx: ProgressReceiver, multi_progress: Mu
                     let upload_pb = upload_pb_guard.get_or_insert_with(|| {
                         info!("Creating upload progress bar");
                         let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
-                        pb.set_message("Writing pads...".to_string());
+                        pb.set_message("Uploading pads...".to_string());
                         pb
                     });
                     info!("Setting upload bar length to {}", total_u64);

@@ -1,6 +1,7 @@
 use crate::network::NetworkError;
 use crate::storage::ScratchpadAddress;
 use blsttc::SecretKey;
+use crc::{Crc, CRC_32_ISCSI};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -87,9 +88,6 @@ impl PadInfo {
     }
 
     pub fn checksum(data: &[u8]) -> usize {
-        let mut hasher = DefaultHasher::new();
-        data.len().hash(&mut hasher);
-        data.hash(&mut hasher);
-        hasher.finish() as usize
+        Crc::<u32>::new(&CRC_32_ISCSI).checksum(data) as usize
     }
 }

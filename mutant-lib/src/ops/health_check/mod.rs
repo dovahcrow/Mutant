@@ -60,7 +60,7 @@ pub(super) async fn health_check(
                 Some(&secret_key_owned)
             };
 
-            if pad.status != PadStatus::Confirmed {
+            if pad.status == PadStatus::Generated {
                 return;
             }
 
@@ -81,8 +81,7 @@ pub(super) async fn health_check(
                         pad.address, e
                     );
                     match e {
-                        NetworkError::GetError(GetRecordError::RecordNotFound)
-                        | NetworkError::GetError(GetRecordError::NotEnoughCopies { .. }) => {
+                        NetworkError::GetError(GetRecordError::NotEnoughCopies { .. }) => {
                             let mut index_guard = index_clone.write().await;
                             index_guard
                                 .update_pad_status(
@@ -94,6 +93,7 @@ pub(super) async fn health_check(
                                 .unwrap();
                             nb_reset_clone.fetch_add(1, Ordering::Relaxed);
                         }
+
                         _ => {
                             if recycle {
                                 let mut index_guard = index_clone.write().await;
@@ -104,6 +104,7 @@ pub(super) async fn health_check(
                             }
                             nb_recycled_clone.fetch_add(1, Ordering::Relaxed);
                         }
+                        _ => {}
                     }
                     invoke_health_check_callback(&task_callback, HealthCheckEvent::KeyProcessed)
                         .await
