@@ -305,6 +305,11 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
             let max_put_retries = 3;
             let mut last_put_error: Option<Error> = None;
 
+            debug!(
+                "Worker {} starting put attempts for pad {} (chunk {}, status: {:?})",
+                worker_id, current_pad_address, pad.chunk_index, initial_status
+            );
+
             for attempt in 1..=max_put_retries {
                 match context
                     .base_context
