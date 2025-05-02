@@ -462,9 +462,13 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
                         .await
                     {
                         Ok(gotten_pad) => {
-                            if (pad_after_put.last_known_counter == 0 && gotten_pad.counter == 0)
-                                || pad_after_put.last_known_counter <= gotten_pad.counter
-                            {
+                            let checksum_match =
+                                pad_after_put.checksum == PadInfo::checksum(&gotten_pad.data);
+                            let counter_match = (pad_after_put.last_known_counter == 0
+                                && gotten_pad.counter == 0)
+                                || pad_after_put.last_known_counter >= gotten_pad.counter;
+                            let size_match = pad_after_put.size == gotten_pad.data.len();
+                            if checksum_match && counter_match && size_match {
                                 context
                                     .base_context
                                     .index

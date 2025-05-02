@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::index::PadInfo;
 use crate::index::{master_index::MasterIndex, PadStatus};
 use crate::internal_events::invoke_health_check_callback;
 use crate::network::client::Config;
@@ -69,7 +70,21 @@ pub(super) async fn health_check(
                 .get(client_ref, &pad.address, secret_key_ref)
                 .await
             {
-                Ok(_) => {
+                Ok(get_result) => {
+                    let checksum_match = pad.checksum == PadInfo::checksum(&get_result.data);
+                    let counter_match = pad.last_known_counter == get_result.counter;
+                    let size_match = pad.size == get_result.data.len();
+                    if !checksum_match || !counter_match || !size_match {
+                        let mut index_guard = index_clone.write().await;
+                        index_guard
+                            .update_pad_status(
+                                &key_name_clone, // Use cloned key_name
+                                &pad.address,
+                                PadStatus::Free,
+                                Some(get_result.counter + 1),
+                            )
+                            .unwrap();
+                    }
                     invoke_health_check_callback(&task_callback, HealthCheckEvent::KeyProcessed)
                         .await
                         .unwrap();
@@ -88,7 +103,7 @@ pub(super) async fn health_check(
                                     &key_name_clone, // Use cloned key_name
                                     &pad.address,
                                     PadStatus::Free,
-                                    None,
+                                    Some(pad.last_known_counter + 1),
                                 )
                                 .unwrap();
                             nb_reset_clone.fetch_add(1, Ordering::Relaxed);
@@ -101,10 +116,21 @@ pub(super) async fn health_check(
                                     .recycle_errored_pad(&key_name_clone, &pad.address) // Use cloned key_name
                                     .await // Add await here
                                     .unwrap();
+
+                                nb_recycled_clone.fetch_add(1, Ordering::Relaxed);
+                            } else {
+                                let mut index_guard = index_clone.write().await;
+                                index_guard
+                                    .update_pad_status(
+                                        &key_name_clone, // Use cloned key_name
+                                        &pad.address,
+                                        PadStatus::Free,
+                                        Some(pad.last_known_counter + 1),
+                                    )
+                                    .unwrap();
+                                nb_reset_clone.fetch_add(1, Ordering::Relaxed);
                             }
-                            nb_recycled_clone.fetch_add(1, Ordering::Relaxed);
                         }
-                        _ => {}
                     }
                     invoke_health_check_callback(&task_callback, HealthCheckEvent::KeyProcessed)
                         .await

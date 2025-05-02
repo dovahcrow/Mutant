@@ -6,7 +6,7 @@ use indicatif::MultiProgress;
 use mutant_protocol::TaskResult;
 use mutant_protocol::TaskResultType;
 
-pub async fn handle_sync(background: bool, push_force: bool) -> Result<()> {
+pub async fn handle_sync(background: bool, push_force: bool, quiet: bool) -> Result<()> {
     if background {
         let _ = tokio::spawn(async move {
             let mut client = connect_to_daemon().await.unwrap();
@@ -22,8 +22,10 @@ pub async fn handle_sync(background: bool, push_force: bool) -> Result<()> {
     let mut client = connect_to_daemon().await?;
     let (start_task, progress_rx) = client.sync(push_force).await?;
 
-    let multi_progress = MultiProgress::new();
-    callbacks::sync::create_sync_progress(progress_rx, &multi_progress);
+    if !quiet {
+        let multi_progress = MultiProgress::new();
+        callbacks::sync::create_sync_progress(progress_rx, &multi_progress);
+    }
 
     match start_task.await {
         Ok(result) => match result {

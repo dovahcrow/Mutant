@@ -7,6 +7,8 @@ use mutant_protocol::StorageMode;
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
+    #[arg(short, long)]
+    pub quiet: bool,
 }
 
 #[derive(clap::Subcommand)]

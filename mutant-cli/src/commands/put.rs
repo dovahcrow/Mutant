@@ -13,6 +13,7 @@ pub async fn handle_put(
     mode: StorageMode,
     no_verify: bool,
     background: bool,
+    quiet: bool,
 ) -> Result<()> {
     let source_path = file;
     if background {
@@ -36,8 +37,10 @@ pub async fn handle_put(
         .put(&key, &source_path, mode, public, no_verify)
         .await?;
 
-    let multi_progress = MultiProgress::new();
-    callbacks::put::create_put_progress(progress_rx, multi_progress.clone());
+    if !quiet {
+        let multi_progress = MultiProgress::new();
+        callbacks::put::create_put_progress(progress_rx, multi_progress.clone());
+    }
 
     match start_task.await {
         Ok(result) => match result {
@@ -56,8 +59,8 @@ pub async fn handle_put(
         }
     }
 
-    // Keep the MultiProgress instance alive until the task is complete
-    drop(multi_progress);
+    // // Keep the MultiProgress instance alive until the task is complete
+    // drop(multi_progress);
 
     Ok(())
 }

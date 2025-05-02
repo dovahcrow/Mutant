@@ -14,6 +14,7 @@ pub async fn handle_get(
     destination_path: String,
     public: bool,
     background: bool,
+    quiet: bool,
 ) -> Result<()> {
     if background {
         let _ = tokio::spawn(async move {
@@ -31,8 +32,10 @@ pub async fn handle_get(
     let mut client = connect_to_daemon().await?;
     let (start_task, progress_rx) = client.get(&key, &destination_path, public).await?;
 
-    let multi_progress = MultiProgress::new();
-    callbacks::get::create_get_progress(progress_rx, &multi_progress);
+    if !quiet {
+        let multi_progress = MultiProgress::new();
+        callbacks::get::create_get_progress(progress_rx, &multi_progress);
+    }
 
     match start_task.await {
         Ok(result) => match result {

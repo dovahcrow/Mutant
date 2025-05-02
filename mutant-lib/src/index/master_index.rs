@@ -263,6 +263,7 @@ impl MasterIndex {
             new_pad.checksum = old_pad.checksum;
             new_pad.size = old_pad.size;
             new_pad.chunk_index = old_pad.chunk_index;
+            new_pad.last_known_counter = old_pad.last_known_counter + 1;
 
             *pad = new_pad.clone();
 

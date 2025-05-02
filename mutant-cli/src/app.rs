@@ -21,8 +21,16 @@ pub async fn run() -> Result<()> {
             public,
             mode,
         } => {
-            commands::put::handle_put(key, file, public, mode.into(), no_verify, background)
-                .await?;
+            commands::put::handle_put(
+                key,
+                file,
+                public,
+                mode.into(),
+                no_verify,
+                background,
+                cli.quiet,
+            )
+            .await?;
         }
         Commands::Get {
             key,
@@ -30,7 +38,7 @@ pub async fn run() -> Result<()> {
             background,
             public,
         } => {
-            commands::get::handle_get(key, destination_path, public, background).await?;
+            commands::get::handle_get(key, destination_path, public, background, cli.quiet).await?;
         }
         Commands::Rm { key } => {
             commands::rm::handle_rm(key).await?;
@@ -51,13 +59,13 @@ pub async fn run() -> Result<()> {
             background,
             push_force,
         } => {
-            commands::sync::handle_sync(background, push_force).await?;
+            commands::sync::handle_sync(background, push_force, cli.quiet).await?;
         }
         Commands::Purge {
             aggressive,
             background,
         } => {
-            commands::purge::handle_purge(aggressive, background).await?;
+            commands::purge::handle_purge(aggressive, background, cli.quiet).await?;
         }
         Commands::Import { file_path } => {
             commands::import::handle_import(file_path).await?;
@@ -70,7 +78,8 @@ pub async fn run() -> Result<()> {
             background,
             recycle,
         } => {
-            commands::health_check::handle_health_check(key_name, background, recycle).await?;
+            commands::health_check::handle_health_check(key_name, background, recycle, cli.quiet)
+                .await?;
         }
     }
 
