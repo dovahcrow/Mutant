@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolved worker concurrency issue in `put` operation by removing unnecessary Mutex around client, allowing each worker to process tasks up to its `batch_size` concurrently.
 - Fixed double counting of confirmed pads during `put` operation, preventing incorrect final count mismatch errors.
 - Prevent `resume` operation from proceeding if the number of pads in the index mismatches the number required for the current data size, forcing a rewrite instead.
+- Fix resumed `put` operations incorrectly reporting missing chunks by accounting for previously confirmed chunks in the final check.
 
 ### Changed
 - Refactored write pipeline: Replaced two-stage put/confirm tasks with a single processing loop (`process_pads`) using `tokio::select!` and `FuturesUnordered` to manage concurrent `process_pad_task` operations (put -> confirm cycle) for each pad, improving deadlock resilience.

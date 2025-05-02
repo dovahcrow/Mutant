@@ -527,11 +527,29 @@ async fn write_pipeline(
     put_callback: Option<PutCallback>,
 ) -> Result<(), Error> {
     let key_name = context.name.clone();
-    let total_pads = context.chunk_ranges.len();
+    let total_pads = pads.len();
 
-    if total_pads == 0 {
-        return Ok(());
-    }
+    // Collect indices of pads already confirmed before starting the pipeline
+    let initially_confirmed_indices: std::collections::HashSet<usize> = pads
+        .iter()
+        .filter_map(|p| {
+            if p.status == PadStatus::Confirmed {
+                Some(p.chunk_index)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let initial_confirmed_count = initially_confirmed_indices.len(); // Reuse this count for the Starting event
+
+    let total_pads_atomic = Arc::new(std::sync::atomic::AtomicUsize::new(total_pads));
+    let completion_notifier = Arc::new(Notify::new());
+    let (recycle_tx, recycle_rx) = bounded::<(Error, PadInfo)>(total_pads); // Channel for pads needing retry
+
+    let initial_chunks_to_reserve = pads
+        .iter()
+        .filter(|p| p.status == PadStatus::Generated)
+        .count();
 
     let mut worker_txs = Vec::with_capacity(WORKER_COUNT);
     let mut worker_rxs = Vec::with_capacity(WORKER_COUNT);
@@ -541,22 +559,6 @@ async fn write_pipeline(
         worker_rxs.push(rx);
     }
     let (global_tx, global_rx) = bounded::<PadInfo>(total_pads + WORKER_COUNT * BATCH_SIZE);
-
-    let (recycle_tx, recycle_rx) =
-        bounded::<(Error, PadInfo)>(total_pads * PAD_RECYCLING_RETRIES + WORKER_COUNT);
-
-    let initial_confirmed_count = pads
-        .iter()
-        .filter(|p| p.status == PadStatus::Confirmed)
-        .count();
-
-    let initial_chunks_to_reserve = pads
-        .iter()
-        .filter(|p| p.status == PadStatus::Generated)
-        .count();
-
-    let completion_notifier = Arc::new(Notify::new());
-    let total_pads_atomic = Arc::new(AtomicUsize::new(total_pads));
 
     let mut clients = Vec::with_capacity(WORKER_COUNT);
     for worker_id in 0..WORKER_COUNT {
@@ -585,7 +587,7 @@ async fn write_pipeline(
                 .iter()
                 .filter(|p| p.status == PadStatus::Written || p.status == PadStatus::Confirmed)
                 .count(),
-            initial_confirmed_count,
+            initial_confirmed_count: initial_confirmed_count,
             chunks_to_reserve: initial_chunks_to_reserve,
         },
     )
@@ -706,9 +708,13 @@ async fn write_pipeline(
 
     match pool_result {
         Ok(results) => {
-            // Completion check: Verify all original chunk indices were processed successfully.
+            // Completion check: Verify all original chunk indices were processed successfully OR were already confirmed.
             use std::collections::HashSet;
-            let processed_indices: HashSet<usize> = results.into_iter().map(|(id, _)| id).collect();
+            let mut processed_indices: HashSet<usize> =
+                results.into_iter().map(|(id, _)| id).collect();
+
+            // Add the indices that were already confirmed at the start
+            processed_indices.extend(initially_confirmed_indices);
 
             if processed_indices.len() != total_pads {
                 // Find missing indices for better error message
