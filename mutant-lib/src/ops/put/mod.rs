@@ -635,7 +635,7 @@ async fn write_pipeline(
         let index = context.index.clone();
         let key_name_clone = key_name.clone();
         let recycle_rx = recycle_rx.clone();
-        let global_pad_tx_clone = global_tx.clone();
+        let global_pad_tx_to_close = global_tx.clone();
 
         tokio::spawn(async move {
             while let Ok((_error_cause, pad_to_recycle)) = recycle_rx.recv().await {
@@ -646,7 +646,7 @@ async fn write_pipeline(
                     .await
                 {
                     Ok(new_pad) => {
-                        if global_pad_tx_clone.send(new_pad).await.is_err() {
+                        if global_pad_tx_to_close.send(new_pad).await.is_err() {
                             warn!("Recycler task: Global channel closed while sending recycled pad for key {}. Stopping recycling.", key_name_clone);
                             break;
                         }
@@ -656,14 +656,16 @@ async fn write_pipeline(
                             "Failed to recycle pad {} for key {}: {}. Aborting recycler task.",
                             pad_to_recycle.address, key_name_clone, recycle_err
                         );
+                        global_pad_tx_to_close.close();
                         return Err(recycle_err);
                     }
                 }
             }
             debug!(
-                "Recycle channel closed for key {}. Recycler task finishing.",
+                "Recycle channel closed or send failed for key {}. Closing global pad channel. Recycler task finishing.",
                 key_name_clone
             );
+            global_pad_tx_to_close.close();
             Ok(())
         })
     };
