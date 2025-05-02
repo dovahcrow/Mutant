@@ -262,6 +262,11 @@ where
             Arc::new(Mutex::new(Vec::new()));
         let errors_collector: Arc<Mutex<Vec<E>>> = Arc::new(Mutex::new(Vec::new()));
 
+        // Keep a clone of the retry sender for the pool itself.
+        // This clone will be dropped *after* all workers have finished,
+        // ensuring the recycle_rx doesn't close prematurely.
+        let pool_retry_sender = self.retry_sender.clone();
+
         let worker_rxs = std::mem::take(&mut self.worker_item_receivers);
         let clients = std::mem::take(&mut self.clients);
         let mut worker_handles = FuturesUnordered::new();
@@ -279,6 +284,7 @@ where
                 task_processor: self.task.clone(),
                 local_queue: worker_rx,
                 global_queue: self.global_item_receiver.clone(),
+                // Pass the pool's retry_sender; Worker will clone it internally if needed
                 retry_sender: self.retry_sender.clone(),
                 results_collector: results_collector.clone(),
                 errors_collector: errors_collector.clone(),
@@ -291,12 +297,26 @@ where
         while let Some(result) = worker_handles.next().await {
             match result {
                 Ok(Ok(())) => {}
-                Ok(Err(e)) => return Err(e),
-                Err(join_err) => return Err(PoolError::JoinError(join_err)),
+                Ok(Err(e)) => {
+                    // Worker encountered an irrecoverable error. Drop sender before propagating.
+                    drop(pool_retry_sender);
+                    return Err(e);
+                }
+                Err(join_err) => {
+                    // Worker panicked. Drop sender before propagating.
+                    drop(pool_retry_sender);
+                    return Err(PoolError::JoinError(join_err));
+                }
             }
         }
 
-        // Check for errors
+        // All workers have finished their execution loops.
+        // Now, explicitly drop the pool's clone of the retry sender.
+        // This, combined with workers having dropped their clones upon finishing,
+        // will cause the recycle_rx channel to close, signaling the recycler task to finish.
+        drop(pool_retry_sender);
+
+        // Check for errors that were collected because sending to retry failed or retry was disabled
         let errors = errors_collector.lock().await;
         if !errors.is_empty() {
             return Err(PoolError::TaskError(errors.first().unwrap().clone()));
