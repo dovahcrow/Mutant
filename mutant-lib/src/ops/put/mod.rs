@@ -471,7 +471,7 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
                                 pad_after_put.checksum == PadInfo::checksum(&gotten_pad.data);
                             let counter_match = (pad_after_put.last_known_counter == 0
                                 && gotten_pad.counter == 0)
-                                || pad_after_put.last_known_counter >= gotten_pad.counter;
+                                || pad_after_put.last_known_counter <= gotten_pad.counter;
                             let size_match = pad_after_put.size == gotten_pad.data.len();
                             if checksum_match && counter_match && size_match {
                                 context
@@ -500,7 +500,15 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
                                     })?;
                                 return Ok((pad.chunk_index, ()));
                             } else {
-                                debug!("Pad {} counter decreased during confirmation check ({} -> {}). Retrying check.", current_pad_address, pad_after_put.last_known_counter, gotten_pad.counter);
+                                if !checksum_match {
+                                    debug!("Pad {} checksum mismatch during confirmation check (Expected: {} -> Got: {}). Retrying check.", current_pad_address, pad_after_put.checksum, PadInfo::checksum(&gotten_pad.data));
+                                }
+                                if !counter_match {
+                                    debug!("Pad {} counter mismatch during confirmation check (Expected: {} -> Got: {}). Retrying check.", current_pad_address, pad_after_put.last_known_counter, gotten_pad.counter);
+                                }
+                                if !size_match {
+                                    debug!("Pad {} size mismatch during confirmation check (Expected: {} -> Got: {}). Retrying check.", current_pad_address, pad_after_put.size, gotten_pad.data.len());
+                                }
                             }
                         }
                         Err(e) => {

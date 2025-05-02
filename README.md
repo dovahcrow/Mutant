@@ -1,4 +1,4 @@
-# Mutant: Decentralized P2P Mutable Key-Value Storage for Autonomi
+# Mutant: Decentralized P2P Mutable Key-Value Storage for [Autonomi](https://autonomi.com)
 
 <!-- Badges -->
 [![Build Status](https://github.com/Champii/Mutant/actions/workflows/ci.yml/badge.svg)](https://github.com/Champii/Mutant/actions/workflows/ci.yml)
@@ -8,12 +8,16 @@
 
 > **Mutant** is a public/private mutable key-value store on the Autonomi decentralized storage network, featuring resumable uploads, local index caching, and a powerful async Rust API + CLI.
 
-**Note:** No LLM was harmed in the making of this project.
+<p align="center">
+  <img src="docs/screenshots/cover.png" alt="cover" width="20%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/demo.gif" alt="demo" width="60%">
+</p>
 
-[Autonomi](https://autonomi.com) is a P2P decentralized storage network, IT IS NOT A BLOCKCHAIN.
 
 
-![demo.gif](docs/screenshots/demo.gif)
+**Note:** No LLMs were harmed in the making of this project.
 
 ## Table of Contents
 1. [Core Concepts](#core-concepts)
