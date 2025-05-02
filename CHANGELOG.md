@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix resumed `put` operations incorrectly reporting missing chunks by accounting for previously confirmed chunks in the final check.
 - Propagate errors from pad recycling during `put` operation to prevent incorrect 'incomplete' errors when recycling fails.
 - Return error immediately if the pad recycler task panics during `put` operation, preventing potential incorrect 'incomplete' errors.
+- Ensure recycled pads during PUT operations are correctly re-processed by the worker pool, preventing operations from finishing with missing confirmations due to failed pads.
 
 ### Changed
 - Refactored write pipeline: Replaced two-stage put/confirm tasks with a single processing loop (`process_pads`) using `tokio::select!` and `FuturesUnordered` to manage concurrent `process_pad_task` operations (put -> confirm cycle) for each pad, improving deadlock resilience.
@@ -182,7 +183,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Correctly set initial status (`Allocated` or `Generated`) for pads acquired during `store` operation, fixing errors when reusing pads from `free_pads` list after a `remove`.
 - Implemented pad harvesting during `remove` operation: `Generated` pads move to `pending_verification_pads`, others move to `free_pads`.
 - Handle inconsistency during `put` resume where `check_existence` fails but pad actually exists on network, preventing `put_raw` from erroring on create.
-- Modified resume logic (`prepare_pads_for_store`) to attempt writing `Generated` pads even if `check_existence` fails, relying on `put_raw`'s inconsistency handling.
+- Modified resume logic (`prepare_pads_for_store`) to attempt writing `Generated` pads even if `check_existence` fails, relying on `put_raw's` inconsistency handling.
 - Increase sleep time in `manage_local_testnet.sh` to allow EVM testnet more time to start in CI.
 - **CLI:** Changed `put --force` behavior to perform `remove` then `store` instead of calling the unimplemented `update` library function.
 
@@ -215,3 +216,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Return error immediately if the pad recycler task panics during `put` operation, preventing potential incorrect 'incomplete' errors.
 - Propagate errors from pad recycling during `put` operation to prevent incorrect 'incomplete' errors when recycling fails.
 - Fix resumed `put` operations incorrectly reporting missing chunks by accounting for previously confirmed chunks in the final check.
+
+### Fixes
+
+- Ensure recycled pads during PUT operations are correctly re-processed by the worker pool, preventing operations from finishing with missing confirmations due to failed pads.

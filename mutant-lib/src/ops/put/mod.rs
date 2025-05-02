@@ -631,23 +631,10 @@ async fn write_pipeline(
         let index = context.index.clone();
         let key_name_clone = key_name.clone();
         let recycle_rx = recycle_rx.clone();
-        let global_pad_tx = global_tx.clone();
-        let total_pads_for_recycler = total_pads;
+        let global_pad_tx_clone = global_tx.clone();
 
         tokio::spawn(async move {
-            let mut recycled_count = 0;
-            let max_recycles = total_pads_for_recycler * PAD_RECYCLING_RETRIES;
-
             while let Ok((_error_cause, pad_to_recycle)) = recycle_rx.recv().await {
-                recycled_count += 1;
-                if recycled_count > max_recycles {
-                    warn!(
-                        "Recycling limit ({}) reached for key {}. Stopping recycling.",
-                        max_recycles, key_name_clone
-                    );
-                    break; // Stop recycling if limit reached
-                }
-
                 match index
                     .write()
                     .await
@@ -655,8 +642,7 @@ async fn write_pipeline(
                     .await
                 {
                     Ok(new_pad) => {
-                        if global_pad_tx.send(new_pad).await.is_err() {
-                            // Global channel closed, pool is shutting down. Stop recycling.
+                        if global_pad_tx_clone.send(new_pad).await.is_err() {
                             warn!("Recycler task: Global channel closed while sending recycled pad for key {}. Stopping recycling.", key_name_clone);
                             break;
                         }
@@ -666,16 +652,15 @@ async fn write_pipeline(
                             "Failed to recycle pad {} for key {}: {}. Aborting recycler task.",
                             pad_to_recycle.address, key_name_clone, recycle_err
                         );
-                        // Return the error immediately, stopping the recycler task
                         return Err(recycle_err);
                     }
                 }
             }
-            // Close the global tx channel when the recycler finishes (recycle_rx is closed)
-            // or the recycling limit is reached, or an error occurred. This signals to the worker pool's
-            // global queue receiver that no more recycled pads are coming.
-            // global_tx_clone.close();
-            Ok(()) // Indicate successful completion of the recycler loop
+            debug!(
+                "Recycle channel closed for key {}. Recycler task finishing.",
+                key_name_clone
+            );
+            Ok(())
         })
     };
 
@@ -704,48 +689,38 @@ async fn write_pipeline(
         warn!("Send pads task join error: {:?}", e);
     }
 
-    // --- Start Modification ---
-    // Handle the Result from the recycler task
     match recycler_task.await {
         Ok(Ok(())) => {
-            // Recycler completed successfully or stopped due to limits/closed channel
             debug!("Recycler task completed for key {}", key_name);
         }
         Ok(Err(recycle_error)) => {
-            // Recycler task returned an error (e.g., failed to recycle a pad)
             error!(
                 "Recycler task failed for key {}: {}",
                 key_name, recycle_error
             );
-            return Err(recycle_error); // Propagate the recycler error
+            return Err(recycle_error);
         }
         Err(join_err) => {
-            // Recycler task panicked or was cancelled
             warn!(
                 "Recycler task join error for key {}: {:?}",
                 key_name, join_err
             );
-            // Return an error, as a panicked recycler likely means the process is incomplete.
             return Err(Error::Internal(format!(
                 "Recycler task panicked for key {}",
                 key_name
             )));
         }
     }
-    // --- End Modification ---
 
     match pool_result {
         Ok(results) => {
-            // Completion check: Verify all original chunk indices were processed successfully OR were already confirmed.
             use std::collections::HashSet;
             let mut processed_indices: HashSet<usize> =
                 results.into_iter().map(|(id, _)| id).collect();
 
-            // Add the indices that were already confirmed at the start
             processed_indices.extend(initially_confirmed_indices);
 
             if processed_indices.len() != total_pads {
-                // Find missing indices for better error message
                 let mut missing_indices = Vec::new();
                 for i in 0..total_pads {
                     if !processed_indices.contains(&i) {
@@ -772,8 +747,7 @@ async fn write_pipeline(
                 "Put operation failed for key {}: {:?}",
                 key_name, pool_error
             );
-            // Ensure notifier doesn't hang if we error out early
-            completion_notifier.notify_waiters(); // Keep this for potential external waiters? Or remove? Let's remove for now.
+            completion_notifier.notify_waiters();
             let final_error = match pool_error {
                 PoolError::TaskError(task_err) => {
                     error!("Pool task error for key {}: {:?}", key_name, task_err);
