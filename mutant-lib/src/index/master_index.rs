@@ -540,6 +540,7 @@ impl MasterIndex {
         index_pad_info.chunk_index = 0;
         index_pad_info.size = 0; // Placeholder
         index_pad_info.checksum = 0; // Placeholder
+        index_pad_info.last_known_counter += 1;
 
         // Generate PadInfo for data chunks
         let data_pads_info = data_ranges
