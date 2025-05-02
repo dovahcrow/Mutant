@@ -4410,7 +4410,7 @@ dependencies = [
 
 [[package]]
 name = "mutant-cli"
-version = "0.1.0"
+version = "0.6.0-dev"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4431,7 +4431,7 @@ dependencies = [
 
 [[package]]
 name = "mutant-client"
-version = "0.1.0"
+version = "0.6.0-dev"
 dependencies = [
  "console_error_panic_hook",
  "ewebsock",
@@ -4454,7 +4454,7 @@ dependencies = [
 
 [[package]]
 name = "mutant-daemon"
-version = "0.1.0"
+version = "0.6.0-dev"
 dependencies = [
  "anyhow",
  "clap",
@@ -4479,7 +4479,7 @@ dependencies = [
 
 [[package]]
 name = "mutant-lib"
-version = "0.5.1"
+version = "0.6.0-dev"
 dependencies = [
  "ant-networking",
  "anyhow",
@@ -4525,7 +4525,7 @@ dependencies = [
 
 [[package]]
 name = "mutant-protocol"
-version = "0.1.0"
+version = "0.6.0-dev"
 dependencies = [
  "base64 0.21.7",
  "serde",
