@@ -56,10 +56,12 @@ impl AsyncTask<PadInfo, PurgeContext, Object<ClientManager>, PurgeTaskOutcome, E
         let outcome: PurgeTaskOutcome;
 
         match get_result {
-            Ok(_res) => {
+            Ok(res) => {
                 debug!("Worker {} verified pad {}.", worker_id, pad.address);
                 match context.index.try_write() {
                     Ok(mut index_guard) => {
+                        let mut pad = pad.clone();
+                        pad.last_known_counter = res.counter;
                         index_guard
                             .verified_pending_pad(pad.clone())
                             .map_err(|e| (e.into(), pad.clone()))?;

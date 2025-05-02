@@ -495,11 +495,11 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
                                     })?;
                                 return Ok((pad.chunk_index, ()));
                             } else {
-                                warn!("Pad {} counter decreased during confirmation check ({} -> {}). Retrying check.", current_pad_address, pad_after_put.last_known_counter, gotten_pad.counter);
+                                debug!("Pad {} counter decreased during confirmation check ({} -> {}). Retrying check.", current_pad_address, pad_after_put.last_known_counter, gotten_pad.counter);
                             }
                         }
                         Err(e) => {
-                            warn!("Worker {} network.get failed during confirmation for pad {}: {}. Retrying check.", worker_id, current_pad_address, e);
+                            debug!("Worker {} network.get failed during confirmation for pad {}: {}. Retrying check.", worker_id, current_pad_address, e);
                         }
                     }
                     tokio::time::sleep(Duration::from_secs(2)).await;

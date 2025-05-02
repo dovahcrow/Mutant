@@ -239,42 +239,111 @@ impl MasterIndex {
         pad_address: &ScratchpadAddress,
     ) -> Result<PadInfo, Error> {
         let mut new_pad = if self.free_pads.is_empty() {
+            // If no free pads, generate a new one temporarily.
+            // The actual data/checksum doesn't matter here as it will be overwritten.
             PadInfo::new(&[0u8; 1], 0)
         } else {
+            // Use a pad from the free list
             self.free_pads.pop().unwrap()
         };
 
         if let Some(entry) = self.index.get_mut(key_name) {
-            let pad = match entry {
+            let result = match entry {
                 IndexEntry::PrivateKey(pads) => {
-                    pads.iter_mut().find(|p| p.address == *pad_address).unwrap()
+                    if let Some(pad_index) = pads.iter().position(|p| p.address == *pad_address) {
+                        let old_pad = pads[pad_index].clone();
+
+                        // Configure the new pad based on the old one
+                        new_pad.checksum = old_pad.checksum;
+                        new_pad.size = old_pad.size;
+                        new_pad.chunk_index = old_pad.chunk_index;
+                        new_pad.last_known_counter = old_pad.last_known_counter + 1;
+                        // new_pad already has its new address and sk_bytes
+
+                        // Replace the old pad info in the vector
+                        pads[pad_index] = new_pad.clone();
+
+                        self.pending_verification_pads.push(old_pad);
+                        Ok(new_pad)
+                    } else {
+                        Err(IndexError::KeyNotFound(format!(
+                            "Pad address {} not found in key {}",
+                            pad_address, key_name
+                        )))
+                    }
                 }
                 IndexEntry::PublicUpload(index_pad, pads) => {
                     if *pad_address == index_pad.address {
-                        index_pad
+                        // Recycling the index pad itself
+                        let old_pad = index_pad.clone();
+
+                        // Configure the new pad based on the old one
+                        new_pad.checksum = old_pad.checksum;
+                        new_pad.size = old_pad.size;
+                        new_pad.chunk_index = old_pad.chunk_index; // Should be 0
+                        new_pad.last_known_counter = old_pad.last_known_counter + 1;
+
+                        // Replace the index pad info
+                        *index_pad = new_pad.clone();
+
+                        self.pending_verification_pads.push(old_pad);
+                        Ok(new_pad)
                     } else {
-                        pads.iter_mut().find(|p| p.address == *pad_address).unwrap()
+                        // Recycling a data pad
+                        if let Some(data_pad_index) =
+                            pads.iter().position(|p| p.address == *pad_address)
+                        {
+                            let old_pad = pads[data_pad_index].clone();
+
+                            // Configure the new pad info based on the old one
+                            new_pad.checksum = old_pad.checksum;
+                            new_pad.size = old_pad.size;
+                            new_pad.chunk_index = old_pad.chunk_index;
+                            new_pad.last_known_counter = old_pad.last_known_counter + 1;
+                            // new_pad already has its new address and sk_bytes
+
+                            // Replace the old pad info in the vector
+                            pads[data_pad_index] = new_pad.clone();
+
+                            // Re-serialize the updated data pads vector for the index pad content
+                            let new_index_data = serde_cbor::to_vec(pads).map_err(|e| {
+                                IndexError::SerializationError(format!(
+                                    "Failed to serialize updated public index data: {}",
+                                    e
+                                ))
+                            })?;
+                            let new_index_checksum = PadInfo::checksum(&new_index_data);
+
+                            // Update the index pad metadata
+                            index_pad.size = new_index_data.len();
+                            index_pad.checksum = new_index_checksum;
+                            index_pad.last_known_counter += 1;
+                            index_pad.status = PadStatus::Free; // Mark index pad for re-upload
+
+                            self.pending_verification_pads.push(old_pad);
+                            Ok(new_pad)
+                        } else {
+                            Err(IndexError::KeyNotFound(format!(
+                                "Pad address {} not found in key {}",
+                                pad_address, key_name
+                            )))
+                        }
                     }
                 }
             };
 
-            let old_pad = pad.clone();
-
-            new_pad.checksum = old_pad.checksum;
-            new_pad.size = old_pad.size;
-            new_pad.chunk_index = old_pad.chunk_index;
-            new_pad.last_known_counter = old_pad.last_known_counter + 1;
-
-            *pad = new_pad.clone();
-
-            self.pending_verification_pads.push(old_pad);
-
-            self.save(self.network_choice)?;
+            // Save the index if the operation inside the match was successful
+            match result {
+                Ok(ref pad_info) => {
+                    // Use ref here to avoid moving pad_info
+                    self.save(self.network_choice)?;
+                    Ok(pad_info.clone()) // Clone the result to return
+                }
+                Err(e) => Err(e.into()), // Propagate index error as Error
+            }
         } else {
-            return Err(IndexError::KeyNotFound(key_name.to_string()).into());
+            Err(IndexError::KeyNotFound(key_name.to_string()).into())
         }
-
-        Ok(new_pad)
     }
 
     pub fn update_pad_status(
