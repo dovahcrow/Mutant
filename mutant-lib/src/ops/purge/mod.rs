@@ -296,9 +296,6 @@ pub(super) async fn purge(
         worker_rxs, // Pass worker receivers
         global_rx,  // Pass global receiver
         None,       // No retry channel needed for purge
-        completion_notifier.clone(),
-        Some(total_items_atomic.clone()),
-        Some(processed_items_counter_atomic.clone()),
     );
 
     // info!(

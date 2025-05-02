@@ -328,9 +328,6 @@ async fn fetch_pads_data(
         worker_rxs, // Pass worker-specific receivers
         global_rx,  // Pass global receiver
         None,       // No retry channel for GET
-        get_context.completion_notifier.clone(),
-        Some(get_context.total_items.clone()),
-        Some(get_context.fetched_items_counter.clone()),
     );
 
     // Run the pool

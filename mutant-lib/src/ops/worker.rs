@@ -4,9 +4,8 @@ use futures::StreamExt;
 use log::{debug, trace};
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::Mutex;
 
 // Trait for the actual work function
 #[async_trait::async_trait]
@@ -39,8 +38,7 @@ where
     TaskError(TaskError),              // Error from within a task's processing
     JoinError(tokio::task::JoinError), // Error joining a task handle
     PoolSetupError(String),            // e.g., failed to get client
-    #[allow(dead_code)]
-    WorkerError(String), // Error from a worker
+    WorkerError(String),               // Error from a worker
 }
 
 // Worker structure to manage a set of task processors
@@ -64,9 +62,6 @@ where
     retry_sender: Option<Sender<(E, Item)>>,
     results_collector: Arc<Mutex<Vec<(Task::ItemId, T)>>>,
     errors_collector: Arc<Mutex<Vec<E>>>,
-    completion_notifier: Arc<Notify>,
-    total_items: Option<Arc<AtomicUsize>>,
-    completed_items_counter: Option<Arc<AtomicUsize>>,
 }
 
 impl<Item, Context, Client, Task, T, E> Worker<Item, Context, Client, Task, T, E>
@@ -96,9 +91,6 @@ where
                 retry_sender: self.retry_sender.clone(),
                 results_collector: self.results_collector.clone(),
                 errors_collector: self.errors_collector.clone(),
-                completion_notifier: self.completion_notifier.clone(),
-                total_items: self.total_items.clone(),
-                completed_items_counter: self.completed_items_counter.clone(),
             };
 
             task_handles.push(tokio::spawn(async move {
@@ -119,59 +111,20 @@ where
     }
 
     async fn run_task_processor(self, task_id: usize) -> Result<(), PoolError<E>> {
-        // Create a channel for signaling completion
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
-
-        // Clone all the values we need to move into the monitor task
-        let worker_id = self.id;
-        let completion_notifier_clone = self.completion_notifier.clone();
-        let completed_items_counter_clone = self.completed_items_counter.clone();
-        let total_items_clone = self.total_items.clone();
-        let local_queue_clone = self.local_queue.clone();
-        let global_queue_clone = self.global_queue.clone();
-
-        // Spawn a task to monitor for completion and signal shutdown
-        let monitor_task = tokio::spawn(async move {
-            loop {
-                // Wait for completion notification
-                completion_notifier_clone.notified().await;
-
-                // Check if we've completed all work
-                if let (Some(counter), Some(total)) =
-                    (&completed_items_counter_clone, &total_items_clone)
-                {
-                    let current_count = counter.load(Ordering::SeqCst);
-                    let total_count = total.load(Ordering::SeqCst);
-                    if total_count > 0 && current_count >= total_count {
-                        // Signal shutdown to the task processor
-                        let _ = shutdown_tx.send(()).await;
-                        break;
-                    }
-                }
-
-                // If both queues are closed, signal shutdown
-                if local_queue_clone.is_closed() && global_queue_clone.is_closed() {
-                    let _ = shutdown_tx.send(()).await;
-                    break;
-                }
-
-                // Sleep briefly to avoid busy-waiting
-                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-            }
-        });
-
         // Main processing loop
         loop {
-            // Try to get work from local queue first, then global queue, or wait for shutdown
+            // Try to get work from local queue first, then global queue
             let item = tokio::select! {
                 biased;
 
                 result = self.local_queue.recv() => {
                     match result {
                         Ok(item) => {
+                            trace!("Worker {}.{} received item from local queue", self.id, task_id);
                             Some(item)
                         },
                         Err(_) => {
+                            trace!("Worker {}.{} local queue closed", self.id, task_id);
                             None
                         },
                     }
@@ -181,21 +134,19 @@ where
                 result = self.global_queue.recv() => {
                     match result {
                         Ok(item) => {
+                            trace!("Worker {}.{} received item from global queue", self.id, task_id);
                             Some(item)
                         },
                         Err(_) => {
+                            trace!("Worker {}.{} global queue closed", self.id, task_id);
                             None
                         },
                     }
                 },
-
-                // Check for shutdown signal
-                _ = shutdown_rx.recv() => {
-                    None
-                }
             };
 
             if let Some(item) = item {
+                trace!("Worker {}.{} processing item", self.id, task_id);
                 // Process the item
                 match self
                     .task_processor
@@ -209,18 +160,6 @@ where
                 {
                     Ok((item_id, result)) => {
                         self.results_collector.lock().await.push((item_id, result));
-
-                        if let Some(counter) = &self.completed_items_counter {
-                            let previous = counter.fetch_add(1, Ordering::SeqCst);
-                            let current = previous + 1;
-
-                            if let Some(total) = &self.total_items {
-                                let total_count = total.load(Ordering::SeqCst);
-                                if total_count > 0 && current >= total_count {
-                                    self.completion_notifier.notify_waiters();
-                                }
-                            }
-                        }
                     }
                     Err((error, failed_item)) => {
                         if let Some(retry_tx) = &self.retry_sender {
@@ -234,25 +173,16 @@ where
                 }
             } else {
                 // No more work and all queues are empty or closed, or we received a shutdown signal
-                if self.local_queue.is_closed() && self.global_queue.is_closed() {
-                    break;
-                }
-
-                // Check if we've completed all work
-                if let (Some(counter), Some(total)) =
-                    (&self.completed_items_counter, &self.total_items)
-                {
-                    let current_count = counter.load(Ordering::SeqCst);
-                    let total_count = total.load(Ordering::SeqCst);
-                    if total_count > 0 && current_count >= total_count {
-                        break;
-                    }
-                }
+                trace!(
+                    "Worker {}.{} terminating: Local closed={}, Global closed={}",
+                    self.id,
+                    task_id,
+                    self.local_queue.is_closed(),
+                    self.global_queue.is_closed()
+                );
+                break; // Exit loop if both channels returned None (meaning they are closed and empty)
             }
         }
-
-        // Cancel the monitor task
-        monitor_task.abort();
 
         Ok(())
     }
@@ -279,9 +209,6 @@ where
     worker_item_receivers: Vec<Receiver<Item>>,
     global_item_receiver: Receiver<Item>,
     retry_sender: Option<Sender<(E, Item)>>,
-    completion_notifier: Arc<Notify>,
-    total_items: Option<Arc<AtomicUsize>>,
-    completed_items_counter: Option<Arc<AtomicUsize>>,
     _marker_result: PhantomData<T>,
     _marker_error: PhantomData<E>,
 }
@@ -305,9 +232,6 @@ where
         worker_item_receivers: Vec<Receiver<Item>>,
         global_item_receiver: Receiver<Item>,
         retry_sender: Option<Sender<(E, Item)>>,
-        completion_notifier: Arc<Notify>,
-        total_items: Option<Arc<AtomicUsize>>,
-        completed_items_counter: Option<Arc<AtomicUsize>>,
     ) -> Self {
         assert_eq!(
             worker_item_receivers.len(),
@@ -328,9 +252,6 @@ where
             worker_item_receivers,
             global_item_receiver,
             retry_sender,
-            completion_notifier,
-            total_items,
-            completed_items_counter,
             _marker_result: PhantomData,
             _marker_error: PhantomData,
         }
@@ -361,9 +282,6 @@ where
                 retry_sender: self.retry_sender.clone(),
                 results_collector: results_collector.clone(),
                 errors_collector: errors_collector.clone(),
-                completion_notifier: self.completion_notifier.clone(),
-                total_items: self.total_items.clone(),
-                completed_items_counter: self.completed_items_counter.clone(),
             };
 
             worker_handles.push(tokio::spawn(async move { worker.run().await }));
