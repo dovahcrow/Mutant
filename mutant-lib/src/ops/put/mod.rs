@@ -644,7 +644,7 @@ async fn write_pipeline(
                         "Recycling limit ({}) reached for key {}. Stopping recycling.",
                         max_recycles, key_name_clone
                     );
-                    break;
+                    break; // Stop recycling if limit reached
                 }
 
                 match index
@@ -655,25 +655,26 @@ async fn write_pipeline(
                 {
                     Ok(new_pad) => {
                         if global_pad_tx.send(new_pad).await.is_err() {
-                            // Global channel closed, pool is shutting down
+                            // Global channel closed, pool is shutting down. Stop recycling.
+                            warn!("Recycler task: Global channel closed while sending recycled pad for key {}. Stopping recycling.", key_name_clone);
                             break;
                         }
                     }
                     Err(recycle_err) => {
                         error!(
-                            "Failed to recycle pad {} for key {}: {}",
+                            "Failed to recycle pad {} for key {}: {}. Aborting recycler task.",
                             pad_to_recycle.address, key_name_clone, recycle_err
                         );
-                        // Decide if we should break or continue trying other pads
-                        // For now, continue, but log the error. A persistent failure
-                        // here might prevent completion.
+                        // Return the error immediately, stopping the recycler task
+                        return Err(recycle_err);
                     }
                 }
             }
             // Close the global tx channel when the recycler finishes (recycle_rx is closed)
-            // or the recycling limit is reached. This signals to the worker pool's
+            // or the recycling limit is reached, or an error occurred. This signals to the worker pool's
             // global queue receiver that no more recycled pads are coming.
             global_pad_tx.close();
+            Ok(()) // Indicate successful completion of the recycler loop
         })
     };
 
@@ -702,9 +703,32 @@ async fn write_pipeline(
         warn!("Send pads task join error: {:?}", e);
     }
 
-    if let Err(e) = recycler_task.await {
-        warn!("Recycler task join error: {:?}", e);
+    // --- Start Modification ---
+    // Handle the Result from the recycler task
+    match recycler_task.await {
+        Ok(Ok(())) => {
+            // Recycler completed successfully or stopped due to limits/closed channel
+            debug!("Recycler task completed for key {}", key_name);
+        }
+        Ok(Err(recycle_error)) => {
+            // Recycler task returned an error (e.g., failed to recycle a pad)
+            error!(
+                "Recycler task failed for key {}: {}",
+                key_name, recycle_error
+            );
+            return Err(recycle_error); // Propagate the recycler error
+        }
+        Err(join_err) => {
+            // Recycler task panicked or was cancelled
+            warn!(
+                "Recycler task join error for key {}: {:?}",
+                key_name, join_err
+            );
+            // Optionally, return an error here, as a panicked recycler might leave the state inconsistent
+            // return Err(Error::Internal(format!("Recycler task panicked for key {}", key_name)));
+        }
     }
+    // --- End Modification ---
 
     match pool_result {
         Ok(results) => {
