@@ -622,7 +622,8 @@ async fn write_pipeline(
                 tx.close();
             }
 
-            global_tx_clone.close();
+            // DO NOT CLOSE global_tx_clone here. The recycler is responsible for this.
+            // global_tx_clone.close();
         })
     };
 
@@ -661,10 +662,21 @@ async fn write_pipeline(
                         }
                     }
                     Err(recycle_err) => {
-                        error!(
-                            "Failed to recycle pad {} for key {}: {}. Aborting recycler task.",
-                            pad_to_recycle.address, key_name_clone, recycle_err
-                        );
+                        // --- Start Modification: Add specific log for NoFreePadsAvailable ---
+                        if let Some(IndexError::NoFreePadsAvailable) =
+                            recycle_err.downcast_ref::<IndexError>()
+                        {
+                            error!(
+                                "Failed to recycle pad {} for key {}: No free pads available. Aborting recycler task.",
+                                pad_to_recycle.address, key_name_clone
+                            );
+                        } else {
+                            error!(
+                                "Failed to recycle pad {} for key {}: {}. Aborting recycler task.",
+                                pad_to_recycle.address, key_name_clone, recycle_err
+                            );
+                        }
+                        // --- End Modification ---
                         // Return the error immediately, stopping the recycler task
                         return Err(recycle_err);
                     }
@@ -673,7 +685,7 @@ async fn write_pipeline(
             // Close the global tx channel when the recycler finishes (recycle_rx is closed)
             // or the recycling limit is reached, or an error occurred. This signals to the worker pool's
             // global queue receiver that no more recycled pads are coming.
-            global_pad_tx.close();
+            // global_tx_clone.close();
             Ok(()) // Indicate successful completion of the recycler loop
         })
     };

@@ -3,7 +3,7 @@ use crate::error::Error;
 use crate::index::pad_info::PadInfo;
 use crate::storage::ScratchpadAddress;
 use crc::{Crc, CRC_32_ISCSI};
-use log::{debug, info};
+use log::{debug, info, warn};
 use mutant_protocol::StorageMode;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -238,11 +238,14 @@ impl MasterIndex {
         key_name: &str,
         pad_address: &ScratchpadAddress,
     ) -> Result<PadInfo, Error> {
-        let mut new_pad = if self.free_pads.is_empty() {
-            PadInfo::new(&[0u8; 1], 0)
-        } else {
-            self.free_pads.pop().unwrap()
-        };
+        if self.free_pads.is_empty() {
+            warn!(
+                "Attempted to recycle pad {} for key '{}', but no free pads were available.",
+                pad_address, key_name
+            );
+            return Err(IndexError::NoFreePadsAvailable.into());
+        }
+        let mut new_pad = self.free_pads.pop().unwrap();
 
         if let Some(entry) = self.index.get_mut(key_name) {
             let pad = match entry {
