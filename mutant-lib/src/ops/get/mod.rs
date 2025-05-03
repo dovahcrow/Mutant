@@ -98,11 +98,7 @@ pub(super) async fn get(
         .await
         .unwrap();
 
-    let pads_to_fetch = if is_public && pads.len() > 1 {
-        pads[1..].to_vec()
-    } else {
-        pads
-    };
+    let pads_to_fetch = pads; // Use the vector directly
 
     fetch_pads_data(network, pads_to_fetch, is_public, callback).await
 }
@@ -157,17 +153,15 @@ impl AsyncTask<PadInfo, GetContext, Object<crate::network::client::ClientManager
             {
                 Ok(pad_result) => {
                     // Pad size check
-                    if pad_result.data.len() != pad.size {
+                    let counter_match = pad_result.counter == pad.last_known_counter;
+                    let size_match = pad_result.data.len() == pad.size;
+                    let checksum_match = pad.checksum == PadInfo::checksum(&pad_result.data);
+                    if !counter_match || !size_match || !checksum_match {
                         error!(
-                            "Pad size mismatch for pad {}: expected {}, got {}",
-                            pad.address,
-                            pad.size,
-                            pad_result.data.len()
+                            "Pad mismatch for pad {}: Match: counter: {}, size: {}, checksum: {}. Retrying...",
+                            pad.address, counter_match, size_match, checksum_match
                         );
-                        return Err((
-                            Error::Internal(format!("Pad size mismatch for pad {}", pad.address)),
-                            pad,
-                        ));
+                        continue;
                     }
 
                     // Invoke callback for progress

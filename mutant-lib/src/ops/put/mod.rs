@@ -36,7 +36,6 @@ struct Context {
     data: Arc<Vec<u8>>,
     chunk_ranges: Arc<Vec<Range<usize>>>,
     public: bool,
-    index_pad_data: Option<Arc<Vec<u8>>>,
 }
 
 pub(super) async fn put(
@@ -134,10 +133,7 @@ async fn resume(
         None
     };
 
-    let chunk_ranges = index
-        .read()
-        .await
-        .chunk_data(&data_bytes, mode.clone(), public);
+    let chunk_ranges = index.read().await.chunk_data(&data_bytes, mode.clone());
 
     if pads.len() != chunk_ranges.len() {
         warn!(
@@ -155,7 +151,7 @@ async fn resume(
             mode,
             public,
             no_verify,
-            put_callback,
+            put_callback.clone(),
         )
         .await;
     }
@@ -167,10 +163,35 @@ async fn resume(
         data: data_bytes.clone(),
         chunk_ranges: Arc::new(chunk_ranges),
         public,
-        index_pad_data,
     };
 
-    write_pipeline(context, pads.clone(), no_verify, put_callback).await?;
+    write_pipeline(context, pads.clone(), no_verify, put_callback.clone()).await?;
+
+    if public {
+        let (index_pad, index_data) = index.write().await.populate_index_pad(name)?;
+        let index_data_bytes = Arc::new(index_data);
+        let index_chunk_ranges = Arc::new(vec![0..index_data_bytes.len()]);
+
+        let index_pad_context = Context {
+            // Reuse index and network Arcs
+            index: index.clone(),
+            network: network.clone(),
+            name: Arc::new(name.to_string()), // Reuse name Arc
+            chunk_ranges: index_chunk_ranges,
+            data: index_data_bytes,
+            public, // Keep public flag
+                    // index_pad_data is None for the index pad itself
+        };
+
+        // Call write_pipeline again for the single index pad
+        write_pipeline(
+            index_pad_context,
+            vec![index_pad],
+            no_verify,
+            put_callback.clone(), // Clone the callback Arc again
+        )
+        .await?;
+    }
 
     Ok(pads[0].address)
 }
@@ -190,15 +211,6 @@ async fn first_store(
         .await
         .create_key(name, &data_bytes, mode, public)?;
 
-    let index_pad_data = if public && pads.len() > 1 {
-        let data_pads: Vec<_> = pads.iter().skip(1).cloned().collect();
-        Some(Arc::new(serde_cbor::to_vec(&data_pads).map_err(|e| {
-            Error::Index(IndexError::SerializationError(e.to_string()))
-        })?))
-    } else {
-        None
-    };
-
     info!("Created key {} with {} pads", name, pads.len());
 
     let address = pads[0].address;
@@ -210,10 +222,40 @@ async fn first_store(
         chunk_ranges: Arc::new(chunk_ranges),
         data: data_bytes.clone(),
         public,
-        index_pad_data,
     };
 
-    write_pipeline(context, pads.clone(), no_verify, put_callback).await?;
+    write_pipeline(context, pads.clone(), no_verify, put_callback.clone()).await?;
+
+    if public {
+        let (index_pad, index_data) = index.write().await.populate_index_pad(name)?;
+        let index_data_bytes = Arc::new(index_data);
+        let index_chunk_ranges = Arc::new(vec![0..index_data_bytes.len()]);
+
+        let index_pad_context = Context {
+            // Reuse index and network Arcs
+            index: index.clone(),
+            network: network.clone(),
+            name: Arc::new(name.to_string()), // Reuse name Arc
+            chunk_ranges: index_chunk_ranges,
+            data: index_data_bytes,
+            public, // Keep public flag
+                    // index_pad_data is None for the index pad itself
+        };
+
+        // Call write_pipeline again for the single index pad
+        write_pipeline(
+            index_pad_context,
+            vec![index_pad],
+            no_verify,
+            put_callback.clone(), // Clone the callback Arc again
+        )
+        .await?;
+    }
+
+    // Final completion callback after all pipelines are done
+    invoke_put_callback(&put_callback, PutEvent::Complete)
+        .await
+        .unwrap();
 
     Ok(address)
 }
@@ -256,35 +298,9 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
 
         if should_put {
             let is_index_pad =
-                context.base_context.public && pad.chunk_index == 0 && context.total_pads > 1;
-            let chunk_data_slice = match (is_index_pad, &context.base_context.index_pad_data) {
-                (true, Some(index_data)) => &index_data[..],
-                (true, None) => {
-                    error!(
-                        "Worker {} missing index pad data for pad {}",
-                        worker_id, current_pad_address
-                    );
-                    return Err((Error::Internal("Missing index pad data".to_string()), pad));
-                }
-                (false, _) => {
-                    let chunk_index = pad.chunk_index;
-                    let range = context.base_context.chunk_ranges[chunk_index].clone();
-                    if range.end > context.base_context.data.len() {
-                        error!(
-                            "Worker {} found invalid range {:?} for chunk {} (data len: {}) in pad {}",
-                            worker_id, range, chunk_index, context.base_context.data.len(), current_pad_address
-                        );
-                        return Err((
-                            Error::Internal(format!(
-                                "Invalid data range for chunk {} (pad {}). Range: {:?}, Data Len: {}",
-                                chunk_index, current_pad_address, range, context.base_context.data.len()
-                            )),
-                            pad,
-                        ));
-                    }
-                    &context.base_context.data[range.clone()]
-                }
-            };
+                context.base_context.public && pad.chunk_index == 0 && context.total_pads == 1;
+            let chunk_data_slice = &context.base_context.data
+                [context.base_context.chunk_ranges[pad.chunk_index].clone()];
 
             if chunk_data_slice.len() != pad.size {
                 warn!(
@@ -648,7 +664,7 @@ async fn write_pipeline(
         let index = context.index.clone();
         let key_name_clone = key_name.clone();
         let recycle_rx = recycle_rx.clone();
-        let global_pad_tx_to_close = global_tx.clone();
+        let global_pad_tx_clone_for_recycler = global_tx.clone(); // Clone for the recycler task
 
         tokio::spawn(async move {
             while let Ok((_error_cause, pad_to_recycle)) = recycle_rx.recv().await {
@@ -659,29 +675,35 @@ async fn write_pipeline(
                     .await
                 {
                     Ok(new_pad) => {
-                        if global_pad_tx_to_close.send(new_pad).await.is_err() {
-                            warn!("Recycler task: Global channel closed while sending recycled pad for key {}. Stopping recycling.", key_name_clone);
-                            break;
+                        // Attempt to send the new pad back to the global queue
+                        if let Err(e) = global_pad_tx_clone_for_recycler.try_send(new_pad) {
+                            warn!(
+                                "Recycler task failed to send recycled pad for key {} to global channel: {}. Pad might be lost. Continuing...",
+                                key_name_clone, e
+                            );
                         }
                     }
                     Err(recycle_err) => {
                         error!(
-                            "Failed to recycle pad {} for key {}: {}. Aborting recycler task.",
+                            "Failed to recycle pad {} for key {}: {}. Skipping this pad.",
                             pad_to_recycle.address, key_name_clone, recycle_err
                         );
-                        global_pad_tx_to_close.close();
-                        return Err(recycle_err);
                     }
                 }
             }
             debug!(
-                "Recycle channel closed or send failed for key {}. Closing global pad channel. Recycler task finishing.",
+                "Recycle channel closed for key {}. Recycler task finishing (will drop its global_tx clone).",
                 key_name_clone
             );
-            global_pad_tx_to_close.close();
+            // No longer close the global channel here; let the clone in write_pipeline manage its lifetime.
+            // global_pad_tx_clone_for_recycler.close();
             Ok(())
         })
     };
+
+    // Keep the original global_tx clone alive in this scope.
+    // The channel remains open until this clone is dropped after pool.run() and recycler_task.await.
+    let _global_tx_pipeline_lifetime_clone = global_tx;
 
     let pool: WorkerPool<
         PadInfo,
