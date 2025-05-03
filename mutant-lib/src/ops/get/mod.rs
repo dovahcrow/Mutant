@@ -157,17 +157,15 @@ impl AsyncTask<PadInfo, GetContext, Object<crate::network::client::ClientManager
             {
                 Ok(pad_result) => {
                     // Pad size check
-                    if pad_result.data.len() != pad.size {
+                    let counter_match = pad_result.counter == pad.last_known_counter;
+                    let size_match = pad_result.data.len() == pad.size;
+                    let checksum_match = pad.checksum == PadInfo::checksum(&pad_result.data);
+                    if !counter_match || !size_match || !checksum_match {
                         error!(
-                            "Pad size mismatch for pad {}: expected {}, got {}",
-                            pad.address,
-                            pad.size,
-                            pad_result.data.len()
+                            "Pad mismatch for pad {}: Match: counter: {}, size: {}, checksum: {}. Retrying...",
+                            pad.address, counter_match, size_match, checksum_match
                         );
-                        return Err((
-                            Error::Internal(format!("Pad size mismatch for pad {}", pad.address)),
-                            pad,
-                        ));
+                        continue;
                     }
 
                     // Invoke callback for progress

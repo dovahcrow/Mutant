@@ -128,7 +128,9 @@ impl MasterIndex {
 
         if public {
             // Empty index pad info for now
-            let index_pad_info = self._acquire_pads_internal(1)?[0].clone();
+            let mut index_pad_info = self._acquire_pads_internal(1)?[0].clone();
+            // Explicitly set chunk_index to 0 for the index pad, regardless of whether it's new or reused.
+            index_pad_info.chunk_index = 0;
 
             self.index.insert(
                 key_name.to_string(),
@@ -332,10 +334,7 @@ impl MasterIndex {
         if let Some(entry) = self.index.get(key_name) {
             match entry {
                 IndexEntry::PrivateKey(pads) => pads.clone(),
-                IndexEntry::PublicUpload(index, pads) => vec![index.clone()]
-                    .into_iter()
-                    .chain(pads.clone())
-                    .collect(),
+                IndexEntry::PublicUpload(_index, pads) => pads.clone(),
             }
         } else {
             Vec::new()
