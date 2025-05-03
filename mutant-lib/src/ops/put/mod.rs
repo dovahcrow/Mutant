@@ -6,6 +6,7 @@ use crate::network::client::{ClientManager, Config};
 use crate::network::{Network, NetworkError};
 use crate::ops::worker::{AsyncTask, PoolError, WorkerPool};
 use crate::ops::{BATCH_SIZE, MAX_CONFIRMATION_DURATION, WORKER_COUNT};
+use crate::storage::IndexEntry;
 use async_channel::bounded;
 use async_trait::async_trait;
 use autonomi::ScratchpadAddress;
@@ -36,7 +37,7 @@ struct Context {
     data: Arc<Vec<u8>>,
     chunk_ranges: Arc<Vec<Range<usize>>>,
     public: bool,
-    index_pad_data: Option<Arc<Vec<u8>>>,
+    // index_pad_data: Option<Arc<Vec<u8>>>,
 }
 
 pub(super) async fn put(
@@ -125,19 +126,7 @@ async fn resume(
         .await;
     }
 
-    let index_pad_data = if public && pads.len() > 1 {
-        let data_pads: Vec<_> = pads.iter().skip(1).cloned().collect();
-        Some(Arc::new(serde_cbor::to_vec(&data_pads).map_err(|e| {
-            Error::Index(IndexError::SerializationError(e.to_string()))
-        })?))
-    } else {
-        None
-    };
-
-    let chunk_ranges = index
-        .read()
-        .await
-        .chunk_data(&data_bytes, mode.clone(), public);
+    let chunk_ranges = index.read().await.chunk_data(&data_bytes, mode.clone());
 
     if pads.len() != chunk_ranges.len() {
         warn!(
@@ -167,7 +156,7 @@ async fn resume(
         data: data_bytes.clone(),
         chunk_ranges: Arc::new(chunk_ranges),
         public,
-        index_pad_data,
+        // index_pad_data,
     };
 
     write_pipeline(context, pads.clone(), no_verify, put_callback).await?;
@@ -190,18 +179,25 @@ async fn first_store(
         .await
         .create_key(name, &data_bytes, mode, public)?;
 
-    let index_pad_data = if public && pads.len() > 1 {
-        let data_pads: Vec<_> = pads.iter().skip(1).cloned().collect();
-        Some(Arc::new(serde_cbor::to_vec(&data_pads).map_err(|e| {
-            Error::Index(IndexError::SerializationError(e.to_string()))
-        })?))
-    } else {
-        None
-    };
+    // let index_pad_data = if public && pads.len() > 1 {
+    //     let data_pads: Vec<_> = pads.iter().skip(1).cloned().collect();
+    //     Some(Arc::new(serde_cbor::to_vec(&data_pads).map_err(|e| {
+    //         Error::Index(IndexError::SerializationError(e.to_string()))
+    //     })?))
+    // } else {
+    //     None
+    // };
 
     info!("Created key {} with {} pads", name, pads.len());
 
-    let address = pads[0].address;
+    let address = if public {
+        match index.read().await.get_entry(&name).unwrap() {
+            IndexEntry::PublicUpload(index_pad, _) => index_pad.address,
+            IndexEntry::PrivateKey(_) => pads[0].address,
+        }
+    } else {
+        pads[0].address
+    };
 
     let context = Context {
         index: index.clone(),
@@ -210,10 +206,30 @@ async fn first_store(
         chunk_ranges: Arc::new(chunk_ranges),
         data: data_bytes.clone(),
         public,
-        index_pad_data,
+        // index_pad_data,
     };
 
-    write_pipeline(context, pads.clone(), no_verify, put_callback).await?;
+    warn!("Starting pipeline for key {}", name);
+    write_pipeline(context, pads.clone(), no_verify, put_callback.clone()).await?;
+    warn!("Pipeline finished for key {}", name);
+
+    if public {
+        let (index_pad, index_data) = index.write().await.populate_index_pad(name)?;
+        let data_bytes = Arc::new(index_data);
+        let chunk_ranges = Arc::new(vec![0..data_bytes.len()]);
+
+        let index_pad_context = Context {
+            index: index.clone(),
+            network: network.clone(),
+            name: Arc::new(name.to_string()),
+            chunk_ranges: chunk_ranges.clone(),
+            data: data_bytes.clone(),
+            public,
+            // index_pad_data,
+        };
+
+        write_pipeline(index_pad_context, vec![index_pad], no_verify, put_callback).await?;
+    }
 
     Ok(address)
 }
@@ -225,6 +241,309 @@ struct PutTaskContext {
     put_callback: Option<PutCallback>,
     total_pads: usize,
 }
+
+async fn write_pipeline(
+    context: Context,
+    pads: Vec<PadInfo>,
+    no_verify: bool,
+    put_callback: Option<PutCallback>,
+) -> Result<(), Error> {
+    let key_name = context.name.clone();
+    let mut pads = pads;
+
+    let total_pads = pads.len();
+
+    // Collect indices of pads already confirmed before starting the pipeline
+    let initially_confirmed_indices: std::collections::HashSet<usize> = pads
+        .iter()
+        .filter_map(|p| {
+            if p.status == PadStatus::Confirmed {
+                Some(p.chunk_index)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let initial_confirmed_count = initially_confirmed_indices.len(); // Reuse this count for the Starting event
+
+    let total_pads_atomic = Arc::new(std::sync::atomic::AtomicUsize::new(total_pads));
+    let completion_notifier = Arc::new(Notify::new());
+    let (recycle_tx, recycle_rx) = bounded::<(Error, PadInfo)>(total_pads); // Channel for pads needing retry
+
+    let initial_chunks_to_reserve = pads
+        .iter()
+        .filter(|p| p.status == PadStatus::Generated)
+        .count();
+
+    let mut worker_txs = Vec::with_capacity(WORKER_COUNT);
+    let mut worker_rxs = Vec::with_capacity(WORKER_COUNT);
+    for _ in 0..WORKER_COUNT {
+        let (tx, rx) = bounded::<PadInfo>(total_pads.saturating_add(1) / WORKER_COUNT + BATCH_SIZE);
+        worker_txs.push(tx);
+        worker_rxs.push(rx);
+    }
+    let (global_tx, global_rx) = bounded::<PadInfo>(total_pads + WORKER_COUNT * BATCH_SIZE);
+
+    let mut clients = Vec::with_capacity(WORKER_COUNT);
+    for worker_id in 0..WORKER_COUNT {
+        let client = context.network.get_client(Config::Put).await.map_err(|e| {
+            error!("Failed to get client for worker {}: {}", worker_id, e);
+            Error::Network(NetworkError::ClientAccessError(format!(
+                "Failed to get client for worker {}: {}",
+                worker_id, e
+            )))
+        })?;
+        clients.push(Arc::new(client));
+    }
+
+    let put_task_context = Arc::new(PutTaskContext {
+        base_context: context.clone(),
+        no_verify: Arc::new(no_verify),
+        put_callback: put_callback.clone(),
+        total_pads,
+    });
+
+    invoke_put_callback(
+        &put_callback,
+        PutEvent::Starting {
+            total_chunks: total_pads,
+            initial_written_count: pads
+                .iter()
+                .filter(|p| p.status == PadStatus::Written || p.status == PadStatus::Confirmed)
+                .count(),
+            initial_confirmed_count: initial_confirmed_count,
+            chunks_to_reserve: initial_chunks_to_reserve,
+        },
+    )
+    .await
+    .unwrap();
+
+    let send_pads_task = {
+        let mut pads = pads.clone();
+
+        let worker_txs_clone = worker_txs.clone();
+        let global_tx_clone = global_tx.clone();
+        let completion_notifier_clone = completion_notifier.clone();
+        let total_pads_atomic_clone = total_pads_atomic.clone();
+
+        tokio::spawn(async move {
+            let mut worker_index = 0;
+
+            let mut unconfirmed_count = 0;
+            for pad in pads {
+                if pad.status != PadStatus::Confirmed {
+                    unconfirmed_count += 1;
+                    let target_tx = &worker_txs_clone[worker_index % WORKER_COUNT];
+                    if let Err(_e) = target_tx.send(pad.clone()).await {
+                        break;
+                    }
+                    worker_index += 1;
+                }
+            }
+
+            // Once all initial pads are sent, close the worker-specific queues.
+            // The pool will stop when these and the global queue (closed by recycler) are empty.
+            for tx in worker_txs_clone {
+                tx.close();
+            }
+
+            // DO NOT CLOSE global_tx_clone here. The recycler is responsible for this.
+            // global_tx_clone.close();
+        })
+    };
+
+    let recycler_task = {
+        let index = context.index.clone();
+        let key_name_clone = key_name.clone();
+        let recycle_rx = recycle_rx.clone();
+        let global_pad_tx_to_close = global_tx.clone();
+
+        tokio::spawn(async move {
+            while let Ok((_error_cause, pad_to_recycle)) = recycle_rx.recv().await {
+                match index
+                    .write()
+                    .await
+                    .recycle_errored_pad(&key_name_clone, &pad_to_recycle.address)
+                    .await
+                {
+                    Ok(new_pad) => {
+                        if global_pad_tx_to_close.send(new_pad).await.is_err() {
+                            warn!("Recycler task: Global channel closed while sending recycled pad for key {}. Stopping recycling.", key_name_clone);
+                            break;
+                        }
+                    }
+                    Err(recycle_err) => {
+                        error!(
+                            "Failed to recycle pad {} for key {}: {}. Aborting recycler task.",
+                            pad_to_recycle.address, key_name_clone, recycle_err
+                        );
+                        global_pad_tx_to_close.close();
+                        return Err(recycle_err);
+                    }
+                }
+            }
+            debug!(
+                "Recycle channel closed or send failed for key {}. Closing global pad channel. Recycler task finishing.",
+                key_name_clone
+            );
+
+            // // SEND THE INDEX PAD TO BE UPLOADED
+            // if let Some(index_pad) = index_pad {
+            //     global_pad_tx_to_close.send(index_pad).await.unwrap();
+            // }
+
+            global_pad_tx_to_close.close();
+            Ok(())
+        })
+    };
+
+    let pool: WorkerPool<
+        PadInfo,
+        PutTaskContext,
+        Object<ClientManager>,
+        PutTaskProcessor,
+        (),
+        Error,
+    > = WorkerPool::new(
+        WORKER_COUNT,
+        crate::ops::BATCH_SIZE,
+        put_task_context,
+        Arc::new(PutTaskProcessor),
+        clients,
+        worker_rxs,
+        global_rx,
+        Some(recycle_tx),
+    );
+
+    warn!("Before pool.run()");
+
+    let pool_result = pool.run().await;
+
+    warn!("After pool.run()");
+
+    // Ensure background tasks are awaited to prevent leaks and ensure channels are closed
+    if let Err(e) = send_pads_task.await {
+        warn!("Send pads task join error: {:?}", e);
+    }
+
+    warn!("After send_pads_task.await");
+
+    // println!("index_pad: {:?}", index_pad);
+
+    // let index_pad_data = if context.public && pads.len() > 1 {
+    //     let data_pads: Vec<_> = pads.iter().skip(1).cloned().collect();
+    //     Some(Arc::new(serde_cbor::to_vec(&data_pads).map_err(|e| {
+    //         Error::Index(IndexError::SerializationError(e.to_string()))
+    //     })?))
+    // } else {
+    //     None
+    // };
+
+    // TODO: HERE, we should upload the index pad if it exists
+    // if let Some(index_pad) = index_pad {
+    //     let index_pad_data = Arc::new(
+    //         serde_cbor::to_vec(&index_pad)
+    //             .map_err(|e| Error::Index(IndexError::SerializationError(e.to_string())))?,
+    //     );
+    // }
+
+    match recycler_task.await {
+        Ok(Ok(())) => {
+            debug!("Recycler task completed for key {}", key_name);
+        }
+        Ok(Err(recycle_error)) => {
+            error!(
+                "Recycler task failed for key {}: {}",
+                key_name, recycle_error
+            );
+            return Err(recycle_error);
+        }
+        Err(join_err) => {
+            warn!(
+                "Recycler task join error for key {}: {:?}",
+                key_name, join_err
+            );
+            return Err(Error::Internal(format!(
+                "Recycler task panicked for key {}",
+                key_name
+            )));
+        }
+    }
+
+    warn!("After recycler_task.await");
+
+    match pool_result {
+        Ok(results) => {
+            use std::collections::HashSet;
+            let mut processed_indices: HashSet<usize> =
+                results.into_iter().map(|(id, _)| id).collect();
+
+            processed_indices.extend(initially_confirmed_indices);
+
+            if processed_indices.len() != total_pads {
+                let mut missing_indices = Vec::new();
+                for i in 0..total_pads {
+                    if !processed_indices.contains(&i) {
+                        missing_indices.push(i);
+                    }
+                }
+                error!(
+                    "Put operation finished for key {}, but not all chunks were confirmed. Expected: {}, Confirmed unique: {}. Missing indices: {:?}",
+                    key_name, total_pads, processed_indices.len(), missing_indices
+                );
+                return Err(Error::Internal(format!(
+                    "Put operation incomplete for key {}. Expected {} chunks, confirmed {}. Missing: {:?}",
+                    key_name, total_pads, processed_indices.len(), missing_indices
+                )));
+            } else {
+                info!(
+                    "Put operation successful for key {}. All {} chunks confirmed.",
+                    key_name, total_pads
+                );
+            }
+        }
+        Err(pool_error) => {
+            error!(
+                "Put operation failed for key {}: {:?}",
+                key_name, pool_error
+            );
+            completion_notifier.notify_waiters();
+            let final_error = match pool_error {
+                PoolError::TaskError(task_err) => {
+                    error!("Pool task error for key {}: {:?}", key_name, task_err);
+                    task_err
+                }
+                PoolError::JoinError(join_err) => {
+                    error!(
+                        "Pool worker join error for key {}: {:?}",
+                        key_name, join_err
+                    );
+                    Error::Internal(format!("Worker task join error for key {}", key_name))
+                }
+                PoolError::PoolSetupError(msg) => {
+                    error!("Pool setup error for key {}: {}", key_name, msg);
+                    Error::Internal(format!("Pool setup error for key {}: {}", key_name, msg))
+                }
+                PoolError::WorkerError(msg) => {
+                    error!("Pool worker error for key {}: {}", key_name, msg);
+                    Error::Internal(format!("Worker error for key {}: {}", key_name, msg))
+                }
+            };
+            return Err(final_error);
+        }
+    }
+
+    let _final_pad_status = pads.last().map(|p| p.status);
+    invoke_put_callback(&put_callback, PutEvent::Complete)
+        .await
+        .unwrap();
+
+    Ok(())
+}
+
+// async fn tmp_test_worker_pool() {
+//     ``
+// }
 
 #[derive(Clone)]
 struct PutTaskProcessor;
@@ -240,6 +559,7 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
         client: &Object<ClientManager>,
         pad: PadInfo,
     ) -> Result<(Self::ItemId, ()), (Error, PadInfo)> {
+        warn!("Processing pad {} (chunk {})", pad.address, pad.chunk_index);
         let mut pad = pad;
         let current_pad_address = pad.address;
         let initial_status = pad.status;
@@ -255,35 +575,30 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
         };
 
         if should_put {
-            let is_index_pad =
-                context.base_context.public && pad.chunk_index == 0 && context.total_pads > 1;
-            let chunk_data_slice = match (is_index_pad, &context.base_context.index_pad_data) {
-                (true, Some(index_data)) => &index_data[..],
-                (true, None) => {
+            let chunk_data_slice = {
+                let chunk_index = pad.chunk_index;
+                let range = context.base_context.chunk_ranges[chunk_index].clone();
+                if range.end > context.base_context.data.len() {
                     error!(
-                        "Worker {} missing index pad data for pad {}",
-                        worker_id, current_pad_address
+                        "Worker {} found invalid range {:?} for chunk {} (data len: {}) in pad {}",
+                        worker_id,
+                        range,
+                        chunk_index,
+                        context.base_context.data.len(),
+                        current_pad_address
                     );
-                    return Err((Error::Internal("Missing index pad data".to_string()), pad));
+                    return Err((
+                        Error::Internal(format!(
+                            "Invalid data range for chunk {} (pad {}). Range: {:?}, Data Len: {}",
+                            chunk_index,
+                            current_pad_address,
+                            range,
+                            context.base_context.data.len()
+                        )),
+                        pad,
+                    ));
                 }
-                (false, _) => {
-                    let chunk_index = pad.chunk_index;
-                    let range = context.base_context.chunk_ranges[chunk_index].clone();
-                    if range.end > context.base_context.data.len() {
-                        error!(
-                            "Worker {} found invalid range {:?} for chunk {} (data len: {}) in pad {}",
-                            worker_id, range, chunk_index, context.base_context.data.len(), current_pad_address
-                        );
-                        return Err((
-                            Error::Internal(format!(
-                                "Invalid data range for chunk {} (pad {}). Range: {:?}, Data Len: {}",
-                                chunk_index, current_pad_address, range, context.base_context.data.len()
-                            )),
-                            pad,
-                        ));
-                    }
-                    &context.base_context.data[range.clone()]
-                }
+                &context.base_context.data[range.clone()]
             };
 
             if chunk_data_slice.len() != pad.size {
@@ -293,13 +608,14 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
                  );
             }
 
-            let encoding = if is_index_pad {
-                DATA_ENCODING_PUBLIC_INDEX
-            } else if context.base_context.public {
-                DATA_ENCODING_PUBLIC_DATA
-            } else {
-                DATA_ENCODING_PRIVATE_DATA
-            };
+            let encoding =
+                if context.base_context.public && pad.chunk_index == 0 && context.total_pads > 1 {
+                    DATA_ENCODING_PUBLIC_INDEX
+                } else if context.base_context.public {
+                    DATA_ENCODING_PUBLIC_DATA
+                } else {
+                    DATA_ENCODING_PRIVATE_DATA
+                };
 
             // --- Start: Retry logic for network.put ---
             let max_put_retries = 3;
@@ -535,267 +851,4 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
             pad_after_put, // Use the state after potential put attempt
         ))
     }
-}
-
-async fn write_pipeline(
-    context: Context,
-    pads: Vec<PadInfo>,
-    no_verify: bool,
-    put_callback: Option<PutCallback>,
-) -> Result<(), Error> {
-    let key_name = context.name.clone();
-    let total_pads = pads.len();
-
-    // Collect indices of pads already confirmed before starting the pipeline
-    let initially_confirmed_indices: std::collections::HashSet<usize> = pads
-        .iter()
-        .filter_map(|p| {
-            if p.status == PadStatus::Confirmed {
-                Some(p.chunk_index)
-            } else {
-                None
-            }
-        })
-        .collect();
-    let initial_confirmed_count = initially_confirmed_indices.len(); // Reuse this count for the Starting event
-
-    let total_pads_atomic = Arc::new(std::sync::atomic::AtomicUsize::new(total_pads));
-    let completion_notifier = Arc::new(Notify::new());
-    let (recycle_tx, recycle_rx) = bounded::<(Error, PadInfo)>(total_pads); // Channel for pads needing retry
-
-    let initial_chunks_to_reserve = pads
-        .iter()
-        .filter(|p| p.status == PadStatus::Generated)
-        .count();
-
-    let mut worker_txs = Vec::with_capacity(WORKER_COUNT);
-    let mut worker_rxs = Vec::with_capacity(WORKER_COUNT);
-    for _ in 0..WORKER_COUNT {
-        let (tx, rx) = bounded::<PadInfo>(total_pads.saturating_add(1) / WORKER_COUNT + BATCH_SIZE);
-        worker_txs.push(tx);
-        worker_rxs.push(rx);
-    }
-    let (global_tx, global_rx) = bounded::<PadInfo>(total_pads + WORKER_COUNT * BATCH_SIZE);
-
-    let mut clients = Vec::with_capacity(WORKER_COUNT);
-    for worker_id in 0..WORKER_COUNT {
-        let client = context.network.get_client(Config::Put).await.map_err(|e| {
-            error!("Failed to get client for worker {}: {}", worker_id, e);
-            Error::Network(NetworkError::ClientAccessError(format!(
-                "Failed to get client for worker {}: {}",
-                worker_id, e
-            )))
-        })?;
-        clients.push(Arc::new(client));
-    }
-
-    let put_task_context = Arc::new(PutTaskContext {
-        base_context: context.clone(),
-        no_verify: Arc::new(no_verify),
-        put_callback: put_callback.clone(),
-        total_pads,
-    });
-
-    invoke_put_callback(
-        &put_callback,
-        PutEvent::Starting {
-            total_chunks: total_pads,
-            initial_written_count: pads
-                .iter()
-                .filter(|p| p.status == PadStatus::Written || p.status == PadStatus::Confirmed)
-                .count(),
-            initial_confirmed_count: initial_confirmed_count,
-            chunks_to_reserve: initial_chunks_to_reserve,
-        },
-    )
-    .await
-    .unwrap();
-
-    let send_pads_task = {
-        let pads = pads.clone();
-        let worker_txs_clone = worker_txs.clone();
-        let global_tx_clone = global_tx.clone();
-        let completion_notifier_clone = completion_notifier.clone();
-        let total_pads_atomic_clone = total_pads_atomic.clone();
-
-        tokio::spawn(async move {
-            let mut worker_index = 0;
-
-            let mut unconfirmed_count = 0;
-            for pad in pads {
-                if pad.status != PadStatus::Confirmed {
-                    unconfirmed_count += 1;
-                    let target_tx = &worker_txs_clone[worker_index % WORKER_COUNT];
-                    if let Err(_e) = target_tx.send(pad.clone()).await {
-                        break;
-                    }
-                    worker_index += 1;
-                }
-            }
-
-            // Once all initial pads are sent, close the worker-specific queues.
-            // The pool will stop when these and the global queue (closed by recycler) are empty.
-            for tx in worker_txs_clone {
-                tx.close();
-            }
-
-            // DO NOT CLOSE global_tx_clone here. The recycler is responsible for this.
-            // global_tx_clone.close();
-        })
-    };
-
-    let recycler_task = {
-        let index = context.index.clone();
-        let key_name_clone = key_name.clone();
-        let recycle_rx = recycle_rx.clone();
-        let global_pad_tx_to_close = global_tx.clone();
-
-        tokio::spawn(async move {
-            while let Ok((_error_cause, pad_to_recycle)) = recycle_rx.recv().await {
-                match index
-                    .write()
-                    .await
-                    .recycle_errored_pad(&key_name_clone, &pad_to_recycle.address)
-                    .await
-                {
-                    Ok(new_pad) => {
-                        if global_pad_tx_to_close.send(new_pad).await.is_err() {
-                            warn!("Recycler task: Global channel closed while sending recycled pad for key {}. Stopping recycling.", key_name_clone);
-                            break;
-                        }
-                    }
-                    Err(recycle_err) => {
-                        error!(
-                            "Failed to recycle pad {} for key {}: {}. Aborting recycler task.",
-                            pad_to_recycle.address, key_name_clone, recycle_err
-                        );
-                        global_pad_tx_to_close.close();
-                        return Err(recycle_err);
-                    }
-                }
-            }
-            debug!(
-                "Recycle channel closed or send failed for key {}. Closing global pad channel. Recycler task finishing.",
-                key_name_clone
-            );
-            global_pad_tx_to_close.close();
-            Ok(())
-        })
-    };
-
-    let pool: WorkerPool<
-        PadInfo,
-        PutTaskContext,
-        Object<ClientManager>,
-        PutTaskProcessor,
-        (),
-        Error,
-    > = WorkerPool::new(
-        WORKER_COUNT,
-        crate::ops::BATCH_SIZE,
-        put_task_context,
-        Arc::new(PutTaskProcessor),
-        clients,
-        worker_rxs,
-        global_rx,
-        Some(recycle_tx),
-    );
-
-    let pool_result = pool.run().await;
-
-    // Ensure background tasks are awaited to prevent leaks and ensure channels are closed
-    if let Err(e) = send_pads_task.await {
-        warn!("Send pads task join error: {:?}", e);
-    }
-
-    match recycler_task.await {
-        Ok(Ok(())) => {
-            debug!("Recycler task completed for key {}", key_name);
-        }
-        Ok(Err(recycle_error)) => {
-            error!(
-                "Recycler task failed for key {}: {}",
-                key_name, recycle_error
-            );
-            return Err(recycle_error);
-        }
-        Err(join_err) => {
-            warn!(
-                "Recycler task join error for key {}: {:?}",
-                key_name, join_err
-            );
-            return Err(Error::Internal(format!(
-                "Recycler task panicked for key {}",
-                key_name
-            )));
-        }
-    }
-
-    match pool_result {
-        Ok(results) => {
-            use std::collections::HashSet;
-            let mut processed_indices: HashSet<usize> =
-                results.into_iter().map(|(id, _)| id).collect();
-
-            processed_indices.extend(initially_confirmed_indices);
-
-            if processed_indices.len() != total_pads {
-                let mut missing_indices = Vec::new();
-                for i in 0..total_pads {
-                    if !processed_indices.contains(&i) {
-                        missing_indices.push(i);
-                    }
-                }
-                error!(
-                    "Put operation finished for key {}, but not all chunks were confirmed. Expected: {}, Confirmed unique: {}. Missing indices: {:?}",
-                    key_name, total_pads, processed_indices.len(), missing_indices
-                );
-                return Err(Error::Internal(format!(
-                    "Put operation incomplete for key {}. Expected {} chunks, confirmed {}. Missing: {:?}",
-                    key_name, total_pads, processed_indices.len(), missing_indices
-                )));
-            } else {
-                info!(
-                    "Put operation successful for key {}. All {} chunks confirmed.",
-                    key_name, total_pads
-                );
-            }
-        }
-        Err(pool_error) => {
-            error!(
-                "Put operation failed for key {}: {:?}",
-                key_name, pool_error
-            );
-            completion_notifier.notify_waiters();
-            let final_error = match pool_error {
-                PoolError::TaskError(task_err) => {
-                    error!("Pool task error for key {}: {:?}", key_name, task_err);
-                    task_err
-                }
-                PoolError::JoinError(join_err) => {
-                    error!(
-                        "Pool worker join error for key {}: {:?}",
-                        key_name, join_err
-                    );
-                    Error::Internal(format!("Worker task join error for key {}", key_name))
-                }
-                PoolError::PoolSetupError(msg) => {
-                    error!("Pool setup error for key {}: {}", key_name, msg);
-                    Error::Internal(format!("Pool setup error for key {}: {}", key_name, msg))
-                }
-                PoolError::WorkerError(msg) => {
-                    error!("Pool worker error for key {}: {}", key_name, msg);
-                    Error::Internal(format!("Worker error for key {}: {}", key_name, msg))
-                }
-            };
-            return Err(final_error);
-        }
-    }
-
-    let _final_pad_status = pads.last().map(|p| p.status);
-    invoke_put_callback(&put_callback, PutEvent::Complete)
-        .await
-        .unwrap();
-
-    Ok(())
 }
