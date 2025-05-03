@@ -324,18 +324,22 @@ where
             worker_handles.push(tokio::spawn(async move { worker.run().await }));
         }
 
+        // Drop the pool's retry sender clone *before* awaiting workers.
+        // This signals that the pool itself won't send more retries.
+        // The retry channel (recycle_rx) will close once all *workers* finish
+        // and drop their clones, allowing the recycler_task to complete.
+        drop(pool_retry_sender);
+
         // Wait for all workers to complete
         while let Some(result) = worker_handles.next().await {
             match result {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     // Worker encountered an irrecoverable error. Drop sender before propagating.
-                    drop(pool_retry_sender);
                     return Err(e);
                 }
                 Err(join_err) => {
                     // Worker panicked. Drop sender before propagating.
-                    drop(pool_retry_sender);
                     return Err(PoolError::JoinError(join_err));
                 }
             }
@@ -345,7 +349,6 @@ where
         // Now, explicitly drop the pool's clone of the retry sender.
         // This, combined with workers having dropped their clones upon finishing,
         // will cause the recycle_rx channel to close, signaling the recycler task to finish.
-        drop(pool_retry_sender);
 
         // Check for errors that were collected because sending to retry failed or retry was disabled
         let errors = errors_collector.lock().await;

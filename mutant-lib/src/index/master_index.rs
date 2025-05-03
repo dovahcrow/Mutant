@@ -796,7 +796,7 @@ mod tests {
         let key_name = "test_key";
 
         let (pads, _) = index
-            .create_private_key(key_name, &data, StorageMode::Medium)
+            .create_key(key_name, &data, StorageMode::Medium, false)
             .unwrap();
 
         assert_eq!(pads.len(), 3); // Should create 3 pads
@@ -818,9 +818,9 @@ mod tests {
         let key_name = "test_key";
 
         index
-            .create_private_key(key_name, &data, StorageMode::Medium)
+            .create_key(key_name, &data, StorageMode::Medium, false)
             .unwrap();
-        let result = index.create_private_key(key_name, &data, StorageMode::Medium);
+        let result = index.create_key(key_name, &data, StorageMode::Medium, false);
 
         assert!(matches!(
             result,
@@ -834,7 +834,7 @@ mod tests {
         let data = vec![0u8; DEFAULT_SCRATCHPAD_SIZE];
         let key_name = "test_key";
         let (pads, _) = index
-            .create_private_key(key_name, &data, StorageMode::Medium)
+            .create_key(key_name, &data, StorageMode::Medium, false)
             .unwrap();
         let pad_address = pads[0].address;
 
@@ -857,7 +857,7 @@ mod tests {
 
         assert!(!index.contains_key(key_name));
         index
-            .create_private_key(key_name, &data, StorageMode::Medium)
+            .create_key(key_name, &data, StorageMode::Medium, false)
             .unwrap();
         assert!(index.contains_key(key_name));
         assert!(!index.contains_key("other_key"));
@@ -872,12 +872,12 @@ mod tests {
         let key_conf = "key_conf";
 
         let (pads_gen, _) = index
-            .create_private_key(key_gen, &data_gen, StorageMode::Medium)
+            .create_key(key_gen, &data_gen, StorageMode::Medium, false)
             .unwrap();
         let pad_gen_addr = pads_gen[0].address;
 
         let (pads_conf, _) = index
-            .create_private_key(key_conf, &data_conf, StorageMode::Medium)
+            .create_key(key_conf, &data_conf, StorageMode::Medium, false)
             .unwrap();
         let pad_conf_addr = pads_conf[0].address;
         index
@@ -907,7 +907,7 @@ mod tests {
         let key_name = "test_key";
 
         let (pads, _) = index
-            .create_private_key(key_name, &data, StorageMode::Medium)
+            .create_key(key_name, &data, StorageMode::Medium, false)
             .unwrap();
         assert!(!index.is_finished(key_name)); // Not finished initially
 
@@ -933,7 +933,7 @@ mod tests {
         let key_name = "test_key";
 
         index
-            .create_private_key(key_name, &data, StorageMode::Medium)
+            .create_key(key_name, &data, StorageMode::Medium, false)
             .unwrap();
 
         // Verify with correct data
@@ -958,10 +958,10 @@ mod tests {
         assert!(index.list().is_empty());
 
         index
-            .create_private_key("key1", &[1], StorageMode::Medium)
+            .create_key("key1", &[1], StorageMode::Medium, false)
             .unwrap();
         index
-            .create_private_key("key2", &[2], StorageMode::Medium)
+            .create_key("key2", &[2], StorageMode::Medium, false)
             .unwrap();
 
         let keys = index.list();
@@ -979,7 +979,7 @@ mod tests {
 
         // Create first key, its pad gets generated
         let (pads1, _) = index
-            .create_private_key(key1, &data1, StorageMode::Medium)
+            .create_key(key1, &data1, StorageMode::Medium, false)
             .unwrap();
         assert_eq!(pads1.len(), 1);
         let pad1_addr = pads1[0].address;
@@ -996,7 +996,7 @@ mod tests {
 
         // Create second key, should reuse the free pad
         let (pads2, _) = index
-            .create_private_key(key2, &data2, StorageMode::Medium)
+            .create_key(key2, &data2, StorageMode::Medium, false)
             .unwrap();
         assert_eq!(pads2.len(), 1);
         assert_eq!(pads2[0].address, pad1_addr); // Reused the same address
@@ -1015,7 +1015,7 @@ mod tests {
         assert!(index.free_pads.is_empty());
 
         let (pads, _) = index
-            .create_private_key(key, &data, StorageMode::Medium)
+            .create_key(key, &data, StorageMode::Medium, false)
             .unwrap();
         assert_eq!(pads.len(), 2);
         assert_ne!(pads[0].address, pads[1].address); // Ensure different addresses for generated pads
@@ -1032,7 +1032,7 @@ mod tests {
 
         // Create key1, mark pad as used, remove key -> pad goes to free_pads
         let (pads1, _) = index
-            .create_private_key(key1, &data1, StorageMode::Medium)
+            .create_key(key1, &data1, StorageMode::Medium, false)
             .unwrap();
         let pad1_addr = pads1[0].address;
         index
@@ -1043,7 +1043,7 @@ mod tests {
 
         // Create key3, requires 3 pads. Should use 1 free pad and generate 2 new ones.
         let (pads3, _) = index
-            .create_private_key(key3, &data3, StorageMode::Medium)
+            .create_key(key3, &data3, StorageMode::Medium, false)
             .unwrap();
         assert_eq!(pads3.len(), 3);
         assert!(index.free_pads.is_empty()); // Free pad was used

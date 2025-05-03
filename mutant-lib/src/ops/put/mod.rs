@@ -228,8 +228,19 @@ async fn first_store(
             // index_pad_data,
         };
 
-        write_pipeline(index_pad_context, vec![index_pad], no_verify, put_callback).await?;
+        write_pipeline(
+            index_pad_context,
+            vec![index_pad],
+            no_verify,
+            put_callback.clone(),
+        )
+        .await?;
     }
+
+    let _final_pad_status = pads.last().map(|p| p.status);
+    invoke_put_callback(&put_callback, PutEvent::Complete)
+        .await
+        .unwrap();
 
     Ok(address)
 }
@@ -238,7 +249,7 @@ async fn first_store(
 struct PutTaskContext {
     base_context: Context,
     no_verify: Arc<bool>,
-    put_callback: Option<PutCallback>,
+    callback: Arc<Option<PutCallback>>,
     total_pads: usize,
 }
 
@@ -252,6 +263,9 @@ async fn write_pipeline(
     let mut pads = pads;
 
     let total_pads = pads.len();
+
+    // Wrap callback in Arc for sharing, shadowing original name
+    let put_callback = Arc::new(put_callback);
 
     // Collect indices of pads already confirmed before starting the pipeline
     let initially_confirmed_indices: std::collections::HashSet<usize> = pads
@@ -269,6 +283,7 @@ async fn write_pipeline(
     let total_pads_atomic = Arc::new(std::sync::atomic::AtomicUsize::new(total_pads));
     let completion_notifier = Arc::new(Notify::new());
     let (recycle_tx, recycle_rx) = bounded::<(Error, PadInfo)>(total_pads); // Channel for pads needing retry
+    let pool_retry_sender = recycle_tx.clone(); // Clone for the pool *before* dropping original
 
     let initial_chunks_to_reserve = pads
         .iter()
@@ -299,12 +314,12 @@ async fn write_pipeline(
     let put_task_context = Arc::new(PutTaskContext {
         base_context: context.clone(),
         no_verify: Arc::new(no_verify),
-        put_callback: put_callback.clone(),
+        callback: put_callback.clone(), // Pass Arc clone
         total_pads,
     });
 
     invoke_put_callback(
-        &put_callback,
+        &*put_callback, // Use shadowed Arc var
         PutEvent::Starting {
             total_chunks: total_pads,
             initial_written_count: pads
@@ -318,45 +333,46 @@ async fn write_pipeline(
     .await
     .unwrap();
 
-    let send_pads_task = {
-        let mut pads = pads.clone();
+    // Clone data needed for the task *before* the async block
+    let pads_for_task = pads.clone();
+    let worker_txs_for_task = worker_txs.clone();
 
-        let worker_txs_clone = worker_txs.clone();
-        let global_tx_clone = global_tx.clone();
-        let completion_notifier_clone = completion_notifier.clone();
-        let total_pads_atomic_clone = total_pads_atomic.clone();
+    // Spawn the task and assign the JoinHandle directly
+    let send_pads_task = tokio::spawn(async move {
+        // Use the cloned data inside the task
+        let pads = pads_for_task;
+        let worker_txs_clone = worker_txs_for_task;
+        // removed unused global_tx_clone
 
-        tokio::spawn(async move {
-            let mut worker_index = 0;
+        let mut worker_index = 0;
+        let mut unconfirmed_count = 0;
 
-            let mut unconfirmed_count = 0;
-            for pad in pads {
-                if pad.status != PadStatus::Confirmed {
-                    unconfirmed_count += 1;
-                    let target_tx = &worker_txs_clone[worker_index % WORKER_COUNT];
-                    if let Err(_e) = target_tx.send(pad.clone()).await {
-                        break;
-                    }
-                    worker_index += 1;
+        for pad in pads {
+            if pad.status != PadStatus::Confirmed {
+                unconfirmed_count += 1;
+                let target_tx = &worker_txs_clone[worker_index % WORKER_COUNT];
+                if let Err(_e) = target_tx.send(pad.clone()).await {
+                    break; // Stop sending if a channel is closed
                 }
+                worker_index += 1;
             }
+        }
 
-            // Once all initial pads are sent, close the worker-specific queues.
-            // The pool will stop when these and the global queue (closed by recycler) are empty.
-            for tx in worker_txs_clone {
-                tx.close();
-            }
+        // Close worker-specific queues once initial pads are sent.
+        for tx in worker_txs_clone {
+            tx.close();
+        }
+        // Recycler is responsible for closing global_tx_clone.
+    }); // End of tokio::spawn
 
-            // DO NOT CLOSE global_tx_clone here. The recycler is responsible for this.
-            // global_tx_clone.close();
-        })
-    };
+    // Drop the original recycle_tx after spawning send_pads_task
+    drop(recycle_tx);
 
     let recycler_task = {
         let index = context.index.clone();
         let key_name_clone = key_name.clone();
-        let recycle_rx = recycle_rx.clone();
-        let global_pad_tx_to_close = global_tx.clone();
+        let recycle_rx = recycle_rx.clone(); // The receiver loop uses this
+        let global_pad_tx_to_close = global_tx.clone(); // The recycler closes this clone
 
         tokio::spawn(async move {
             while let Ok((_error_cause, pad_to_recycle)) = recycle_rx.recv().await {
@@ -386,12 +402,6 @@ async fn write_pipeline(
                 "Recycle channel closed or send failed for key {}. Closing global pad channel. Recycler task finishing.",
                 key_name_clone
             );
-
-            // // SEND THE INDEX PAD TO BE UPLOADED
-            // if let Some(index_pad) = index_pad {
-            //     global_pad_tx_to_close.send(index_pad).await.unwrap();
-            // }
-
             global_pad_tx_to_close.close();
             Ok(())
         })
@@ -412,7 +422,8 @@ async fn write_pipeline(
         clients,
         worker_rxs,
         global_rx,
-        Some(recycle_tx),
+        // Pass the *cloned* sender to the pool.
+        Some(pool_retry_sender), // Use the clone created earlier
     );
 
     warn!("Before pool.run()");
@@ -421,31 +432,13 @@ async fn write_pipeline(
 
     warn!("After pool.run()");
 
-    // Ensure background tasks are awaited to prevent leaks and ensure channels are closed
+    // Await background task
     if let Err(e) = send_pads_task.await {
         warn!("Send pads task join error: {:?}", e);
+        // Consider if this should be a hard error
     }
 
     warn!("After send_pads_task.await");
-
-    // println!("index_pad: {:?}", index_pad);
-
-    // let index_pad_data = if context.public && pads.len() > 1 {
-    //     let data_pads: Vec<_> = pads.iter().skip(1).cloned().collect();
-    //     Some(Arc::new(serde_cbor::to_vec(&data_pads).map_err(|e| {
-    //         Error::Index(IndexError::SerializationError(e.to_string()))
-    //     })?))
-    // } else {
-    //     None
-    // };
-
-    // TODO: HERE, we should upload the index pad if it exists
-    // if let Some(index_pad) = index_pad {
-    //     let index_pad_data = Arc::new(
-    //         serde_cbor::to_vec(&index_pad)
-    //             .map_err(|e| Error::Index(IndexError::SerializationError(e.to_string())))?,
-    //     );
-    // }
 
     match recycler_task.await {
         Ok(Ok(())) => {
@@ -507,7 +500,7 @@ async fn write_pipeline(
                 "Put operation failed for key {}: {:?}",
                 key_name, pool_error
             );
-            completion_notifier.notify_waiters();
+            completion_notifier.notify_waiters(); // Ensure notifier is still in scope if needed
             let final_error = match pool_error {
                 PoolError::TaskError(task_err) => {
                     error!("Pool task error for key {}: {:?}", key_name, task_err);
@@ -534,9 +527,12 @@ async fn write_pipeline(
     }
 
     let _final_pad_status = pads.last().map(|p| p.status);
-    invoke_put_callback(&put_callback, PutEvent::Complete)
-        .await
-        .unwrap();
+    invoke_put_callback(
+        &*put_callback, // Use shadowed Arc var
+        PutEvent::Complete,
+    )
+    .await
+    .unwrap();
 
     Ok(())
 }
@@ -640,8 +636,8 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
                     .await
                 {
                     Ok(_) => {
-                        // Put succeeded, call callbacks and update status in the index
-                        invoke_put_callback(&context.put_callback, PutEvent::PadsWritten)
+                        // Use context.callback which is Arc<Option<PutCallback>>
+                        invoke_put_callback(&*context.callback, PutEvent::PadsWritten)
                             .await
                             .map_err(|e| {
                                 (
@@ -649,11 +645,12 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
                                         "Callback error (PadsWritten): {:?}",
                                         e
                                     )),
-                                    pad.clone(), // Return original pad on callback error
+                                    pad.clone(),
                                 )
                             })?;
                         if initial_status == PadStatus::Generated {
-                            invoke_put_callback(&context.put_callback, PutEvent::PadReserved)
+                            // Use context.callback
+                            invoke_put_callback(&*context.callback, PutEvent::PadReserved)
                                 .await
                                 .map_err(|e| {
                                     (
@@ -661,7 +658,7 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
                                             "Callback error (PadReserved): {:?}",
                                             e
                                         )),
-                                        pad.clone(), // Return original pad on callback error
+                                        pad.clone(),
                                     )
                                 })?;
                         }
@@ -739,7 +736,8 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
                     )
                     .map_err(|e| (e, pad_after_put.clone()))?;
 
-                invoke_put_callback(&context.put_callback, PutEvent::PadsConfirmed)
+                // Use context.callback
+                invoke_put_callback(&*context.callback, PutEvent::PadsConfirmed)
                     .await
                     .map_err(|e| {
                         (
@@ -803,7 +801,8 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
                                     )
                                     .map_err(|e| (e, pad_after_put.clone()))?;
 
-                                invoke_put_callback(&context.put_callback, PutEvent::PadsConfirmed)
+                                // Use context.callback
+                                invoke_put_callback(&*context.callback, PutEvent::PadsConfirmed)
                                     .await
                                     .map_err(|e| {
                                         (
