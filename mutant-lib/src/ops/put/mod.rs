@@ -151,7 +151,7 @@ async fn resume(
             mode,
             public,
             no_verify,
-            put_callback,
+            put_callback.clone(),
         )
         .await;
     }
@@ -165,7 +165,33 @@ async fn resume(
         public,
     };
 
-    write_pipeline(context, pads.clone(), no_verify, put_callback).await?;
+    write_pipeline(context, pads.clone(), no_verify, put_callback.clone()).await?;
+
+    if public {
+        let (index_pad, index_data) = index.write().await.populate_index_pad(name)?;
+        let index_data_bytes = Arc::new(index_data);
+        let index_chunk_ranges = Arc::new(vec![0..index_data_bytes.len()]);
+
+        let index_pad_context = Context {
+            // Reuse index and network Arcs
+            index: index.clone(),
+            network: network.clone(),
+            name: Arc::new(name.to_string()), // Reuse name Arc
+            chunk_ranges: index_chunk_ranges,
+            data: index_data_bytes,
+            public, // Keep public flag
+                    // index_pad_data is None for the index pad itself
+        };
+
+        // Call write_pipeline again for the single index pad
+        write_pipeline(
+            index_pad_context,
+            vec![index_pad],
+            no_verify,
+            put_callback.clone(), // Clone the callback Arc again
+        )
+        .await?;
+    }
 
     Ok(pads[0].address)
 }
@@ -638,7 +664,7 @@ async fn write_pipeline(
         let index = context.index.clone();
         let key_name_clone = key_name.clone();
         let recycle_rx = recycle_rx.clone();
-        let global_pad_tx_to_close = global_tx.clone();
+        let global_pad_tx_clone_for_recycler = global_tx.clone(); // Clone for the recycler task
 
         tokio::spawn(async move {
             while let Ok((_error_cause, pad_to_recycle)) = recycle_rx.recv().await {
@@ -650,14 +676,11 @@ async fn write_pipeline(
                 {
                     Ok(new_pad) => {
                         // Attempt to send the new pad back to the global queue
-                        if let Err(e) = global_pad_tx_to_close.try_send(new_pad) {
+                        if let Err(e) = global_pad_tx_clone_for_recycler.try_send(new_pad) {
                             warn!(
                                 "Recycler task failed to send recycled pad for key {} to global channel: {}. Pad might be lost. Continuing...",
                                 key_name_clone, e
                             );
-                            // Don't break the loop or close the channel here.
-                            // The worker pool might still be active or recover.
-                            // If the channel is permanently closed, subsequent sends will also fail.
                         }
                     }
                     Err(recycle_err) => {
@@ -665,20 +688,22 @@ async fn write_pipeline(
                             "Failed to recycle pad {} for key {}: {}. Skipping this pad.",
                             pad_to_recycle.address, key_name_clone, recycle_err
                         );
-                        // Don't close the global channel here, just log and continue.
-                        // return Err(recycle_err); // Don't return error, just continue the loop
                     }
                 }
             }
-            // The loop finishes when recycle_rx closes (meaning no more pads are being sent for recycling)
             debug!(
-                "Recycle channel closed for key {}. Closing global pad channel. Recycler task finishing.",
+                "Recycle channel closed for key {}. Recycler task finishing (will drop its global_tx clone).",
                 key_name_clone
             );
-            global_pad_tx_to_close.close(); // Close the global channel *only* after the loop finishes
+            // No longer close the global channel here; let the clone in write_pipeline manage its lifetime.
+            // global_pad_tx_clone_for_recycler.close();
             Ok(())
         })
     };
+
+    // Keep the original global_tx clone alive in this scope.
+    // The channel remains open until this clone is dropped after pool.run() and recycler_task.await.
+    let _global_tx_pipeline_lifetime_clone = global_tx;
 
     let pool: WorkerPool<
         PadInfo,
