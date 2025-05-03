@@ -649,26 +649,33 @@ async fn write_pipeline(
                     .await
                 {
                     Ok(new_pad) => {
-                        if global_pad_tx_to_close.send(new_pad).await.is_err() {
-                            warn!("Recycler task: Global channel closed while sending recycled pad for key {}. Stopping recycling.", key_name_clone);
-                            break;
+                        // Attempt to send the new pad back to the global queue
+                        if let Err(e) = global_pad_tx_to_close.try_send(new_pad) {
+                            warn!(
+                                "Recycler task failed to send recycled pad for key {} to global channel: {}. Pad might be lost. Continuing...",
+                                key_name_clone, e
+                            );
+                            // Don't break the loop or close the channel here.
+                            // The worker pool might still be active or recover.
+                            // If the channel is permanently closed, subsequent sends will also fail.
                         }
                     }
                     Err(recycle_err) => {
                         error!(
-                            "Failed to recycle pad {} for key {}: {}. Aborting recycler task.",
+                            "Failed to recycle pad {} for key {}: {}. Skipping this pad.",
                             pad_to_recycle.address, key_name_clone, recycle_err
                         );
-                        global_pad_tx_to_close.close();
-                        return Err(recycle_err);
+                        // Don't close the global channel here, just log and continue.
+                        // return Err(recycle_err); // Don't return error, just continue the loop
                     }
                 }
             }
+            // The loop finishes when recycle_rx closes (meaning no more pads are being sent for recycling)
             debug!(
-                "Recycle channel closed or send failed for key {}. Closing global pad channel. Recycler task finishing.",
+                "Recycle channel closed for key {}. Closing global pad channel. Recycler task finishing.",
                 key_name_clone
             );
-            global_pad_tx_to_close.close();
+            global_pad_tx_to_close.close(); // Close the global channel *only* after the loop finishes
             Ok(())
         })
     };
