@@ -98,11 +98,7 @@ pub(super) async fn get(
         .await
         .unwrap();
 
-    let pads_to_fetch = if is_public && pads.len() > 1 {
-        pads[1..].to_vec()
-    } else {
-        pads
-    };
+    let pads_to_fetch = pads; // Use the vector directly
 
     fetch_pads_data(network, pads_to_fetch, is_public, callback).await
 }
