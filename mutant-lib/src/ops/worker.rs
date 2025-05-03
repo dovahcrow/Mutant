@@ -111,69 +111,43 @@ where
     }
 
     async fn run_task_processor(self, task_id: usize) -> Result<(), PoolError<E>> {
-        let mut local_closed = false;
-        let mut global_closed = false;
-
-        // Main processing loop: Continue until BOTH local and global queues are closed.
+        // Main processing loop
         loop {
-            // Determine if the loop should terminate.
-            if local_closed && global_closed {
-                trace!(
-                    "Worker {}.{} terminating: Both queues closed.",
-                    self.id,
-                    task_id
-                );
-                break;
-            }
-
-            // Select an item from either local (priority) or global queue,
-            // only if the respective queue is not yet closed.
+            // Try to get work from local queue first, then global queue
             let item = tokio::select! {
-                biased; // Prioritize local queue
+                biased;
 
-                // Attempt to receive from local queue if it's not marked as closed.
-                res = self.local_queue.recv(), if !local_closed => {
-                    match res {
+                result = self.local_queue.recv() => {
+                    match result {
                         Ok(item) => {
                             trace!("Worker {}.{} received item from local queue", self.id, task_id);
-                            Some(item) // Got an item from local queue
+                            Some(item)
                         },
-                        Err(_) => { // Local queue is now closed and empty
+                        Err(_) => {
                             trace!("Worker {}.{} local queue closed", self.id, task_id);
-                            local_closed = true; // Mark local queue as closed
-                            None // No item received, loop again to check global
-                        }
+                            None
+                        },
                     }
                 },
 
-                // Attempt to receive from global queue if it's not marked as closed.
-                res = self.global_queue.recv(), if !global_closed => {
-                     match res {
+                // If local queue is empty, try global queue
+                result = self.global_queue.recv() => {
+                    match result {
                         Ok(item) => {
                             trace!("Worker {}.{} received item from global queue", self.id, task_id);
-                            Some(item) // Got an item from global queue
+                            Some(item)
                         },
-                        Err(_) => { // Global queue is now closed and empty
+                        Err(_) => {
                             trace!("Worker {}.{} global queue closed", self.id, task_id);
-                            global_closed = true; // Mark global queue as closed
-                            None // No item received, loop again to check local
-                        }
+                            None
+                        },
                     }
                 },
-
-                // This branch is automatically selected if both `if` conditions above are false,
-                // meaning both local_closed and global_closed are true.
-                else => {
-                    // This case should technically be covered by the check at the loop start,
-                    // but it acts as a safeguard.
-                    trace!("Worker {}.{} both select branches disabled (queues closed), breaking loop", self.id, task_id);
-                    break; // Exit loop as both queues are closed
-                }
             };
 
-            // If an item was successfully received from either queue, process it.
             if let Some(item) = item {
                 trace!("Worker {}.{} processing item", self.id, task_id);
+                // Process the item
                 match self
                     .task_processor
                     .process(
@@ -185,34 +159,29 @@ where
                     .await
                 {
                     Ok((item_id, result)) => {
-                        // Successfully processed, collect result.
                         self.results_collector.lock().await.push((item_id, result));
                     }
                     Err((error, failed_item)) => {
-                        // Processing failed, attempt to send to retry channel if available.
                         if let Some(retry_tx) = &self.retry_sender {
                             if retry_tx.send((error.clone(), failed_item)).await.is_err() {
-                                // Failed to send to retry (channel closed), collect error locally.
-                                trace!("Worker {}.{} failed to send item to retry channel (closed?). Collecting error.", self.id, task_id);
                                 self.errors_collector.lock().await.push(error);
-                            } else {
-                                // Successfully sent to retry channel.
-                                trace!(
-                                    "Worker {}.{} sent item to retry channel.",
-                                    self.id,
-                                    task_id
-                                );
                             }
                         } else {
-                            // No retry mechanism, collect the error directly.
                             self.errors_collector.lock().await.push(error);
                         }
                     }
                 }
+            } else {
+                // No more work and all queues are empty or closed, or we received a shutdown signal
+                trace!(
+                    "Worker {}.{} terminating: Local closed={}, Global closed={}",
+                    self.id,
+                    task_id,
+                    self.local_queue.is_closed(),
+                    self.global_queue.is_closed()
+                );
+                break; // Exit loop if both channels returned None (meaning they are closed and empty)
             }
-            // If 'item' is None (because a queue was found closed in the select!),
-            // the loop continues to the next iteration to check the other queue status
-            // or break if both are now closed.
         }
 
         Ok(())
@@ -324,22 +293,18 @@ where
             worker_handles.push(tokio::spawn(async move { worker.run().await }));
         }
 
-        // Drop the pool's retry sender clone *before* awaiting workers.
-        // This signals that the pool itself won't send more retries.
-        // The retry channel (recycle_rx) will close once all *workers* finish
-        // and drop their clones, allowing the recycler_task to complete.
-        drop(pool_retry_sender);
-
         // Wait for all workers to complete
         while let Some(result) = worker_handles.next().await {
             match result {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     // Worker encountered an irrecoverable error. Drop sender before propagating.
+                    drop(pool_retry_sender);
                     return Err(e);
                 }
                 Err(join_err) => {
                     // Worker panicked. Drop sender before propagating.
+                    drop(pool_retry_sender);
                     return Err(PoolError::JoinError(join_err));
                 }
             }
@@ -349,6 +314,7 @@ where
         // Now, explicitly drop the pool's clone of the retry sender.
         // This, combined with workers having dropped their clones upon finishing,
         // will cause the recycle_rx channel to close, signaling the recycler task to finish.
+        drop(pool_retry_sender);
 
         // Check for errors that were collected because sending to retry failed or retry was disabled
         let errors = errors_collector.lock().await;

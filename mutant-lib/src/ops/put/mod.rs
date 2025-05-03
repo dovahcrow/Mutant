@@ -36,7 +36,6 @@ struct Context {
     data: Arc<Vec<u8>>,
     chunk_ranges: Arc<Vec<Range<usize>>>,
     public: bool,
-    index_pad_data: Option<Arc<Vec<u8>>>,
 }
 
 pub(super) async fn put(
@@ -164,7 +163,6 @@ async fn resume(
         data: data_bytes.clone(),
         chunk_ranges: Arc::new(chunk_ranges),
         public,
-        index_pad_data,
     };
 
     write_pipeline(context, pads.clone(), no_verify, put_callback).await?;
@@ -187,15 +185,6 @@ async fn first_store(
         .await
         .create_key(name, &data_bytes, mode, public)?;
 
-    let index_pad_data = if public && pads.len() > 1 {
-        let data_pads: Vec<_> = pads.iter().skip(1).cloned().collect();
-        Some(Arc::new(serde_cbor::to_vec(&data_pads).map_err(|e| {
-            Error::Index(IndexError::SerializationError(e.to_string()))
-        })?))
-    } else {
-        None
-    };
-
     info!("Created key {} with {} pads", name, pads.len());
 
     let address = pads[0].address;
@@ -207,7 +196,6 @@ async fn first_store(
         chunk_ranges: Arc::new(chunk_ranges),
         data: data_bytes.clone(),
         public,
-        index_pad_data,
     };
 
     write_pipeline(context, pads.clone(), no_verify, put_callback.clone()).await?;
@@ -225,8 +213,7 @@ async fn first_store(
             chunk_ranges: index_chunk_ranges,
             data: index_data_bytes,
             public, // Keep public flag
-            // index_pad_data is None for the index pad itself
-            index_pad_data: None,
+                    // index_pad_data is None for the index pad itself
         };
 
         // Call write_pipeline again for the single index pad
@@ -285,78 +272,9 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<ClientManager>, (), Error> for Pu
 
         if should_put {
             let is_index_pad =
-                context.base_context.public && pad.chunk_index == 0 && context.total_pads > 1;
-            let chunk_data_slice = match (is_index_pad, &context.base_context.index_pad_data) {
-                (true, Some(index_data)) => &index_data[..],
-                (true, None) => {
-                    if context.base_context.index_pad_data.is_none()
-                        && !context.base_context.data.is_empty()
-                    {
-                        &context.base_context.data[..]
-                    } else {
-                        error!(
-                            "Worker {} missing index pad data for pad {}",
-                            worker_id, current_pad_address
-                        );
-                        return Err((Error::Internal("Missing index pad data".to_string()), pad));
-                    }
-                }
-                (false, _) => {
-                    let chunk_index = pad.chunk_index;
-                    let actual_chunk_index =
-                        if context.base_context.public && context.total_pads > 1 {
-                            chunk_index
-                        } else {
-                            chunk_index
-                        };
-
-                    if actual_chunk_index >= context.base_context.chunk_ranges.len() {
-                        error!(
-                            "Worker {} found invalid chunk index {} (chunk_ranges len: {}) for pad {}",
-                            worker_id, actual_chunk_index, context.base_context.chunk_ranges.len(), current_pad_address
-                        );
-                        return Err((
-                            Error::Internal(format!(
-                                "Invalid chunk index {} for pad {}",
-                                actual_chunk_index, current_pad_address
-                            )),
-                            pad,
-                        ));
-                    }
-
-                    let range = context.base_context.chunk_ranges[actual_chunk_index].clone();
-
-                    if context.base_context.public
-                        && context.total_pads > 1
-                        && actual_chunk_index == 0
-                        && range != (0..0)
-                    {
-                        error!(
-                            "Worker {} expected placeholder range 0..0 for public index chunk 0, got {:?} for pad {}",
-                            worker_id, range, current_pad_address
-                        );
-                        return Err((
-                            Error::Internal("Invalid public index range".to_string()),
-                            pad,
-                        ));
-                    }
-
-                    if range.end > context.base_context.data.len() {
-                        error!(
-                            "Worker {} found invalid range {:?} for chunk {} (data len: {}) in pad {}",
-                            worker_id, range, actual_chunk_index, context.base_context.data.len(), current_pad_address
-                        );
-                        return Err((
-                            Error::Internal(format!(
-                                "Invalid data range for chunk {} (pad {}). Range: {:?}, Data Len: {}",
-                                actual_chunk_index, current_pad_address, range, context.base_context.data.len()
-                            )),
-                            pad,
-                        ));
-                    }
-                    &context.base_context.data[range.clone()]
-                }
-            };
+                context.base_context.public && pad.chunk_index == 0 && context.total_pads == 1;
+            let chunk_data_slice = &context.base_context.data
+                [context.base_context.chunk_ranges[pad.chunk_index].clone()];
 
             if chunk_data_slice.len() != pad.size {
                 warn!(
