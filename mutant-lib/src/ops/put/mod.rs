@@ -26,6 +26,8 @@ struct Context {
     data: Arc<Vec<u8>>,
     chunk_ranges: Arc<Vec<Range<usize>>>,
     public: bool,
+    /// Optional preserved index pad for public key updates
+    preserved_index_pad: Option<PadInfo>,
 }
 
 /// Update a key with new content, preserving the public index pad if applicable.
@@ -51,33 +53,29 @@ async fn update(
     info!("Update for {}", key_name);
 
     // Special handling for public keys to preserve the index pad
-    let mut preserved_index_pad = None;
-
-    // Check if this is a public key and extract the index pad before removing the key
-    if public && index.read().await.is_public(key_name) {
+    let preserved_index_pad = if public && index.read().await.is_public(key_name) {
         info!("Preserving public index pad for key {}", key_name);
-        preserved_index_pad = index.read().await.extract_public_index_pad(key_name);
-    }
+        index.read().await.extract_public_index_pad(key_name)
+    } else {
+        None
+    };
 
     // Remove the key (this will move all pads to free_pads or pending_verification_pads)
     index.write().await.remove_key(key_name).unwrap();
 
     // Create a new key with the updated content
-    let result = first_store(
-        index.clone(),
-        network.clone(),
-        key_name,
-        content.clone(),
-        mode,
-        public,
-        no_verify,
-        put_callback.clone(),
-    )
-    .await?;
+    let (pads, chunk_ranges) = index
+        .write()
+        .await
+        .create_key(key_name, &content, mode, public)?;
 
-    // If we preserved an index pad, replace the newly created one with it
-    if let Some(old_index_pad) = preserved_index_pad {
-        info!("Replacing new index pad with preserved one for key {}", key_name);
+    info!("Created key {} with {} pads", key_name, pads.len());
+
+    let address = pads[0].address;
+
+    // If we have a preserved index pad and this is a public key, update the index
+    if let Some(old_index_pad) = preserved_index_pad.clone() {
+        info!("Using preserved index pad for key {}", key_name);
 
         // Get the data pads from the newly created key
         let data_pads = if let Some(entry) = index.read().await.get_entry(key_name) {
@@ -91,24 +89,38 @@ async fn update(
             }
         } else {
             return Err(Error::Internal(format!(
-                "Key {} not found after first_store",
+                "Key {} not found after create_key",
                 key_name
             )));
         };
 
-        // Update the key with the preserved index pad
+        // Update the key with the preserved index pad before writing any data
         index.write().await.update_public_key_with_preserved_index_pad(
             key_name,
             old_index_pad,
             data_pads,
         )?;
+    }
 
-        // Regenerate the index pad data
+    let context = Context {
+        index: index.clone(),
+        network: network.clone(),
+        name: Arc::new(key_name.to_string()),
+        chunk_ranges: Arc::new(chunk_ranges),
+        data: content.clone(),
+        public,
+        preserved_index_pad: None,
+    };
+
+    // Write the data pads
+    write_pipeline(context, pads.clone(), no_verify, put_callback.clone()).await?;
+
+    // For public keys, we need to write the index pad
+    if public {
         let (index_pad, index_data) = index.write().await.populate_index_pad(key_name)?;
         let index_data_bytes = Arc::new(index_data);
         let index_chunk_ranges = Arc::new(vec![0..index_data_bytes.len()]);
 
-        // Create a context for writing the index pad
         let index_pad_context = Context {
             index: index.clone(),
             network: network.clone(),
@@ -116,6 +128,7 @@ async fn update(
             chunk_ranges: index_chunk_ranges,
             data: index_data_bytes,
             public,
+            preserved_index_pad,
         };
 
         // Write the index pad
@@ -128,7 +141,12 @@ async fn update(
         .await?;
     }
 
-    Ok(result)
+    // Final completion callback after all pipelines are done
+    invoke_put_callback(&put_callback, PutEvent::Complete)
+        .await
+        .unwrap();
+
+    Ok(address)
 }
 
 pub(super) async fn put(
@@ -246,6 +264,7 @@ async fn resume(
         data: data_bytes.clone(),
         chunk_ranges: Arc::new(chunk_ranges),
         public,
+        preserved_index_pad: None,
     };
 
     write_pipeline(context, pads.clone(), no_verify, put_callback.clone()).await?;
@@ -263,7 +282,7 @@ async fn resume(
             chunk_ranges: index_chunk_ranges,
             data: index_data_bytes,
             public, // Keep public flag
-                    // index_pad_data is None for the index pad itself
+            preserved_index_pad: None, // No preserved index pad for normal operations
         };
 
         // Call write_pipeline again for the single index pad
@@ -305,6 +324,7 @@ async fn first_store(
         chunk_ranges: Arc::new(chunk_ranges),
         data: data_bytes.clone(),
         public,
+        preserved_index_pad: None,
     };
 
     write_pipeline(context, pads.clone(), no_verify, put_callback.clone()).await?;
@@ -322,7 +342,7 @@ async fn first_store(
             chunk_ranges: index_chunk_ranges,
             data: index_data_bytes,
             public, // Keep public flag
-                    // index_pad_data is None for the index pad itself
+            preserved_index_pad: None, // No preserved index pad for normal operations
         };
 
         // Call write_pipeline again for the single index pad
@@ -392,6 +412,18 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<crate::network::client::ClientMan
             let is_index_pad = is_public
                 && pad_state.chunk_index == 0
                 && self.context.base_context.chunk_ranges.len() == 1;
+
+            // Check if we have a preserved index pad that we should use instead
+            if is_index_pad && self.context.base_context.preserved_index_pad.is_some() {
+                // If we have a preserved index pad, we should use its address instead
+                if let Some(preserved_pad) = &self.context.base_context.preserved_index_pad {
+                    info!(
+                        "Worker {} using preserved index pad address {} instead of {}",
+                        worker_id, preserved_pad.address, pad_state.address
+                    );
+                    pad_state.address = preserved_pad.address;
+                }
+            }
 
             let data_encoding = if is_public {
                 if is_index_pad {
