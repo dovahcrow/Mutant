@@ -65,15 +65,18 @@ pub(crate) async fn create_client(
                 "http://178.62.197.211/bootstrap_cache.json".to_string(),
             ];
 
-            let peers_multi_addr = vec![];
+            let addrs = vec![
+                "/ip4/206.189.96.49/udp/49841/quic-v1/p2p/12D3KooWQp3XJ6SRVLvLhezJQ7QgTQWFwDDVvwrXZQrFL4NfebWX".to_string().try_into().unwrap(),
+            ];
+
             let config = ClientConfig {
                 init_peers_config: InitialPeersConfig {
                     first: false,
-                    addrs: peers_multi_addr, // either provide a vec of multiaddr
+                    addrs: addrs, // either provide a vec of multiaddr
                     network_contacts_url: network_contacts_url, // see other earlier list
                     local: false,
                     disable_mainnet_contacts: true,
-                    ignore_cache: false,
+                    ignore_cache: true,
                     bootstrap_cache_dir: None,
                 },
                 evm_network: autonomi::Network::ArbitrumSepoliaTest,
