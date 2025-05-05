@@ -570,6 +570,10 @@ async fn write_pipeline(
         .iter()
         .filter(|p| p.status == PadStatus::Confirmed)
         .count();
+    let chunks_to_reserve = pads
+        .iter()
+        .filter(|p| p.status == PadStatus::Generated)
+        .count();
 
     // Send Starting event with pad counts
     info!(
@@ -587,7 +591,7 @@ async fn write_pipeline(
             total_chunks,
             initial_written_count,
             initial_confirmed_count,
-            chunks_to_reserve: total_chunks - initial_written_count - initial_confirmed_count,
+            chunks_to_reserve,
         },
     )
     .await

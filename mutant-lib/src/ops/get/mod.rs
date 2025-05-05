@@ -30,7 +30,10 @@ pub(super) async fn get_public(
 
     debug!(
         "get_public: Processing pad {} with data_encoding={} (PUBLIC_INDEX={}, PUBLIC_DATA={})",
-        address, index_pad_data.data_encoding, DATA_ENCODING_PUBLIC_INDEX, DATA_ENCODING_PUBLIC_DATA
+        address,
+        index_pad_data.data_encoding,
+        DATA_ENCODING_PUBLIC_INDEX,
+        DATA_ENCODING_PUBLIC_DATA
     );
 
     match index_pad_data.data_encoding {
@@ -165,37 +168,42 @@ impl AsyncTask<PadInfo, (), Object<crate::network::client::ClientManager>, Vec<u
                 .get(client, &pad.address, secret_key_ref)
                 .await
             {
-                Ok(record) => {
-                    // Invoke callback directly
-                    invoke_get_callback(&self.get_callback, GetEvent::PadFetched)
-                        .await
-                        .map_err(|e| (e, pad.clone()))?;
+                Ok(get_result) => {
+                    let checksum_match = pad.checksum == PadInfo::checksum(&get_result.data);
+                    let counter_match = pad.last_known_counter == get_result.counter;
+                    let size_match = pad.size == get_result.data.len();
+                    if checksum_match && counter_match && size_match {
+                        // Invoke callback directly
+                        invoke_get_callback(&self.get_callback, GetEvent::PadFetched)
+                            .await
+                            .map_err(|e| (e, pad.clone()))?;
 
-                    // Remove old counter/notifier logic
-                    // self.context.fetched_items_counter.fetch_add(1, Ordering::Relaxed);
-                    // ...
-                    // if current_fetched >= current_total {
-                    //     self.context.completion_notifier.notify_one();
-                    // }
-
-                    return Ok((pad.chunk_index, record.data));
-                }
-                Err(e) => {
-                    match e {
-                        _ => {
-                            retries_left -= 1;
-                            warn!(
-                                "GET failed for pad {} (chunk {}): {}. Retries left: {}",
-                                pad.address, pad.chunk_index, e, retries_left
-                            );
-                            if retries_left <= 0 {
-                                return Err((e.into(), pad));
-                            }
-                        }
+                        return Ok((pad.chunk_index, get_result.data));
                     }
-                    tokio::time::sleep(Duration::from_secs(1)).await;
                 }
+                Err(e) => match e {
+                    _ => {}
+                },
             }
+
+            retries_left -= 1;
+
+            warn!(
+                "GET failed for pad {} (chunk {}). Retries left: {}",
+                pad.address, pad.chunk_index, retries_left
+            );
+
+            if retries_left <= 0 {
+                return Err((
+                    Error::Internal(format!(
+                        "GET failed for pad {} (chunk {}) after {} retries",
+                        pad.address, pad.chunk_index, PAD_RECYCLING_RETRIES
+                    )),
+                    pad,
+                ));
+            }
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
 }
@@ -207,7 +215,10 @@ async fn fetch_pads_data(
     get_callback: Option<GetCallback>,
 ) -> Result<Vec<u8>, Error> {
     let total_pads_to_fetch = pads.len();
-    debug!("fetch_pads_data: Starting to fetch {} pads, public={}", total_pads_to_fetch, public);
+    debug!(
+        "fetch_pads_data: Starting to fetch {} pads, public={}",
+        total_pads_to_fetch, public
+    );
 
     if total_pads_to_fetch == 0 {
         debug!("fetch_pads_data: No pads to fetch, returning empty data");
@@ -269,7 +280,10 @@ async fn fetch_pads_data(
     // let send_pads_task = { ... };
 
     // 5. Run the Worker Pool (no recycle_fn)
-    debug!("fetch_pads_data: Running worker pool to fetch {} pads", total_pads_to_fetch);
+    debug!(
+        "fetch_pads_data: Running worker pool to fetch {} pads",
+        total_pads_to_fetch
+    );
     let pool_run_result = pool.run(None).await; // Pass None for recycle_fn
     debug!("fetch_pads_data: Worker pool run completed");
 
@@ -279,7 +293,10 @@ async fn fetch_pads_data(
     // 6. Process Results
     match pool_run_result {
         Ok(mut fetched_results) => {
-            debug!("fetch_pads_data: Got {} results from worker pool", fetched_results.len());
+            debug!(
+                "fetch_pads_data: Got {} results from worker pool",
+                fetched_results.len()
+            );
             if fetched_results.len() != total_pads_to_fetch {
                 warn!(
                     "GET result count mismatch: expected {}, got {}. Some pads might have failed.",
@@ -301,11 +318,18 @@ async fn fetch_pads_data(
                 fetched_results.into_iter().map(|(_, data)| data).collect();
 
             let final_capacity: usize = collected_data.iter().map(|data| data.len()).sum();
-            debug!("fetch_pads_data: Assembling final data with capacity {}", final_capacity);
+            debug!(
+                "fetch_pads_data: Assembling final data with capacity {}",
+                final_capacity
+            );
 
             let mut final_data: Vec<u8> = Vec::with_capacity(final_capacity);
             for (i, pad_data) in collected_data.iter().enumerate() {
-                debug!("fetch_pads_data: Adding chunk {} with size {}", i, pad_data.len());
+                debug!(
+                    "fetch_pads_data: Adding chunk {} with size {}",
+                    i,
+                    pad_data.len()
+                );
                 final_data.extend(pad_data);
             }
 
