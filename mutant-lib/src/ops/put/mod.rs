@@ -28,6 +28,109 @@ struct Context {
     public: bool,
 }
 
+/// Update a key with new content, preserving the public index pad if applicable.
+///
+/// For public keys, this function ensures that the public index pad is preserved during updates.
+/// This is critical because the public index pad must remain the same to maintain accessibility
+/// of the key through its public address. The function:
+/// 1. Extracts and preserves the index pad from the existing public key
+/// 2. Removes the key (which moves all pads to free_pads or pending_verification_pads)
+/// 3. Creates a new key with the updated content
+/// 4. Replaces the newly created index pad with the preserved one
+/// 5. Updates the index pad data to reflect the new content
+async fn update(
+    index: Arc<RwLock<crate::index::master_index::MasterIndex>>,
+    network: Arc<Network>,
+    key_name: &str,
+    content: Arc<Vec<u8>>,
+    mode: StorageMode,
+    public: bool,
+    no_verify: bool,
+    put_callback: Option<PutCallback>,
+) -> Result<ScratchpadAddress, Error> {
+    info!("Update for {}", key_name);
+
+    // Special handling for public keys to preserve the index pad
+    let mut preserved_index_pad = None;
+
+    // Check if this is a public key and extract the index pad before removing the key
+    if public && index.read().await.is_public(key_name) {
+        info!("Preserving public index pad for key {}", key_name);
+        preserved_index_pad = index.read().await.extract_public_index_pad(key_name);
+    }
+
+    // Remove the key (this will move all pads to free_pads or pending_verification_pads)
+    index.write().await.remove_key(key_name).unwrap();
+
+    // Create a new key with the updated content
+    let result = first_store(
+        index.clone(),
+        network.clone(),
+        key_name,
+        content.clone(),
+        mode,
+        public,
+        no_verify,
+        put_callback.clone(),
+    )
+    .await?;
+
+    // If we preserved an index pad, replace the newly created one with it
+    if let Some(old_index_pad) = preserved_index_pad {
+        info!("Replacing new index pad with preserved one for key {}", key_name);
+
+        // Get the data pads from the newly created key
+        let data_pads = if let Some(entry) = index.read().await.get_entry(key_name) {
+            if let crate::index::master_index::IndexEntry::PublicUpload(_, data_pads) = entry {
+                data_pads.clone()
+            } else {
+                return Err(Error::Internal(format!(
+                    "Expected PublicUpload entry for key {}, but found PrivateKey",
+                    key_name
+                )));
+            }
+        } else {
+            return Err(Error::Internal(format!(
+                "Key {} not found after first_store",
+                key_name
+            )));
+        };
+
+        // Update the key with the preserved index pad
+        index.write().await.update_public_key_with_preserved_index_pad(
+            key_name,
+            old_index_pad,
+            data_pads,
+        )?;
+
+        // Regenerate the index pad data
+        let (index_pad, index_data) = index.write().await.populate_index_pad(key_name)?;
+        let index_data_bytes = Arc::new(index_data);
+        let index_chunk_ranges = Arc::new(vec![0..index_data_bytes.len()]);
+
+        // Create a context for writing the index pad
+        let index_pad_context = Context {
+            index: index.clone(),
+            network: network.clone(),
+            name: Arc::new(key_name.to_string()),
+            chunk_ranges: index_chunk_ranges,
+            data: index_data_bytes,
+            public,
+        };
+
+        // Write the index pad
+        write_pipeline(
+            index_pad_context,
+            vec![index_pad],
+            no_verify,
+            put_callback.clone(),
+        )
+        .await?;
+    }
+
+    Ok(result)
+}
+
 pub(super) async fn put(
     index: Arc<RwLock<crate::index::master_index::MasterIndex>>,
     network: Arc<Network>,
@@ -57,9 +160,8 @@ pub(super) async fn put(
             )
             .await
         } else {
-            info!("Update for {}", key_name);
-            index.write().await.remove_key(key_name).unwrap();
-            first_store(
+            // Call the dedicated update function
+            update(
                 index,
                 network,
                 key_name,
