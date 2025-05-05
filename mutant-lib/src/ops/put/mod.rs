@@ -28,6 +28,8 @@ struct Context {
     public: bool,
     /// Optional preserved index pad for public key updates
     preserved_index_pad: Option<PadInfo>,
+    /// Flag to indicate if this context is for an index pad
+    is_index_pad: bool,
 }
 
 /// Update a key with new content, preserving the public index pad if applicable.
@@ -81,6 +83,7 @@ async fn update(
         data: content.clone(),
         public,
         preserved_index_pad: None,
+        is_index_pad: false, 
     };
 
     // Write the data pads
@@ -97,7 +100,7 @@ async fn update(
             old_pad.size = index_pad.size;
             old_pad.status = PadStatus::Free;
             old_pad.last_known_counter += 1;
-            
+
             old_pad
         });
 
@@ -114,6 +117,7 @@ async fn update(
             data: index_data_bytes,
             public,
             preserved_index_pad: preserved_index_pad.clone(),
+            is_index_pad: true, // This is an index pad
         };
 
         // Write the index pad
@@ -250,6 +254,7 @@ async fn resume(
         chunk_ranges: Arc::new(chunk_ranges),
         public,
         preserved_index_pad: None,
+        is_index_pad: false, // This is for data pads, not the index pad
     };
 
     write_pipeline(context, pads.clone(), no_verify, put_callback.clone()).await?;
@@ -268,6 +273,7 @@ async fn resume(
             data: index_data_bytes,
             public, // Keep public flag
             preserved_index_pad: None, // No preserved index pad for normal operations
+            is_index_pad: true, // This is an index pad
         };
 
         // Call write_pipeline again for the single index pad
@@ -310,6 +316,7 @@ async fn first_store(
         data: data_bytes.clone(),
         public,
         preserved_index_pad: None,
+        is_index_pad: false, // This is for data pads, not the index pad
     };
 
     write_pipeline(context, pads.clone(), no_verify, put_callback.clone()).await?;
@@ -328,6 +335,7 @@ async fn first_store(
             data: index_data_bytes,
             public, // Keep public flag
             preserved_index_pad: None, // No preserved index pad for normal operations
+            is_index_pad: true, // This is an index pad
         };
 
         // Call write_pipeline again for the single index pad
@@ -392,11 +400,8 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<crate::network::client::ClientMan
         };
 
         if should_put {
-            // Determine if this is an index pad for a public upload
-            // For public uploads, the index pad is the one with chunk_index 0 and only one chunk range
-            let is_index_pad = is_public
-                && pad_state.chunk_index == 0
-                && self.context.base_context.chunk_ranges.len() == 1;
+            // Use the is_index_pad flag from the context to determine if this is an index pad
+            let is_index_pad = is_public && self.context.base_context.is_index_pad;
 
             // Check if we have a preserved index pad that we should use instead
             if is_index_pad && self.context.base_context.preserved_index_pad.is_some() {
