@@ -4,15 +4,17 @@ use crate::index::{master_index::MasterIndex, PadInfo};
 use crate::internal_events::invoke_get_callback;
 use crate::network::client::Config;
 use crate::network::{Network, NetworkError, BATCH_SIZE, NB_CLIENTS};
-use crate::ops::worker::{AsyncTask, PoolError, WorkerPool};
+use crate::ops::worker::{self, AsyncTask, PoolError, WorkerPoolConfig};
 use async_channel::bounded;
 use async_trait::async_trait;
 use autonomi::ScratchpadAddress;
 use deadpool::managed::Object;
-use log::{debug, error};
+use log::{debug, error, warn};
+use mutant_protocol::GetResult;
 use std::sync::atomic::Ordering;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, Notify, RwLock};
+use tokio::time::Instant;
 
 use super::{DATA_ENCODING_PUBLIC_DATA, DATA_ENCODING_PUBLIC_INDEX, PAD_RECYCLING_RETRIES};
 
@@ -44,7 +46,7 @@ pub(super) async fn get_public(
             .await
             .unwrap();
 
-            invoke_get_callback(&callback, GetEvent::PadsFetched)
+            invoke_get_callback(&callback, GetEvent::PadFetched)
                 .await
                 .unwrap();
 
@@ -54,7 +56,7 @@ pub(super) async fn get_public(
             invoke_get_callback(&callback, GetEvent::Starting { total_chunks: 1 })
                 .await
                 .unwrap();
-            invoke_get_callback(&callback, GetEvent::PadsFetched)
+            invoke_get_callback(&callback, GetEvent::PadFetched)
                 .await
                 .unwrap();
             invoke_get_callback(&callback, GetEvent::Complete)
@@ -115,7 +117,15 @@ struct GetContext {
 
 // Task processor for GET operations.
 #[derive(Clone)] // Required by WorkerPool
-struct GetTaskProcessor;
+struct GetTaskProcessor {
+    context: Arc<GetContext>,
+}
+
+impl GetTaskProcessor {
+    fn new(context: Arc<GetContext>) -> Self {
+        Self { context }
+    }
+}
 
 // We need to use a different approach since Object<autonomi::Client> doesn't implement Clone
 // Let's use Arc<Mutex<Object<autonomi::Client>>> as our client type
@@ -127,14 +137,13 @@ impl AsyncTask<PadInfo, GetContext, Object<crate::network::client::ClientManager
 
     async fn process(
         &self,
-        _worker_id: usize,
-        context: Arc<GetContext>,
-        client: &Object<crate::network::client::ClientManager>, // Changed client type and removed Arc/Mutex
+        _worker_id: usize, // worker_id not used in GET logic currently
+        client: &Object<crate::network::client::ClientManager>,
         pad: PadInfo,
     ) -> Result<(Self::ItemId, Vec<u8>), (Error, PadInfo)> {
-        let mut retries_left = PAD_RECYCLING_RETRIES; // Use same retry count logic
+        let mut retries_left = PAD_RECYCLING_RETRIES;
         let owned_key;
-        let secret_key_ref = if context.public {
+        let secret_key_ref = if self.context.public {
             None
         } else {
             owned_key = pad.secret_key();
@@ -142,50 +151,49 @@ impl AsyncTask<PadInfo, GetContext, Object<crate::network::client::ClientManager
         };
 
         loop {
-            // Removed client mutex locking
-            // Use the provided client directly
-            match context
+            match self
+                .context
                 .network
-                .get(client, &pad.address, secret_key_ref) // Pass client directly
+                .get(client, &pad.address, secret_key_ref)
                 .await
             {
-                Ok(pad_result) => {
-                    // Pad size check
-                    let counter_match = pad_result.counter == pad.last_known_counter;
-                    let size_match = pad_result.data.len() == pad.size;
-                    let checksum_match = pad.checksum == PadInfo::checksum(&pad_result.data);
-                    if !counter_match || !size_match || !checksum_match {
-                        error!(
-                            "Pad mismatch for pad {}: Match: counter: {}, size: {}, checksum: {}. Retrying...",
-                            pad.address, counter_match, size_match, checksum_match
-                        );
-                        continue;
+                Ok(record) => {
+                    // GET successful
+                    invoke_get_callback(&self.context.get_callback, GetEvent::PadFetched)
+                        .await
+                        .map_err(|e| (e, pad.clone()))?;
+
+                    self.context
+                        .fetched_items_counter
+                        .fetch_add(1, Ordering::Relaxed);
+                    let current_total = self.context.total_items.load(Ordering::Relaxed);
+                    let current_fetched =
+                        self.context.fetched_items_counter.load(Ordering::Relaxed);
+
+                    if current_fetched >= current_total {
+                        self.context.completion_notifier.notify_one();
                     }
 
-                    // Invoke callback for progress
-                    invoke_get_callback(&context.get_callback, GetEvent::PadsFetched)
-                        .await
-                        .map_err(|e| {
-                            (
-                                Error::Internal(format!("Callback error (PadsFetched): {:?}", e)),
-                                pad.clone(),
-                            )
-                        })?;
-
-                    // Increment counter (informational)
-                    context
-                        .fetched_items_counter
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                    // Return chunk index and fetched data
-                    return Ok((pad.chunk_index, pad_result.data));
+                    return Ok((pad.chunk_index, record.data)); // Return chunk index and data
                 }
                 Err(e) => {
-                    retries_left -= 1;
-                    if retries_left == 0 {
-                        return Err((Error::Network(e), pad)); // Return error and pad after retries
+                    match e {
+                        // Specific retryable errors for GET (if any - less likely than PUT)
+                        // NetworkError::GetError(GetRecordError::Timeout) => { ... }
+                        _ => {
+                            // Non-retryable or generic error
+                            retries_left -= 1;
+                            warn!(
+                                "GET failed for pad {} (chunk {}): {}. Retries left: {}",
+                                pad.address, pad.chunk_index, e, retries_left
+                            );
+                            if retries_left <= 0 {
+                                return Err((e.into(), pad)); // Return error and original pad
+                            }
+                        }
                     }
-                    tokio::time::sleep(Duration::from_secs(1)).await; // Wait before retrying
+                    // Wait before retrying
+                    tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             }
         }
@@ -207,22 +215,7 @@ async fn fetch_pads_data(
         return Ok(Vec::new());
     }
 
-    // Create channels for the worker pool
-    // Create worker-specific channels and a global queue channel
-    let mut worker_txs = Vec::with_capacity(*NB_CLIENTS);
-    let mut worker_rxs = Vec::with_capacity(*NB_CLIENTS);
-    for _ in 0..*NB_CLIENTS {
-        // Bounded channel for each worker's initial tasks
-        let (tx, rx) =
-            bounded::<PadInfo>(total_pads_to_fetch.saturating_add(1) / *NB_CLIENTS + *BATCH_SIZE);
-        worker_txs.push(tx);
-        worker_rxs.push(rx);
-    }
-    // Global queue - might not be strictly necessary for GET if no recycling
-    let (global_tx, global_rx) =
-        bounded::<PadInfo>(total_pads_to_fetch + *NB_CLIENTS * *BATCH_SIZE); // Generous buffer
-
-    // Create context for the worker pool
+    // 1. Create Context
     let get_context = Arc::new(GetContext {
         network: network.clone(),
         public,
@@ -232,146 +225,152 @@ async fn fetch_pads_data(
         fetched_items_counter: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     });
 
-    // Task to send pads to the pool
+    // 2. Create Task Processor
+    let task_processor = GetTaskProcessor::new(get_context.clone());
+
+    // 3. Create WorkerPoolConfig
+    let config = WorkerPoolConfig {
+        network: network.clone(),
+        client_config: crate::network::client::Config::Get, // Use crate path for Config
+        task_processor,
+        enable_recycling: false, // No recycling for GET
+        total_items_hint: total_pads_to_fetch,
+    };
+
+    // 4. Build WorkerPool and Handles
+    let (pool, handles) = match worker::build(config).await {
+        Ok(res) => res,
+        Err(e) => {
+            error!("Failed to build worker pool for GET: {:?}", e);
+            return match e {
+                PoolError::ClientAcquisitionError(msg) => {
+                    Err(Error::Network(NetworkError::ClientAccessError(msg)))
+                }
+                _ => Err(Error::Internal(format!("Pool build failed: {:?}", e))),
+            };
+        }
+    };
+
+    // 5. Spawn Distribution Task
     let send_pads_task = {
-        let pads_clone = pads.clone();
-        // Clone worker transmitters
-        let worker_txs_clone = worker_txs.clone();
-        let global_tx_clone = global_tx.clone(); // Need to close this later
+        let pads_clone = pads; // Clone pads for the task
+        let worker_txs = handles.worker_txs;
         let completion_notifier_clone = get_context.completion_notifier.clone();
         let fetched_items_counter_clone = get_context.fetched_items_counter.clone();
         let total_items_clone = get_context.total_items.clone();
 
         tokio::spawn(async move {
             let mut worker_index = 0;
-            let total_pads = pads_clone.len();
-
+            let num_workers = worker_txs.len();
+            if num_workers == 0 {
+                warn!("GET distribution task: No workers to distribute to!");
+                return;
+            }
             debug!(
-                "Distributing {} pads to {} workers in round-robin fashion",
-                total_pads, *NB_CLIENTS
+                "GET distributing {} pads to {} workers...",
+                pads_clone.len(),
+                num_workers
             );
 
             for pad in pads_clone {
-                // Send round-robin to worker channels
-                let target_tx = &worker_txs_clone[worker_index % *NB_CLIENTS];
+                let target_tx = &worker_txs[worker_index % num_workers];
                 if target_tx.send(pad).await.is_err() {
+                    warn!("GET distribution failed: Worker channel closed unexpectedly.");
                     break;
                 }
                 worker_index += 1;
             }
+            debug!("GET initial distribution finished.");
 
-            // Wait for all pads to be fetched before closing channels
-            // This ensures that all task processors stay alive until all work is done
+            // Wait until all items are processed or notified
             loop {
                 let fetched_count = fetched_items_counter_clone.load(Ordering::SeqCst);
                 let total_count = total_items_clone.load(Ordering::SeqCst);
-
                 if fetched_count >= total_count {
                     debug!(
-                        "All pads fetched ({}/{}), closing channels",
+                        "GET all pads processed ({}/{}), closing worker channels.",
                         fetched_count, total_count
                     );
                     break;
                 }
-
-                // Wait for completion notification or check again after a delay
                 tokio::select! {
                     _ = completion_notifier_clone.notified() => {
-                        debug!("Received completion notification, closing channels");
+                        debug!("GET completion notified, closing worker channels.");
                         break;
                     }
-                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
-                        // Continue checking
-                    }
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {}
                 }
             }
-
-            // Only close channels after all work is done
-            for tx in worker_txs_clone {
-                tx.close();
-            }
-
-            // Also close the global transmitter after all worker channels are closed
-            global_tx_clone.close();
+            // Drop worker_txs implicitly closes channels
+            debug!("GET distribution task finished.");
         })
     };
 
-    // Create clients for each worker - EXACTLY ONE client per worker
-    let mut clients = Vec::with_capacity(*NB_CLIENTS);
-    for worker_id in 0..*NB_CLIENTS {
-        let client = network.get_client(Config::Get).await.map_err(|e| {
-            error!("Failed to get client for worker {}: {}", worker_id, e);
-            Error::Network(NetworkError::ClientAccessError(format!(
-                "Failed to get client for worker {}: {}",
-                worker_id, e
-            )))
-        })?;
-        clients.push(Arc::new(client)); // Use Arc<Object> directly, matching put
-    }
+    // 6. No Recycler Task for GET
 
-    // Create and configure the worker pool
-    let pool = WorkerPool::new(
-        *NB_CLIENTS,
-        *BATCH_SIZE,
-        get_context.clone(),
-        Arc::new(GetTaskProcessor),
-        clients,    // Pass Vec<Arc<Object<ClientManager>>>
-        worker_rxs, // Pass worker-specific receivers
-        global_rx,  // Pass global receiver
-        None,       // No retry channel for GET
-    );
-
-    // Run the pool
+    // 7. Run the Worker Pool
     let pool_run_result = pool.run().await;
 
-    // Ensure the sending task completes
-    send_pads_task
-        .await
-        .map_err(|e| Error::Internal(format!("Send pads task panicked: {:?}", e)))?;
+    // 8. Await Distribution Task
+    if let Err(e) = send_pads_task.await {
+        error!("GET distribution task panicked: {:?}", e);
+        return Err(Error::Internal(format!(
+            "Pad distribution task failed: {:?}",
+            e
+        )));
+    }
+    debug!("GET distribution task completed.");
 
-    // Process the results from the pool
+    // 9. Process Results
     match pool_run_result {
         Ok(mut fetched_results) => {
             if fetched_results.len() != total_pads_to_fetch {
-                return Err(Error::Internal(
-                    "Mismatch between expected and fetched pad count".to_string(),
-                ));
+                // This might happen if some tasks failed and returned Err instead of Ok
+                warn!(
+                    "GET result count mismatch: expected {}, got {}. Some pads might have failed.",
+                    total_pads_to_fetch,
+                    fetched_results.len()
+                );
+                // Consider returning an error or partial data depending on requirements
+                return Err(Error::Internal(format!(
+                    "GET failed: Fetched {} pads, expected {}",
+                    fetched_results.len(),
+                    total_pads_to_fetch
+                )));
             }
 
-            // Sort results by chunk index (ItemId)
             fetched_results.sort_by_key(|(chunk_index, _)| *chunk_index);
-
-            // Collect into Vec first
             let collected_data: Vec<Vec<u8>> =
                 fetched_results.into_iter().map(|(_, data)| data).collect();
-
-            // Concatenate data in order
             let final_capacity: usize = collected_data.iter().map(|data| data.len()).sum();
             let mut final_data: Vec<u8> = Vec::with_capacity(final_capacity);
             for pad_data in collected_data {
                 final_data.extend(pad_data);
             }
 
-            // Send completion event after successful processing
             invoke_get_callback(&get_callback, GetEvent::Complete)
                 .await
                 .unwrap();
-
             Ok(final_data)
         }
         Err(pool_error) => {
-            // Convert PoolError to crate::Error
-            let final_error = match pool_error {
-                PoolError::TaskError(task_err) => task_err,
-                PoolError::JoinError(join_err) => {
-                    Error::Internal(format!("Worker task join error: {:?}", join_err))
-                }
+            error!("GET worker pool failed: {:?}", pool_error);
+            match pool_error {
+                PoolError::TaskError(task_err) => Err(task_err),
+                PoolError::JoinError(join_err) => Err(Error::Internal(format!(
+                    "Worker task join error: {:?}",
+                    join_err
+                ))),
                 PoolError::PoolSetupError(msg) => {
-                    Error::Internal(format!("Pool setup error: {}", msg))
+                    Err(Error::Internal(format!("Pool setup error: {}", msg)))
                 }
-                PoolError::WorkerError(msg) => Error::Internal(format!("Worker error: {}", msg)),
-            };
-            Err(final_error)
+                PoolError::WorkerError(msg) => {
+                    Err(Error::Internal(format!("Worker error: {}", msg)))
+                }
+                PoolError::ClientAcquisitionError(msg) => {
+                    Err(Error::Network(NetworkError::ClientAccessError(msg)))
+                }
+            }
         }
     }
 }

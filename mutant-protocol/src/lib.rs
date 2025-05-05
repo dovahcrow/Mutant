@@ -123,15 +123,13 @@ pub type HealthCheckCallback = Arc<
 /// Events emitted during a `get` operation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GetEvent {
-    /// Indicates the start of chunk fetching.
+    /// Indicates the start of the `get` operation.
     Starting {
-        /// Total number of data chunks to be fetched (including index).
+        /// Total number of pads (chunks) to be fetched.
         total_chunks: usize,
     },
-
-    /// Indicates that a specific data chunk has been fetched from storage.
-    PadsFetched,
-
+    /// Indicates that a single pad (chunk) has been fetched.
+    PadFetched,
     /// Indicates that the `get` operation has completed successfully.
     Complete,
 }
@@ -474,8 +472,10 @@ pub struct SyncResult {
     pub nb_pending_pads_added: usize,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+/// Represents the final result of a successful `get` operation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetResult {
+    /// Total size of the retrieved data in bytes.
     pub size: usize,
 }
 

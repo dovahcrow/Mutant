@@ -32,7 +32,7 @@ pub fn create_get_progress(mut progress_rx: ProgressReceiver, multi_progress: &M
 
                     drop(pb_guard);
                 }
-                GetEvent::PadsFetched => {
+                GetEvent::PadFetched => {
                     let mut pb_guard = pb_arc.lock().await;
                     if let Some(pb) = pb_guard.as_mut() {
                         if !pb.is_finished() {
@@ -40,7 +40,7 @@ pub fn create_get_progress(mut progress_rx: ProgressReceiver, multi_progress: &M
                         }
                     } else {
                         error!(
-                            "Get Callback: ChunkFetched event received but progress bar does not exist."
+                            "Get Callback: PadFetched event received but progress bar does not exist."
                         );
                     }
                     drop(pb_guard);

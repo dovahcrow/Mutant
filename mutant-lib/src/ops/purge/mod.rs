@@ -5,7 +5,7 @@ use crate::index::PadInfo;
 use crate::internal_events::invoke_purge_callback;
 use crate::network::client::{ClientManager, Config};
 use crate::network::{Network, NetworkError};
-use crate::ops::worker::{AsyncTask, PoolError, WorkerPool};
+use crate::ops::worker::{AsyncTask, PoolError, WorkerPoolConfig};
 use ant_networking::GetRecordError;
 use async_channel::bounded;
 use async_trait::async_trait;
@@ -36,7 +36,15 @@ struct PurgeContext {
 }
 
 #[derive(Clone)]
-struct PurgeTaskProcessor;
+struct PurgeTaskProcessor {
+    context: Arc<PurgeContext>,
+}
+
+impl PurgeTaskProcessor {
+    fn new(context: Arc<PurgeContext>) -> Self {
+        Self { context }
+    }
+}
 
 #[async_trait]
 impl AsyncTask<PadInfo, PurgeContext, Object<ClientManager>, PurgeTaskOutcome, Error>
@@ -47,18 +55,17 @@ impl AsyncTask<PadInfo, PurgeContext, Object<ClientManager>, PurgeTaskOutcome, E
     async fn process(
         &self,
         worker_id: usize,
-        context: Arc<PurgeContext>,
         client: &Object<ClientManager>,
         pad: PadInfo,
     ) -> Result<(Self::ItemId, PurgeTaskOutcome), (Error, PadInfo)> {
-        let get_result = context.network.get(client, &pad.address, None).await;
+        let get_result = self.context.network.get(client, &pad.address, None).await;
 
         let outcome: PurgeTaskOutcome;
 
         match get_result {
             Ok(res) => {
                 debug!("Worker {} verified pad {}.", worker_id, pad.address);
-                match context.index.try_write() {
+                match self.context.index.try_write() {
                     Ok(mut index_guard) => {
                         let mut pad = pad.clone();
                         pad.last_known_counter = res.counter;
@@ -88,7 +95,7 @@ impl AsyncTask<PadInfo, PurgeContext, Object<ClientManager>, PurgeTaskOutcome, E
                         "Worker {} discarding pad {} (NotFound).",
                         worker_id, pad.address
                     );
-                    match context.index.try_write() {
+                    match self.context.index.try_write() {
                         Ok(mut index_guard) => {
                             index_guard
                                 .discard_pending_pad(pad.clone())
@@ -112,7 +119,7 @@ impl AsyncTask<PadInfo, PurgeContext, Object<ClientManager>, PurgeTaskOutcome, E
                         "Worker {} verified pad {} but not enough copies reported by node.",
                         worker_id, pad.address
                     );
-                    match context.index.try_write() {
+                    match self.context.index.try_write() {
                         Ok(mut index_guard) => {
                             index_guard
                                 .verified_pending_pad(pad.clone())
@@ -132,12 +139,12 @@ impl AsyncTask<PadInfo, PurgeContext, Object<ClientManager>, PurgeTaskOutcome, E
                     }
                 }
                 _ => {
-                    if context.aggressive {
+                    if self.context.aggressive {
                         debug!(
                             "Worker {} discarding pad {} (aggressive due to error: {}).",
                             worker_id, pad.address, e
                         );
-                        match context.index.try_write() {
+                        match self.context.index.try_write() {
                             Ok(mut index_guard) => {
                                 index_guard
                                     .discard_pending_pad(pad.clone())
@@ -163,7 +170,7 @@ impl AsyncTask<PadInfo, PurgeContext, Object<ClientManager>, PurgeTaskOutcome, E
             },
         }
 
-        invoke_purge_callback(&context.purge_callback, PurgeEvent::PadProcessed)
+        invoke_purge_callback(&self.context.purge_callback, PurgeEvent::PadProcessed)
             .await
             .map_err(|cb_err| {
                 error!(
@@ -176,7 +183,7 @@ impl AsyncTask<PadInfo, PurgeContext, Object<ClientManager>, PurgeTaskOutcome, E
                 )
             })?;
 
-        context
+        self.context
             .processed_items_counter
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
@@ -217,34 +224,6 @@ pub(super) async fn purge(
         return Ok(PurgeResult { nb_pads_purged: 0 });
     }
 
-    // Create worker-specific and global channels
-    let mut worker_txs = Vec::with_capacity(*NB_CLIENTS);
-    let mut worker_rxs = Vec::with_capacity(*NB_CLIENTS);
-    for _ in 0..*NB_CLIENTS {
-        let (tx, rx) = bounded::<PadInfo>(total_pads.saturating_add(1) / *NB_CLIENTS + *BATCH_SIZE);
-        worker_txs.push(tx);
-        worker_rxs.push(rx);
-    }
-    let (global_tx, global_rx) = bounded::<PadInfo>(total_pads + *NB_CLIENTS * *BATCH_SIZE); // Generous buffer
-
-    // Create clients for each worker - EXACTLY ONE client per worker
-    let mut clients = Vec::with_capacity(*NB_CLIENTS);
-    for worker_id in 0..*NB_CLIENTS {
-        let client = network.get_client(Config::Get).await.map_err(|e| {
-            error!("Failed to get client for worker {}: {}", worker_id, e);
-            Error::Network(NetworkError::ClientAccessError(format!(
-                "Failed to get client for worker {}: {}",
-                worker_id, e
-            )))
-        })?;
-        // Double Arc wrapping to match the expected type in WorkerPool
-        // The outer Arc is for sharing the client among the worker's task processors
-        // The inner Arc is to match the type expected by the AsyncTask implementation
-        clients.push(Arc::new(client));
-    }
-
-    let completion_notifier = Arc::new(Notify::new());
-    let total_items_atomic = Arc::new(std::sync::atomic::AtomicUsize::new(total_pads));
     let processed_items_counter_atomic = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     let purge_context = Arc::new(PurgeContext {
@@ -255,78 +234,77 @@ pub(super) async fn purge(
         processed_items_counter: processed_items_counter_atomic.clone(),
     });
 
+    let task_processor = PurgeTaskProcessor::new(purge_context.clone());
+
+    let config = WorkerPoolConfig {
+        network: network.clone(),
+        client_config: Config::Get,
+        task_processor,
+        enable_recycling: false,
+        total_items_hint: total_pads,
+    };
+
+    let (pool, handles) = match crate::ops::worker::build(config).await {
+        Ok(res) => res,
+        Err(e) => {
+            error!("Failed to build worker pool for purge: {:?}", e);
+            return match e {
+                PoolError::ClientAcquisitionError(msg) => {
+                    Err(Error::Network(NetworkError::ClientAccessError(msg)))
+                }
+                _ => Err(Error::Internal(format!("Pool build failed: {:?}", e))),
+            };
+        }
+    };
+
     let send_pads_task = {
         let pads_clone = pads;
-        let worker_txs_clone = worker_txs.clone();
-        let global_tx_clone = global_tx.clone(); // To close later
+        let worker_txs = handles.worker_txs;
 
         tokio::spawn(async move {
             let mut worker_index = 0;
-            let total_pads = pads_clone.len();
+            let num_workers = worker_txs.len();
+            if num_workers == 0 {
+                warn!("Purge distribution task: No workers to distribute to!");
+                return;
+            }
 
             debug!(
-                "Distributing {} pads to {} workers in round-robin fashion",
-                total_pads, *NB_CLIENTS
+                "Purge distributing {} pads to {} workers...",
+                pads_clone.len(),
+                num_workers
             );
 
             for pad in pads_clone {
-                // Send round-robin
-                let target_tx = &worker_txs_clone[worker_index % *NB_CLIENTS];
+                let target_tx = &worker_txs[worker_index % num_workers];
                 if target_tx.send(pad).await.is_err() {
+                    warn!("Purge distribution failed: Worker channel closed unexpectedly.");
                     break;
                 }
                 worker_index += 1;
             }
 
-            // Close all worker channels - this doesn't prevent workers from processing
-            // items already in their queues or stealing from the global queue
-            for tx in worker_txs_clone {
-                tx.close();
-            }
-
-            // Close global channel after all worker channels are closed
-            global_tx_clone.close();
+            debug!("Purge distribution finished, closing worker channels.");
         })
     };
 
-    let pool = WorkerPool::new(
-        *NB_CLIENTS,
-        *BATCH_SIZE,
-        purge_context.clone(),
-        Arc::new(PurgeTaskProcessor),
-        clients,    // Pass clients for each worker
-        worker_rxs, // Pass worker receivers
-        global_rx,  // Pass global receiver
-        None,       // No retry channel needed for purge
-    );
-
-    // info!(
-    //     "Starting purge worker pool with {} workers for {} pads.",
-    //     NB_CLIENTS, total_pads
-    // );
-
     let pool_run_result = pool.run().await;
 
-    if let Err(_e) = send_pads_task.await {
-        // error!("Send pads task panicked: {:?}", e);
-    } else {
-        // debug!("Send pads task completed successfully.");
+    if let Err(e) = send_pads_task.await {
+        error!("Purge distribution task panicked: {:?}", e);
+        return Err(Error::Internal(format!(
+            "Pad distribution task failed: {:?}",
+            e
+        )));
     }
+    debug!("Purge distribution task completed.");
 
     match pool_run_result {
         Ok(purge_outcomes) => {
-            // info!(
-            //     "Purge worker pool finished. Processed outcomes for {} pads.",
-            //     purge_outcomes.len()
-            // );
-
-            if purge_outcomes.len() != total_pads {
-                // warn!(
-                //      "Purge pool finished OK, but outcome count ({}) doesn't match total pads ({}). This might indicate an issue with worker error handling or counters.",
-                //      purge_outcomes.len(),
-                //      total_pads
-                //  );
-            }
+            debug!(
+                "Purge pool completed. Processing {} outcomes.",
+                purge_outcomes.len()
+            );
 
             let mut verified_count = 0;
             let mut discarded_count = 0;
@@ -358,7 +336,7 @@ pub(super) async fn purge(
             })
         }
         Err(pool_error) => {
-            // error!("Purge worker pool failed: {:?}", pool_error);
+            error!("Purge worker pool failed: {:?}", pool_error);
             match pool_error {
                 PoolError::TaskError(task_err) => Err(task_err),
                 PoolError::JoinError(join_err) => Err(Error::Internal(format!(
@@ -370,6 +348,9 @@ pub(super) async fn purge(
                 }
                 PoolError::WorkerError(msg) => {
                     Err(Error::Internal(format!("Worker error: {}", msg)))
+                }
+                PoolError::ClientAcquisitionError(msg) => {
+                    Err(Error::Network(NetworkError::ClientAccessError(msg)))
                 }
             }
         }
