@@ -463,6 +463,43 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<crate::network::client::ClientMan
     }
 }
 
+// Define the recycling logic function
+async fn recycle_put_pad(
+    context: Context,
+    error_cause: Error,
+    pad_to_recycle: PadInfo,
+) -> Result<Option<PadInfo>, Error> {
+    warn!(
+        "Recycling pad {} for key '{}' due to error: {:?}",
+        pad_to_recycle.address, context.name, error_cause
+    );
+    match context
+        .index
+        .write()
+        .await
+        .recycle_errored_pad(&context.name, &pad_to_recycle.address)
+        .await
+    {
+        Ok(new_pad) => {
+            debug!(
+                "Recycled pad {} -> {} for key '{}', returning to pool.",
+                pad_to_recycle.address, new_pad.address, context.name
+            );
+            Ok(Some(new_pad))
+        }
+        Err(recycle_err) => {
+            error!(
+                "Failed to recycle pad {} for key '{}': {}. Skipping this pad.",
+                pad_to_recycle.address, context.name, recycle_err
+            );
+            // Decide if the recycle error itself should halt the process.
+            // Here we just skip the pad and log the error.
+            Ok(None)
+            // Alternatively, return Err(recycle_err) to propagate the failure.
+        }
+    }
+}
+
 async fn write_pipeline(
     context: Context,
     pads: Vec<PadInfo>,
@@ -506,9 +543,20 @@ async fn write_pipeline(
         total_items_hint: initial_process_count,
     };
 
-    // 4. Build WorkerPool and Handles
-    let (pool, handles) = match worker::build(config).await {
-        Ok(res) => res,
+    // Define the recycling closure
+    let recycle_fn = {
+        let context_clone = context.clone(); // Clone context for the closure
+        Arc::new(move |error: Error, pad: PadInfo| {
+            let context_inner = context_clone.clone(); // Clone again for the async block
+            Box::pin(async move { recycle_put_pad(context_inner, error, pad).await })
+                as futures::future::BoxFuture<'static, Result<Option<PadInfo>, Error>>
+        })
+    };
+
+    // 4. Build WorkerPool
+    let pool = match worker::build(config, Some(recycle_fn)).await {
+        // Pass recycle_fn
+        Ok(pool) => pool,
         Err(e) => {
             error!(
                 "Failed to build worker pool for PUT '{}': {:?}",
@@ -523,149 +571,24 @@ async fn write_pipeline(
         }
     };
 
-    // Extract handles
-    let worker_txs = handles.worker_txs;
-    let global_tx = handles.global_tx;
-    // We expect retry_rx for PUT
-    let retry_rx = handles
-        .retry_rx
-        .ok_or_else(|| Error::Internal("Missing retry receiver for PUT operation".to_string()))?;
-
-    // 5. Spawn Distribution Task
-    let send_pads_task = {
-        let pads_to_distribute = pads_to_process; // Move pads into the task
-                                                  // Move worker_txs into the task
-        tokio::spawn(async move {
-            let mut worker_index = 0;
-            let num_workers = worker_txs.len();
-            if num_workers == 0 {
-                warn!("PUT distribution task: No workers to distribute to!");
-                return;
-            }
-            debug!(
-                "PUT distributing {} pads to {} workers...",
-                pads_to_distribute.len(),
-                num_workers
-            );
-            for pad in pads_to_distribute {
-                // Pad status is already filtered, send all
-                let target_tx = &worker_txs[worker_index % num_workers];
-                if target_tx.send(pad).await.is_err() {
-                    warn!("PUT distribution failed: Worker channel closed unexpectedly.");
-                    break; // Stop sending if a worker channel is closed
-                }
-                worker_index += 1;
-            }
-            // Drop worker_txs implicitly closes channels
-            debug!("PUT distribution finished, closing worker channels.");
-        })
-    };
-
-    // 6. Spawn Recycler Task
-    let recycler_task = {
-        let index = context.index.clone(); // Clone index Arc
-        let key_name_clone = key_name.clone(); // Clone key name Arc
-        let global_tx_clone = global_tx.clone(); // Clone global_tx for the recycler
-                                                 // Move retry_rx into the task
-
-        tokio::spawn(async move {
-            debug!("Recycler task started for key {}", key_name_clone);
-            while let Ok((error_cause, pad_to_recycle)) = retry_rx.recv().await {
-                warn!(
-                    "Recycling pad {} for key '{}' due to error: {:?}",
-                    pad_to_recycle.address, key_name_clone, error_cause
-                );
-                match index
-                    .write()
-                    .await
-                    .recycle_errored_pad(&key_name_clone, &pad_to_recycle.address)
-                    .await
-                {
-                    Ok(new_pad) => {
-                        debug!(
-                            "Recycled pad {} -> {} for key '{}', sending back to pool.",
-                            pad_to_recycle.address, new_pad.address, key_name_clone
-                        );
-                        // Attempt to send the new pad back to the global queue
-                        if global_tx_clone.send(new_pad).await.is_err() {
-                            // This is more serious, pool might be shutting down
-                            error!(
-                                "Recycler failed to send recycled pad {} for key '{}' to global channel. Pool might be closed.",
-                                pad_to_recycle.address, key_name_clone
-                            );
-                            // We might want to signal an error or break here
-                            break;
-                        }
-                    }
-                    Err(recycle_err) => {
-                        // Failed to get a new pad from the index
-                        error!(
-                            "Failed to recycle pad {} for key '{}': {}. Skipping this pad.",
-                            pad_to_recycle.address, key_name_clone, recycle_err
-                        );
-                        // Continue to next errored pad
-                    }
-                }
-            }
-            // Loop ends when retry_rx closes (implicitly when all retry_sender clones are dropped)
-            debug!(
-                "Recycle channel closed for key '{}'. Recycler task finishing.",
-                key_name_clone
-            );
-            // Return Ok(()) to indicate normal completion
-            Ok::<(), Error>(())
-        })
-    };
-
-    // Keep the original global_tx alive until pool and recycler are done
-    let _global_tx_pipeline_lifetime_clone = global_tx;
-
-    // 7. Run the Worker Pool
-    let pool_result = pool.run().await;
-
-    // 8. Await Distribution and Recycler Tasks
-    if let Err(e) = send_pads_task.await {
+    // 5. Send pads to the pool
+    if let Err(e) = pool.send_items(pads_to_process).await {
         error!(
-            "PUT distribution task panicked for key '{}': {:?}",
+            "Failed to send initial pads to worker pool for PUT '{}': {:?}",
             key_name, e
         );
-        // Don't await recycler if distribution failed catastrophically
-        return Err(Error::Internal(format!(
-            "Pad distribution task failed: {:?}",
-            e
-        )));
-    }
-    debug!("PUT distribution task completed for key '{}'.", key_name);
-
-    match recycler_task.await {
-        Ok(Ok(())) => {
-            debug!(
-                "Recycler task completed successfully for key '{}'.",
-                key_name
-            );
-        }
-        Ok(Err(recycle_error)) => {
-            // Error returned from *within* the recycler task's logic (shouldn't happen with current logic)
-            error!(
-                "Recycler task failed internally for key '{}': {:?}",
-                key_name, recycle_error
-            );
-            return Err(recycle_error);
-        }
-        Err(join_err) => {
-            // Recycler task panicked
-            error!(
-                "Recycler task panicked for key '{}': {:?}",
-                key_name, join_err
-            );
-            return Err(Error::Internal(format!(
-                "Recycler task panicked: {:?}",
-                join_err
-            )));
-        }
+        // If sending fails, the pool might be in a bad state.
+        return match e {
+            PoolError::PoolSetupError(msg) => Err(Error::Internal(msg)),
+            // Other PoolErrors might be relevant here depending on send_items implementation
+            _ => Err(Error::Internal(format!("Pool send_items failed: {:?}", e))),
+        };
     }
 
-    // 9. Process Pool Results
+    // 6. Run the Worker Pool (recycling is now internal)
+    let pool_result = pool.run(None).await; // Pass recycle_fn to run
+
+    // 7. Process Pool Results
     match pool_result {
         Ok(_results) => {
             // For PUT, successful completion of the pool.run() without error is the main success signal,

@@ -221,3 +221,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixes
 
 - Ensure recycled pads during PUT operations are correctly re-processed by the worker pool, preventing operations from finishing with missing confirmations due to failed pads.
+
+### Refactor
+
+- Internalize worker pool distribution and recycling logic, simplifying PUT operation.
