@@ -15,7 +15,7 @@ use mutant_protocol::PurgeResult;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify, RwLock};
 
-use super::{BATCH_SIZE, WORKER_COUNT};
+use crate::network::{BATCH_SIZE, NB_CLIENTS};
 
 #[derive(Debug, Clone, Copy)]
 enum PurgeTaskOutcome {
@@ -218,18 +218,18 @@ pub(super) async fn purge(
     }
 
     // Create worker-specific and global channels
-    let mut worker_txs = Vec::with_capacity(WORKER_COUNT);
-    let mut worker_rxs = Vec::with_capacity(WORKER_COUNT);
-    for _ in 0..WORKER_COUNT {
-        let (tx, rx) = bounded::<PadInfo>(total_pads.saturating_add(1) / WORKER_COUNT + BATCH_SIZE);
+    let mut worker_txs = Vec::with_capacity(*NB_CLIENTS);
+    let mut worker_rxs = Vec::with_capacity(*NB_CLIENTS);
+    for _ in 0..*NB_CLIENTS {
+        let (tx, rx) = bounded::<PadInfo>(total_pads.saturating_add(1) / *NB_CLIENTS + *BATCH_SIZE);
         worker_txs.push(tx);
         worker_rxs.push(rx);
     }
-    let (global_tx, global_rx) = bounded::<PadInfo>(total_pads + WORKER_COUNT * BATCH_SIZE); // Generous buffer
+    let (global_tx, global_rx) = bounded::<PadInfo>(total_pads + *NB_CLIENTS * *BATCH_SIZE); // Generous buffer
 
     // Create clients for each worker - EXACTLY ONE client per worker
-    let mut clients = Vec::with_capacity(WORKER_COUNT);
-    for worker_id in 0..WORKER_COUNT {
+    let mut clients = Vec::with_capacity(*NB_CLIENTS);
+    for worker_id in 0..*NB_CLIENTS {
         let client = network.get_client(Config::Get).await.map_err(|e| {
             error!("Failed to get client for worker {}: {}", worker_id, e);
             Error::Network(NetworkError::ClientAccessError(format!(
@@ -266,12 +266,12 @@ pub(super) async fn purge(
 
             debug!(
                 "Distributing {} pads to {} workers in round-robin fashion",
-                total_pads, WORKER_COUNT
+                total_pads, *NB_CLIENTS
             );
 
             for pad in pads_clone {
                 // Send round-robin
-                let target_tx = &worker_txs_clone[worker_index % WORKER_COUNT];
+                let target_tx = &worker_txs_clone[worker_index % *NB_CLIENTS];
                 if target_tx.send(pad).await.is_err() {
                     break;
                 }
@@ -290,8 +290,8 @@ pub(super) async fn purge(
     };
 
     let pool = WorkerPool::new(
-        WORKER_COUNT,
-        BATCH_SIZE,
+        *NB_CLIENTS,
+        *BATCH_SIZE,
         purge_context.clone(),
         Arc::new(PurgeTaskProcessor),
         clients,    // Pass clients for each worker
@@ -302,7 +302,7 @@ pub(super) async fn purge(
 
     // info!(
     //     "Starting purge worker pool with {} workers for {} pads.",
-    //     WORKER_COUNT, total_pads
+    //     NB_CLIENTS, total_pads
     // );
 
     let pool_run_result = pool.run().await;

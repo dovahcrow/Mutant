@@ -3,9 +3,9 @@ use crate::index::error::IndexError;
 use crate::index::{PadInfo, PadStatus};
 use crate::internal_events::invoke_put_callback;
 use crate::network::client::{ClientManager, Config};
-use crate::network::{Network, NetworkError};
+use crate::network::{Network, NetworkError, BATCH_SIZE, NB_CLIENTS};
 use crate::ops::worker::{AsyncTask, PoolError, WorkerPool};
-use crate::ops::{BATCH_SIZE, MAX_CONFIRMATION_DURATION, WORKER_COUNT};
+use crate::ops::MAX_CONFIRMATION_DURATION;
 use async_channel::bounded;
 use async_trait::async_trait;
 use autonomi::ScratchpadAddress;
@@ -584,17 +584,17 @@ async fn write_pipeline(
         .filter(|p| p.status == PadStatus::Generated)
         .count();
 
-    let mut worker_txs = Vec::with_capacity(WORKER_COUNT);
-    let mut worker_rxs = Vec::with_capacity(WORKER_COUNT);
-    for _ in 0..WORKER_COUNT {
-        let (tx, rx) = bounded::<PadInfo>(total_pads.saturating_add(1) / WORKER_COUNT + BATCH_SIZE);
+    let mut worker_txs = Vec::with_capacity(*NB_CLIENTS);
+    let mut worker_rxs = Vec::with_capacity(*NB_CLIENTS);
+    for _ in 0..*NB_CLIENTS {
+        let (tx, rx) = bounded::<PadInfo>(total_pads.saturating_add(1) / *NB_CLIENTS + *BATCH_SIZE);
         worker_txs.push(tx);
         worker_rxs.push(rx);
     }
-    let (global_tx, global_rx) = bounded::<PadInfo>(total_pads + WORKER_COUNT * BATCH_SIZE);
+    let (global_tx, global_rx) = bounded::<PadInfo>(total_pads + *NB_CLIENTS * *BATCH_SIZE);
 
-    let mut clients = Vec::with_capacity(WORKER_COUNT);
-    for worker_id in 0..WORKER_COUNT {
+    let mut clients = Vec::with_capacity(*NB_CLIENTS);
+    for worker_id in 0..*NB_CLIENTS {
         let client = context.network.get_client(Config::Put).await.map_err(|e| {
             error!("Failed to get client for worker {}: {}", worker_id, e);
             Error::Network(NetworkError::ClientAccessError(format!(
@@ -641,7 +641,7 @@ async fn write_pipeline(
             for pad in pads {
                 if pad.status != PadStatus::Confirmed {
                     unconfirmed_count += 1;
-                    let target_tx = &worker_txs_clone[worker_index % WORKER_COUNT];
+                    let target_tx = &worker_txs_clone[worker_index % *NB_CLIENTS];
                     if let Err(_e) = target_tx.send(pad.clone()).await {
                         break;
                     }
@@ -713,8 +713,8 @@ async fn write_pipeline(
         (),
         Error,
     > = WorkerPool::new(
-        WORKER_COUNT,
-        crate::ops::BATCH_SIZE,
+        *NB_CLIENTS,
+        *BATCH_SIZE,
         put_task_context,
         Arc::new(PutTaskProcessor),
         clients,

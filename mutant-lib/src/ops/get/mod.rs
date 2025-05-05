@@ -3,7 +3,7 @@ use crate::events::{GetCallback, GetEvent};
 use crate::index::{master_index::MasterIndex, PadInfo};
 use crate::internal_events::invoke_get_callback;
 use crate::network::client::Config;
-use crate::network::{Network, NetworkError};
+use crate::network::{Network, NetworkError, BATCH_SIZE, NB_CLIENTS};
 use crate::ops::worker::{AsyncTask, PoolError, WorkerPool};
 use async_channel::bounded;
 use async_trait::async_trait;
@@ -14,9 +14,7 @@ use std::sync::atomic::Ordering;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, Notify, RwLock};
 
-use super::{
-    DATA_ENCODING_PUBLIC_DATA, DATA_ENCODING_PUBLIC_INDEX, PAD_RECYCLING_RETRIES, WORKER_COUNT,
-};
+use super::{DATA_ENCODING_PUBLIC_DATA, DATA_ENCODING_PUBLIC_INDEX, PAD_RECYCLING_RETRIES};
 
 pub(super) async fn get_public(
     network: Arc<Network>,
@@ -211,19 +209,18 @@ async fn fetch_pads_data(
 
     // Create channels for the worker pool
     // Create worker-specific channels and a global queue channel
-    let mut worker_txs = Vec::with_capacity(WORKER_COUNT);
-    let mut worker_rxs = Vec::with_capacity(WORKER_COUNT);
-    for _ in 0..WORKER_COUNT {
+    let mut worker_txs = Vec::with_capacity(*NB_CLIENTS);
+    let mut worker_rxs = Vec::with_capacity(*NB_CLIENTS);
+    for _ in 0..*NB_CLIENTS {
         // Bounded channel for each worker's initial tasks
-        let (tx, rx) = bounded::<PadInfo>(
-            total_pads_to_fetch.saturating_add(1) / WORKER_COUNT + crate::ops::BATCH_SIZE,
-        );
+        let (tx, rx) =
+            bounded::<PadInfo>(total_pads_to_fetch.saturating_add(1) / *NB_CLIENTS + *BATCH_SIZE);
         worker_txs.push(tx);
         worker_rxs.push(rx);
     }
     // Global queue - might not be strictly necessary for GET if no recycling
     let (global_tx, global_rx) =
-        bounded::<PadInfo>(total_pads_to_fetch + WORKER_COUNT * crate::ops::BATCH_SIZE); // Generous buffer
+        bounded::<PadInfo>(total_pads_to_fetch + *NB_CLIENTS * *BATCH_SIZE); // Generous buffer
 
     // Create context for the worker pool
     let get_context = Arc::new(GetContext {
@@ -251,12 +248,12 @@ async fn fetch_pads_data(
 
             debug!(
                 "Distributing {} pads to {} workers in round-robin fashion",
-                total_pads, WORKER_COUNT
+                total_pads, *NB_CLIENTS
             );
 
             for pad in pads_clone {
                 // Send round-robin to worker channels
-                let target_tx = &worker_txs_clone[worker_index % WORKER_COUNT];
+                let target_tx = &worker_txs_clone[worker_index % *NB_CLIENTS];
                 if target_tx.send(pad).await.is_err() {
                     break;
                 }
@@ -300,8 +297,8 @@ async fn fetch_pads_data(
     };
 
     // Create clients for each worker - EXACTLY ONE client per worker
-    let mut clients = Vec::with_capacity(WORKER_COUNT);
-    for worker_id in 0..WORKER_COUNT {
+    let mut clients = Vec::with_capacity(*NB_CLIENTS);
+    for worker_id in 0..*NB_CLIENTS {
         let client = network.get_client(Config::Get).await.map_err(|e| {
             error!("Failed to get client for worker {}: {}", worker_id, e);
             Error::Network(NetworkError::ClientAccessError(format!(
@@ -314,8 +311,8 @@ async fn fetch_pads_data(
 
     // Create and configure the worker pool
     let pool = WorkerPool::new(
-        WORKER_COUNT,
-        crate::ops::BATCH_SIZE,
+        *NB_CLIENTS,
+        *BATCH_SIZE,
         get_context.clone(),
         Arc::new(GetTaskProcessor),
         clients,    // Pass Vec<Arc<Object<ClientManager>>>

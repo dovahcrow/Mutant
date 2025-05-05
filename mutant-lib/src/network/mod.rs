@@ -8,6 +8,7 @@ use blsttc::SecretKey;
 use client::{ClientManager, Config, PoolManagerError};
 use deadpool::managed::{self, Pool};
 pub use error::NetworkError;
+use tokio::sync::OnceCell;
 
 use self::wallet::create_wallet;
 use crate::index::PadInfo;
@@ -52,6 +53,18 @@ pub struct PutResult {
     pub address: ScratchpadAddress,
 }
 
+lazy_static::lazy_static! {
+    pub static ref NB_CLIENTS: usize = std::env::var("NB_CLIENTS")
+        .unwrap_or_else(|_| "10".to_string())
+        .parse::<usize>()
+        .unwrap_or(10);
+
+    pub static ref BATCH_SIZE: usize = std::env::var("BATCH_SIZE")
+        .unwrap_or_else(|_| "10".to_string())
+        .parse::<usize>()
+        .unwrap_or(10);
+}
+
 /// Provides an interface to interact with the Autonomi network.
 ///
 /// This adapter handles client initialization, wallet management, and delegates
@@ -82,10 +95,7 @@ impl Network {
         };
 
         // get the max_connections from the env
-        let max_connections = std::env::var("MAX_CONNECTIONS")
-            .unwrap_or_else(|_| "10".to_string())
-            .parse::<usize>()
-            .unwrap_or(10);
+        let max_connections = *NB_CLIENTS;
 
         debug!("Max connections: {}", max_connections);
 

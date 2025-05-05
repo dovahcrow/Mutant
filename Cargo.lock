@@ -4502,6 +4502,7 @@ dependencies = [
  "hkdf",
  "indicatif",
  "k256",
+ "lazy_static",
  "log",
  "mutant-protocol",
  "never",

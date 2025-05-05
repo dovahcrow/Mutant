@@ -47,6 +47,7 @@ mutant-protocol = { path = "../mutant-protocol", version = "0.6.0-dev" }
 async-channel = "2.3.1"
 never = "0.1.0"
 crc = "3.2.1"
+lazy_static = "1.5.0"
 
 [dev-dependencies]
 # assert_matches = "1.5" # Removed
