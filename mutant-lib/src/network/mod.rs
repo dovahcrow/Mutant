@@ -8,7 +8,6 @@ use blsttc::SecretKey;
 use client::{ClientManager, Config, PoolManagerError};
 use deadpool::managed::{self, Pool};
 pub use error::NetworkError;
-use tokio::sync::OnceCell;
 
 use self::wallet::create_wallet;
 use crate::index::PadInfo;

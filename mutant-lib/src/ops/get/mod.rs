@@ -3,18 +3,15 @@ use crate::events::{GetCallback, GetEvent};
 use crate::index::{master_index::MasterIndex, PadInfo};
 use crate::internal_events::invoke_get_callback;
 use crate::network::client::Config;
-use crate::network::{Network, NetworkError, BATCH_SIZE, NB_CLIENTS};
+use crate::network::{Network, NetworkError};
 use crate::ops::worker::{self, AsyncTask, PoolError, WorkerPoolConfig};
-use async_channel::bounded;
 use async_trait::async_trait;
 use autonomi::ScratchpadAddress;
 use deadpool::managed::Object;
 use log::{debug, error, warn};
-use mutant_protocol::GetResult;
 use std::sync::atomic::Ordering;
 use std::{sync::Arc, time::Duration};
-use tokio::sync::{Mutex, Notify, RwLock};
-use tokio::time::Instant;
+use tokio::sync::{Notify, RwLock};
 
 use super::{DATA_ENCODING_PUBLIC_DATA, DATA_ENCODING_PUBLIC_INDEX, PAD_RECYCLING_RETRIES};
 

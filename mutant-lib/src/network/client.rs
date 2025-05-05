@@ -5,7 +5,6 @@ use deadpool::managed::{self, PoolError};
 use thiserror::Error;
 // use autonomi::{ResponseQuorum, RetryStrategy}
 use log::info;
-use std::num::NonZero;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Config {

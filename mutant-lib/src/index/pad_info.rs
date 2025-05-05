@@ -3,8 +3,7 @@ use crate::storage::ScratchpadAddress;
 use blsttc::SecretKey;
 use crc::{Crc, CRC_32_ISCSI};
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 
 /// Status of an individual pad within a key.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Copy)]

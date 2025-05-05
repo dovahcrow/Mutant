@@ -2,7 +2,6 @@ use crate::config::NetworkChoice;
 use crate::error::Error;
 use crate::index::pad_info::PadInfo;
 use crate::storage::ScratchpadAddress;
-use crc::{Crc, CRC_32_ISCSI};
 use log::{debug, info};
 use mutant_protocol::StorageMode;
 use serde::{Deserialize, Serialize};
@@ -696,14 +695,7 @@ impl MasterIndex {
         let pads_to_generate = num_pads_needed.saturating_sub(free_pads_count);
         let pads_to_take_from_free = num_pads_needed - pads_to_generate;
 
-        // Generate the required new pads first
-        let mut generated_new_pads = Vec::with_capacity(pads_to_generate);
-        for _ in 0..pads_to_generate {
-            // Create a dummy PadInfo; size and checksum will be set later
-            generated_new_pads.push(PadInfo::new(&[], 0));
-        }
-
-        // Then, take the remaining needed pads from the free list
+        // Take the required pads from the free list first
         if self.free_pads.len() < pads_to_take_from_free {
             return Err(Error::Internal(format!(
                 "Insufficient free pads available. Needed {}, have {}",
@@ -711,11 +703,18 @@ impl MasterIndex {
                 self.free_pads.len()
             )));
         }
-        let mut taken_free_pads: Vec<_> = self.free_pads.drain(..pads_to_take_from_free).collect();
+        let taken_free_pads: Vec<_> = self.free_pads.drain(..pads_to_take_from_free).collect();
 
-        // Combine generated and taken pads
-        let mut available_pads = generated_new_pads;
-        available_pads.append(&mut taken_free_pads);
+        // Then, generate the remaining required new pads
+        let mut generated_new_pads = Vec::with_capacity(pads_to_generate);
+        for _ in 0..pads_to_generate {
+            // Create a dummy PadInfo; size and checksum will be set later
+            generated_new_pads.push(PadInfo::new(&[], 0));
+        }
+
+        // Combine taken and generated pads (Free first, then New)
+        let mut available_pads = taken_free_pads;
+        available_pads.append(&mut generated_new_pads);
 
         if available_pads.len() < num_pads_needed {
             return Err(Error::Internal(format!(

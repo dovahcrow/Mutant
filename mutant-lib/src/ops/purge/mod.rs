@@ -7,15 +7,13 @@ use crate::network::client::{ClientManager, Config};
 use crate::network::{Network, NetworkError};
 use crate::ops::worker::{AsyncTask, PoolError, WorkerPoolConfig};
 use ant_networking::GetRecordError;
-use async_channel::bounded;
 use async_trait::async_trait;
 use deadpool::managed::Object;
 use log::{debug, error, info, warn};
 use mutant_protocol::PurgeResult;
 use std::sync::Arc;
-use tokio::sync::{Mutex, Notify, RwLock};
+use tokio::sync::RwLock;
 
-use crate::network::{BATCH_SIZE, NB_CLIENTS};
 
 #[derive(Debug, Clone, Copy)]
 enum PurgeTaskOutcome {
