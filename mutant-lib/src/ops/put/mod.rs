@@ -530,6 +530,33 @@ async fn write_pipeline(
 ) -> Result<(), Error> {
     let key_name = context.name.clone();
 
+    // Count pads by status before filtering
+    let total_chunks = pads.len();
+    let initial_written_count = pads.iter().filter(|p| p.status == PadStatus::Written).count();
+    let initial_confirmed_count = pads.iter().filter(|p| p.status == PadStatus::Confirmed).count();
+
+    // Send Starting event with pad counts
+    info!(
+        "Sending Starting event for key '{}': total={}, written={}, confirmed={}, to_reserve={}",
+        key_name,
+        total_chunks,
+        initial_written_count,
+        initial_confirmed_count,
+        total_chunks - initial_written_count - initial_confirmed_count
+    );
+
+    invoke_put_callback(
+        &put_callback,
+        PutEvent::Starting {
+            total_chunks,
+            initial_written_count,
+            initial_confirmed_count,
+            chunks_to_reserve: total_chunks - initial_written_count - initial_confirmed_count,
+        },
+    )
+    .await
+    .map_err(|e| Error::Internal(format!("Callback error on Starting event: {:?}", e)))?;
+
     // Filter out already confirmed pads - these don't need processing
     let pads_to_process: Vec<PadInfo> = pads
         .into_iter()
