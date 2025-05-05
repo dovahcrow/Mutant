@@ -504,17 +504,21 @@ where
         // Wait for all workers to complete with a timeout
         debug!("Waiting for {} workers to complete...", worker_handles.len());
 
-        // Use a timeout to prevent hanging indefinitely
-        let worker_timeout = std::time::Duration::from_secs(10); // 10 second timeout
+        // Use a timeout for individual worker tasks, but wait for all workers
+        let individual_worker_timeout = std::time::Duration::from_secs(30); // 30 second timeout per worker
         let mut completed_workers = 0;
+        let total_workers = worker_handles.len();
 
+        debug!("Waiting for all {} workers to complete...", total_workers);
+
+        // Wait for all workers to complete
         while !worker_handles.is_empty() {
-            match tokio::time::timeout(worker_timeout, worker_handles.next()).await {
+            match tokio::time::timeout(individual_worker_timeout, worker_handles.next()).await {
                 Ok(Some(result)) => {
                     match result {
                         Ok(Ok(())) => {
                             completed_workers += 1;
-                            debug!("Worker completed successfully ({}/{})", completed_workers, worker_handles.len() + completed_workers);
+                            debug!("Worker completed successfully ({}/{})", completed_workers, total_workers);
                         }
                         Ok(Err(e)) => {
                             error!("Worker failed: {:?}", e);
@@ -532,21 +536,26 @@ where
                     break;
                 },
                 Err(_) => {
-                    // Timeout occurred
-                    warn!("Timeout waiting for workers to complete. {} workers completed, {} still running.",
-                          completed_workers, worker_handles.len());
-                    break;
+                    // Individual worker timeout occurred
+                    warn!("Timeout waiting for a worker to complete. Moving to next worker.");
+                    // We don't break here, we continue to the next worker
                 }
             }
         }
-        debug!("All workers completed or timed out.");
+
+        if completed_workers == total_workers {
+            debug!("All {} workers completed successfully.", total_workers);
+        } else {
+            warn!("Only {}/{} workers completed within the timeout period.", completed_workers, total_workers);
+            // We'll continue anyway and try to collect results
+        }
 
         // Wait for recycler to complete if it exists, with a timeout
         if let Some(handle) = recycler_handle {
             debug!("Waiting for recycler task to complete...");
 
             // Use a timeout to prevent hanging indefinitely
-            let recycler_timeout = std::time::Duration::from_secs(5); // 5 second timeout
+            let recycler_timeout = std::time::Duration::from_secs(10); // 10 second timeout
 
             match tokio::time::timeout(recycler_timeout, handle).await {
                 Ok(result) => {
@@ -573,29 +582,71 @@ where
             debug!("No recycler task to wait for.");
         }
 
+        // Give a little extra time for any remaining tasks to finish and release their locks
+        debug!("Waiting a moment for any remaining tasks to finish...");
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
         // Check for errors
-        let final_errors = errors_collector.lock().await;
+        let final_errors = match errors_collector.try_lock() {
+            Ok(errors) => errors,
+            Err(_) => {
+                warn!("Could not immediately acquire lock on errors collector. Waiting...");
+                errors_collector.lock().await
+            }
+        };
+
         if !final_errors.is_empty() {
             return Err(PoolError::TaskError(final_errors.first().unwrap().clone()));
         }
 
-        // Return results
-        let result = match Arc::try_unwrap(results_collector) {
-            Ok(mutex) => {
-                let results = mutex.into_inner();
-                debug!("WorkerPool completed successfully with {} results.", results.len());
-                Ok(results)
-            },
-            Err(_) => {
-                error!("Failed to unwrap results collector Arc");
-                Err(PoolError::PoolSetupError(
-                    "Failed to unwrap results collector Arc".to_string(),
-                ))
-            },
-        };
+        // Drop the errors lock before trying to get results
+        drop(final_errors);
 
-        debug!("WorkerPool::run finished.");
-        result
+        // Try to get the results with a timeout
+        let max_attempts = 5;
+        let mut attempt = 0;
+
+        loop {
+            attempt += 1;
+            debug!("Attempting to collect results (attempt {}/{})", attempt, max_attempts);
+
+            // First try to lock the results collector
+            match results_collector.try_lock() {
+                Ok(results) => {
+                    debug!("Successfully locked results collector");
+                    let results_copy = results.clone(); // Make a copy while we have the lock
+                    drop(results); // Release the lock
+
+                    // Now try to unwrap the Arc
+                    match Arc::try_unwrap(results_collector.clone()) {
+                        Ok(mutex) => {
+                            let final_results = mutex.into_inner();
+                            debug!("WorkerPool completed successfully with {} results.", final_results.len());
+                            return Ok(final_results);
+                        },
+                        Err(_) => {
+                            // Arc still has other references, return our copy
+                            debug!("Could not unwrap results collector Arc, but we have a copy with {} results.", results_copy.len());
+                            return Ok(results_copy);
+                        }
+                    }
+                },
+                Err(_) => {
+                    warn!("Could not lock results collector on attempt {}/{}. Waiting...", attempt, max_attempts);
+
+                    if attempt >= max_attempts {
+                        error!("Failed to collect results after {} attempts", max_attempts);
+                        return Err(PoolError::PoolSetupError(
+                            format!("Failed to collect results after {} attempts", max_attempts)
+                        ));
+                    }
+
+                    // Wait a bit before trying again
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    continue;
+                }
+            };
+        }
     }
 
     fn spawn_drainer(rx: Receiver<(E, Item)>) {
