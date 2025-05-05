@@ -225,3 +225,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Refactor
 
 - Internalize worker pool distribution and recycling mechanics, simplifying PUT operation. The pool now requires a recycling function to be provided during setup if recycling is enabled.
+- Adapt GET and PURGE operations to use the refactored WorkerPool API.
