@@ -352,6 +352,9 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<crate::network::client::ClientMan
 
                 match put_result {
                     Ok(_) => {
+                        // Check if this was a Generated pad that needs a PadReserved event
+                        let was_generated = initial_status == PadStatus::Generated;
+
                         pad_state.status = PadStatus::Written;
                         match self
                             .context
@@ -368,6 +371,18 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<crate::network::client::ClientMan
                             Ok(updated_pad) => pad_state = updated_pad,
                             Err(e) => return Err((e, pad_state.clone())),
                         }
+
+                        // If the pad was in Generated status, send PadReserved event
+                        if was_generated {
+                            info!(
+                                "Worker {} sending PadReserved event for pad {} (chunk {})",
+                                worker_id, current_pad_address, pad_state.chunk_index
+                            );
+                            invoke_put_callback(&self.context.put_callback, PutEvent::PadReserved)
+                                .await
+                                .map_err(|e| (e, pad_state.clone()))?;
+                        }
+
                         put_succeeded = true;
                         last_put_error = None;
                         break;
