@@ -54,12 +54,12 @@ pub struct PutResult {
 }
 
 lazy_static::lazy_static! {
-    pub static ref NB_CLIENTS: usize = std::env::var("NB_CLIENTS")
+    pub static ref NB_CLIENTS: usize = std::env::var("MUTANT_NB_CLIENTS")
         .unwrap_or_else(|_| "10".to_string())
         .parse::<usize>()
         .unwrap_or(10);
 
-    pub static ref BATCH_SIZE: usize = std::env::var("BATCH_SIZE")
+    pub static ref BATCH_SIZE: usize = std::env::var("MUTANT_BATCH_SIZE")
         .unwrap_or_else(|_| "10".to_string())
         .parse::<usize>()
         .unwrap_or(10);
