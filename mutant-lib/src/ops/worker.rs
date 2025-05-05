@@ -5,7 +5,7 @@ use async_channel::{bounded, Receiver, Sender};
 use deadpool::managed::Object;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -422,36 +422,51 @@ where
             (maybe_retry_rx.clone(), recycle_fn)
         {
             Some(tokio::spawn(async move {
-                debug!("WorkerPool internal recycler task started.");
+                debug!("WorkerPool internal recycler task started. Processing recycling queue...");
 
                 let mut recycled_count = 0;
                 let mut dropped_count = 0;
                 let mut error_count = 0;
 
-                while let Ok((error_cause, item_to_recycle)) = retry_rx.recv().await {
-                    debug!(
-                        "Recycler received item {:?} due to error: {:?}",
-                        item_to_recycle, error_cause
-                    );
-                    match recycle_function(error_cause, item_to_recycle).await {
-                        Ok(Some(new_item)) => {
-                            recycled_count += 1;
+                // Log that we're starting the recycling process
+                info!("Starting recycling process for failed items...");
+
+                // Process the recycling queue until it's empty
+                // This ensures all failed pads are properly recycled
+                info!("Starting recycling loop to process all failed pads...");
+                'recycling_loop: loop {
+                    match retry_rx.recv().await {
+                        Ok((error_cause, item_to_recycle)) => {
                             debug!(
-                                "Recycled into new item {:?}, sending back to pool. (Total recycled: {})",
-                                new_item, recycled_count
+                                "Recycler received item {:?} due to error: {:?}",
+                                item_to_recycle, error_cause
                             );
-                            if global_tx_for_recycler.send(new_item).await.is_err() {
-                                error!("Recycler failed to send recycled item to global channel. Pool might be closed.");
-                                break;
+                            match recycle_function(error_cause, item_to_recycle).await {
+                                Ok(Some(new_item)) => {
+                                    recycled_count += 1;
+                                    debug!(
+                                        "Recycled into new item {:?}, sending back to pool. (Total recycled: {})",
+                                        new_item, recycled_count
+                                    );
+                                    if global_tx_for_recycler.send(new_item).await.is_err() {
+                                        error!("Recycler failed to send recycled item to global channel. Pool might be closed.");
+                                        break 'recycling_loop;
+                                    }
+                                }
+                                Ok(None) => {
+                                    dropped_count += 1;
+                                    debug!("Recycling resulted in no new item. Dropping. (Total dropped: {})", dropped_count);
+                                }
+                                Err(recycle_err) => {
+                                    error_count += 1;
+                                    error!("Recycling failed: {:?}. Skipping item. (Total errors: {})", recycle_err, error_count);
+                                }
                             }
-                        }
-                        Ok(None) => {
-                            dropped_count += 1;
-                            debug!("Recycling resulted in no new item. Dropping. (Total dropped: {})", dropped_count);
-                        }
-                        Err(recycle_err) => {
-                            error_count += 1;
-                            error!("Recycling failed: {:?}. Skipping item. (Total errors: {})", recycle_err, error_count);
+                        },
+                        Err(e) => {
+                            debug!("Recycling channel closed or empty: {}. Exiting recycling loop.", e);
+                            // The channel is closed, which means no more items to recycle
+                            break 'recycling_loop;
                         }
                     }
                 }
@@ -538,6 +553,8 @@ where
                 }
                 Ok(Err(recycler_pool_error)) => {
                     error!("Internal recycler task failed: {:?}", recycler_pool_error);
+                    // Return the error to ensure the caller knows recycling failed
+                    return Err(recycler_pool_error);
                 }
                 Err(join_err) => {
                     error!("Internal recycler task panicked: {:?}", join_err);

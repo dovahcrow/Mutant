@@ -518,6 +518,13 @@ async fn recycle_put_pad(
         "Recycling pad {} for key '{}' due to error: {:?}",
         pad_to_recycle.address, context.name, error_cause
     );
+
+    // Log the pad status before recycling
+    debug!(
+        "Pad to recycle: address={}, status={:?}, chunk_index={}, size={}",
+        pad_to_recycle.address, pad_to_recycle.status, pad_to_recycle.chunk_index, pad_to_recycle.size
+    );
+
     match context
         .index
         .write()
@@ -527,9 +534,11 @@ async fn recycle_put_pad(
     {
         Ok(new_pad) => {
             debug!(
-                "Recycled pad {} -> {} for key '{}', returning to pool.",
-                pad_to_recycle.address, new_pad.address, context.name
+                "Successfully recycled pad {} -> {} for key '{}', returning to pool. New pad status: {:?}",
+                pad_to_recycle.address, new_pad.address, context.name, new_pad.status
             );
+
+            // Return the new pad to be processed by the worker pool
             Ok(Some(new_pad))
         }
         Err(recycle_err) => {
@@ -537,10 +546,8 @@ async fn recycle_put_pad(
                 "Failed to recycle pad {} for key '{}': {}. Skipping this pad.",
                 pad_to_recycle.address, context.name, recycle_err
             );
-            // Decide if the recycle error itself should halt the process.
-            // Here we just skip the pad and log the error.
+            // We'll just skip this pad and log the error rather than halting the entire process
             Ok(None)
-            // Alternatively, return Err(recycle_err) to propagate the failure.
         }
     }
 }
@@ -617,17 +624,36 @@ async fn write_pipeline(
         network: context.network.clone(), // Clone network Arc
         client_config: crate::network::client::Config::Put, // Use crate path
         task_processor,
-        enable_recycling: true, // PUT needs recycling
+        enable_recycling: true, // Ensure recycling is enabled for PUT
         total_items_hint: initial_process_count,
     };
+
+    debug!(
+        "Created WorkerPoolConfig for PUT with recycling enabled, total_items_hint={}",
+        initial_process_count
+    );
 
     // Define the recycling closure
     let recycle_fn = {
         let context_clone = context.clone(); // Clone context for the closure
+        let key_name_for_log = context.name.to_string(); // Clone the key name for logging
+
         Arc::new(move |error: Error, pad: PadInfo| {
             let context_inner = context_clone.clone(); // Clone again for the async block
-            Box::pin(async move { recycle_put_pad(context_inner, error, pad).await })
-                as futures::future::BoxFuture<'static, Result<Option<PadInfo>, Error>>
+            let key_name_inner = key_name_for_log.clone(); // Clone for the async block
+
+            info!(
+                "Creating recycling function for key '{}', pad {}",
+                key_name_inner, pad.address
+            );
+
+            Box::pin(async move {
+                info!(
+                    "Executing recycling function for key '{}', pad {}",
+                    key_name_inner, pad.address
+                );
+                recycle_put_pad(context_inner, error, pad).await
+            }) as futures::future::BoxFuture<'static, Result<Option<PadInfo>, Error>>
         })
     };
 
@@ -663,7 +689,8 @@ async fn write_pipeline(
     }
 
     // 6. Run the Worker Pool (recycling is now internal, driven by passed fn)
-    let pool_result = pool.run(Some(recycle_fn)).await; // Pass recycle_fn to run
+    // Make sure to pass the recycle_fn to ensure the recycling mechanism is active
+    let pool_result = pool.run(Some(recycle_fn)).await;
 
     // 7. Process Pool Results
     match pool_result {
