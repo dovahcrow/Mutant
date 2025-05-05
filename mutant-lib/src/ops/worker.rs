@@ -412,8 +412,6 @@ where
             None
         };
 
-        drop(self.global_tx);
-
         while let Some(result) = worker_handles.next().await {
             match result {
                 Ok(Ok(())) => {}
@@ -427,6 +425,9 @@ where
                 }
             }
         }
+
+        // Drop the pool's sender to signal the recycler to stop
+        drop(self.retry_sender);
 
         if let Some(handle) = recycler_handle {
             match handle.await {
@@ -442,6 +443,9 @@ where
                 }
             }
         }
+
+        // Drop the global sender *after* the recycler has finished
+        drop(self.global_tx);
 
         let final_errors = errors_collector.lock().await;
         if !final_errors.is_empty() {
