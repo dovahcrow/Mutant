@@ -13,7 +13,10 @@ use std::{ops::Range, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 
-use super::{DATA_ENCODING_PRIVATE_DATA, DATA_ENCODING_PUBLIC_DATA, DATA_ENCODING_PUBLIC_INDEX, PAD_RECYCLING_RETRIES};
+use super::{
+    DATA_ENCODING_PRIVATE_DATA, DATA_ENCODING_PUBLIC_DATA, DATA_ENCODING_PUBLIC_INDEX,
+    PAD_RECYCLING_RETRIES,
+};
 
 #[derive(Clone)]
 struct Context {
@@ -284,9 +287,9 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<crate::network::client::ClientMan
         if should_put {
             // Determine if this is an index pad for a public upload
             // For public uploads, the index pad is the one with chunk_index 0 and only one chunk range
-            let is_index_pad = is_public &&
-                pad_state.chunk_index == 0 &&
-                self.context.base_context.chunk_ranges.len() == 1;
+            let is_index_pad = is_public
+                && pad_state.chunk_index == 0
+                && self.context.base_context.chunk_ranges.len() == 1;
 
             let data_encoding = if is_public {
                 if is_index_pad {
@@ -440,27 +443,32 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<crate::network::client::ClientMan
                     .get(client, &current_pad_address, secret_key_ref)
                     .await
                 {
-                    Ok(_) => {
-                        pad_state.status = PadStatus::Confirmed;
-                        match self
-                            .context
-                            .base_context
-                            .index
-                            .write()
-                            .await
-                            .update_pad_status(
-                                &self.context.base_context.name,
-                                &current_pad_address,
-                                PadStatus::Confirmed,
-                                None,
-                            ) {
-                            Ok(final_pad) => {
-                                confirmation_succeeded = true;
-                                pad_state = final_pad;
-                                break;
-                            }
-                            Err(e) => {
-                                warn!("Worker {} failed to update index status to Confirmed for pad {}: {}. Retrying confirmation...", worker_id, current_pad_address, e);
+                    Ok(get_result) => {
+                        let checksum_match = pad.checksum == PadInfo::checksum(&get_result.data);
+                        let counter_match = pad.last_known_counter == get_result.counter;
+                        let size_match = pad.size == get_result.data.len();
+                        if checksum_match && counter_match && size_match {
+                            pad_state.status = PadStatus::Confirmed;
+                            match self
+                                .context
+                                .base_context
+                                .index
+                                .write()
+                                .await
+                                .update_pad_status(
+                                    &self.context.base_context.name,
+                                    &current_pad_address,
+                                    PadStatus::Confirmed,
+                                    None,
+                                ) {
+                                Ok(final_pad) => {
+                                    confirmation_succeeded = true;
+                                    pad_state = final_pad;
+                                    break;
+                                }
+                                Err(e) => {
+                                    warn!("Worker {} failed to update index status to Confirmed for pad {}: {}. Retrying confirmation...", worker_id, current_pad_address, e);
+                                }
                             }
                         }
                     }
@@ -547,8 +555,14 @@ async fn write_pipeline(
 
     // Count pads by status before filtering
     let total_chunks = pads.len();
-    let initial_written_count = pads.iter().filter(|p| p.status == PadStatus::Written).count();
-    let initial_confirmed_count = pads.iter().filter(|p| p.status == PadStatus::Confirmed).count();
+    let initial_written_count = pads
+        .iter()
+        .filter(|p| p.status == PadStatus::Written)
+        .count();
+    let initial_confirmed_count = pads
+        .iter()
+        .filter(|p| p.status == PadStatus::Confirmed)
+        .count();
 
     // Send Starting event with pad counts
     info!(
