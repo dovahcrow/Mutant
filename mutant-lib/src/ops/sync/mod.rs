@@ -144,7 +144,7 @@ pub(super) async fn sync(
         .await
         .unwrap();
 
-    let mut retries = 10;
+    let mut retries = 20;
 
     loop {
         match network

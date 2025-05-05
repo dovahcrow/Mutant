@@ -592,9 +592,17 @@ impl MasterIndex {
     pub fn export_raw_pads_private_key(&self) -> Result<Vec<PadInfo>, Error> {
         let mut pads_hex = Vec::new();
         for (_key, entry) in self.index.iter() {
-            if let IndexEntry::PrivateKey(pads) = entry {
-                for pad in pads {
-                    pads_hex.push(pad.clone());
+            match entry {
+                IndexEntry::PrivateKey(pads) => {
+                    for pad in pads {
+                        pads_hex.push(pad.clone());
+                    }
+                }
+                IndexEntry::PublicUpload(index, pads) => {
+                    pads_hex.push(index.clone());
+                    for pad in pads {
+                        pads_hex.push(pad.clone());
+                    }
                 }
             }
         }
