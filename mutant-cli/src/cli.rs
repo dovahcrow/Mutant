@@ -19,7 +19,7 @@ pub enum Commands {
         file: String,
         #[arg(short, long)]
         public: bool,
-        #[arg(value_enum, short, long, default_value_t = StorageModeCli::Medium)]
+        #[arg(value_enum, short, long, default_value_t = StorageModeCli::Heaviest)]
         mode: StorageModeCli,
         #[arg(short, long)]
         background: bool,

@@ -76,7 +76,7 @@ pub(crate) async fn create_client(
                     network_contacts_url: network_contacts_url, // see other earlier list
                     local: false,
                     disable_mainnet_contacts: true,
-                    ignore_cache: true,
+                    ignore_cache: false,
                     bootstrap_cache_dir: None,
                 },
                 evm_network: autonomi::Network::ArbitrumSepoliaTest,

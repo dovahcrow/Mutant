@@ -102,25 +102,17 @@ where
             task_handles.push(tokio::spawn(worker_clone.run_task_processor(task_id)));
         }
 
-        // Use a timeout to prevent hanging indefinitely
-        let task_timeout = std::time::Duration::from_secs(60); // 60 second timeout
-
         while !task_handles.is_empty() {
-            match tokio::time::timeout(task_timeout, task_handles.next()).await {
-                Ok(Some(result)) => {
+            match task_handles.next().await {
+                Some(result) => {
                     match result {
                         Ok(Ok(())) => {}
                         Ok(Err(e)) => return Err(e),
                         Err(join_err) => return Err(PoolError::JoinError(join_err)),
                     }
                 },
-                Ok(None) => {
+                None => {
                     // No more tasks to wait for
-                    break;
-                },
-                Err(_) => {
-                    // Timeout occurred
-                    warn!("Timeout waiting for worker {} tasks to complete. Some tasks may still be running.", self.id);
                     break;
                 }
             }
@@ -501,20 +493,16 @@ where
             debug!("Closed retry channel.");
         }
 
-        // Wait for all workers to complete with a timeout
+        // Wait for all workers to complete
         debug!("Waiting for {} workers to complete...", worker_handles.len());
 
-        // Use a timeout for individual worker tasks, but wait for all workers
-        let individual_worker_timeout = std::time::Duration::from_secs(30); // 30 second timeout per worker
         let mut completed_workers = 0;
         let total_workers = worker_handles.len();
 
-        debug!("Waiting for all {} workers to complete...", total_workers);
-
         // Wait for all workers to complete
         while !worker_handles.is_empty() {
-            match tokio::time::timeout(individual_worker_timeout, worker_handles.next()).await {
-                Ok(Some(result)) => {
+            match worker_handles.next().await {
+                Some(result) => {
                     match result {
                         Ok(Ok(())) => {
                             completed_workers += 1;
@@ -530,61 +518,35 @@ where
                         }
                     }
                 },
-                Ok(None) => {
+                None => {
                     // No more workers to wait for
                     debug!("No more workers to wait for.");
                     break;
-                },
-                Err(_) => {
-                    // Individual worker timeout occurred
-                    warn!("Timeout waiting for a worker to complete. Moving to next worker.");
-                    // We don't break here, we continue to the next worker
                 }
             }
         }
 
-        if completed_workers == total_workers {
-            debug!("All {} workers completed successfully.", total_workers);
-        } else {
-            warn!("Only {}/{} workers completed within the timeout period.", completed_workers, total_workers);
-            // We'll continue anyway and try to collect results
-        }
+        debug!("All {} workers completed.", total_workers);
 
-        // Wait for recycler to complete if it exists, with a timeout
+        // Wait for recycler to complete if it exists
         if let Some(handle) = recycler_handle {
             debug!("Waiting for recycler task to complete...");
 
-            // Use a timeout to prevent hanging indefinitely
-            let recycler_timeout = std::time::Duration::from_secs(10); // 10 second timeout
-
-            match tokio::time::timeout(recycler_timeout, handle).await {
-                Ok(result) => {
-                    match result {
-                        Ok(Ok(())) => {
-                            debug!("Internal recycler task completed successfully.");
-                        }
-                        Ok(Err(recycler_pool_error)) => {
-                            error!("Internal recycler task failed: {:?}", recycler_pool_error);
-                        }
-                        Err(join_err) => {
-                            error!("Internal recycler task panicked: {:?}", join_err);
-                            return Err(PoolError::JoinError(join_err));
-                        }
-                    }
-                },
-                Err(_) => {
-                    // Timeout occurred
-                    warn!("Timeout waiting for recycler task to complete. It may still be running.");
-                    // We'll continue anyway since we've already closed all channels
+            match handle.await {
+                Ok(Ok(())) => {
+                    debug!("Internal recycler task completed successfully.");
+                }
+                Ok(Err(recycler_pool_error)) => {
+                    error!("Internal recycler task failed: {:?}", recycler_pool_error);
+                }
+                Err(join_err) => {
+                    error!("Internal recycler task panicked: {:?}", join_err);
+                    return Err(PoolError::JoinError(join_err));
                 }
             }
         } else {
             debug!("No recycler task to wait for.");
         }
-
-        // Give a little extra time for any remaining tasks to finish and release their locks
-        debug!("Waiting a moment for any remaining tasks to finish...");
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
         // Check for errors
         let final_errors = match errors_collector.try_lock() {
@@ -641,8 +603,6 @@ where
                         ));
                     }
 
-                    // Wait a bit before trying again
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                     continue;
                 }
             };
