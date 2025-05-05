@@ -582,7 +582,7 @@ async fn write_pipeline(
         total_chunks,
         initial_written_count,
         initial_confirmed_count,
-        total_chunks - initial_written_count - initial_confirmed_count
+        chunks_to_reserve
     );
 
     invoke_put_callback(
