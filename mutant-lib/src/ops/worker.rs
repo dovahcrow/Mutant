@@ -11,44 +11,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-// --- Placeholder Imports ---
-// Assume these exist and are properly defined elsewhere
-mod placeholder {
-    
-    
-    // Assume NetworkProvider trait is defined (e.g., in crate::network)
-    #[async_trait::async_trait]
-    pub trait NetworkProvider: Send + Sync + 'static {
-        type Client: Send + Sync + 'static;
-        type Config: Send + Sync + Clone + 'static; // e.g., crate::network::Config
-        type Error: std::error::Error + Send + Sync + 'static;
-
-        async fn get_client(&self, config: Self::Config) -> Result<Self::Client, Self::Error>;
-    }
-
-    // Assume Config is defined (e.g., in crate::config)
-    pub const NB_CLIENTS: usize = 4; // Example value
-    pub const BATCH_SIZE: usize = 10; // Example value
-
-    // Dummy implementation for compilation
-    pub struct DummyNetworkProvider;
-    #[derive(Clone)]
-    pub struct DummyClientConfig;
-    pub struct DummyClient;
-
-    #[async_trait::async_trait]
-    impl NetworkProvider for DummyNetworkProvider {
-        type Client = DummyClient;
-        type Config = DummyClientConfig;
-        type Error = std::io::Error; // Just an example error type
-
-        async fn get_client(&self, _config: Self::Config) -> Result<Self::Client, Self::Error> {
-            Ok(DummyClient)
-        }
-    }
-}
-use placeholder::{NetworkProvider, BATCH_SIZE, NB_CLIENTS}; // Use placeholder imports
-                                                            // --- End Placeholder Imports ---
+use crate::network::BATCH_SIZE;
+use crate::network::NB_CLIENTS;
 
 // Trait for the actual work function
 #[async_trait::async_trait]
@@ -78,7 +42,6 @@ where
     TaskError(TaskError),
     JoinError(tokio::task::JoinError),
     PoolSetupError(String),
-    WorkerError(String),
     ClientAcquisitionError(String),
 }
 
@@ -102,7 +65,6 @@ where
     E: std::fmt::Debug + Send + Clone + 'static,
 {
     id: usize,
-    batch_size: usize,
     client: Arc<Client>,
     task_processor: Arc<Task>,
     local_queue: Receiver<Item>,
@@ -124,12 +86,10 @@ where
 {
     async fn run(self) -> Result<(), PoolError<E>> {
         let mut task_handles = FuturesUnordered::new();
-        let batch_size = BATCH_SIZE;
 
-        for task_id in 0..batch_size {
+        for task_id in 0..*BATCH_SIZE {
             let worker_clone = Worker {
                 id: self.id,
-                batch_size,
                 client: self.client.clone(),
                 task_processor: self.task_processor.clone(),
                 local_queue: self.local_queue.clone(),
@@ -261,8 +221,8 @@ where
     T: Send + Sync + Clone + 'static,
     E: Debug + Send + Clone + 'static,
 {
-    let num_workers = NB_CLIENTS;
-    let batch_size = BATCH_SIZE;
+    let num_workers = *NB_CLIENTS;
+    let batch_size = *BATCH_SIZE;
 
     // --- Channel Creation ---
     let mut worker_txs = Vec::with_capacity(num_workers);
@@ -333,9 +293,6 @@ where
     E: Debug + Send + Clone + 'static,
 {
     pub async fn run(mut self) -> Result<Vec<(Task::ItemId, T)>, PoolError<E>> {
-        let num_workers = NB_CLIENTS;
-        let batch_size = BATCH_SIZE;
-
         let results_collector: Arc<Mutex<Vec<(Task::ItemId, T)>>> =
             Arc::new(Mutex::new(Vec::new()));
         let errors_collector: Arc<Mutex<Vec<E>>> = Arc::new(Mutex::new(Vec::new()));
@@ -358,7 +315,6 @@ where
         {
             let worker: Worker<Item, Context, Object<ClientManager>, Task, T, E> = Worker {
                 id: worker_id,
-                batch_size,
                 client, // Arc<Object<ClientManager>> moved
                 task_processor: task.clone(),
                 local_queue: worker_rx,                   // Receiver is moved

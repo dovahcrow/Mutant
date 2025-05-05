@@ -1,5 +1,4 @@
 use crate::error::Error;
-use crate::index::error::IndexError;
 use crate::index::{PadInfo, PadStatus};
 use crate::internal_events::invoke_put_callback;
 use crate::network::{Network, NetworkError};
@@ -10,18 +9,11 @@ use autonomi::ScratchpadAddress;
 use deadpool::managed::Object;
 use log::{debug, error, info, warn};
 use mutant_protocol::{PutCallback, PutEvent, StorageMode};
-use std::{
-    ops::Range,
-    sync::Arc,
-    time::Duration,
-};
+use std::{ops::Range, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 
-use super::{
-    DATA_ENCODING_PRIVATE_DATA, DATA_ENCODING_PUBLIC_DATA,
-    PAD_RECYCLING_RETRIES,
-};
+use super::{DATA_ENCODING_PRIVATE_DATA, DATA_ENCODING_PUBLIC_DATA, PAD_RECYCLING_RETRIES};
 
 #[derive(Clone)]
 struct Context {
@@ -118,15 +110,6 @@ async fn resume(
         )
         .await;
     }
-
-    let index_pad_data = if public && pads.len() > 1 {
-        let data_pads: Vec<_> = pads.iter().skip(1).cloned().collect();
-        Some(Arc::new(serde_cbor::to_vec(&data_pads).map_err(|e| {
-            Error::Index(IndexError::SerializationError(e.to_string()))
-        })?))
-    } else {
-        None
-    };
 
     let chunk_ranges = index.read().await.chunk_data(&data_bytes, mode.clone());
 
@@ -259,7 +242,6 @@ struct PutTaskContext {
     base_context: Context,
     no_verify: Arc<bool>,
     put_callback: Option<PutCallback>,
-    total_pads: usize,
 }
 
 #[derive(Clone)]
@@ -488,7 +470,6 @@ async fn write_pipeline(
     put_callback: Option<PutCallback>,
 ) -> Result<(), Error> {
     let key_name = context.name.clone();
-    let total_pads = pads.len();
 
     // Filter out already confirmed pads - these don't need processing
     let pads_to_process: Vec<PadInfo> = pads
@@ -511,7 +492,6 @@ async fn write_pipeline(
         base_context: context.clone(), // Clone base context Arc
         no_verify: Arc::new(no_verify),
         put_callback: put_callback.clone(),
-        total_pads, // Pass total original pads count
     });
 
     // 2. Create Task Processor
@@ -712,9 +692,6 @@ async fn write_pipeline(
                 ))),
                 PoolError::PoolSetupError(msg) => {
                     Err(Error::Internal(format!("Pool setup error: {}", msg)))
-                }
-                PoolError::WorkerError(msg) => {
-                    Err(Error::Internal(format!("Worker error: {}", msg)))
                 }
                 PoolError::ClientAcquisitionError(msg) => {
                     Err(Error::Network(NetworkError::ClientAccessError(msg)))

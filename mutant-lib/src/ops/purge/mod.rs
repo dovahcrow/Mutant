@@ -14,7 +14,6 @@ use mutant_protocol::PurgeResult;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-
 #[derive(Debug, Clone, Copy)]
 enum PurgeTaskOutcome {
     Verified,
@@ -343,9 +342,6 @@ pub(super) async fn purge(
                 ))),
                 PoolError::PoolSetupError(msg) => {
                     Err(Error::Internal(format!("Pool setup error: {}", msg)))
-                }
-                PoolError::WorkerError(msg) => {
-                    Err(Error::Internal(format!("Worker error: {}", msg)))
                 }
                 PoolError::ClientAcquisitionError(msg) => {
                     Err(Error::Network(NetworkError::ClientAccessError(msg)))

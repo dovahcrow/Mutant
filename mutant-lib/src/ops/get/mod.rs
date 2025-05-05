@@ -361,9 +361,6 @@ async fn fetch_pads_data(
                 PoolError::PoolSetupError(msg) => {
                     Err(Error::Internal(format!("Pool setup error: {}", msg)))
                 }
-                PoolError::WorkerError(msg) => {
-                    Err(Error::Internal(format!("Worker error: {}", msg)))
-                }
                 PoolError::ClientAcquisitionError(msg) => {
                     Err(Error::Network(NetworkError::ClientAccessError(msg)))
                 }
