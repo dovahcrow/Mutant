@@ -554,8 +554,7 @@ async fn write_pipeline(
     };
 
     // 4. Build WorkerPool
-    let pool = match worker::build(config, Some(recycle_fn)).await {
-        // Pass recycle_fn
+    let pool = match worker::build(config, Some(recycle_fn.clone())).await {
         Ok(pool) => pool,
         Err(e) => {
             error!(
@@ -585,8 +584,8 @@ async fn write_pipeline(
         };
     }
 
-    // 6. Run the Worker Pool (recycling is now internal)
-    let pool_result = pool.run(None).await; // Pass recycle_fn to run
+    // 6. Run the Worker Pool (recycling is now internal, driven by passed fn)
+    let pool_result = pool.run(Some(recycle_fn)).await; // Pass recycle_fn to run
 
     // 7. Process Pool Results
     match pool_result {

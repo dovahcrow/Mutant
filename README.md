@@ -9,7 +9,7 @@
 > **Mutant** is a public/private mutable key-value store on the Autonomi decentralized storage network, featuring resumable uploads, local index caching, and a powerful async Rust API + CLI.
 
 <p align="center">
-  <img src="docs/screenshots/cover.png" alt="cover" width="40%">
+  <img src="docs/screenshots/banner_medium.png" alt="cover" width="100%">
 </p>
 <p align="center">
   <img src="docs/screenshots/demo.gif" alt="demo" width="100%">
