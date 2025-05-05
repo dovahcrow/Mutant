@@ -102,13 +102,31 @@ where
             task_handles.push(tokio::spawn(worker_clone.run_task_processor(task_id)));
         }
 
-        while let Some(result) = task_handles.next().await {
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => return Err(e),
-                Err(join_err) => return Err(PoolError::JoinError(join_err)),
+        // Use a timeout to prevent hanging indefinitely
+        let task_timeout = std::time::Duration::from_secs(60); // 60 second timeout
+
+        while !task_handles.is_empty() {
+            match tokio::time::timeout(task_timeout, task_handles.next()).await {
+                Ok(Some(result)) => {
+                    match result {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => return Err(e),
+                        Err(join_err) => return Err(PoolError::JoinError(join_err)),
+                    }
+                },
+                Ok(None) => {
+                    // No more tasks to wait for
+                    break;
+                },
+                Err(_) => {
+                    // Timeout occurred
+                    warn!("Timeout waiting for worker {} tasks to complete. Some tasks may still be running.", self.id);
+                    break;
+                }
             }
         }
+
+        debug!("Worker {} completed all tasks or timed out", self.id);
         Ok(())
     }
 
@@ -119,13 +137,41 @@ where
                 result = self.local_queue.recv() => {
                     match result {
                         Ok(item) => Some(item),
-                        Err(_) => None,
+                        Err(_) => {
+                            // Local queue is closed or errored
+                            if self.global_queue.is_closed() {
+                                // Both channels are now closed
+                                trace!(
+                                    "Worker {}.{} terminating: Local channel error and Global closed",
+                                    self.id,
+                                    task_id
+                                );
+                                None
+                            } else {
+                                // Continue to try global queue
+                                continue;
+                            }
+                        }
                     }
                 },
                 result = self.global_queue.recv() => {
                     match result {
                         Ok(item) => Some(item),
-                        Err(_) => None,
+                        Err(_) => {
+                            // Global queue is closed or errored
+                            if self.local_queue.is_closed() {
+                                // Both channels are now closed
+                                trace!(
+                                    "Worker {}.{} terminating: Global channel error and Local closed",
+                                    self.id,
+                                    task_id
+                                );
+                                None
+                            } else {
+                                // Continue to try local queue
+                                continue;
+                            }
+                        }
                     }
                 },
             };
@@ -295,9 +341,10 @@ where
             return Ok(());
         }
 
+        let item_count = items.len();
         debug!(
             "WorkerPool distributing {} items to {} workers...",
-            items.len(),
+            item_count,
             num_workers
         );
 
@@ -315,10 +362,9 @@ where
             worker_index += 1;
         }
 
-        for tx in self.worker_txs.iter() {
-            tx.close();
-        }
-        debug!("WorkerPool distribution finished, closed worker channels.");
+        // Note: We don't close the channels here anymore.
+        // The channels will be closed in the run method after workers have processed the items.
+        debug!("WorkerPool distribution finished, sent {} items to workers.", item_count);
         Ok(())
     }
 
@@ -347,19 +393,28 @@ where
         let task = self.task.clone();
         let clients = self.clients.clone();
         let retry_sender_clone = self.retry_sender.clone();
-        let _pool_retry_sender_lifetime = self.retry_sender.clone();
+
+        // Keep a clone of the global_tx for the recycler
+        let global_tx_for_recycler = self.global_tx.clone();
+
+        // Create a vector to store all global_rx clones that we'll need to close later
+        let mut global_rx_clones = Vec::new();
 
         let mut worker_handles = FuturesUnordered::new();
 
         for ((worker_id, worker_rx), client) in
             worker_rxs.into_iter().enumerate().zip(clients.into_iter())
         {
+            // Clone the global_rx for this worker and keep track of it
+            let worker_global_rx = self.global_rx.clone();
+            global_rx_clones.push(worker_global_rx.clone());
+
             let worker: Worker<Item, Context, Object<ClientManager>, Task, T, E> = Worker {
                 id: worker_id,
                 client,
                 task_processor: task.clone(),
                 local_queue: worker_rx,
-                global_queue: self.global_rx.clone(),
+                global_queue: worker_global_rx,
                 retry_sender: retry_sender_clone.clone(),
                 results_collector: results_collector.clone(),
                 errors_collector: errors_collector.clone(),
@@ -368,15 +423,19 @@ where
             worker_handles.push(tokio::spawn(worker.run()));
         }
 
+        // Drop the original global_rx
         drop(self.global_rx);
 
         let recycler_handle = if let (Some(retry_rx), Some(recycle_function)) =
             (maybe_retry_rx.clone(), recycle_fn)
         {
-            let global_tx_clone = self.global_tx.clone();
-
             Some(tokio::spawn(async move {
                 debug!("WorkerPool internal recycler task started.");
+
+                let mut recycled_count = 0;
+                let mut dropped_count = 0;
+                let mut error_count = 0;
+
                 while let Ok((error_cause, item_to_recycle)) = retry_rx.recv().await {
                     debug!(
                         "Recycler received item {:?} due to error: {:?}",
@@ -384,24 +443,29 @@ where
                     );
                     match recycle_function(error_cause, item_to_recycle).await {
                         Ok(Some(new_item)) => {
+                            recycled_count += 1;
                             debug!(
-                                "Recycled into new item {:?}, sending back to pool.",
-                                new_item
+                                "Recycled into new item {:?}, sending back to pool. (Total recycled: {})",
+                                new_item, recycled_count
                             );
-                            if global_tx_clone.send(new_item).await.is_err() {
+                            if global_tx_for_recycler.send(new_item).await.is_err() {
                                 error!("Recycler failed to send recycled item to global channel. Pool might be closed.");
                                 break;
                             }
                         }
                         Ok(None) => {
-                            debug!("Recycling resulted in no new item. Dropping.");
+                            dropped_count += 1;
+                            debug!("Recycling resulted in no new item. Dropping. (Total dropped: {})", dropped_count);
                         }
                         Err(recycle_err) => {
-                            error!("Recycling failed: {:?}. Skipping item.", recycle_err);
+                            error_count += 1;
+                            error!("Recycling failed: {:?}. Skipping item. (Total errors: {})", recycle_err, error_count);
                         }
                     }
                 }
-                debug!("Recycle channel closed. Recycler task finishing.");
+                debug!("Recycle channel closed. Recycler task finishing. Stats: recycled={}, dropped={}, errors={}",
+                      recycled_count, dropped_count, error_count);
+
                 Ok::<(), PoolError<E>>(())
             }))
         } else {
@@ -412,52 +476,131 @@ where
             None
         };
 
-        drop(self.global_tx);
+        // First, close all channels to signal workers to finish
+        debug!("Closing all channels to signal workers to finish...");
 
-        while let Some(result) = worker_handles.next().await {
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    error!("Worker {} failed: {:?}", "?", e);
-                    return Err(e);
-                }
-                Err(join_err) => {
-                    error!("Worker panicked: {:?}", join_err);
-                    return Err(PoolError::JoinError(join_err));
+        // Close the worker channels
+        for tx in self.worker_txs.iter() {
+            tx.close();
+        }
+        debug!("Closed worker channels.");
+
+        // Close the global_tx to prevent new items from being added
+        self.global_tx.close();
+        debug!("Closed global channel.");
+
+        // Close all global_rx clones to ensure workers can terminate
+        for rx in &global_rx_clones {
+            rx.close();
+        }
+        debug!("Closed all global_rx clones.");
+
+        // Now close the retry channel if it exists
+        if let Some(sender) = &self.retry_sender {
+            sender.close();
+            debug!("Closed retry channel.");
+        }
+
+        // Wait for all workers to complete with a timeout
+        debug!("Waiting for {} workers to complete...", worker_handles.len());
+
+        // Use a timeout to prevent hanging indefinitely
+        let worker_timeout = std::time::Duration::from_secs(10); // 10 second timeout
+        let mut completed_workers = 0;
+
+        while !worker_handles.is_empty() {
+            match tokio::time::timeout(worker_timeout, worker_handles.next()).await {
+                Ok(Some(result)) => {
+                    match result {
+                        Ok(Ok(())) => {
+                            completed_workers += 1;
+                            debug!("Worker completed successfully ({}/{})", completed_workers, worker_handles.len() + completed_workers);
+                        }
+                        Ok(Err(e)) => {
+                            error!("Worker failed: {:?}", e);
+                            return Err(e);
+                        }
+                        Err(join_err) => {
+                            error!("Worker panicked: {:?}", join_err);
+                            return Err(PoolError::JoinError(join_err));
+                        }
+                    }
+                },
+                Ok(None) => {
+                    // No more workers to wait for
+                    debug!("No more workers to wait for.");
+                    break;
+                },
+                Err(_) => {
+                    // Timeout occurred
+                    warn!("Timeout waiting for workers to complete. {} workers completed, {} still running.",
+                          completed_workers, worker_handles.len());
+                    break;
                 }
             }
         }
+        debug!("All workers completed or timed out.");
 
+        // Wait for recycler to complete if it exists, with a timeout
         if let Some(handle) = recycler_handle {
-            match handle.await {
-                Ok(Ok(())) => {
-                    debug!("Internal recycler task completed successfully.");
-                }
-                Ok(Err(recycler_pool_error)) => {
-                    error!("Internal recycler task failed: {:?}", recycler_pool_error);
-                }
-                Err(join_err) => {
-                    error!("Internal recycler task panicked: {:?}", join_err);
-                    return Err(PoolError::JoinError(join_err));
+            debug!("Waiting for recycler task to complete...");
+
+            // Use a timeout to prevent hanging indefinitely
+            let recycler_timeout = std::time::Duration::from_secs(5); // 5 second timeout
+
+            match tokio::time::timeout(recycler_timeout, handle).await {
+                Ok(result) => {
+                    match result {
+                        Ok(Ok(())) => {
+                            debug!("Internal recycler task completed successfully.");
+                        }
+                        Ok(Err(recycler_pool_error)) => {
+                            error!("Internal recycler task failed: {:?}", recycler_pool_error);
+                        }
+                        Err(join_err) => {
+                            error!("Internal recycler task panicked: {:?}", join_err);
+                            return Err(PoolError::JoinError(join_err));
+                        }
+                    }
+                },
+                Err(_) => {
+                    // Timeout occurred
+                    warn!("Timeout waiting for recycler task to complete. It may still be running.");
+                    // We'll continue anyway since we've already closed all channels
                 }
             }
+        } else {
+            debug!("No recycler task to wait for.");
         }
 
+        // Check for errors
         let final_errors = errors_collector.lock().await;
         if !final_errors.is_empty() {
             return Err(PoolError::TaskError(final_errors.first().unwrap().clone()));
         }
 
-        match Arc::try_unwrap(results_collector) {
-            Ok(mutex) => Ok(mutex.into_inner()),
-            Err(_) => Err(PoolError::PoolSetupError(
-                "Failed to unwrap results collector Arc".to_string(),
-            )),
-        }
+        // Return results
+        let result = match Arc::try_unwrap(results_collector) {
+            Ok(mutex) => {
+                let results = mutex.into_inner();
+                debug!("WorkerPool completed successfully with {} results.", results.len());
+                Ok(results)
+            },
+            Err(_) => {
+                error!("Failed to unwrap results collector Arc");
+                Err(PoolError::PoolSetupError(
+                    "Failed to unwrap results collector Arc".to_string(),
+                ))
+            },
+        };
+
+        debug!("WorkerPool::run finished.");
+        result
     }
 
     fn spawn_drainer(rx: Receiver<(E, Item)>) {
         tokio::spawn(async move {
+            // Don't close the channel immediately, let it drain first
             while let Ok((err, item)) = rx.recv().await {
                 warn!(
                     "Draining item {:?} from unused/unconfigured retry queue due to error: {:?}",
