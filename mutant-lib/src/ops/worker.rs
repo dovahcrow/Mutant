@@ -113,51 +113,23 @@ where
     }
 
     async fn run_task_processor(self, task_id: usize) -> Result<(), PoolError<E>> {
-        let mut local_closed = false;
-        let mut global_closed = false;
-
         loop {
-            // Only terminate when both queues are confirmed closed.
-            if local_closed && global_closed {
-                trace!(
-                    "Worker {}.{} terminating: Both local and global queues closed.",
-                    self.id,
-                    task_id
-                );
-                break;
-            }
-
             let item = tokio::select! {
-                biased; // Prioritize local queue
-
-                // Read from local queue only if it's not known to be closed yet.
-                res = self.local_queue.recv(), if !local_closed => {
-                    match res {
+                biased;
+                result = self.local_queue.recv() => {
+                    match result {
                         Ok(item) => Some(item),
-                        Err(_) => {
-                            trace!("Worker {}.{} detected local queue closed.", self.id, task_id);
-                            local_closed = true;
-                            None // Signal local closed, loop again
-                        }
+                        Err(_) => None,
                     }
                 },
-
-                // Read from global queue only if it's not known to be closed yet.
-                res = self.global_queue.recv(), if !global_closed => {
-                     match res {
+                result = self.global_queue.recv() => {
+                    match result {
                         Ok(item) => Some(item),
-                        Err(_) => {
-                            trace!("Worker {}.{} detected global queue closed.", self.id, task_id);
-                            global_closed = true;
-                            None // Signal global closed, loop again
-                        }
+                        Err(_) => None,
                     }
                 },
-                // If both `if` conditions are false, the select will wait indefinitely.
-                // The check at the loop start prevents this by breaking when both are closed.
             };
 
-            // Process the item if one was received.
             if let Some(item) = item {
                 trace!("Worker {}.{} processing item", self.id, task_id);
                 match self
@@ -170,21 +142,28 @@ where
                     }
                     Err((error, failed_item)) => {
                         if let Some(retry_tx) = &self.retry_sender {
-                            // Use try_send to avoid blocking if the retry channel is full
                             if retry_tx.try_send((error.clone(), failed_item)).is_err() {
                                 debug!(
-                                    "Retry channel closed or full for worker {}, task {}, collecting error directly.",
+                                    "Retry channel closed or full for worker {}, task {}, collecting error.",
                                     self.id, task_id
                                 );
                                 self.errors_collector.lock().await.push(error);
                             }
                         } else {
-                            // No retry mechanism, collect error directly
                             self.errors_collector.lock().await.push(error);
                         }
                     }
                 }
-            } // else: item is None, means one queue closed this iteration. Loop continues.
+            } else {
+                trace!(
+                    "Worker {}.{} terminating: Local closed={}, Global closed={}",
+                    self.id,
+                    task_id,
+                    self.local_queue.is_closed(),
+                    self.global_queue.is_closed()
+                );
+                break;
+            }
         }
         Ok(())
     }
@@ -433,6 +412,8 @@ where
             None
         };
 
+        drop(self.global_tx);
+
         while let Some(result) = worker_handles.next().await {
             match result {
                 Ok(Ok(())) => {}
@@ -446,9 +427,6 @@ where
                 }
             }
         }
-
-        // Drop the pool's sender to signal the recycler to stop
-        drop(self.retry_sender);
 
         if let Some(handle) = recycler_handle {
             match handle.await {
@@ -464,9 +442,6 @@ where
                 }
             }
         }
-
-        // Drop the global sender *after* the recycler has finished
-        drop(self.global_tx);
 
         let final_errors = errors_collector.lock().await;
         if !final_errors.is_empty() {
