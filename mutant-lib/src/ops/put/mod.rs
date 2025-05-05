@@ -53,7 +53,7 @@ async fn update(
     info!("Update for {}", key_name);
 
     // Special handling for public keys to preserve the index pad
-    let preserved_index_pad = if public && index.read().await.is_public(key_name) {
+    let mut preserved_index_pad = if public && index.read().await.is_public(key_name) {
         info!("Preserving public index pad for key {}", key_name);
         index.read().await.extract_public_index_pad(key_name)
     } else {
@@ -72,35 +72,6 @@ async fn update(
     info!("Created key {} with {} pads", key_name, pads.len());
 
     let address = pads[0].address;
-
-    // If we have a preserved index pad and this is a public key, update the index
-    if let Some(old_index_pad) = preserved_index_pad.clone() {
-        info!("Using preserved index pad for key {}", key_name);
-
-        // Get the data pads from the newly created key
-        let data_pads = if let Some(entry) = index.read().await.get_entry(key_name) {
-            if let crate::index::master_index::IndexEntry::PublicUpload(_, data_pads) = entry {
-                data_pads.clone()
-            } else {
-                return Err(Error::Internal(format!(
-                    "Expected PublicUpload entry for key {}, but found PrivateKey",
-                    key_name
-                )));
-            }
-        } else {
-            return Err(Error::Internal(format!(
-                "Key {} not found after create_key",
-                key_name
-            )));
-        };
-
-        // Update the key with the preserved index pad before writing any data
-        index.write().await.update_public_key_with_preserved_index_pad(
-            key_name,
-            old_index_pad,
-            data_pads,
-        )?;
-    }
 
     let context = Context {
         index: index.clone(),
@@ -121,6 +92,20 @@ async fn update(
         let index_data_bytes = Arc::new(index_data);
         let index_chunk_ranges = Arc::new(vec![0..index_data_bytes.len()]);
 
+        preserved_index_pad = preserved_index_pad.map(|mut old_pad| {
+            old_pad.checksum = index_pad.checksum;
+            old_pad.size = index_pad.size;
+            old_pad.status = PadStatus::Free;
+            old_pad.last_known_counter += 1;
+            
+            old_pad
+        });
+
+        //call update_public_key_with_preserved_index_pad
+        if let Some(preserved_index_pad) = &preserved_index_pad {
+            index.write().await.update_public_key_with_preserved_index_pad(key_name, preserved_index_pad.clone())?;
+        }
+
         let index_pad_context = Context {
             index: index.clone(),
             network: network.clone(),
@@ -128,13 +113,13 @@ async fn update(
             chunk_ranges: index_chunk_ranges,
             data: index_data_bytes,
             public,
-            preserved_index_pad,
+            preserved_index_pad: preserved_index_pad.clone(),
         };
 
         // Write the index pad
         write_pipeline(
             index_pad_context,
-            vec![index_pad],
+            vec![preserved_index_pad.unwrap_or(index_pad)],
             no_verify,
             put_callback.clone(),
         )
@@ -619,7 +604,7 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<crate::network::client::ClientMan
                         );
                     }
                 }
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
 
             if !confirmation_succeeded {

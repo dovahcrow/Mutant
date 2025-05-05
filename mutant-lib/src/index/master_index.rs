@@ -404,17 +404,19 @@ impl MasterIndex {
         &mut self,
         key_name: &str,
         preserved_index_pad: PadInfo,
-        data_pads: Vec<PadInfo>,
     ) -> Result<(), Error> {
         if !self.contains_key(key_name) {
             return Err(IndexError::KeyNotFound(key_name.to_string()).into());
         }
 
-        // Create a new entry with the preserved index pad and the new data pads
-        let new_entry = IndexEntry::PublicUpload(preserved_index_pad, data_pads);
+        if let Some(entry) = self.index.get_mut(key_name) {
+            if let IndexEntry::PublicUpload(index_pad, _) = entry {
+                *index_pad = preserved_index_pad;
+            } else {
+                return Err(IndexError::KeyNotFound(key_name.to_string()).into());
+            }
+        }
 
-        // Update the entry in the index
-        self.index.insert(key_name.to_string(), new_entry);
         self.save(self.network_choice)?;
 
         info!("Updated public key {} with preserved index pad", key_name);
