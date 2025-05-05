@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ensure recycled pads during PUT operations are correctly re-processed by the worker pool, preventing operations from finishing with missing confirmations due to failed pads.
 - Prevent recycler task from prematurely closing the global pad channel on single send failure.
 - Fixed potential hang in worker pool when using item recycling by ensuring correct channel closure order.
+- Fixed worker termination logic in `WorkerPool` to ensure workers only exit after both local and global queues are fully drained, preventing hangs when using recycling.
 
 ### Changed
 - Refactored write pipeline: Replaced two-stage put/confirm tasks with a single processing loop (`process_pads`) using `tokio::select!` and `FuturesUnordered` to manage concurrent `process_pad_task` operations (put -> confirm cycle) for each pad, improving deadlock resilience.
