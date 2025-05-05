@@ -1,4 +1,3 @@
-use crate::error::Error;
 use crate::network::client::ClientManager;
 use crate::network::client::Config as ClientConfig;
 use crate::network::Network;
@@ -12,7 +11,6 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::index::master_index::MasterIndex;
 use crate::network::BATCH_SIZE;
 use crate::network::NB_CLIENTS;
 
@@ -373,7 +371,7 @@ where
         drop(self.global_rx);
 
         let recycler_handle = if let (Some(retry_rx), Some(recycle_function)) =
-            (maybe_retry_rx, recycle_fn)
+            (maybe_retry_rx.clone(), recycle_fn)
         {
             let global_tx_clone = self.global_tx.clone();
 
@@ -416,7 +414,6 @@ where
 
         drop(self.global_tx);
 
-        let mut worker_results = Vec::new();
         while let Some(result) = worker_handles.next().await {
             match result {
                 Ok(Ok(())) => {}
