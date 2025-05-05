@@ -8,7 +8,7 @@ use crate::ops::worker::{self, AsyncTask, PoolError, WorkerPoolConfig};
 use async_trait::async_trait;
 use autonomi::ScratchpadAddress;
 use deadpool::managed::Object;
-use log::{error, warn};
+use log::{debug, error, warn};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 
@@ -28,10 +28,18 @@ pub(super) async fn get_public(
     let callback = get_callback.clone();
     drop(client_guard);
 
+    debug!(
+        "get_public: Processing pad {} with data_encoding={} (PUBLIC_INDEX={}, PUBLIC_DATA={})",
+        address, index_pad_data.data_encoding, DATA_ENCODING_PUBLIC_INDEX, DATA_ENCODING_PUBLIC_DATA
+    );
+
     match index_pad_data.data_encoding {
         DATA_ENCODING_PUBLIC_INDEX => {
+            debug!("get_public: Found PUBLIC_INDEX pad, deserializing index");
             let index: Vec<PadInfo> = serde_cbor::from_slice(&index_pad_data.data)
                 .map_err(|e| Error::Internal(format!("Failed to decode public index: {}", e)))?;
+
+            debug!("get_public: Index contains {} data pads", index.len());
 
             invoke_get_callback(
                 &callback,
@@ -46,10 +54,12 @@ pub(super) async fn get_public(
                 .await
                 .unwrap();
 
+            debug!("get_public: Fetching data pads");
             fetch_pads_data(network, index, true, callback).await
         }
         DATA_ENCODING_PUBLIC_DATA => {
-            invoke_get_callback(&callback, GetEvent::Starting { total_chunks: 1 })
+            debug!("get_public: Found PUBLIC_DATA pad, returning data directly");
+            invoke_get_callback(&callback, GetEvent::Starting { total_chunks: 1000 })
                 .await
                 .unwrap();
             invoke_get_callback(&callback, GetEvent::PadFetched)
@@ -197,12 +207,25 @@ async fn fetch_pads_data(
     get_callback: Option<GetCallback>,
 ) -> Result<Vec<u8>, Error> {
     let total_pads_to_fetch = pads.len();
+    debug!("fetch_pads_data: Starting to fetch {} pads, public={}", total_pads_to_fetch, public);
 
     if total_pads_to_fetch == 0 {
+        debug!("fetch_pads_data: No pads to fetch, returning empty data");
         invoke_get_callback(&get_callback, GetEvent::Complete)
             .await
             .unwrap();
         return Ok(Vec::new());
+    }
+
+    // Log the first few pads for debugging
+    for (i, pad) in pads.iter().take(3).enumerate() {
+        debug!(
+            "fetch_pads_data: Pad[{}]: address={}, chunk_index={}, size={}",
+            i, pad.address, pad.chunk_index, pad.size
+        );
+    }
+    if pads.len() > 3 {
+        debug!("fetch_pads_data: ... and {} more pads", pads.len() - 3);
     }
 
     // 1. Create Task Processor (directly)
@@ -246,7 +269,9 @@ async fn fetch_pads_data(
     // let send_pads_task = { ... };
 
     // 5. Run the Worker Pool (no recycle_fn)
+    debug!("fetch_pads_data: Running worker pool to fetch {} pads", total_pads_to_fetch);
     let pool_run_result = pool.run(None).await; // Pass None for recycle_fn
+    debug!("fetch_pads_data: Worker pool run completed");
 
     // REMOVED Awaiting Distribution Task
     // if let Err(e) = send_pads_task.await { ... };
@@ -254,6 +279,7 @@ async fn fetch_pads_data(
     // 6. Process Results
     match pool_run_result {
         Ok(mut fetched_results) => {
+            debug!("fetch_pads_data: Got {} results from worker pool", fetched_results.len());
             if fetched_results.len() != total_pads_to_fetch {
                 warn!(
                     "GET result count mismatch: expected {}, got {}. Some pads might have failed.",
@@ -267,15 +293,23 @@ async fn fetch_pads_data(
                 )));
             }
 
+            debug!("fetch_pads_data: Sorting results by chunk_index");
             fetched_results.sort_by_key(|(chunk_index, _)| *chunk_index);
+
+            debug!("fetch_pads_data: Collecting data from all chunks");
             let collected_data: Vec<Vec<u8>> =
                 fetched_results.into_iter().map(|(_, data)| data).collect();
+
             let final_capacity: usize = collected_data.iter().map(|data| data.len()).sum();
+            debug!("fetch_pads_data: Assembling final data with capacity {}", final_capacity);
+
             let mut final_data: Vec<u8> = Vec::with_capacity(final_capacity);
-            for pad_data in collected_data {
+            for (i, pad_data) in collected_data.iter().enumerate() {
+                debug!("fetch_pads_data: Adding chunk {} with size {}", i, pad_data.len());
                 final_data.extend(pad_data);
             }
 
+            debug!("fetch_pads_data: Final data size: {}", final_data.len());
             invoke_get_callback(&get_callback, GetEvent::Complete)
                 .await
                 .unwrap();

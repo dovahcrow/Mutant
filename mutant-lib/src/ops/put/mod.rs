@@ -13,7 +13,7 @@ use std::{ops::Range, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 
-use super::{DATA_ENCODING_PRIVATE_DATA, DATA_ENCODING_PUBLIC_DATA, PAD_RECYCLING_RETRIES};
+use super::{DATA_ENCODING_PRIVATE_DATA, DATA_ENCODING_PUBLIC_DATA, DATA_ENCODING_PUBLIC_INDEX, PAD_RECYCLING_RETRIES};
 
 #[derive(Clone)]
 struct Context {
@@ -282,9 +282,31 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<crate::network::client::ClientMan
         };
 
         if should_put {
+            // Determine if this is an index pad for a public upload
+            // For public uploads, the index pad is the one with chunk_index 0 and only one chunk range
+            let is_index_pad = is_public &&
+                pad_state.chunk_index == 0 &&
+                self.context.base_context.chunk_ranges.len() == 1;
+
             let data_encoding = if is_public {
-                DATA_ENCODING_PUBLIC_DATA
+                if is_index_pad {
+                    debug!(
+                        "Using PUBLIC_INDEX encoding for index pad {} (chunk_index={})",
+                        pad_state.address, pad_state.chunk_index
+                    );
+                    DATA_ENCODING_PUBLIC_INDEX
+                } else {
+                    debug!(
+                        "Using PUBLIC_DATA encoding for data pad {} (chunk_index={})",
+                        pad_state.address, pad_state.chunk_index
+                    );
+                    DATA_ENCODING_PUBLIC_DATA
+                }
             } else {
+                debug!(
+                    "Using PRIVATE_DATA encoding for pad {} (chunk_index={})",
+                    pad_state.address, pad_state.chunk_index
+                );
                 DATA_ENCODING_PRIVATE_DATA
             };
 
