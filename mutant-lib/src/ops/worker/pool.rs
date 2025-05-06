@@ -221,12 +221,6 @@ where
         }
         debug!("Closed all global_rx clones.");
 
-        // Now close the retry channel if it exists
-        if let Some(sender) = &self.retry_sender {
-            sender.close();
-            debug!("Closed retry channel.");
-        }
-
         // Wait for all workers to complete
         debug!("Waiting for {} workers to complete...", worker_handles.len());
 
@@ -261,6 +255,12 @@ where
         }
 
         debug!("All {} workers completed.", total_workers);
+
+        // Now close the retry channel if it exists
+        if let Some(sender) = &self.retry_sender {
+            sender.close();
+            debug!("Closed retry channel.");
+        }
 
         // Wait for recycler to complete if it exists
         if let Some(handle) = recycler_handle {
