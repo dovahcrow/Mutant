@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::index::{PadInfo, PadStatus};
+use crate::index::PadStatus;
 use crate::internal_events::invoke_put_callback;
 use crate::network::Network;
 use autonomi::ScratchpadAddress;

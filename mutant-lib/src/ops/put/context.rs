@@ -1,4 +1,4 @@
-use crate::index::{PadInfo, PadStatus};
+use crate::index::PadInfo;
 use crate::network::Network;
 use std::{ops::Range, sync::Arc};
 use tokio::sync::RwLock;
