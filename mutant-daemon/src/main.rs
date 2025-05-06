@@ -8,7 +8,7 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use warp::Filter;
 
 mod error;
-mod handler;
+mod handlers;
 mod wallet;
 
 use mutant_protocol::{Task, TaskId};
@@ -175,7 +175,7 @@ async fn main() -> Result<(), Error> {
         .and(warp::any().map(move || tasks.clone()))
         .map(
             |ws: warp::ws::Ws, mutant_instance: Arc<MutAnt>, task_map: TaskMap| {
-                ws.on_upgrade(move |socket| handler::handle_ws(socket, mutant_instance, task_map))
+                ws.on_upgrade(move |socket| handlers::handle_ws(socket, mutant_instance, task_map))
             },
         );
 
