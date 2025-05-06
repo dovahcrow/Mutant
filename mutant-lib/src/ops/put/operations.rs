@@ -62,7 +62,7 @@ pub async fn update(
         data: content.clone(),
         public,
         preserved_index_pad: None,
-        is_index_pad: false, 
+        is_index_pad: false,
     };
 
     // Write the data pads
@@ -71,7 +71,7 @@ pub async fn update(
     // For public keys, we need to write the index pad
     if public {
         let (index_pad, index_data) = index.write().await.populate_index_pad(key_name)?;
-        let index_data_bytes = Arc::new(index_data);
+        let index_data_bytes: Arc<Vec<u8>> = Arc::new(index_data);
         let index_chunk_ranges = Arc::new(vec![0..index_data_bytes.len()]);
 
         preserved_index_pad = preserved_index_pad.map(|mut old_pad| {
@@ -182,7 +182,7 @@ pub async fn resume(
 
     if public {
         let (index_pad, index_data) = index.write().await.populate_index_pad(name)?;
-        let index_data_bytes = Arc::new(index_data);
+        let index_data_bytes: Arc<Vec<u8>> = Arc::new(index_data);
         let index_chunk_ranges = Arc::new(vec![0..index_data_bytes.len()]);
 
         let index_pad_context = Context {
@@ -244,7 +244,7 @@ pub async fn first_store(
 
     if public {
         let (index_pad, index_data) = index.write().await.populate_index_pad(name)?;
-        let index_data_bytes = Arc::new(index_data);
+        let index_data_bytes: Arc<Vec<u8>> = Arc::new(index_data);
         let index_chunk_ranges = Arc::new(vec![0..index_data_bytes.len()]);
 
         let index_pad_context = Context {
