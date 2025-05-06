@@ -2,7 +2,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::error::Error as DaemonError;
-use crate::TaskMap;
+use super::{TaskMap, TaskEntry};
 use mutant_lib::MutAnt;
 use mutant_protocol::{
     HealthCheckCallback, HealthCheckEvent, HealthCheckRequest, PurgeCallback, PurgeEvent,
@@ -139,7 +139,7 @@ pub(crate) async fn handle_sync(
 
     // Get the abort handle and create the TaskEntry
     let abort_handle = task_handle.abort_handle();
-    let task_entry = crate::TaskEntry {
+    let task_entry = TaskEntry {
         task, // The task struct created earlier
         abort_handle: Some(abort_handle),
     };
@@ -279,7 +279,7 @@ pub(crate) async fn handle_purge(
 
     // Get the abort handle and create the TaskEntry
     let abort_handle = task_handle.abort_handle();
-    let task_entry = crate::TaskEntry {
+    let task_entry = TaskEntry {
         task, // The task struct created earlier
         abort_handle: Some(abort_handle),
     };
@@ -421,7 +421,7 @@ pub(crate) async fn handle_health_check(
 
     // Get the abort handle and create the TaskEntry
     let abort_handle = task_handle.abort_handle();
-    let task_entry = crate::TaskEntry {
+    let task_entry = TaskEntry {
         task, // The task struct created earlier
         abort_handle: Some(abort_handle),
     };

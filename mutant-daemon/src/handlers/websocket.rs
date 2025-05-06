@@ -6,12 +6,12 @@ use futures_util::{
 };
 use tokio::sync::mpsc;
 use warp::ws::WebSocket;
-use crate::TaskMap;
 use mutant_lib::MutAnt;
 use mutant_protocol::{ErrorResponse, Request, Response};
 
 use super::common::send_response;
 use super::dispatcher::handle_request;
+use super::TaskMap;
 
 pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap) {
     let (mut ws_sender, mut ws_receiver) = ws.split();

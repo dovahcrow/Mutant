@@ -7,8 +7,8 @@ use warp::Filter;
 
 use crate::error::Error;
 use crate::handlers;
+use crate::handlers::TaskMap;
 use crate::wallet;
-use crate::TaskMap;
 
 use tokio::signal;
 

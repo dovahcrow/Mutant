@@ -1,25 +1,10 @@
 use clap::Parser;
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
-use tokio::task::AbortHandle;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 mod app;
 mod error;
 mod handlers;
 mod wallet;
-
-use mutant_protocol::{Task, TaskId};
-
-// Define a struct to hold task state and its abort handle
-#[derive(Debug)]
-struct TaskEntry {
-    task: Task,
-    abort_handle: Option<AbortHandle>,
-}
-
-// Update TaskMap to store TaskEntry instead of just Task
-type TaskMap = Arc<RwLock<HashMap<TaskId, TaskEntry>>>;
 
 use error::Error;
 

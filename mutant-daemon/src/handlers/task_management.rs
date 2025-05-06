@@ -1,11 +1,22 @@
 use crate::error::Error as DaemonError;
-use crate::TaskMap;
 use mutant_protocol::{
-    ErrorResponse, ListTasksRequest, QueryTaskRequest, Response, StopTaskRequest, TaskListEntry,
-    TaskListResponse, TaskResultResponse, TaskStatus, TaskStoppedResponse, TaskUpdateResponse,
+    ErrorResponse, ListTasksRequest, QueryTaskRequest, Response, StopTaskRequest, Task, TaskListEntry, TaskListResponse, TaskResultResponse, TaskStatus, TaskStoppedResponse, TaskUpdateResponse
 };
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tokio::task::AbortHandle;
+use mutant_protocol::TaskId;
 
 use super::common::UpdateSender;
+
+#[derive(Debug)]
+pub struct TaskEntry {
+    pub task: Task,
+    pub abort_handle: Option<AbortHandle>,
+}
+
+pub type TaskMap = Arc<RwLock<HashMap<TaskId, TaskEntry>>>;
 
 pub(crate) async fn handle_query_task(
     req: QueryTaskRequest,

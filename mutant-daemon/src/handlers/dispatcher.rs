@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::error::Error as DaemonError;
-use crate::TaskMap;
+use super::TaskMap;
+
 use mutant_lib::MutAnt;
 use mutant_protocol::Request;
 

@@ -3,7 +3,7 @@ use tokio::fs;
 use uuid::Uuid;
 
 use crate::error::Error as DaemonError;
-use crate::TaskMap;
+use super::{TaskEntry, TaskMap};
 use mutant_lib::storage::ScratchpadAddress;
 use mutant_lib::MutAnt;
 use mutant_protocol::{
@@ -161,7 +161,7 @@ pub(crate) async fn handle_put(
 
     // Get the abort handle and create the TaskEntry
     let abort_handle = task_handle.abort_handle();
-    let task_entry = crate::TaskEntry {
+    let task_entry = TaskEntry {
         task, // The task struct created earlier
         abort_handle: Some(abort_handle),
     };
@@ -335,7 +335,7 @@ pub(crate) async fn handle_get(
 
     // Get the abort handle and create the TaskEntry
     let abort_handle = task_handle.abort_handle();
-    let task_entry = crate::TaskEntry {
+    let task_entry = TaskEntry {
         task, // The task struct created earlier
         abort_handle: Some(abort_handle),
     };

@@ -10,3 +10,4 @@ mod import_export;
 
 // Public exports
 pub use websocket::handle_ws;
+pub use task_management::{TaskEntry, TaskMap};
