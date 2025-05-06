@@ -153,7 +153,7 @@ impl AsyncTask<PadInfo, (), Object<crate::network::client::ClientManager>, Vec<u
         client: &Object<crate::network::client::ClientManager>,
         pad: PadInfo,
     ) -> Result<(Self::ItemId, Vec<u8>), (Error, PadInfo)> {
-        let mut retries_left = 5;
+        let mut retries_left = 20;
         let owned_key;
         let secret_key_ref = if self.public {
             None
@@ -197,7 +197,7 @@ impl AsyncTask<PadInfo, (), Object<crate::network::client::ClientManager>, Vec<u
                 return Err((
                     Error::Internal(format!(
                         "GET failed for pad {} (chunk {}) after {} retries",
-                        pad.address, pad.chunk_index, 5
+                        pad.address, pad.chunk_index, 20
                     )),
                     pad,
                 ));
