@@ -23,7 +23,7 @@ pub async fn start_daemon() -> Result<()> {
 
     println!("Starting daemon...");
 
-    let _ = Command::new("mutant-daemon").arg("--ignore-ctrl-c").spawn()?;
+    let _ = Command::new("bash").arg("-c").arg("mutant-daemon --ignore-ctrl-c &").spawn()?;
 
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
