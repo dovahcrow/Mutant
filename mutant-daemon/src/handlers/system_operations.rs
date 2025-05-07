@@ -44,7 +44,7 @@ pub(crate) async fn handle_sync(
         let mutant = mutant_clone;
         let update_tx = update_tx_clone_for_spawn;
 
-        tracing::info!(task_id = %task_id, "Starting SYNC task");
+        log::info!("Starting SYNC task: task_id={}", task_id);
 
         // Update status in TaskMap
         {
@@ -77,7 +77,7 @@ pub(crate) async fn handle_sync(
                             progress: Some(progress),
                         }));
                     } else {
-                        tracing::warn!(task_id = %task_id, "Received SYNC progress update for task not InProgress (status: {:?}). Ignoring.", entry.task.status);
+                        log::warn!("Received SYNC progress update for task not InProgress (status: {:?}). Ignoring. task_id={}", entry.task.status, task_id);
                         return Ok(false); // Indicate to stop sending updates if task is no longer InProgress
                     }
                 }
@@ -100,7 +100,7 @@ pub(crate) async fn handle_sync(
                             entry.task.result =
                                 TaskResult::Result(TaskResultType::Sync(sync_result_data));
                             entry.abort_handle = None; // Task finished, remove handle
-                            tracing::info!(task_id = %task_id, "SYNC task completed successfully");
+                            log::info!("SYNC task completed successfully: task_id={}", task_id);
                             Some(Response::TaskResult(TaskResultResponse {
                                 task_id,
                                 status: TaskStatus::Completed,
@@ -112,7 +112,7 @@ pub(crate) async fn handle_sync(
                             entry.task.status = TaskStatus::Failed;
                             entry.task.result = TaskResult::Error(error_msg.clone());
                             entry.abort_handle = None; // Task finished, remove handle
-                            tracing::error!(task_id = %task_id, "SYNC task failed: {}", error_msg);
+                            log::error!("SYNC task failed: task_id={}, error={}", task_id, error_msg);
                             Some(Response::TaskResult(TaskResultResponse {
                                 task_id,
                                 status: TaskStatus::Failed,
@@ -121,18 +121,18 @@ pub(crate) async fn handle_sync(
                         }
                     }
                 } else {
-                    tracing::info!(task_id = %task_id, "SYNC task was stopped before completion.");
+                    log::info!("SYNC task was stopped before completion: task_id={}", task_id);
                     entry.abort_handle = None; // Ensure handle is cleared if stopped
                     None // No final result to send if stopped
                 }
             } else {
-                tracing::warn!(task_id = %task_id, "Task entry removed before SYNC completion?");
+                log::warn!("Task entry removed before SYNC completion? task_id={}", task_id);
                 None
             }
         };
         if let Some(response) = final_response {
             if update_tx.send(response).is_err() {
-                tracing::debug!(task_id = %task_id, "Client disconnected before final SYNC result sent");
+                log::debug!("Client disconnected before final SYNC result sent: task_id={}", task_id);
             }
         }
     });
@@ -184,7 +184,7 @@ pub(crate) async fn handle_purge(
         let mutant = mutant_clone;
         let update_tx = update_tx_clone_for_spawn;
 
-        tracing::info!(task_id = %task_id, "Starting PURGE task");
+        log::info!("Starting PURGE task: task_id={}", task_id);
 
         // Update status in TaskMap
         {
@@ -217,7 +217,7 @@ pub(crate) async fn handle_purge(
                             progress: Some(progress),
                         }));
                     } else {
-                        tracing::warn!(task_id = %task_id, "Received PURGE progress update for task not InProgress (status: {:?}). Ignoring.", entry.task.status);
+                        log::warn!("Received PURGE progress update for task not InProgress (status: {:?}). Ignoring. task_id={}", entry.task.status, task_id);
                         return Ok(false); // Indicate to stop sending updates if task is no longer InProgress
                     }
                 }
@@ -240,7 +240,7 @@ pub(crate) async fn handle_purge(
                             entry.task.result =
                                 TaskResult::Result(TaskResultType::Purge(purge_result_data));
                             entry.abort_handle = None; // Task finished, remove handle
-                            tracing::info!(task_id = %task_id, "PURGE task completed successfully");
+                            log::info!("PURGE task completed successfully: task_id={}", task_id);
                             Some(Response::TaskResult(TaskResultResponse {
                                 task_id,
                                 status: TaskStatus::Completed,
@@ -252,7 +252,7 @@ pub(crate) async fn handle_purge(
                             entry.task.status = TaskStatus::Failed;
                             entry.task.result = TaskResult::Error(error_msg.clone());
                             entry.abort_handle = None; // Task finished, remove handle
-                            tracing::error!(task_id = %task_id, "PURGE task failed: {}", error_msg);
+                            log::error!("PURGE task failed: task_id={}, error={}", task_id, error_msg);
                             Some(Response::TaskResult(TaskResultResponse {
                                 task_id,
                                 status: TaskStatus::Failed,
@@ -261,18 +261,18 @@ pub(crate) async fn handle_purge(
                         }
                     }
                 } else {
-                    tracing::info!(task_id = %task_id, "PURGE task was stopped before completion.");
+                    log::info!("PURGE task was stopped before completion: task_id={}", task_id);
                     entry.abort_handle = None; // Ensure handle is cleared if stopped
                     None // No final result to send if stopped
                 }
             } else {
-                tracing::warn!(task_id = %task_id, "Task entry removed before PURGE completion?");
+                log::warn!("Task entry removed before PURGE completion? task_id={}", task_id);
                 None
             }
         };
         if let Some(response) = final_response {
             if update_tx.send(response).is_err() {
-                tracing::debug!(task_id = %task_id, "Client disconnected before final PURGE result sent");
+                log::debug!("Client disconnected before final PURGE result sent: task_id={}", task_id);
             }
         }
     });
@@ -323,7 +323,7 @@ pub(crate) async fn handle_health_check(
         let mutant = mutant_clone;
         let update_tx = update_tx_clone_for_spawn;
 
-        tracing::info!(task_id = %task_id, "Starting HEALTH CHECK task");
+        log::info!("Starting HEALTH CHECK task: task_id={}", task_id);
 
         // Update status in TaskMap
         {
@@ -356,7 +356,7 @@ pub(crate) async fn handle_health_check(
                             progress: Some(progress),
                         }));
                     } else {
-                        tracing::warn!(task_id = %task_id, "Received HEALTH_CHECK progress update for task not InProgress (status: {:?}). Ignoring.", entry.task.status);
+                        log::warn!("Received HEALTH_CHECK progress update for task not InProgress (status: {:?}). Ignoring. task_id={}", entry.task.status, task_id);
                         return Ok(false); // Indicate to stop sending updates if task is no longer InProgress
                     }
                 }
@@ -382,7 +382,7 @@ pub(crate) async fn handle_health_check(
                                 health_check_result_data,
                             ));
                             entry.abort_handle = None; // Task finished, remove handle
-                            tracing::info!(task_id = %task_id, "HEALTH CHECK task completed successfully");
+                            log::info!("HEALTH CHECK task completed successfully: task_id={}", task_id);
                             Some(Response::TaskResult(TaskResultResponse {
                                 task_id,
                                 status: TaskStatus::Completed,
@@ -394,7 +394,7 @@ pub(crate) async fn handle_health_check(
                             entry.task.status = TaskStatus::Failed;
                             entry.task.result = TaskResult::Error(error_msg.clone());
                             entry.abort_handle = None; // Task finished, remove handle
-                            tracing::error!(task_id = %task_id, "HEALTH CHECK task failed: {}", error_msg);
+                            log::error!("HEALTH CHECK task failed: task_id={}, error={}", task_id, error_msg);
                             Some(Response::TaskResult(TaskResultResponse {
                                 task_id,
                                 status: TaskStatus::Failed,
@@ -403,18 +403,18 @@ pub(crate) async fn handle_health_check(
                         }
                     }
                 } else {
-                    tracing::info!(task_id = %task_id, "HEALTH CHECK task was stopped before completion.");
+                    log::info!("HEALTH CHECK task was stopped before completion: task_id={}", task_id);
                     entry.abort_handle = None; // Ensure handle is cleared if stopped
                     None // No final result to send if stopped
                 }
             } else {
-                tracing::warn!(task_id = %task_id, "Task entry removed before HEALTH CHECK completion?");
+                log::warn!("Task entry removed before HEALTH CHECK completion? task_id={}", task_id);
                 None
             }
         };
         if let Some(response) = final_response {
             if update_tx.send(response).is_err() {
-                tracing::debug!(task_id = %task_id, "Client disconnected before final HEALTH CHECK result sent");
+                log::debug!("Client disconnected before final HEALTH CHECK result sent: task_id={}", task_id);
             }
         }
     });

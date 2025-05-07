@@ -59,7 +59,7 @@ pub(crate) async fn handle_put(
         let update_tx = update_tx_clone_for_spawn;
         let data_to_put = data_arc_clone; // Use the cloned Arc
 
-        tracing::info!(task_id = %task_id, user_key = %user_key, source_path = %source_path, "Starting PUT task");
+        log::info!("Starting PUT task: task_id={}, user_key={}, source_path={}", task_id, user_key, source_path);
 
         // Update status in TaskMap
         {
@@ -92,7 +92,7 @@ pub(crate) async fn handle_put(
                             progress: Some(progress),
                         }));
                     } else {
-                        tracing::warn!(task_id = %task_id, "Received PUT progress update for task not InProgress (status: {:?}). Ignoring.", entry.task.status);
+                        log::warn!("Received PUT progress update for task not InProgress (status: {:?}). Ignoring. task_id={}", entry.task.status, task_id);
                         return Ok(false); // Indicate to stop sending updates if task is no longer InProgress
                     }
                 }
@@ -124,7 +124,7 @@ pub(crate) async fn handle_put(
                             entry.task.status = TaskStatus::Completed;
                             entry.task.result = TaskResult::Result(TaskResultType::Put(()));
                             entry.abort_handle = None; // Task finished, remove handle
-                            tracing::info!(task_id = %task_id, user_key = %user_key, source_path = %source_path, "PUT task completed successfully");
+                            log::info!("PUT task completed successfully: task_id={}, user_key={}, source_path={}", task_id, user_key, source_path);
                             Some(Response::TaskResult(TaskResultResponse {
                                 task_id,
                                 status: TaskStatus::Completed,
@@ -135,7 +135,7 @@ pub(crate) async fn handle_put(
                             entry.task.status = TaskStatus::Failed;
                             entry.task.result = TaskResult::Error(e.to_string());
                             entry.abort_handle = None; // Task finished, remove handle
-                            tracing::error!(task_id = %task_id, user_key = %user_key, source_path = %source_path, error = %e, "PUT task failed");
+                            log::error!("PUT task failed: task_id={}, user_key={}, source_path={}, error={}", task_id, user_key, source_path, e);
                             Some(Response::TaskResult(TaskResultResponse {
                                 task_id,
                                 status: TaskStatus::Failed,
@@ -144,12 +144,12 @@ pub(crate) async fn handle_put(
                         }
                     }
                 } else {
-                    tracing::info!(task_id = %task_id, "PUT task was stopped before completion.");
+                    log::info!("PUT task was stopped before completion: task_id={}", task_id);
                     entry.abort_handle = None; // Ensure handle is cleared if stopped
                     None // No final result to send if stopped
                 }
             } else {
-                tracing::warn!(task_id = %task_id, "Task entry removed before PUT completion?");
+                log::warn!("Task entry removed before PUT completion? task_id={}", task_id);
                 None
             }
         };
@@ -207,7 +207,7 @@ pub(crate) async fn handle_get(
         let mutant = mutant_clone;
         let update_tx = update_tx_clone_for_spawn;
 
-        tracing::info!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, "Starting GET task");
+        log::info!("Starting GET task: task_id={}, user_key={}, destination_path={}", task_id, user_key, destination_path);
 
         // Update status in TaskMap
         {
@@ -240,7 +240,7 @@ pub(crate) async fn handle_get(
                             progress: Some(progress),
                         }));
                     } else {
-                        tracing::warn!(task_id = %task_id, "Received GET progress update for task not InProgress (status: {:?}). Ignoring.", entry.task.status);
+                        log::warn!("Received GET progress update for task not InProgress (status: {:?}). Ignoring. task_id={}", entry.task.status, task_id);
                         return Ok(false); // Indicate to stop sending updates if task is no longer InProgress
                     }
                 }
@@ -296,7 +296,7 @@ pub(crate) async fn handle_get(
                                     size: data_bytes.len(),
                                 }));
                             entry.abort_handle = None; // Task finished, remove handle
-                            tracing::info!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, bytes_written = data_bytes.len(), "GET task completed successfully");
+                            log::info!("GET task completed successfully: task_id={}, user_key={}, destination_path={}, bytes_written={}", task_id, user_key, destination_path, data_bytes.len());
                             Some(Response::TaskResult(TaskResultResponse {
                                 task_id,
                                 status: TaskStatus::Completed,
@@ -308,7 +308,7 @@ pub(crate) async fn handle_get(
                             entry.task.status = TaskStatus::Failed;
                             entry.task.result = TaskResult::Error(error_msg.clone());
                             entry.abort_handle = None; // Task finished, remove handle
-                            tracing::error!(task_id = %task_id, user_key = %user_key, destination_path = %destination_path, "GET task failed: {}", error_msg);
+                            log::error!("GET task failed: task_id={}, user_key={}, destination_path={}, error={}", task_id, user_key, destination_path, error_msg);
                             Some(Response::TaskResult(TaskResultResponse {
                                 task_id,
                                 status: TaskStatus::Failed,
@@ -317,18 +317,18 @@ pub(crate) async fn handle_get(
                         }
                     }
                 } else {
-                    tracing::info!(task_id = %task_id, "GET task was stopped before completion.");
+                    log::info!("GET task was stopped before completion: task_id={}", task_id);
                     entry.abort_handle = None; // Ensure handle is cleared if stopped
                     None // No final result to send if stopped
                 }
             } else {
-                tracing::warn!(task_id = %task_id, "Task entry removed before GET completion?");
+                log::warn!("Task entry removed before GET completion? task_id={}", task_id);
                 None
             }
         };
         if let Some(response) = final_response {
             if update_tx.send(response).is_err() {
-                tracing::debug!(task_id = %task_id, "Client disconnected before final GET result sent");
+                log::debug!("Client disconnected before final GET result sent: task_id={}", task_id);
             }
         }
     });
@@ -355,17 +355,17 @@ pub(crate) async fn handle_rm(
     original_request_str: &str,
 ) -> Result<(), DaemonError> {
     let user_key = req.user_key.clone();
-    tracing::info!(user_key = %user_key, "Starting RM task");
+    log::info!("Starting RM task: user_key={}", user_key);
 
     let result = mutant.rm(&user_key).await;
 
     let response = match result {
         Ok(_) => {
-            tracing::info!(user_key = %user_key, "RM task completed successfully");
+            log::info!("RM task completed successfully: user_key={}", user_key);
             Response::RmSuccess(RmSuccessResponse { user_key })
         }
         Err(e) => {
-            tracing::error!(user_key = %user_key, error = %e, "RM task failed");
+            log::error!("RM task failed: user_key={}, error={}", user_key, e);
             Response::Error(ErrorResponse {
                 error: e.to_string(),
                 original_request: Some(original_request_str.to_string()),

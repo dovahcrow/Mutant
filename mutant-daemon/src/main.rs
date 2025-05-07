@@ -6,6 +6,7 @@ mod handlers;
 mod wallet;
 
 use error::Error;
+use log::LevelFilter;
 
 #[derive(Parser)]
 struct Args {

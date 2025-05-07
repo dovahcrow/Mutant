@@ -17,34 +17,34 @@ pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap) {
     let (mut ws_sender, mut ws_receiver) = ws.split();
     let (update_tx, mut update_rx) = mpsc::unbounded_channel::<Response>();
 
-    tracing::info!("WebSocket client connected");
+    log::info!("WebSocket client connected");
 
     // Task to listen for updates from spawned tasks and send them to the client
     let update_forwarder = tokio::spawn(async move {
         while let Some(response) = update_rx.recv().await {
             if let Err(e) = send_response(&mut ws_sender, response).await {
-                tracing::error!("Failed to send task update via WebSocket: {}", e);
+                log::error!("Failed to send task update via WebSocket: {}", e);
                 // If sending fails, the client might be disconnected, so we stop.
                 break;
             }
         }
         // Ensure the sender is closed if the loop exits
         let _ = ws_sender.close().await;
-        tracing::debug!("Update forwarder task finished.");
+        log::debug!("Update forwarder task finished.");
     });
 
     while let Some(result) = ws_receiver.next().await {
         let msg = match result {
             Ok(msg) => msg,
             Err(e) => {
-                tracing::error!("WebSocket receive error: {}", e);
+                log::error!("WebSocket receive error: {}", e);
                 // Don't need to send error here, forwarder handles closure
                 break;
             }
         };
 
         if msg.is_close() {
-            tracing::info!("WebSocket client disconnected explicitly");
+            log::info!("WebSocket client disconnected explicitly");
             break;
         }
 
@@ -61,7 +61,7 @@ pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap) {
                     )
                     .await
                     {
-                        tracing::error!("Error handling request: {}", e);
+                        log::error!("Error handling request: {}", e);
                         let _ = update_tx.send(Response::Error(ErrorResponse {
                             error: e.to_string(),
                             original_request: Some(original_request),
@@ -69,7 +69,7 @@ pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap) {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to deserialize request: {}", e);
+                    log::warn!("Failed to deserialize request: {}", e);
                     let _ = update_tx.send(Response::Error(ErrorResponse {
                         error: format!("Invalid JSON request: {}", e),
                         original_request: Some(original_request),
@@ -77,19 +77,19 @@ pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap) {
                 }
             }
         } else if msg.is_binary() {
-            tracing::warn!("Received binary message, ignoring.");
+            log::warn!("Received binary message, ignoring.");
             let _ = update_tx.send(Response::Error(ErrorResponse {
                 error: "Binary messages are not supported".to_string(),
                 original_request: None,
             }));
         } else if msg.is_ping() {
-            tracing::trace!("Received Ping");
+            log::trace!("Received Ping");
         } else if msg.is_pong() {
-            tracing::trace!("Received Pong");
+            log::trace!("Received Pong");
         }
     }
 
     // Ensure the forwarder task is cleaned up when the receive loop ends
     update_forwarder.abort();
-    tracing::debug!("WebSocket connection handler finished.");
+    log::debug!("WebSocket connection handler finished.");
 }

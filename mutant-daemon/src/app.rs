@@ -116,7 +116,7 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     // Writing the PID might be redundant or could be handled differently.
     std::fs::write("/tmp/mutant-daemon.lock", std::process::id().to_string())?;
 
-    tracing::info!("Starting Mutant Daemon...");
+    log::info!("Starting Mutant Daemon...");
 
     let network_choice = if options.local {
         NetworkChoice::Devnet
@@ -132,7 +132,7 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
 
     match config.get_private_key(network_choice)? {
         Some((key_from_file, pk_hex)) => {
-            tracing::info!(
+            log::info!(
                 "Loaded private key from file for network {:?}: {}",
                 network_choice,
                 pk_hex
@@ -140,12 +140,12 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
             private_key_for_mutant = key_from_file;
         }
         None => {
-            tracing::info!("No private key found in config or file, attempting to scan wallets for network {:?}", network_choice);
+            log::info!("No private key found in config or file, attempting to scan wallets for network {:?}", network_choice);
             let (selected_private_key, pk_hex) = wallet::scan_and_select_wallet().await?;
 
             config.set_public_key(network_choice, pk_hex.clone());
             config.save()?;
-            tracing::info!(
+            log::info!(
                 "Saved newly selected public key {} to config for network {:?}",
                 pk_hex,
                 network_choice
@@ -157,25 +157,25 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     let mutant = Arc::new(
         match network_choice {
             NetworkChoice::Devnet => {
-                tracing::info!("Running in local mode");
+                log::info!("Running in local mode");
                 MutAnt::init_local().await
             }
             NetworkChoice::Alphanet => {
-                tracing::info!("Running in alphanet mode");
+                log::info!("Running in alphanet mode");
                 MutAnt::init_alphanet(&private_key_for_mutant).await
             }
             NetworkChoice::Mainnet => {
-                tracing::info!("Running in mainnet mode");
+                log::info!("Running in mainnet mode");
                 MutAnt::init(&private_key_for_mutant).await
             }
         }
         .map_err(Error::MutAnt)?,
     );
-    tracing::info!("MutAnt initialized successfully.");
+    log::info!("MutAnt initialized successfully.");
 
     // Initialize Task Management
     let tasks: TaskMap = Arc::new(RwLock::new(HashMap::new()));
-    tracing::info!("Task manager initialized.");
+    log::info!("Task manager initialized.");
 
     // Define WebSocket route using the actual handler
     let ws_route = warp::path("ws")
@@ -191,7 +191,7 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     // Define server address
     // TODO: Make this configurable
     let addr: SocketAddr = ([127, 0, 0, 1], 3030).into();
-    tracing::info!("WebSocket server listening on {}", addr);
+    log::info!("WebSocket server listening on {}", addr);
 
     // Create a shutdown signal receiver
     let shutdown_signal = async {
@@ -207,18 +207,18 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
         let sigterm = std::future::pending::<()>(); // No SIGTERM on non-Unix
 
         tokio::select! {
-            _ = ctrl_c => { tracing::info!("Received Ctrl+C, shutting down."); },
-            _ = sigterm => { tracing::info!("Received SIGTERM, shutting down."); },
+            _ = ctrl_c => { log::info!("Received Ctrl+C, shutting down."); },
+            _ = sigterm => { log::info!("Received SIGTERM, shutting down."); },
         }
     };
 
     // Start the server with graceful shutdown
     let (_, server) = warp::serve(ws_route).bind_with_graceful_shutdown(addr, shutdown_signal);
 
-    tracing::info!("Starting server task...");
+    log::info!("Starting server task...");
     // Await the server task. The lock file will be released when the process exits.
     tokio::task::spawn(server).await.map_err(Error::JoinError)?;
-    tracing::info!("Server task finished.");
+    log::info!("Server task finished.");
 
     // The lock file (_lock_file) is released automatically when the process exits
     // because the file descriptor associated with the lock is closed.

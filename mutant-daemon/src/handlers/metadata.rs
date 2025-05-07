@@ -15,14 +15,14 @@ pub(crate) async fn handle_list_keys(
     update_tx: UpdateSender,
     mutant: Arc<MutAnt>,
 ) -> Result<(), DaemonError> {
-    tracing::debug!("Handling ListKeys request");
+    log::debug!("Handling ListKeys request");
 
     // Use mutant.list() to get detailed IndexEntry data
     let index_result = mutant.list().await;
 
     let response = match index_result {
         Ok(index_map) => {
-            tracing::info!("Found {} keys", index_map.len());
+            log::info!("Found {} keys", index_map.len());
             let details: Vec<KeyDetails> = index_map
                 .into_iter()
                 .map(|(key, entry)| match entry {
@@ -71,7 +71,7 @@ pub(crate) async fn handle_list_keys(
             Response::ListKeys(ListKeysResponse { keys: details })
         }
         Err(e) => {
-            tracing::error!("Failed to list keys from mutant-lib: {}", e);
+            log::error!("Failed to list keys from mutant-lib: {}", e);
             Response::Error(ErrorResponse {
                 error: format!("Failed to retrieve key list: {}", e),
                 original_request: None, // Cannot easily get original string here yet
@@ -91,11 +91,11 @@ pub(crate) async fn handle_stats(
     update_tx: UpdateSender,
     mutant: Arc<MutAnt>,
 ) -> Result<(), DaemonError> {
-    tracing::debug!("Handling Stats request");
+    log::debug!("Handling Stats request");
 
     // Call the method which returns StorageStats directly
     let stats = mutant.get_storage_stats().await;
-    tracing::info!("Retrieved storage stats successfully: {:?}", stats);
+    log::info!("Retrieved storage stats successfully: {:?}", stats);
 
     // Adapt the fields from mutant_lib::StorageStats to mutant_protocol::StatsResponse
     let response = Response::Stats(StatsResponse {

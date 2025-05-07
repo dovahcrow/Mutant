@@ -16,7 +16,7 @@ pub(crate) async fn handle_import(
     update_tx: UpdateSender,
     mutant: Arc<MutAnt>,
 ) -> Result<(), DaemonError> {
-    tracing::debug!("Handling Import request");
+    log::debug!("Handling Import request");
 
     let file_path = req.file_path.clone();
     let pads_hex = fs::read(&file_path)
@@ -28,7 +28,7 @@ pub(crate) async fn handle_import(
 
     // Call the method which returns StorageStats directly
     let stats = mutant.import_raw_pads_private_key(pads_hex).await;
-    tracing::info!("Imported file successfully: {:?}", stats);
+    log::info!("Imported file successfully: {:?}", stats);
 
     let response = Response::Import(ImportResponse {
         result: ImportResult {
@@ -48,7 +48,7 @@ pub(crate) async fn handle_export(
     update_tx: UpdateSender,
     mutant: Arc<MutAnt>,
 ) -> Result<(), DaemonError> {
-    tracing::debug!("Handling Export request");
+    log::debug!("Handling Export request");
 
     let destination_path = req.destination_path.clone();
 
