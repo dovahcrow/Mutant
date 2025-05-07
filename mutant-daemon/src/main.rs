@@ -14,6 +14,8 @@ struct Args {
     local: bool,
     #[arg(long)]
     alphanet: bool,
+    #[arg(long)]
+    ignore_ctrl_c: bool,
 }
 
 #[tokio::main]
@@ -31,6 +33,7 @@ async fn main() -> Result<(), Error> {
     let options = app::AppOptions {
         local: args.local,
         alphanet: args.alphanet,
+        ignore_ctrl_c: args.ignore_ctrl_c,
     };
 
     // Run the application

@@ -98,6 +98,7 @@ impl Config {
 pub struct AppOptions {
     pub local: bool,
     pub alphanet: bool,
+    pub ignore_ctrl_c: bool,
 }
 
 pub async fn run(options: AppOptions) -> Result<(), Error> {
@@ -193,8 +194,10 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     let addr: SocketAddr = ([127, 0, 0, 1], 3030).into();
     log::info!("WebSocket server listening on {}", addr);
 
+    let ignore_ctrl_c = options.ignore_ctrl_c;
+
     // Create a shutdown signal receiver
-    let shutdown_signal = async {
+    let shutdown_signal = async move {
         let ctrl_c = signal::ctrl_c();
         #[cfg(unix)]
         let sigterm = async {
@@ -206,10 +209,16 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
         #[cfg(not(unix))]
         let sigterm = std::future::pending::<()>(); // No SIGTERM on non-Unix
 
-        tokio::select! {
-            _ = ctrl_c => { log::info!("Received Ctrl+C, shutting down."); },
-            _ = sigterm => { log::info!("Received SIGTERM, shutting down."); },
+        if ignore_ctrl_c {
+            log::debug!("Ignoring Ctrl+C signal.");
+            sigterm.await;
+        } else {
+            tokio::select! {
+                _ = ctrl_c => { log::info!("Received Ctrl+C, shutting down."); },
+                _ = sigterm => { log::info!("Received SIGTERM, shutting down."); },
+            }
         }
+
     };
 
     // Start the server with graceful shutdown

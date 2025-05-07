@@ -22,9 +22,10 @@ pub async fn start_daemon() -> Result<()> {
     };
 
     println!("Starting daemon...");
-    let _ = Command::new("mutant-daemon").spawn()?;
 
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let _ = Command::new("mutant-daemon").arg("--ignore-ctrl-c").spawn()?;
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     Ok(())
 }
@@ -39,7 +40,7 @@ async fn stop_daemon() -> Result<()> {
         }
     };
     match Command::new("kill")
-        .arg("-2") // SIGINT
+        .arg("-15") // SIGTERM
         .arg(pid)
         .output()
         .await
