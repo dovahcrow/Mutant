@@ -43,14 +43,13 @@ async fn test_put_public_create() {
     let data = generate_random_data(512);
     let (pad_info, address) = create_initial_pad_info(data.len());
 
-    let client_guard = adapter
+    let client = adapter
         .get_client(Config::Put)
         .await
         .expect("Failed to get PUT client");
-    let client = &*client_guard;
 
     let result = adapter
-        .put(client, &pad_info, &data, DATA_ENCODING_PUBLIC_DATA, true)
+        .put(&client, &pad_info, &data, DATA_ENCODING_PUBLIC_DATA, true)
         .await;
 
     assert!(
@@ -65,21 +64,18 @@ async fn test_put_public_create() {
         put_result.cost > AttoTokens::zero(),
         "Initial put should have a cost > 0"
     );
-    drop(client_guard);
 
-    let client_guard = adapter
+    let client = adapter
         .get_client(Config::Get)
         .await
         .expect("Failed to get GET client");
-    let client = &*client_guard;
 
-    let get_result = adapter.get(client, &address, None).await;
+    let get_result = adapter.get(&client, &address, None).await;
     assert!(
         get_result.is_ok(),
         "Get public failed: {:?}",
         get_result.err()
     );
-    drop(client_guard);
 
     let get_result = get_result.unwrap();
     assert_eq!(get_result.data, data, "Retrieved private data mismatch");
@@ -96,15 +92,14 @@ async fn test_put_public_update() {
     let initial_data = generate_random_data(512);
     let (mut pad_info, address) = create_initial_pad_info(initial_data.len());
 
-    let client_guard = adapter
+    let client = adapter
         .get_client(Config::Put)
         .await
         .expect("Failed to get PUT client");
-    let client = &*client_guard;
 
     let create_result = adapter
         .put(
-            client,
+            &client,
             &pad_info,
             &initial_data,
             DATA_ENCODING_PUBLIC_DATA,
@@ -122,7 +117,6 @@ async fn test_put_public_update() {
         put_result.cost > AttoTokens::zero(),
         "Initial put should have a cost > 0"
     );
-    drop(client_guard);
 
     let initial_counter = pad_info.last_known_counter;
 
@@ -130,15 +124,14 @@ async fn test_put_public_update() {
     pad_info.size = updated_data.len();
     pad_info.last_known_counter = initial_counter + 1;
 
-    let client_guard = adapter
+    let client = adapter
         .get_client(Config::Put)
         .await
         .expect("Failed to get PUT client");
-    let client = &*client_guard;
 
     let update_result = adapter
         .put(
-            client,
+            &client,
             &pad_info,
             &updated_data,
             DATA_ENCODING_PUBLIC_DATA,
@@ -151,7 +144,6 @@ async fn test_put_public_update() {
         update_result.err()
     );
     let put_update_result = update_result.unwrap();
-    drop(client_guard);
 
     assert!(
         put_update_result.cost == AttoTokens::zero(),
@@ -162,18 +154,16 @@ async fn test_put_public_update() {
         put_update_result.address, address,
         "Update address mismatch"
     );
-    let client_guard = adapter
+    let client = adapter
         .get_client(Config::Get)
         .await
         .expect("Failed to get GET client");
-    let client = &*client_guard;
-    let get_result = adapter.get(client, &address, None).await;
+    let get_result = adapter.get(&client, &address, None).await;
     assert!(
         get_result.is_ok(),
         "Get public after update failed: {:?}",
         get_result.err()
     );
-    drop(client_guard);
     let final_data = get_result.unwrap();
     assert_eq!(final_data.data, updated_data, "Updated data not retrieved");
     assert_eq!(
@@ -189,14 +179,13 @@ async fn test_put_private_create() {
     let data = generate_random_data(512);
     let (pad_info, address) = create_initial_pad_info(data.len());
 
-    let client_guard = adapter
+    let client = adapter
         .get_client(Config::Put)
         .await
         .expect("Failed to get PUT client");
-    let client = &*client_guard;
 
     let result = adapter
-        .put(client, &pad_info, &data, DATA_ENCODING_PRIVATE_DATA, false)
+        .put(&client, &pad_info, &data, DATA_ENCODING_PRIVATE_DATA, false)
         .await;
 
     assert!(
@@ -205,7 +194,6 @@ async fn test_put_private_create() {
         result.err()
     );
     let put_result = result.unwrap();
-    drop(client_guard);
 
     assert!(
         put_result.cost > AttoTokens::zero(),
@@ -214,21 +202,19 @@ async fn test_put_private_create() {
 
     assert_eq!(put_result.address, address, "Private address mismatch");
 
-    let client_guard = adapter
+    let client = adapter
         .get_client(Config::Get)
         .await
         .expect("Failed to get GET client");
-    let client = &*client_guard;
 
     let get_result = adapter
-        .get(client, &address, Some(&pad_info.secret_key()))
+        .get(&client, &address, Some(&pad_info.secret_key()))
         .await;
     assert!(
         get_result.is_ok(),
         "Get private failed: {:?}",
         get_result.err()
     );
-    drop(client_guard);
 
     let get_result = get_result.unwrap();
     assert_eq!(get_result.data, data, "Retrieved private data mismatch");
@@ -245,14 +231,13 @@ async fn test_put_private_update() {
     let initial_data = generate_random_data(512);
     let (mut pad_info, address) = create_initial_pad_info(initial_data.len());
 
-    let client_guard = adapter
+    let client = adapter
         .get_client(Config::Put)
         .await
         .expect("Failed to get PUT client");
-    let client = &*client_guard;
     let create_result = adapter
         .put(
-            client,
+            &client,
             &pad_info,
             &initial_data,
             DATA_ENCODING_PRIVATE_DATA,
@@ -269,20 +254,18 @@ async fn test_put_private_update() {
         put_result.cost > AttoTokens::zero(),
         "Initial put should have a cost > 0"
     );
-    drop(client_guard);
 
     let updated_data = generate_random_data(700);
     pad_info.size = updated_data.len();
     pad_info.last_known_counter = 1;
 
-    let client_guard = adapter
+    let client = adapter
         .get_client(Config::Put)
         .await
         .expect("Failed to get PUT client");
-    let client = &*client_guard;
     let update_result = adapter
         .put(
-            client,
+            &client,
             &pad_info,
             &updated_data,
             DATA_ENCODING_PRIVATE_DATA,
@@ -295,7 +278,6 @@ async fn test_put_private_update() {
         update_result.err()
     );
     let put_update_result = update_result.unwrap();
-    drop(client_guard);
 
     assert_eq!(
         put_update_result.address, address,
@@ -307,20 +289,18 @@ async fn test_put_private_update() {
         "Update put should have a cost == 0"
     );
 
-    let client_guard = adapter
+    let client = adapter
         .get_client(Config::Get)
         .await
         .expect("Failed to get GET client");
-    let client = &*client_guard;
     let get_result = adapter
-        .get(client, &address, Some(&pad_info.secret_key()))
+        .get(&client, &address, Some(&pad_info.secret_key()))
         .await;
     assert!(
         get_result.is_ok(),
         "Get private after update failed: {:?}",
         get_result.err()
     );
-    drop(client_guard);
     let final_data = get_result.unwrap();
     assert_eq!(
         final_data.data, updated_data,

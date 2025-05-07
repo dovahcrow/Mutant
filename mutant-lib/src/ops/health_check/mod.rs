@@ -36,11 +36,11 @@ pub(super) async fn health_check(
 
     let is_public = index.read().await.is_public(key_name);
     let mut tasks = Vec::new();
-    let client_guard = network
+    let client = network
         .get_client(Config::Get)
         .await
         .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
-    let client = Arc::new(client_guard);
+    let client = Arc::new(client);
 
     for pad in pads {
         let pad = pad.clone();
@@ -65,9 +65,8 @@ pub(super) async fn health_check(
                 return;
             }
 
-            let client_ref = &*client_clone;
             match network_clone
-                .get(client_ref, &pad.address, secret_key_ref)
+                .get(client_clone, &pad.address, secret_key_ref)
                 .await
             {
                 Ok(get_result) => {

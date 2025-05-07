@@ -5,8 +5,7 @@ pub mod put;
 pub mod wallet;
 
 use blsttc::SecretKey;
-use client::{ClientManager, Config, PoolManagerError};
-use deadpool::managed::{self, Pool};
+use client::Config;
 pub use error::NetworkError;
 
 use self::wallet::create_wallet;
@@ -71,7 +70,6 @@ lazy_static::lazy_static! {
 pub struct Network {
     wallet: Wallet,
     network_choice: NetworkChoice,
-    pool: Pool<ClientManager>,
     secret_key: SecretKey,
 }
 
@@ -88,62 +86,44 @@ impl Network {
 
         let (wallet, secret_key) = create_wallet(private_key_hex, network_choice)?;
 
-        let manager = ClientManager {
-            network_choice,
-            config: Config::Get,
-        };
-
-        // get the max_connections from the env
-        let max_connections = *NB_CLIENTS;
-
-        debug!("Max connections: {}", max_connections);
-
-        let pool = Pool::builder(manager)
-            .max_size(max_connections) // Adjust size as needed
-            .build()
-            .map_err(|e| {
-                NetworkError::ClientInitError(format!("Failed to create GET pool: {}", e))
-            })?;
-
         Ok(Self {
             wallet,
             network_choice,
-            pool,
             secret_key,
         })
     }
 
-    /// Retrieves an Autonomi network client from the appropriate pool.
+    /// Retrieves an Autonomi network client.
+    /// This method creates a new client for each call.
     pub(crate) async fn get_client(
         &self,
         config: Config,
-    ) -> Result<managed::Object<ClientManager>, PoolManagerError> {
-        debug!("Requesting client from pool (Config: {:?})", config);
-        self.pool.get().await.map_err(PoolManagerError::from)
+    ) -> Result<Client, NetworkError> {
+        client::create_client(self.network_choice, config).await
     }
 
     /// Retrieves the raw content of a scratchpad from the network.
     /// Delegates to the `get` module.
     /// Requires PadInfo to reconstruct the SecretKey for decryption.
-    pub(crate) async fn get(
+    pub(crate) async fn get<C: std::ops::Deref<Target = Client>>(
         &self,
-        client: &Client,
+        client: C,
         address: &ScratchpadAddress,
         owner_sk: Option<&SecretKey>,
     ) -> Result<GetResult, NetworkError> {
-        get::get(client, address, owner_sk).await
+        get::get(client.deref(), address, owner_sk).await
     }
 
-    pub(crate) async fn put(
+    pub(crate) async fn put<C: std::ops::Deref<Target = Client>>(
         &self,
-        client: &Client,
+        client: C,
         pad_info: &PadInfo,
         data: &[u8],
         data_encoding: u64,
         is_public: bool,
     ) -> Result<PutResult, NetworkError> {
         put::put(
-            client,
+            client.deref(),
             self.wallet.clone(),
             pad_info,
             data,

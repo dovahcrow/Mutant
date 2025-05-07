@@ -37,14 +37,13 @@ pub(super) async fn sync(
     let (owner_address, owner_secret_key) =
         derive_master_index_info(&owner_secret_key_data.to_hex())?;
 
-    let client_guard_get = network
+    let client_get = network
         .get_client(Config::Get)
         .await
         .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
-    let client_get = &*client_guard_get;
 
     let (remote_index, remote_index_counter) = match network
-        .get(client_get, &owner_address, Some(&owner_secret_key))
+        .get(&client_get, &owner_address, Some(&owner_secret_key))
         .await
     {
         Ok(get_result) => {
@@ -58,7 +57,6 @@ pub(super) async fn sync(
         }
         Err(_e) => (MasterIndex::new(network.network_choice()), 0),
     };
-    drop(client_guard_get);
 
     invoke_sync_callback(&callback, SyncEvent::Merging)
         .await
@@ -103,11 +101,10 @@ pub(super) async fn sync(
     let serialized_index = serde_cbor::to_vec(&*local_index).unwrap(); // Deref local_index
     drop(local_index); // Drop the write lock before potential network calls
 
-    let client_guard_put = network
+    let client_put = network
         .get_client(Config::Put)
         .await
         .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
-    let client_put = &*client_guard_put;
 
     invoke_sync_callback(&callback, SyncEvent::PushingRemoteIndex)
         .await
@@ -125,20 +122,18 @@ pub(super) async fn sync(
 
     network
         .put(
-            client_put,
+            &client_put,
             &pad_info,
             &serialized_index,
             DATA_ENCODING_MASTER_INDEX,
             false,
         )
         .await?;
-    drop(client_guard_put);
 
-    let client_guard_verify = network
+    let client_verify = network
         .get_client(Config::Get)
         .await
         .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
-    let client_verify = &*client_guard_verify;
 
     invoke_sync_callback(&callback, SyncEvent::VerifyingRemoteIndex)
         .await
@@ -148,7 +143,7 @@ pub(super) async fn sync(
 
     loop {
         match network
-            .get(client_verify, &owner_address, Some(&owner_secret_key))
+            .get(&client_verify, &owner_address, Some(&owner_secret_key))
             .await
         {
             Ok(get_result) => {
@@ -170,8 +165,6 @@ pub(super) async fn sync(
         retries -= 1;
         tokio::time::sleep(Duration::from_secs(1)).await;
     }?;
-
-    drop(client_guard_verify);
 
     // Reacquire lock to update the index in memory (optional, depending on desired consistency)
     // *index.write().await = local_index_data; // If we had cloned the data before dropping lock

@@ -3,12 +3,11 @@ use crate::events::{PurgeCallback, PurgeEvent};
 use crate::index::master_index::MasterIndex;
 use crate::index::PadInfo;
 use crate::internal_events::invoke_purge_callback;
-use crate::network::client::{ClientManager, Config};
+use crate::network::client::Config;
 use crate::network::{Network, NetworkError};
 use crate::ops::worker::{AsyncTask, PoolError, WorkerPoolConfig};
 use ant_networking::GetRecordError;
 use async_trait::async_trait;
-use deadpool::managed::Object;
 use log::{debug, error, info, warn};
 use mutant_protocol::PurgeResult;
 use std::sync::Arc;
@@ -48,13 +47,13 @@ impl PurgeTaskProcessor {
 }
 
 #[async_trait]
-impl AsyncTask<PadInfo, (), Object<ClientManager>, PurgeTaskOutcome, Error> for PurgeTaskProcessor {
+impl AsyncTask<PadInfo, (), autonomi::Client, PurgeTaskOutcome, Error> for PurgeTaskProcessor {
     type ItemId = ();
 
     async fn process(
         &self,
         worker_id: usize,
-        client: &Object<ClientManager>,
+        client: &autonomi::Client,
         pad: PadInfo,
     ) -> Result<(Self::ItemId, PurgeTaskOutcome), (Error, PadInfo)> {
         let get_result = self.network.get(client, &pad.address, None).await;

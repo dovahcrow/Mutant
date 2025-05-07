@@ -7,7 +7,6 @@ use crate::network::{Network, NetworkError};
 use crate::ops::worker::{self, AsyncTask, PoolError, WorkerPoolConfig};
 use async_trait::async_trait;
 use autonomi::ScratchpadAddress;
-use deadpool::managed::Object;
 use log::{debug, error, warn};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock;
@@ -19,14 +18,12 @@ pub(super) async fn get_public(
     address: &ScratchpadAddress,
     get_callback: Option<GetCallback>,
 ) -> Result<Vec<u8>, Error> {
-    let client_guard = network
+    let client = network
         .get_client(Config::Get)
         .await
         .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
-    let client = &*client_guard;
-    let index_pad_data = network.get(client, address, None).await?;
+    let index_pad_data = network.get(&client, address, None).await?;
     let callback = get_callback.clone();
-    drop(client_guard);
 
     debug!(
         "get_public: Processing pad {} with data_encoding={} (PUBLIC_INDEX={}, PUBLIC_DATA={})",
@@ -142,7 +139,7 @@ impl GetTaskProcessor {
 
 // Use () for Context generic as it's no longer stored in the pool
 #[async_trait]
-impl AsyncTask<PadInfo, (), Object<crate::network::client::ClientManager>, Vec<u8>, Error>
+impl AsyncTask<PadInfo, (), autonomi::Client, Vec<u8>, Error>
     for GetTaskProcessor
 {
     type ItemId = usize; // Use chunk index for ordering
@@ -150,7 +147,7 @@ impl AsyncTask<PadInfo, (), Object<crate::network::client::ClientManager>, Vec<u
     async fn process(
         &self,
         _worker_id: usize, // worker_id not used
-        client: &Object<crate::network::client::ClientManager>,
+        client: &autonomi::Client,
         pad: PadInfo,
     ) -> Result<(Self::ItemId, Vec<u8>), (Error, PadInfo)> {
         let mut retries_left = 20;

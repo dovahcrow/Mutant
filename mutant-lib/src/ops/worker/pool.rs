@@ -1,5 +1,5 @@
 use async_channel::{Receiver, Sender};
-use deadpool::managed::Object;
+use autonomi::Client;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
@@ -9,7 +9,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::error::Error as MutantError;
-use crate::network::client::ClientManager;
 use super::async_task::AsyncTask;
 use super::error::PoolError;
 use super::worker::Worker;
@@ -37,11 +36,11 @@ where
     pub(crate) _marker_error: PhantomData<E>,
 }
 
-impl<Item, Context, Task, T, E> WorkerPool<Item, Context, Object<ClientManager>, Task, T, E>
+impl<Item, Context, Task, T, E> WorkerPool<Item, Context, Client, Task, T, E>
 where
     Item: Send + 'static + Debug,
     Context: Send + Sync + 'static,
-    Task: AsyncTask<Item, Context, Object<ClientManager>, T, E> + Send + Sync + 'static + Clone,
+    Task: AsyncTask<Item, Context, Client, T, E> + Send + Sync + 'static + Clone,
     T: Send + Sync + Clone + 'static,
     E: Debug + Send + Clone + 'static + From<MutantError>,
 {
@@ -120,7 +119,7 @@ where
             let worker_global_rx = self.global_rx.clone();
             global_rx_clones.push(worker_global_rx.clone());
 
-            let worker: Worker<Item, Context, Object<ClientManager>, Task, T, E> = Worker {
+            let worker: Worker<Item, Context, Client, Task, T, E> = Worker {
                 id: worker_id,
                 client,
                 task_processor: task.clone(),

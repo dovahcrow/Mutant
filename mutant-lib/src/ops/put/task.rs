@@ -5,7 +5,6 @@ use crate::network::NetworkError;
 use crate::ops::worker::AsyncTask;
 use crate::ops::MAX_CONFIRMATION_DURATION;
 use async_trait::async_trait;
-use deadpool::managed::Object;
 use log::{debug, error, info, warn};
 use mutant_protocol::PutEvent;
 use std::{sync::Arc, time::Duration};
@@ -29,7 +28,7 @@ impl PutTaskProcessor {
 }
 
 #[async_trait]
-impl AsyncTask<PadInfo, PutTaskContext, Object<crate::network::client::ClientManager>, (), Error>
+impl AsyncTask<PadInfo, PutTaskContext, autonomi::Client, (), Error>
     for PutTaskProcessor
 {
     type ItemId = usize;
@@ -37,7 +36,7 @@ impl AsyncTask<PadInfo, PutTaskContext, Object<crate::network::client::ClientMan
     async fn process(
         &self,
         worker_id: usize,
-        client: &Object<crate::network::client::ClientManager>,
+        client: &autonomi::Client,
         pad: PadInfo,
     ) -> Result<(Self::ItemId, ()), (Error, PadInfo)> {
         let mut pad_state = pad.clone();

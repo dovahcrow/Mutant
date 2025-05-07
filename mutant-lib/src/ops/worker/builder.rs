@@ -1,12 +1,11 @@
 use async_channel::bounded;
-use deadpool::managed::Object;
 use log::error;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use autonomi::Client;
 use crate::error::Error as MutantError;
-use crate::network::client::ClientManager;
 use crate::network::BATCH_SIZE;
 use crate::network::NB_CLIENTS;
 use super::async_task::AsyncTask;
@@ -28,11 +27,11 @@ pub async fn build<Item, Context, Task, T, E>(
                 + Sync,
         >,
     >,
-) -> Result<WorkerPool<Item, Context, Object<ClientManager>, Task, T, E>, PoolError<E>>
+) -> Result<WorkerPool<Item, Context, Client, Task, T, E>, PoolError<E>>
 where
     Item: Send + 'static,
     Context: Send + Sync + 'static,
-    Task: AsyncTask<Item, Context, Object<ClientManager>, T, E> + Send + Sync + 'static + Clone,
+    Task: AsyncTask<Item, Context, Client, T, E> + Send + Sync + 'static + Clone,
     T: Send + Sync + Clone + 'static,
     E: Debug + Send + Clone + 'static + From<MutantError>,
 {
