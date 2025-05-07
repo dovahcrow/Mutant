@@ -9,8 +9,8 @@ use mutant_protocol::{PutCallback, PutEvent};
 use std::sync::Arc;
 
 use super::context::Context;
-use super::task::PutTaskProcessor;
 use super::context::PutTaskContext;
+use super::task::PutTaskProcessor;
 
 // Define the recycling logic function
 pub async fn recycle_put_pad(
@@ -26,7 +26,10 @@ pub async fn recycle_put_pad(
     // Log the pad status before recycling
     debug!(
         "Pad to recycle: address={}, status={:?}, chunk_index={}, size={}",
-        pad_to_recycle.address, pad_to_recycle.status, pad_to_recycle.chunk_index, pad_to_recycle.size
+        pad_to_recycle.address,
+        pad_to_recycle.status,
+        pad_to_recycle.chunk_index,
+        pad_to_recycle.size
     );
 
     match context
@@ -68,7 +71,7 @@ pub async fn write_pipeline(
     let total_chunks = pads.len();
     let initial_written_count = pads
         .iter()
-        .filter(|p| p.status == PadStatus::Written)
+        .filter(|p| p.status == PadStatus::Written || p.status == PadStatus::Confirmed)
         .count();
     let initial_confirmed_count = pads
         .iter()
@@ -82,11 +85,7 @@ pub async fn write_pipeline(
     // Send Starting event with pad counts
     info!(
         "Sending Starting event for key '{}': total={}, written={}, confirmed={}, to_reserve={}",
-        key_name,
-        total_chunks,
-        initial_written_count,
-        initial_confirmed_count,
-        chunks_to_reserve
+        key_name, total_chunks, initial_written_count, initial_confirmed_count, chunks_to_reserve
     );
 
     invoke_put_callback(
