@@ -1,5 +1,4 @@
 use clap::Parser;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 mod app;
 mod error;
@@ -19,9 +18,9 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     // Initialize logging
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
+    env_logger::builder()
+        .filter_level(LevelFilter::Off)
+        .parse_default_env()
         .init();
 
     // Parse command line arguments
