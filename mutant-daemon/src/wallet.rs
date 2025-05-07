@@ -86,7 +86,8 @@ fn prompt_user_for_wallet(wallets: &[PathBuf]) -> Result<PathBuf, Error> {
     }
 }
 
-pub async fn scan_and_select_wallet() -> Result<String, Error> {
+pub async fn scan_and_select_wallet() -> Result<(String, String), Error> {
+    // (private key, public key)
     info!("Scanning Autonomi wallet directory...");
     let wallet_dir = get_autonomi_wallet_dir()?;
     let available_wallets = scan_wallet_dir(&wallet_dir)?;
@@ -101,5 +102,11 @@ pub async fn scan_and_select_wallet() -> Result<String, Error> {
     };
     debug!("Using private key hex from file: '{}'", private_key_hex);
 
-    Ok(private_key_hex)
+    let pk_hex = selected_wallet
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    Ok((private_key_hex, pk_hex))
 }

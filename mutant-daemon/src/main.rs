@@ -14,8 +14,6 @@ struct Args {
     local: bool,
     #[arg(long)]
     alphanet: bool,
-    #[arg(long)]
-    private_key: Option<String>,
 }
 
 #[tokio::main]
@@ -33,7 +31,6 @@ async fn main() -> Result<(), Error> {
     let options = app::AppOptions {
         local: args.local,
         alphanet: args.alphanet,
-        private_key: args.private_key,
     };
 
     // Run the application
