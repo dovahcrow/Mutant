@@ -3,28 +3,7 @@ use crate::network::NetworkChoice;
 use autonomi::{Client, ClientConfig, InitialPeersConfig};
 use deadpool::managed::{self, PoolError};
 use thiserror::Error;
-// use autonomi::{ResponseQuorum, RetryStrategy}
 use log::info;
-use std::ops::Deref;
-
-/// A wrapper around Client that can be dereferenced to Client
-/// This is used to maintain compatibility with the existing codebase
-/// that expects a dereferenceable type from get_client
-pub struct ClientWrapper(pub Client);
-
-impl std::fmt::Debug for ClientWrapper {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ClientWrapper").finish()
-    }
-}
-
-impl Deref for ClientWrapper {
-    type Target = Client;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Config {
