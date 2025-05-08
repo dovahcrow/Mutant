@@ -3,8 +3,7 @@ use crate::connect_to_daemon;
 use anyhow::Result;
 use colored::Colorize;
 use indicatif::MultiProgress;
-use mutant_protocol::StorageMode;
-use mutant_protocol::TaskResult;
+use mutant_protocol::{StorageMode, TaskResult};
 
 pub async fn handle_put(
     key: String,
@@ -47,8 +46,17 @@ pub async fn handle_put(
             TaskResult::Error(error) => {
                 eprintln!("{} {}", "Error:".bright_red(), error);
             }
-            TaskResult::Result(_result) => {
+            TaskResult::Result(result) => {
                 println!("{} Upload complete!", "•".bright_green());
+
+                // If this is a public key, display the index address
+                if public {
+                    if let mutant_protocol::TaskResultType::Put(put_result) = result {
+                        if let Some(public_address) = put_result.public_address {
+                            println!("{} Public index address: {}", "•".bright_blue(), public_address);
+                        }
+                    }
+                }
             }
             TaskResult::Pending => {
                 println!("{} Upload pending.", "•".bright_yellow());

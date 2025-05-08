@@ -8,8 +8,8 @@ use mutant_lib::storage::ScratchpadAddress;
 use mutant_lib::MutAnt;
 use mutant_protocol::{
     ErrorResponse, GetCallback, GetEvent, GetRequest, GetResult, PutCallback, PutEvent, PutRequest,
-    Response, RmRequest, RmSuccessResponse, Task, TaskCreatedResponse, TaskProgress, TaskResult,
-    TaskResultResponse, TaskResultType, TaskStatus, TaskType, TaskUpdateResponse,
+    PutResult, Response, RmRequest, RmSuccessResponse, Task, TaskCreatedResponse, TaskProgress,
+    TaskResult, TaskResultResponse, TaskResultType, TaskStatus, TaskType, TaskUpdateResponse,
 };
 
 use super::common::UpdateSender;
@@ -144,9 +144,18 @@ pub(crate) async fn handle_put(
                 // Only update if the task hasn't been stopped externally
                 if entry.task.status != TaskStatus::Stopped {
                     match result {
-                        Ok(_addr) => {
+                        Ok(addr) => {
+                            // For public keys, include the index address in the result
+                            let public_address = if req.public {
+                                Some(addr.to_hex())
+                            } else {
+                                None
+                            };
+
                             entry.task.status = TaskStatus::Completed;
-                            entry.task.result = TaskResult::Result(TaskResultType::Put(()));
+                            entry.task.result = TaskResult::Result(TaskResultType::Put(PutResult {
+                                public_address,
+                            }));
                             entry.abort_handle = None; // Task finished, remove handle
                             log::info!("PUT task completed successfully: task_id={}, user_key={}, source_path={}", task_id, user_key, source_path);
                             Some(Response::TaskResult(TaskResultResponse {

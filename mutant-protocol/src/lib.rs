@@ -295,11 +295,18 @@ pub enum TaskResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskResultType {
-    Put(()),
+    Put(PutResult),
     Get(GetResult),
     Sync(SyncResult),
     Purge(PurgeResult),
     HealthCheck(HealthCheckResult),
+}
+
+/// Represents the final result of a successful `put` operation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PutResult {
+    /// The public address of the key, if it's a public key
+    pub public_address: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

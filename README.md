@@ -168,17 +168,14 @@ Options:
 #### Store/fetch private data
 
 ```bash
-# Store a value directly
-$> mutant put mykey "my value"
+# Store a file directly
+$> mutant put mykey data.txt
 
 # Get a value and save to a file
-$> mutant get mykey output.txt
-
-# Store with specific storage mode (lightest, light, medium, heavy, heaviest)
-$> mutant put mykey "my value" --mode medium
+$> mutant get mykey fetched_data.txt
 
 # Run operations in the background
-$> mutant put large_file.zip mykey --background
+$> mutant put my_file large_file.zip --background
 
 # Remove a value
 $> mutant rm mykey
@@ -188,7 +185,7 @@ $> mutant rm mykey
 
 ```bash
 # Store data publicly (no encryption) under a name
-$> mutant put -p my_key "some public content"
+$> mutant put -p my_key my_file.ext
 # Output: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
 # Get your own public data by name
@@ -198,17 +195,7 @@ $> mutant get my_key output.txt
 $> mutant get -p 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef output.txt
 
 # You can update public data by using the same key
-$> mutant put -p my_key "some updated public content"
-```
-
-#### Pipes and redirects
-
-```bash
-# Store a file
-$> mutant put mykey2 data.txt
-
-# Get a value and save to a file
-$> mutant get mykey2 fetched_data.txt
+$> mutant put -p my_key my_updated_file.ext
 ```
 
 #### Daemon and task management
@@ -235,8 +222,11 @@ $> mutant tasks stop <task_id>
 ```bash
 # List stored keys
 $> mutant ls
-# test         57 pads 55.80 MiB  (public @ 858105ad390518c26a75e48fdfe87358a76fb24a06b1fb04b634af317ab39efcf8faf95b0d4c5eaac01a3a3fe3f8f6d5)
-# mykey        1 pad   1.00 KiB
+ Key                   Pads       Size Status       Address/Info
+----------------------------------------------------------------------
+ dwarf                  265   1.03 GiB Ready        Private
+ nothing_here             2   3.28 KiB Ready        Public: ac09242b5c5658dd313e37b08cba4810346bc8ce75f32d9330b20f142c941fa47a396077e91acfb990edab5430e3245
+ zorglub                 10 100.00 KiB         Private
 
 # List stored keys with fetch history
 $> mutant ls --history
@@ -246,8 +236,15 @@ $> mutant sync
 
 # View storage statistics
 $> mutant stats
+Storage Statistics:
+-------------------
+Total Keys: 2
+Total Pads Managed:    270
+  Occupied (Private):  267
+  Free Pads:           3
+  Pending Verify Pads: 0
 
-# Perform health check on a specific key
+# Perform health check on a specific key with recycling enabled
 $> mutant health-check mykey --recycle
 ```
 
