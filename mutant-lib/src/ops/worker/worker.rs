@@ -27,6 +27,8 @@ where
     pub retry_sender: Option<Sender<(E, Item)>>,
     pub results_collector: Arc<Mutex<Vec<(Task::ItemId, T)>>>,
     pub errors_collector: Arc<Mutex<Vec<E>>>,
+    pub processed_items_counter: Arc<Mutex<usize>>,
+    pub total_items_hint: usize,
     pub _marker_context: PhantomData<Context>,
 }
 
@@ -52,6 +54,8 @@ where
                 retry_sender: self.retry_sender.clone(),
                 results_collector: self.results_collector.clone(),
                 errors_collector: self.errors_collector.clone(),
+                processed_items_counter: self.processed_items_counter.clone(),
+                total_items_hint: self.total_items_hint,
                 _marker_context: PhantomData,
             };
             task_handles.push(tokio::spawn(worker_clone.run_task_processor(task_id)));
@@ -151,6 +155,19 @@ where
                     .await
                 {
                     Ok((item_id, result)) => {
+                        // Increment the processed items counter
+                        let mut counter = self.processed_items_counter.lock().await;
+                        *counter += 1;
+                        let current_count = *counter;
+                        drop(counter); // Release the lock
+
+                        // Check if we've processed all items
+                        if current_count >= self.total_items_hint {
+                            debug!("Worker {}.{}: Processed all {} items, closing channels", self.id, task_id, current_count);
+                            // Close the global queue to signal that all items have been processed
+                            self.global_queue.close();
+                        }
+
                         self.results_collector.lock().await.push((item_id, result));
                     }
                     Err((error, failed_item)) => {

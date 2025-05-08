@@ -97,6 +97,17 @@ where
             Arc::new(Mutex::new(Vec::new()));
         let errors_collector: Arc<Mutex<Vec<E>>> = Arc::new(Mutex::new(Vec::new()));
 
+        // Create a counter to track the number of processed items
+        let processed_items_counter = Arc::new(Mutex::new(0));
+
+        // Use a simple approach to estimate the total number of items
+        // We'll just use the number of workers * 10 as a reasonable default
+        let worker_count = self.worker_txs.len();
+        let worker_batch_size = *crate::network::BATCH_SIZE as usize;
+        let total_items_hint = worker_count * worker_batch_size;
+        debug!("Total items hint: {} (workers: {}, batch size: {})",
+               total_items_hint, worker_count, worker_batch_size);
+
         let worker_rxs = std::mem::take(&mut self.worker_rxs);
         let maybe_retry_rx = self.retry_rx.take();
 
@@ -128,6 +139,8 @@ where
                 retry_sender: retry_sender_clone.clone(),
                 results_collector: results_collector.clone(),
                 errors_collector: errors_collector.clone(),
+                processed_items_counter: processed_items_counter.clone(),
+                total_items_hint,
                 _marker_context: PhantomData,
             };
             worker_handles.push(tokio::spawn(worker.run()));
