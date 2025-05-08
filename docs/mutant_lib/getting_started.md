@@ -10,7 +10,7 @@ This guide provides a basic example of how to use `mutant-lib` to store and retr
 
 ```toml
 [dependencies]
-mutant-lib = "0.6.0"
+mutant-lib = "0.6.1"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
 ```

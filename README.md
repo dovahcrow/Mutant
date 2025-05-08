@@ -256,7 +256,7 @@ Add `mutant-lib` and its dependencies to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mutant-lib = "0.6.0" # Or the version you need
+mutant-lib = "0.6.1" # Or the version you need
 tokio = { version = "1", features = ["full"] }
 ```
 
