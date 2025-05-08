@@ -7,12 +7,22 @@ use mutant_client::MutantClient;
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Daemon { command: _ } => {}
-        _ => commands::daemon::start_daemon().await?,
-    };
+    // If no command is provided, run the ls command
+    if cli.command.is_none() {
+        commands::daemon::start_daemon().await?;
+        return commands::ls::handle_ls().await;
+    }
 
-    match cli.command {
+    // We know command is Some at this point, so we can safely unwrap
+    let command = cli.command.unwrap();
+
+    // Start daemon for all commands except Daemon
+    if !matches!(command, Commands::Daemon { .. }) {
+        commands::daemon::start_daemon().await?;
+    }
+
+    // Process the command
+    match command {
         Commands::Put {
             key,
             file,
