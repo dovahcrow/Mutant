@@ -22,10 +22,16 @@ pub async fn handle_sync(background: bool, push_force: bool, quiet: bool) -> Res
     let mut client = connect_to_daemon().await?;
     let (start_task, progress_rx) = client.sync(push_force).await?;
 
-    if !quiet {
+    // Create the progress bar wrapper that will disable stdin
+    // Keep it in scope until the end of the function to ensure stdin remains disabled
+    // and progress bars are properly cleaned up
+    let _progress = if !quiet {
         let progress = ProgressWithDisabledStdin::new();
         callbacks::sync::create_sync_progress(progress_rx, progress.multi_progress());
-    }
+        Some(progress)
+    } else {
+        None
+    };
 
     match start_task.await {
         Ok(result) => match result {

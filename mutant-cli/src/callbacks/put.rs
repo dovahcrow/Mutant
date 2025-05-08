@@ -140,26 +140,52 @@ pub fn create_put_progress(mut progress_rx: ProgressReceiver, multi_progress: Mu
                 PutEvent::Complete => {
                     info!("Complete event received, clearing progress bars");
 
+                    // Make sure all progress bars are finished and cleared
+                    // First, finish the reservation bar if it exists
                     let mut res_pb_guard = ctx.res_pb_opt.lock().await;
                     if let Some(pb) = res_pb_guard.take() {
                         info!("Clearing reservation bar");
+                        if !pb.is_finished() {
+                            // If the bar isn't at 100%, set it to 100% before clearing
+                            if let Some(len) = pb.length() {
+                                pb.set_position(len);
+                            }
+                            pb.set_message("Pads acquired.".to_string());
+                        }
                         pb.finish_and_clear();
                     }
                     drop(res_pb_guard);
 
+                    // Next, finish the upload bar
                     let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
                     if let Some(pb) = upload_pb_guard.take() {
                         info!("Clearing upload bar");
+                        if !pb.is_finished() {
+                            // If the bar isn't at 100%, set it to 100% before clearing
+                            if let Some(len) = pb.length() {
+                                pb.set_position(len);
+                            }
+                            pb.set_message("Upload complete.".to_string());
+                        }
                         pb.finish_and_clear();
                     }
                     drop(upload_pb_guard);
 
+                    // Finally, finish the confirmation bar
                     let mut confirm_pb_guard = ctx.confirm_pb_opt.lock().await;
                     if let Some(pb) = confirm_pb_guard.take() {
                         info!("Clearing confirmation bar");
+                        if !pb.is_finished() {
+                            // If the bar isn't at 100%, set it to 100% before clearing
+                            if let Some(len) = pb.length() {
+                                pb.set_position(len);
+                            }
+                            pb.set_message("Confirmation complete.".to_string());
+                        }
                         pb.finish_and_clear();
                     }
                     drop(confirm_pb_guard);
+
                     Ok::<bool, Box<dyn std::error::Error + Send + Sync>>(true)
                 }
             }

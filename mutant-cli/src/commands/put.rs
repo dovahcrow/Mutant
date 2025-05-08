@@ -36,10 +36,16 @@ pub async fn handle_put(
         .put(&key, &source_path, mode, public, no_verify)
         .await?;
 
-    if !quiet {
+    // Create the progress bar wrapper that will disable stdin
+    // Keep it in scope until the end of the function to ensure stdin remains disabled
+    // and progress bars are properly cleaned up
+    let _progress = if !quiet {
         let progress = ProgressWithDisabledStdin::new();
         callbacks::put::create_put_progress(progress_rx, progress.multi_progress().clone());
-    }
+        Some(progress)
+    } else {
+        None
+    };
 
     match start_task.await {
         Ok(result) => match result {
