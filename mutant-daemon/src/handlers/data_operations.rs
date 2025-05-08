@@ -3,7 +3,7 @@ use tokio::fs;
 use uuid::Uuid;
 
 use crate::error::Error as DaemonError;
-use super::{TaskEntry, TaskMap};
+use super::{TaskEntry, TaskMap, ActiveKeysMap, try_register_key, release_key};
 use mutant_lib::storage::ScratchpadAddress;
 use mutant_lib::MutAnt;
 use mutant_protocol::{
@@ -19,13 +19,32 @@ pub(crate) async fn handle_put(
     update_tx: UpdateSender,
     mutant: Arc<MutAnt>,
     tasks: TaskMap,
+    active_keys: ActiveKeysMap,
+    original_request_str: &str,
 ) -> Result<(), DaemonError> {
     let task_id = Uuid::new_v4();
     let user_key = req.user_key.clone();
     let source_path = req.source_path.clone(); // Keep path for logging
 
+    // Try to register the key for this task
+    try_register_key(
+        &active_keys,
+        &user_key,
+        task_id,
+        TaskType::Put,
+        &update_tx,
+        original_request_str,
+    ).await?;
+
     // Read data into an Arc<Vec<u8>> to avoid cloning the whole data later.
     let data_bytes_vec = fs::read(&req.source_path).await.map_err(|e| {
+        // Release the key if we fail to read the file
+        let active_keys_clone = active_keys.clone();
+        let user_key_clone = user_key.clone();
+        tokio::spawn(async move {
+            release_key(&active_keys_clone, &user_key_clone).await;
+        });
+
         DaemonError::IoError(format!(
             "Failed to read source file {}: {}",
             req.source_path, e
@@ -39,6 +58,7 @@ pub(crate) async fn handle_put(
         status: TaskStatus::Pending,
         progress: None,
         result: TaskResult::Pending,
+        key: Some(user_key.clone()),
     };
     // We will insert the TaskEntry after spawning the task and getting the handle
 
@@ -51,6 +71,8 @@ pub(crate) async fn handle_put(
     let mutant_clone = mutant.clone();
     let update_tx_clone_for_spawn = update_tx.clone();
     let data_arc_clone = data_arc.clone(); // Clone the Arc for the task
+    let active_keys_clone = active_keys.clone();
+    let user_key_clone = user_key.clone();
 
     let task_handle = tokio::spawn(async move {
         // Use the cloned handles inside the spawned task
@@ -58,6 +80,8 @@ pub(crate) async fn handle_put(
         let mutant = mutant_clone;
         let update_tx = update_tx_clone_for_spawn;
         let data_to_put = data_arc_clone; // Use the cloned Arc
+        let active_keys = active_keys_clone;
+        let user_key = user_key_clone;
 
         log::info!("Starting PUT task: task_id={}, user_key={}, source_path={}", task_id, user_key, source_path);
 
@@ -157,6 +181,10 @@ pub(crate) async fn handle_put(
         if let Some(response) = final_response {
             let _ = update_tx.send(response);
         }
+
+        // Release the key when the operation completes
+        release_key(&active_keys, &user_key).await;
+        log::debug!("Released key '{}' after PUT operation", user_key);
     });
 
     // Get the abort handle and create the TaskEntry
@@ -179,10 +207,22 @@ pub(crate) async fn handle_get(
     update_tx: UpdateSender,
     mutant: Arc<MutAnt>,
     tasks: TaskMap,
+    active_keys: ActiveKeysMap,
+    original_request_str: &str,
 ) -> Result<(), DaemonError> {
     let task_id = Uuid::new_v4();
     let user_key = req.user_key.clone();
     let destination_path = req.destination_path.clone(); // Keep path for logging and writing
+
+    // Try to register the key for this task
+    try_register_key(
+        &active_keys,
+        &user_key,
+        task_id,
+        TaskType::Get,
+        &update_tx,
+        original_request_str,
+    ).await?;
 
     let task = Task {
         id: task_id,
@@ -190,6 +230,7 @@ pub(crate) async fn handle_get(
         status: TaskStatus::Pending,
         progress: None,
         result: TaskResult::Pending,
+        key: Some(user_key.clone()),
     };
 
     update_tx
@@ -200,12 +241,16 @@ pub(crate) async fn handle_get(
     let tasks_clone = tasks.clone();
     let mutant_clone = mutant.clone();
     let update_tx_clone_for_spawn = update_tx.clone();
+    let active_keys_clone = active_keys.clone();
+    let user_key_clone = user_key.clone();
 
     let task_handle = tokio::spawn(async move {
         // Use the cloned handles inside the spawned task
         let tasks = tasks_clone;
         let mutant = mutant_clone;
         let update_tx = update_tx_clone_for_spawn;
+        let active_keys = active_keys_clone;
+        let user_key = user_key_clone;
 
         log::info!("Starting GET task: task_id={}, user_key={}, destination_path={}", task_id, user_key, destination_path);
 
@@ -339,6 +384,10 @@ pub(crate) async fn handle_get(
                 log::debug!("Client disconnected before final GET result sent: task_id={}", task_id);
             }
         }
+
+        // Release the key when the operation completes
+        release_key(&active_keys, &user_key).await;
+        log::debug!("Released key '{}' after GET operation", user_key);
     });
 
     // Get the abort handle and create the TaskEntry
@@ -360,8 +409,10 @@ pub(crate) async fn handle_rm(
     req: RmRequest,
     update_tx: UpdateSender,
     mutant: Arc<MutAnt>,
+    active_keys: ActiveKeysMap,
     original_request_str: &str,
 ) -> Result<(), DaemonError> {
+    let task_id = Uuid::new_v4();
     let user_key = req.user_key.clone();
     log::info!("Starting RM task: user_key={}", user_key);
 
@@ -379,7 +430,20 @@ pub(crate) async fn handle_rm(
             .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)));
     }
 
+    // Try to register the key for this task
+    try_register_key(
+        &active_keys,
+        &user_key,
+        task_id,
+        TaskType::Rm,
+        &update_tx,
+        original_request_str,
+    ).await?;
+
     let result = mutant.rm(&user_key).await;
+
+    // Release the key after the operation completes
+    release_key(&active_keys, &user_key).await;
 
     let response = match result {
         Ok(_) => {

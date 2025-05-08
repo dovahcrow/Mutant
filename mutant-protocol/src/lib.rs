@@ -238,6 +238,7 @@ pub enum TaskType {
     Sync,
     Purge,
     HealthCheck,
+    Rm,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -308,6 +309,7 @@ pub struct Task {
     pub status: TaskStatus,
     pub progress: Option<TaskProgress>,
     pub result: TaskResult,
+    pub key: Option<String>, // The key this task is operating on, if any
 }
 
 // --- Protocol Definitions (Requests & Responses) ---

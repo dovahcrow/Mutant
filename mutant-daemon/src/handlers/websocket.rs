@@ -11,9 +11,9 @@ use mutant_protocol::{ErrorResponse, Request, Response};
 
 use super::common::send_response;
 use super::dispatcher::handle_request;
-use super::TaskMap;
+use super::{TaskMap, ActiveKeysMap};
 
-pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap) {
+pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap, active_keys: ActiveKeysMap) {
     let (mut ws_sender, mut ws_receiver) = ws.split();
     let (update_tx, mut update_rx) = mpsc::unbounded_channel::<Response>();
 
@@ -58,6 +58,7 @@ pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap) {
                         update_tx.clone(), // Pass the update channel sender
                         mutant.clone(),
                         tasks.clone(),
+                        active_keys.clone(),
                     )
                     .await
                     {

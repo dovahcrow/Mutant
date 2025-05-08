@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::error::Error as DaemonError;
-use super::TaskMap;
+use super::{TaskMap, ActiveKeysMap};
 
 use mutant_lib::MutAnt;
 use mutant_protocol::Request;
@@ -19,15 +19,16 @@ pub(crate) async fn handle_request(
     update_tx: UpdateSender,
     mutant: Arc<MutAnt>,
     tasks: TaskMap,
+    active_keys: ActiveKeysMap,
 ) -> Result<(), DaemonError> {
     match request {
-        Request::Put(put_req) => handle_put(put_req, update_tx, mutant, tasks).await?,
-        Request::Get(get_req) => handle_get(get_req, update_tx, mutant, tasks).await?,
+        Request::Put(put_req) => handle_put(put_req, update_tx, mutant, tasks, active_keys, original_request_str).await?,
+        Request::Get(get_req) => handle_get(get_req, update_tx, mutant, tasks, active_keys, original_request_str).await?,
         Request::QueryTask(query_req) => {
             handle_query_task(query_req, update_tx, tasks, original_request_str).await?
         }
         Request::ListTasks(list_req) => handle_list_tasks(list_req, update_tx, tasks).await?,
-        Request::Rm(rm_req) => handle_rm(rm_req, update_tx, mutant, original_request_str).await?,
+        Request::Rm(rm_req) => handle_rm(rm_req, update_tx, mutant, active_keys, original_request_str).await?,
         Request::ListKeys(list_keys_req) => {
             handle_list_keys(list_keys_req, update_tx, mutant).await?
         }

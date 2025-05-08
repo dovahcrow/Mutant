@@ -40,6 +40,7 @@ impl MutantClient {
                             status: TaskStatus::Pending,
                             progress: None,
                             result: TaskResult::Pending,
+                            key: None,
                         },
                     );
 
@@ -94,6 +95,7 @@ impl MutantClient {
                             status,
                             progress,
                             result: TaskResult::Pending,
+                            key: None,
                         },
                     );
                 }
@@ -157,6 +159,7 @@ impl MutantClient {
                             status,
                             result,
                             progress: None,
+                            key: None,
                         },
                     );
                 }

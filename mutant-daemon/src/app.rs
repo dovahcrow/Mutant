@@ -178,14 +178,19 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     let tasks: TaskMap = Arc::new(RwLock::new(HashMap::new()));
     log::info!("Task manager initialized.");
 
+    // Initialize Active Keys Management
+    let active_keys: handlers::ActiveKeysMap = Arc::new(RwLock::new(HashMap::new()));
+    log::info!("Active keys manager initialized.");
+
     // Define WebSocket route using the actual handler
     let ws_route = warp::path("ws")
         .and(warp::ws())
         .and(warp::any().map(move || mutant.clone()))
         .and(warp::any().map(move || tasks.clone()))
+        .and(warp::any().map(move || active_keys.clone()))
         .map(
-            |ws: warp::ws::Ws, mutant_instance: Arc<MutAnt>, task_map: TaskMap| {
-                ws.on_upgrade(move |socket| handlers::handle_ws(socket, mutant_instance, task_map))
+            |ws: warp::ws::Ws, mutant_instance: Arc<MutAnt>, task_map: TaskMap, active_keys_map: handlers::ActiveKeysMap| {
+                ws.on_upgrade(move |socket| handlers::handle_ws(socket, mutant_instance, task_map, active_keys_map))
             },
         );
 

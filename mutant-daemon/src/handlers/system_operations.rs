@@ -27,6 +27,7 @@ pub(crate) async fn handle_sync(
         status: TaskStatus::Pending,
         progress: None,
         result: TaskResult::Pending,
+        key: None, // Sync doesn't operate on a specific key
     };
 
     update_tx
@@ -167,6 +168,7 @@ pub(crate) async fn handle_purge(
         status: TaskStatus::Pending,
         progress: None,
         result: TaskResult::Pending,
+        key: None, // Purge doesn't operate on a specific key
     };
 
     update_tx
@@ -306,6 +308,7 @@ pub(crate) async fn handle_health_check(
         status: TaskStatus::Pending,
         progress: None,
         result: TaskResult::Pending,
+        key: Some(req.key_name.clone()), // Health check operates on a specific key
     };
 
     update_tx
