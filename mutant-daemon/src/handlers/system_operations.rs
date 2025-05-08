@@ -365,10 +365,19 @@ pub(crate) async fn handle_health_check(
             })
         });
 
-        // Call health_check with the callback
-        let health_check_result = mutant
-            .health_check(&req.key_name, req.recycle, Some(callback))
-            .await; // Pass callback
+        // Check if the key exists first for better error messages
+        let health_check_result = if !mutant.contains_key(&req.key_name).await {
+            // If the key doesn't exist, return an empty result instead of an error
+            // This makes the CLI behavior more user-friendly
+            Ok(mutant_protocol::HealthCheckResult {
+                nb_keys_reset: 0,
+                nb_keys_recycled: 0,
+            })
+        } else {
+            mutant
+                .health_check(&req.key_name, req.recycle, Some(callback))
+                .await // Pass callback
+        };
 
         let final_response = {
             let mut tasks_guard = tasks.write().await;

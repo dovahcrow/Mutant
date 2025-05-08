@@ -106,6 +106,10 @@ impl MutAnt {
         Ok(keys)
     }
 
+    pub async fn contains_key(&self, user_key: &str) -> bool {
+        self.index.read().await.contains_key(user_key)
+    }
+
     pub async fn export_raw_pads_private_key(&self) -> Result<Vec<PadInfo>, Error> {
         let pads_hex = self.index.read().await.export_raw_pads_private_key()?;
         Ok(pads_hex)

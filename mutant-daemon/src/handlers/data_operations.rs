@@ -249,7 +249,7 @@ pub(crate) async fn handle_get(
             })
         });
 
-        // Call get or get_public with the callback
+        // Check if the key exists first for private keys
         let get_result = if req.public {
             // TODO: Fix public key handling if necessary, ScratchpadAddress requires valid hex
             match ScratchpadAddress::from_hex(&user_key) {
@@ -264,7 +264,15 @@ pub(crate) async fn handle_get(
                 }
             }
         } else {
-            mutant.get(&user_key, Some(callback)).await // Pass callback
+            // Check if the key exists first for better error messages
+            if !mutant.contains_key(&user_key).await {
+                Err(mutant_lib::error::Error::Internal(format!(
+                    "Key '{}' not found",
+                    user_key
+                )))
+            } else {
+                mutant.get(&user_key, Some(callback)).await // Pass callback
+            }
         };
 
         let write_result = match get_result {
@@ -356,6 +364,17 @@ pub(crate) async fn handle_rm(
 ) -> Result<(), DaemonError> {
     let user_key = req.user_key.clone();
     log::info!("Starting RM task: user_key={}", user_key);
+
+    // Check if the key exists first
+    let key_exists = mutant.contains_key(&user_key).await;
+
+    if !key_exists {
+        log::info!("RM task for non-existent key: user_key={}", user_key);
+        // Return success even for non-existent keys to make the CLI behavior consistent
+        return update_tx
+            .send(Response::RmSuccess(RmSuccessResponse { user_key }))
+            .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)));
+    }
 
     let result = mutant.rm(&user_key).await;
 

@@ -40,7 +40,13 @@ pub async fn handle_get(
     match start_task.await {
         Ok(result) => match result {
             TaskResult::Error(error) => {
-                eprintln!("{} {}", "Error:".bright_red(), error);
+                if error.contains("Key not found") ||
+                   error.contains("No pads found for key") ||
+                   error.contains("upload is not finished") {
+                    eprintln!("{} Key '{}' not found.", "Error:".bright_red(), key);
+                } else {
+                    eprintln!("{} {}", "Error:".bright_red(), error);
+                }
             }
             TaskResult::Result(result) => match result {
                 TaskResultType::Get(result) => {

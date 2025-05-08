@@ -97,7 +97,8 @@ OVERALL_TEST_EXIT_CODE=0
 
 # Test the mutant library
 echo "--- Testing Lib Crate (Filter: '${TEST_PATH_FILTER:-<all>}') ---"
-LIB_TEST_CMD="cargo test --package mutant-lib -- --nocapture --test-threads=1"
+# LIB_TEST_CMD="cargo test --package mutant-lib -- --nocapture --test-threads=1"
+LIB_TEST_CMD="cargo test --package mutant-lib --package mutant --package mutant-daemon --package mutant-client --package mutant-protocol -- --nocapture --test-threads=1"
 if [ -n "$TEST_PATH_FILTER" ]; then
   LIB_TEST_CMD="$LIB_TEST_CMD $TEST_PATH_FILTER"
 fi
