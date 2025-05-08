@@ -186,7 +186,7 @@ $> mutant rm mykey
 ```bash
 # Store data publicly (no encryption) under a name
 $> mutant put -p my_key my_file.ext
-# Output: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
 # Get your own public data by name
 $> mutant get my_key output.txt
