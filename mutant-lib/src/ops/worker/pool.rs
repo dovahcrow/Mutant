@@ -226,7 +226,8 @@ where
         // IMPORTANT: We DO NOT close any channels at this point.
         // We'll let the workers process all items from their local queues first.
         // The global channel will remain open for recycled items.
-        // We'll close channels only after all workers have completed or after the recycler has completed.
+        // Workers will close channels when they've processed all items.
+        // We'll also close channels after all workers have completed or after the recycler has completed.
         debug!("Keeping all channels open to allow processing of items...");
 
         // Wait for all workers to complete

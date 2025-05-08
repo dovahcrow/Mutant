@@ -164,8 +164,15 @@ where
                         // Check if we've processed all items
                         if current_count >= self.total_items_hint {
                             debug!("Worker {}.{}: Processed all {} items, closing channels", self.id, task_id, current_count);
-                            // Close the global queue to signal that all items have been processed
+                            // Close both queues to signal that all items have been processed
                             self.global_queue.close();
+                            self.local_queue.close();
+
+                            // Also close the retry channel if it exists
+                            if let Some(retry_tx) = &self.retry_sender {
+                                debug!("Worker {}.{}: Closing retry channel", self.id, task_id);
+                                retry_tx.close();
+                            }
                         }
 
                         self.results_collector.lock().await.push((item_id, result));
