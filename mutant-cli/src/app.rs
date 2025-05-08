@@ -7,10 +7,10 @@ use mutant_client::MutantClient;
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
-    // If no command is provided, run the ls command
+    // If no command is provided, run the ls command without history
     if cli.command.is_none() {
         commands::daemon::start_daemon().await?;
-        return commands::ls::handle_ls().await;
+        return commands::ls::handle_ls(false).await;
     }
 
     // We know command is Some at this point, so we can safely unwrap
@@ -53,8 +53,8 @@ pub async fn run() -> Result<()> {
         Commands::Rm { key } => {
             commands::rm::handle_rm(key).await?;
         }
-        Commands::Ls => {
-            commands::ls::handle_ls().await?;
+        Commands::Ls { history } => {
+            commands::ls::handle_ls(history).await?;
         }
         Commands::Stats => {
             commands::stats::handle_stats().await?;

@@ -4,7 +4,7 @@ use colored::Colorize;
 use humansize::{format_size, BINARY};
 use log::info;
 
-pub async fn handle_ls() -> Result<()> {
+pub async fn handle_ls(show_history: bool) -> Result<()> {
     let mut client = connect_to_daemon().await?;
     let details = client.list_keys().await?;
 
@@ -52,18 +52,22 @@ pub async fn handle_ls() -> Result<()> {
         }
     }
 
-    info!("Loading fetch history from file...");
-    let mut history = load_history();
-    if !history.is_empty() {
-        println!("\n--- Fetch History ---");
-        history.sort_by(|a, b| b.fetched_at.cmp(&a.fetched_at));
+    // Only show fetch history if requested
+    if show_history {
+        info!("Loading fetch history from file...");
+        let mut history = load_history();
+        if !history.is_empty() {
+            println!("\n--- Fetch History ---");
+            history.sort_by(|a, b| b.fetched_at.cmp(&a.fetched_at));
 
-        for entry in history {
-            let size_str = format_size(entry.size, BINARY);
-            let date_str = entry.fetched_at.format("%b %d %H:%M").to_string();
+            for entry in history {
+                let size_str = format_size(entry.size, BINARY);
+                let date_str = entry.fetched_at.format("%b %d %H:%M").to_string();
 
-            println!(" {: <32} {:>10} {}", entry.address, size_str, date_str);
+                println!(" {: <32} {:>10} {}", entry.address, size_str, date_str);
+            }
         }
     }
+
     Ok(())
 }

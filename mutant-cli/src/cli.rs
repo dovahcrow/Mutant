@@ -38,7 +38,10 @@ pub enum Commands {
     #[command(about = "Remove a key-value pair")]
     Rm { key: String },
     #[command(about = "List stored keys")]
-    Ls,
+    Ls {
+        #[arg(short = 'h', long, help = "Show fetch history")]
+        history: bool,
+    },
     #[command(about = "Show storage statistics")]
     Stats,
     #[command(about = "Manage background tasks")]
