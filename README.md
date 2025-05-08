@@ -226,7 +226,7 @@ $> mutant ls
 ----------------------------------------------------------------------
  dwarf                  265   1.03 GiB Ready        Private
  nothing_here             2   3.28 KiB Ready        Public: ac09242b5c5658dd313e37b08cba4810346bc8ce75f32d9330b20f142c941fa47a396077e91acfb990edab5430e3245
- zorglub                 10 100.00 KiB         Private
+ zorglub                 10 100.00 KiB 61% (6/10)   Private
 
 # List stored keys with fetch history
 $> mutant ls --history
