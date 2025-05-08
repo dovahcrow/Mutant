@@ -3,7 +3,7 @@ use crate::connect_to_daemon;
 use crate::history::append_history_entry;
 use crate::history::FetchHistoryEntry;
 use crate::terminal::ProgressWithDisabledStdin;
-use crate::utils::format_elapsed_time;
+use crate::utils::{ensure_progress_cleared, format_elapsed_time};
 use anyhow::Result;
 use chrono::Utc;
 use colored::Colorize;
@@ -41,7 +41,7 @@ pub async fn handle_get(
     // Create the progress bar wrapper that will disable stdin
     // Keep it in scope until the end of the function to ensure stdin remains disabled
     // and progress bars are properly cleaned up
-    let _progress = if !quiet {
+    let progress = if !quiet {
         let progress = ProgressWithDisabledStdin::new();
         callbacks::get::create_get_progress(progress_rx, progress.multi_progress());
         Some(progress)
@@ -64,6 +64,11 @@ pub async fn handle_get(
                 TaskResultType::Get(result) => {
                     // Calculate and format elapsed time
                     let time_str = format_elapsed_time(start_time.elapsed());
+
+                    // Ensure progress bars are cleared before displaying final message
+                    if let Some(p) = &progress {
+                        ensure_progress_cleared(p.multi_progress());
+                    }
 
                     println!(
                         "{} Get task completed in {}. Result saved to {} on daemon.",
