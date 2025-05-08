@@ -31,6 +31,7 @@ where
     pub(crate) global_rx: Receiver<Item>,
     pub(crate) retry_sender: Option<Sender<(E, Item)>>,
     pub(crate) retry_rx: Option<Receiver<(E, Item)>>,
+    pub(crate) total_items_hint: usize,
     pub(crate) _marker_context: PhantomData<Context>,
     pub(crate) _marker_result: PhantomData<T>,
     pub(crate) _marker_error: PhantomData<E>,
@@ -106,18 +107,16 @@ where
         // Create a counter to track the number of active workers
         let active_workers_counter = Arc::new(Mutex::new(0));
 
-        // Use a simple approach to estimate the total number of items
-        // We'll just use the number of workers * 10 as a reasonable default
-        let worker_count = self.worker_txs.len();
-        let worker_batch_size = *crate::network::BATCH_SIZE as usize;
-        let total_items_hint = worker_count * worker_batch_size;
-        debug!("Total items hint: {} (workers: {}, batch size: {})",
-               total_items_hint, worker_count, worker_batch_size);
+        // Use the total items hint from the pool
+        // This is the actual number of pads that need to be processed
+        let total_items_hint = self.total_items_hint;
+        debug!("Using total_items_hint: {}", total_items_hint);
 
         // Spawn a task to monitor the processed items and active workers
         let monitor_processed_items_counter = processed_items_counter.clone();
         let monitor_active_workers_counter = active_workers_counter.clone();
         let monitor_all_items_processed = all_items_processed.clone();
+        let monitor_total_items_hint = total_items_hint;
 
         tokio::spawn(async move {
             // Check every 1 second if all items have been processed
@@ -127,23 +126,13 @@ where
                 let processed_items = *monitor_processed_items_counter.lock().await;
                 let active_workers = *monitor_active_workers_counter.lock().await;
 
-                debug!("Monitor: processed_items={}, active_workers={}", processed_items, active_workers);
-
-                // Get the expected number of items from the first worker's run
-                // This is the actual number of pads we need to process, which might be less than total_items_hint
-                let expected_items = if processed_items > 0 {
-                    // If we've processed some items, we can use that as our expected count
-                    // This handles cases where the actual number of pads is less than worker_count * batch_size
-                    processed_items
-                } else {
-                    // Otherwise use the hint as a fallback
-                    total_items_hint
-                };
+                debug!("Monitor: processed_items={}, active_workers={}, expected_items={}",
+                       processed_items, active_workers, monitor_total_items_hint);
 
                 // We consider all items processed when:
-                // 1. We've processed all expected items (all pads are Confirmed), OR
+                // 1. We've processed exactly the expected number of items (all pads are Confirmed), OR
                 // 2. We've processed at least one item and there are no active workers
-                if processed_items > 0 && processed_items == expected_items {
+                if processed_items > 0 && processed_items == monitor_total_items_hint {
                     debug!("Monitor: Processed all {} expected items. All pads confirmed. Notifying...",
                            processed_items);
                     monitor_all_items_processed.notify_waiters();

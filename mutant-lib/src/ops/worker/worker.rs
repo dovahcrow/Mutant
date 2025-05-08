@@ -178,12 +178,12 @@ where
 
                         // Check if we've processed all items
                         // We notify in these cases:
-                        // 1. We've processed at least the total_items_hint (all expected pads are Confirmed)
+                        // 1. We've processed exactly the total_items_hint (all expected pads are Confirmed)
                         // 2. We've processed all items that were actually in the queue (might be less than hint)
                         // 3. We've processed some items and both queues are closed
-                        if current_count >= self.total_items_hint {
-                            debug!("Worker {}.{}: Processed {} items (>= hint of {}), notifying",
-                                   self.id, task_id, current_count, self.total_items_hint);
+                        if current_count == self.total_items_hint {
+                            debug!("Worker {}.{}: Processed {} items (exact match with hint), notifying",
+                                   self.id, task_id, current_count);
                             // Notify that all items have been processed
                             self.all_items_processed.notify_waiters();
                         } else if self.local_queue.is_closed() && self.global_queue.is_closed() {
@@ -192,9 +192,8 @@ where
                             debug!("Worker {}.{}: Processed {} items and queues are closed, notifying",
                                    self.id, task_id, current_count);
                             self.all_items_processed.notify_waiters();
-                        } else if current_count > 0 && current_count < self.total_items_hint {
-                            // If we've processed some items but fewer than the hint,
-                            // check if this is the last item we expect to process
+                        } else if current_count > 0 {
+                            // If we've processed some items, check if this is the last item we expect to process
                             let counter = self.active_workers_counter.lock().await;
                             if *counter <= 1 {
                                 debug!("Worker {}.{}: Processed {} items with only {} active workers, notifying",

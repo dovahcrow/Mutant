@@ -91,6 +91,7 @@ where
         global_rx,
         retry_sender,
         retry_rx: retry_receiver,
+        total_items_hint: config.total_items_hint,
         _marker_context: PhantomData,
         _marker_result: PhantomData,
         _marker_error: PhantomData,
