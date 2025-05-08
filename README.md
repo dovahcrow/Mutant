@@ -127,7 +127,7 @@ $> cargo install mutant
 You can fetch the daily meme of the day with the following command:
 
 ```bash
-$> mutant get -p 9620303d41cd65177e6763809f4780b1fa7d864a14d4ed0ed0322c5d4524fe406db65fdc485f1737814c81ab6d61dab0 daily_meme.jpg
+$> mutant get -p a420224971527d61ce6ee21d850a07c243498c95808697e8fac23f461545656933016697d10b805c0fa26b50eb3532b2 daily_meme.jpg
 ```
 
 ## Command-Line Interface (CLI)
