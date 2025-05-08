@@ -370,9 +370,12 @@ pub(crate) async fn handle_rm(
 
     if !key_exists {
         log::info!("RM task for non-existent key: user_key={}", user_key);
-        // Return success even for non-existent keys to make the CLI behavior consistent
+        // Return an error for non-existent keys
         return update_tx
-            .send(Response::RmSuccess(RmSuccessResponse { user_key }))
+            .send(Response::Error(ErrorResponse {
+                error: format!("Key '{}' not found", user_key),
+                original_request: Some(original_request_str.to_string()),
+            }))
             .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)));
     }
 

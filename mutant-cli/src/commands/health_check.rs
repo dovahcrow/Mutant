@@ -35,7 +35,7 @@ pub async fn handle_health_check(
     match start_task.await {
         Ok(result) => match result {
             TaskResult::Error(error) => {
-                if error.contains("Key not found") || error.contains("No pads found for key") {
+                if error.contains("not found") || error.contains("No pads found for key") {
                     eprintln!("{} Key '{}' not found.", "Error:".bright_red(), key_name);
                 } else {
                     eprintln!("{} {}", "Error:".bright_red(), error);

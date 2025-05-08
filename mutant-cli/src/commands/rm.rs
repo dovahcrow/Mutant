@@ -10,7 +10,7 @@ pub async fn handle_rm(key: String) -> Result<()> {
             println!("{} Key '{}' removed.", "•".bright_green(), key);
         }
         Err(e) => {
-            if e.to_string().contains("Key not found") {
+            if e.to_string().contains("not found") {
                 eprintln!("{} Key '{}' not found.", "Error:".bright_red(), key);
             } else {
                 eprintln!("{} {}", "Error:".bright_red(), e);
