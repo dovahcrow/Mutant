@@ -1,15 +1,22 @@
 use std::time::Duration;
-use humantime::format_duration;
 use indicatif::MultiProgress;
+use pretty_duration::{PrettyDurationOptions, PrettyDurationOutputFormat};
 
 /// Format a duration into a human-readable string using the humantime crate
+/// but hide durations under 1 second
 ///
 /// Examples:
 /// - 1m 30s
-/// - 2s 500ms
-/// - 45ms
+/// - 2s
+/// - <1s (for durations under 1 second)
 pub fn format_elapsed_time(elapsed: Duration) -> String {
-    format!("{}", format_duration(elapsed))
+    let elapsed = pretty_duration::pretty_duration(&elapsed, Some(PrettyDurationOptions {
+        output_format: Some(PrettyDurationOutputFormat::Compact),
+        singular_labels: None,
+        plural_labels: None,
+    }));
+    
+    format!("{}", elapsed)
 }
 
 /// Ensure all progress bars in a MultiProgress are properly cleared

@@ -15,8 +15,8 @@ mutant-protocol = { path = "../mutant-protocol", version = "0.6.0-dev" }
 tokio = { version = "1.0", features = ["full"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 humansize = "2.1"
-humantime = "2.1"
 chrono = { version = "0.4", features = ["serde"] }
 directories = "5.0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+pretty-duration = "0.1.1"
