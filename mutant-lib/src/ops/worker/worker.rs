@@ -28,6 +28,8 @@ where
     pub results_collector: Arc<Mutex<Vec<(Task::ItemId, T)>>>,
     pub errors_collector: Arc<Mutex<Vec<E>>>,
     pub processed_items_counter: Arc<Mutex<usize>>,
+    pub active_workers_counter: Arc<Mutex<usize>>,
+    pub all_items_processed: Arc<tokio::sync::Notify>,
     pub total_items_hint: usize,
     pub _marker_context: PhantomData<Context>,
 }
@@ -44,6 +46,14 @@ where
     pub async fn run(self) -> Result<(), PoolError<E>> {
         let mut task_handles = FuturesUnordered::new();
 
+        // We'll increment the active workers counter once for the worker itself
+        // rather than for each task, to avoid overcounting
+        {
+            let mut counter = self.active_workers_counter.lock().await;
+            *counter += 1;
+            debug!("Worker {} started. Active workers: {}", self.id, *counter);
+        }
+
         for task_id in 0..*BATCH_SIZE {
             let worker_clone = Worker {
                 id: self.id,
@@ -55,6 +65,8 @@ where
                 results_collector: self.results_collector.clone(),
                 errors_collector: self.errors_collector.clone(),
                 processed_items_counter: self.processed_items_counter.clone(),
+                active_workers_counter: self.active_workers_counter.clone(),
+                all_items_processed: self.all_items_processed.clone(),
                 total_items_hint: self.total_items_hint,
                 _marker_context: PhantomData,
             };
@@ -77,7 +89,10 @@ where
             }
         }
 
-        debug!("Worker {} completed all tasks or timed out", self.id);
+        // We don't need to decrement the active workers counter here anymore
+        // It's already decremented in the run_task_processor method when the last task completes
+        debug!("Worker {} completed all tasks.", self.id);
+
         Ok(())
     }
 
@@ -162,16 +177,32 @@ where
                         drop(counter); // Release the lock
 
                         // Check if we've processed all items
+                        // We notify in these cases:
+                        // 1. We've processed at least the total_items_hint (all expected pads are Confirmed)
+                        // 2. We've processed all items that were actually in the queue (might be less than hint)
+                        // 3. We've processed some items and both queues are closed
                         if current_count >= self.total_items_hint {
-                            debug!("Worker {}.{}: Processed all {} items, closing channels", self.id, task_id, current_count);
-                            // Close both queues to signal that all items have been processed
-                            self.global_queue.close();
-                            self.local_queue.close();
-
-                            // Also close the retry channel if it exists
-                            if let Some(retry_tx) = &self.retry_sender {
-                                debug!("Worker {}.{}: Closing retry channel", self.id, task_id);
-                                retry_tx.close();
+                            debug!("Worker {}.{}: Processed {} items (>= hint of {}), notifying",
+                                   self.id, task_id, current_count, self.total_items_hint);
+                            // Notify that all items have been processed
+                            self.all_items_processed.notify_waiters();
+                        } else if self.local_queue.is_closed() && self.global_queue.is_closed() {
+                            // If both queues are closed and we've processed some items,
+                            // it means we've processed all actual items (which might be fewer than the hint)
+                            debug!("Worker {}.{}: Processed {} items and queues are closed, notifying",
+                                   self.id, task_id, current_count);
+                            self.all_items_processed.notify_waiters();
+                        } else if current_count > 0 && current_count < self.total_items_hint {
+                            // If we've processed some items but fewer than the hint,
+                            // check if this is the last item we expect to process
+                            let counter = self.active_workers_counter.lock().await;
+                            if *counter <= 1 {
+                                debug!("Worker {}.{}: Processed {} items with only {} active workers, notifying",
+                                       self.id, task_id, current_count, *counter);
+                                drop(counter);
+                                self.all_items_processed.notify_waiters();
+                            } else {
+                                drop(counter);
                             }
                         }
 
@@ -199,6 +230,22 @@ where
                     self.local_queue.is_closed(),
                     self.global_queue.is_closed()
                 );
+
+                // Check if this is the last task for this worker
+                // If all tasks are done, we should decrement the active workers counter
+                debug!("Worker {}.{} task completed. No more items to process.", self.id, task_id);
+
+                // Decrement the active workers counter if this is the last task to finish
+                // We do this here to ensure the counter is decremented as soon as possible
+                // rather than waiting for the entire worker to complete
+                if task_id == *BATCH_SIZE - 1 {
+                    let mut counter = self.active_workers_counter.lock().await;
+                    if *counter > 0 {
+                        *counter -= 1;
+                    }
+                    debug!("Worker {} last task completed. Active workers: {}", self.id, *counter);
+                }
+
                 break;
             }
         }

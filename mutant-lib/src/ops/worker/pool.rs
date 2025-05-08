@@ -100,6 +100,12 @@ where
         // Create a counter to track the number of processed items
         let processed_items_counter = Arc::new(Mutex::new(0));
 
+        // Create a flag to track if all items have been processed
+        let all_items_processed = Arc::new(tokio::sync::Notify::new());
+
+        // Create a counter to track the number of active workers
+        let active_workers_counter = Arc::new(Mutex::new(0));
+
         // Use a simple approach to estimate the total number of items
         // We'll just use the number of workers * 10 as a reasonable default
         let worker_count = self.worker_txs.len();
@@ -107,6 +113,48 @@ where
         let total_items_hint = worker_count * worker_batch_size;
         debug!("Total items hint: {} (workers: {}, batch size: {})",
                total_items_hint, worker_count, worker_batch_size);
+
+        // Spawn a task to monitor the processed items and active workers
+        let monitor_processed_items_counter = processed_items_counter.clone();
+        let monitor_active_workers_counter = active_workers_counter.clone();
+        let monitor_all_items_processed = all_items_processed.clone();
+
+        tokio::spawn(async move {
+            // Check every 1 second if all items have been processed
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+                let processed_items = *monitor_processed_items_counter.lock().await;
+                let active_workers = *monitor_active_workers_counter.lock().await;
+
+                debug!("Monitor: processed_items={}, active_workers={}", processed_items, active_workers);
+
+                // Get the expected number of items from the first worker's run
+                // This is the actual number of pads we need to process, which might be less than total_items_hint
+                let expected_items = if processed_items > 0 {
+                    // If we've processed some items, we can use that as our expected count
+                    // This handles cases where the actual number of pads is less than worker_count * batch_size
+                    processed_items
+                } else {
+                    // Otherwise use the hint as a fallback
+                    total_items_hint
+                };
+
+                // We consider all items processed when:
+                // 1. We've processed all expected items (all pads are Confirmed), OR
+                // 2. We've processed at least one item and there are no active workers
+                if processed_items > 0 && processed_items == expected_items {
+                    debug!("Monitor: Processed all {} expected items. All pads confirmed. Notifying...",
+                           processed_items);
+                    monitor_all_items_processed.notify_waiters();
+                    break;
+                } else if processed_items > 0 && active_workers == 0 {
+                    debug!("Monitor: All workers completed with {} processed items. Notifying...", processed_items);
+                    monitor_all_items_processed.notify_waiters();
+                    break;
+                }
+            }
+        });
 
         let worker_rxs = std::mem::take(&mut self.worker_rxs);
         let maybe_retry_rx = self.retry_rx.take();
@@ -130,6 +178,9 @@ where
             let worker_global_rx = self.global_rx.clone();
             global_rx_clones.push(worker_global_rx.clone());
 
+            // We don't need to increment the active workers counter here
+            // It will be incremented in the worker's run method
+
             let worker: Worker<Item, Context, Client, Task, T, E> = Worker {
                 id: worker_id,
                 client,
@@ -140,6 +191,8 @@ where
                 results_collector: results_collector.clone(),
                 errors_collector: errors_collector.clone(),
                 processed_items_counter: processed_items_counter.clone(),
+                active_workers_counter: active_workers_counter.clone(),
+                all_items_processed: all_items_processed.clone(),
                 total_items_hint,
                 _marker_context: PhantomData,
             };
@@ -209,9 +262,9 @@ where
                 debug!("Recycle channel closed. Recycler task finishing. Stats: recycled={}, dropped={}, errors={}",
                       recycled_count, dropped_count, error_count);
 
-                // Close the global_tx_for_recycler to signal that no more recycled items will be sent
-                debug!("Recycler finished processing, closing global_tx_for_recycler.");
-                global_tx_for_recycler.close(); // Recycler closes its global_tx clone
+                // We don't close the global_tx_for_recycler here anymore
+                // It will be closed by the main pool when all workers are done
+                debug!("Recycler finished processing, but keeping global_tx_for_recycler open for workers.");
 
                 Ok::<(), PoolError<E>>(())
             }))
@@ -226,9 +279,46 @@ where
         // IMPORTANT: We DO NOT close any channels at this point.
         // We'll let the workers process all items from their local queues first.
         // The global channel will remain open for recycled items.
-        // Workers will close channels when they've processed all items.
-        // We'll also close channels after all workers have completed or after the recycler has completed.
+        // We'll wait for the all_items_processed notification before closing channels.
         debug!("Keeping all channels open to allow processing of items...");
+
+        // Wait for the all_items_processed notification with a timeout
+        let timeout = tokio::time::Duration::from_secs(60); // 60 seconds timeout
+        tokio::select! {
+            _ = all_items_processed.notified() => {
+                debug!("Received all_items_processed notification. Closing channels...");
+            }
+            _ = tokio::time::sleep(timeout) => {
+                debug!("Timeout waiting for all_items_processed notification. Closing channels anyway...");
+            }
+        }
+
+        // Now close all channels
+        debug!("Closing channels...");
+
+        // First close the retry channel to prevent new items from being recycled
+        if let Some(sender) = &self.retry_sender {
+            debug!("Closing retry channel...");
+            sender.close();
+        }
+
+        // Then close the worker channels
+        debug!("Closing worker channels...");
+        for tx in self.worker_txs.iter() {
+            tx.close();
+        }
+
+        // Close the global channel
+        debug!("Closing global channel...");
+        self.global_tx.close();
+
+        // Close all global_rx clones
+        debug!("Closing all global_rx clones...");
+        for rx in &global_rx_clones {
+            rx.close();
+        }
+
+        debug!("All channels closed.");
 
         // Wait for all workers to complete
         debug!("Waiting for {} workers to complete...", worker_handles.len());
@@ -265,35 +355,6 @@ where
 
         debug!("All {} workers completed.", total_workers);
 
-        // Now that all workers have completed, we can close the worker channels
-        debug!("Now closing worker_txs channels after all workers have completed...");
-        for tx in self.worker_txs.iter() {
-            tx.close();
-        }
-        debug!("Closed worker channels.");
-
-        // Close the global_tx if recycling is not enabled
-        if recycler_handle.is_none() {
-            // If there's no recycler, no one else will use global_tx
-            debug!("No recycler active. Closing original global_tx.");
-            self.global_tx.close(); // Close the original global_tx
-
-            // Close all global_rx clones
-            debug!("No recycler active. Closing all global_rx clones.");
-            for rx in &global_rx_clones {
-                rx.close();
-            }
-            debug!("Closed all global_rx clones.");
-
-            // Close the retry channel if it exists
-            if let Some(sender) = &self.retry_sender {
-                sender.close();
-                debug!("Closed retry channel.");
-            }
-        } else {
-            debug!("Recycler active. Keeping channels open for recycling.");
-        }
-
         // Wait for recycler to complete if it exists
         if let Some(handle) = recycler_handle {
             debug!("Waiting for recycler task to complete...");
@@ -301,37 +362,13 @@ where
             match handle.await {
                 Ok(Ok(())) => {
                     debug!("Internal recycler task completed successfully.");
-
-                    // Now that the recycler has completed, close all global_rx clones
-                    debug!("Recycler completed. Now closing all global_rx clones.");
-                    for rx in &global_rx_clones {
-                        rx.close();
-                    }
-                    debug!("Closed all global_rx clones after recycler completion.");
                 }
                 Ok(Err(recycler_pool_error)) => {
                     error!("Internal recycler task failed: {:?}", recycler_pool_error);
-
-                    // Close global_rx clones even if recycler failed
-                    debug!("Recycler failed. Closing all global_rx clones.");
-                    for rx in &global_rx_clones {
-                        rx.close();
-                    }
-                    debug!("Closed all global_rx clones after recycler failure.");
-
-                    // Return the error to ensure the caller knows recycling failed
                     return Err(recycler_pool_error);
                 }
                 Err(join_err) => {
                     error!("Internal recycler task panicked: {:?}", join_err);
-
-                    // Close global_rx clones even if recycler panicked
-                    debug!("Recycler panicked. Closing all global_rx clones.");
-                    for rx in &global_rx_clones {
-                        rx.close();
-                    }
-                    debug!("Closed all global_rx clones after recycler panic.");
-
                     return Err(PoolError::JoinError(join_err));
                 }
             }
