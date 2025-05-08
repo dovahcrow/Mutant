@@ -144,10 +144,17 @@ pub(crate) async fn handle_put(
                 // Only update if the task hasn't been stopped externally
                 if entry.task.status != TaskStatus::Stopped {
                     match result {
-                        Ok(addr) => {
-                            // For public keys, include the index address in the result
+                        Ok(_addr) => {
+                            // For public keys, get the index pad address from the master index
                             let public_address = if req.public {
-                                Some(addr.to_hex())
+                                // Get the index pad address from the master index
+                                match mutant.get_public_index_address(&user_key).await {
+                                    Ok(addr) => Some(addr),
+                                    Err(e) => {
+                                        log::warn!("Failed to get public index address for key {}: {}", user_key, e);
+                                        None
+                                    }
+                                }
                             } else {
                                 None
                             };

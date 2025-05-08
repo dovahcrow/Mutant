@@ -110,6 +110,25 @@ impl MutAnt {
         self.index.read().await.contains_key(user_key)
     }
 
+    /// Get the public index address for a key
+    ///
+    /// This is used to get the address that can be used to fetch the key publicly
+    pub async fn get_public_index_address(&self, user_key: &str) -> Result<String, Error> {
+        let index_guard = self.index.read().await;
+
+        // Check if the key exists and is public
+        if !index_guard.is_public(user_key) {
+            return Err(Error::Internal(format!("Key '{}' is not a public key", user_key)));
+        }
+
+        // Extract the index pad
+        if let Some(index_pad) = index_guard.extract_public_index_pad(user_key) {
+            Ok(index_pad.address.to_hex())
+        } else {
+            Err(Error::Internal(format!("Failed to get index pad for key '{}'", user_key)))
+        }
+    }
+
     pub async fn export_raw_pads_private_key(&self) -> Result<Vec<PadInfo>, Error> {
         let pads_hex = self.index.read().await.export_raw_pads_private_key()?;
         Ok(pads_hex)
