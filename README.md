@@ -6,7 +6,7 @@
 [![Docs.rs](https://docs.rs/mutant-lib/badge.svg)](https://docs.rs/mutant-lib)
 [![License: LGPLv3](https://img.shields.io/badge/license-LGPLv3-blue.svg)](LICENSE)
 
-> **Mutant** is a public/private mutable key-value store on the Autonomi decentralized storage network, featuring resumable uploads, local index caching, and a powerful async Rust API + CLI.
+> **Mutant** is a decentralized P2P mutable key-value storage system built on the Autonomi network, featuring chunking, encryption, resumable uploads, pad recycling, daemon architecture, and background task management with a powerful async Rust API + CLI.
 
 <p align="center">
   <img src="docs/screenshots/banner_medium.png" alt="cover" width="100%">
@@ -258,7 +258,7 @@ Add `mutant-lib` and its dependencies to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mutant-lib = "0.5.0" # Or the version you need
+mutant-lib = "0.6.0" # Or the version you need
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -316,3 +316,84 @@ async fn main() -> Result<()> {
 }
 
 This keyless instance is optimized for fetching public data and cannot perform operations requiring a private key (like `put`, `rm`, `ls`, etc).
+
+### Using the Daemon and Client
+
+For most applications, it's recommended to use the daemon architecture:
+
+```rust
+use mutant_client::MutantClient;
+use anyhow::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Connect to the daemon (must be running)
+    let mut client = MutantClient::new();
+    client.connect("ws://localhost:3030/ws").await?;
+
+    // Start a put operation in the background
+    let (start_task, progress_rx) = client.put(
+        "my_key",
+        "path/to/file.txt",
+        mutant_protocol::StorageMode::Medium,
+        false, // not public
+        false, // verify
+    ).await?;
+
+    // Monitor progress (optional)
+    tokio::spawn(async move {
+        while let Ok(progress) = progress_rx.recv().await {
+            println!("Progress: {:?}", progress);
+        }
+    });
+
+    // Wait for the task to complete
+    let result = start_task.await?;
+    println!("Task completed: {:?}", result);
+
+    Ok(())
+}
+```
+
+## Development and Testing
+
+### Local Testnet Management (`scripts/manage_local_testnet.sh`)
+
+### Running Integration Tests (`scripts/run_tests_with_env.sh`)
+
+## Migration
+
+## Architecture Overview
+
+MutAnt consists of five main components that work together to provide a complete storage solution:
+
+1. **mutant-lib**: Core library handling chunking, encryption, and storage operations
+2. **mutant-protocol**: Shared communication format definitions
+3. **mutant-daemon**: Background service maintaining Autonomi connection
+4. **mutant-client**: WebSocket client library for communicating with the daemon
+5. **mutant-cli**: Command-line interface for end users
+
+These components work together in a client-server architecture:
+
+- The **daemon** uses **mutant-lib** to interact with the Autonomi network
+- **Clients** (CLI or custom applications) connect to the daemon via WebSocket
+- Communication between clients and the daemon uses the protocol definitions
+- The daemon manages concurrent operations, background tasks, and network connections
+
+This architecture provides several benefits:
+- Persistent connection to the Autonomi network
+- Background processing of long-running operations
+- Task management and monitoring
+- Concurrent operations with efficient resource usage
+- Worker pools for optimized performance
+
+### Internal Architecture
+
+Under the hood, MutAnt uses a worker architecture for handling operations:
+- 10 workers, each with a dedicated client
+- Each worker manages 10 concurrent operations (tasks)
+- Total of 100 concurrent operations
+- Round-robin distribution of work with work stealing
+- Automatic recycling of failed pads
+
+## Configuration
