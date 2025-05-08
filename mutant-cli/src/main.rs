@@ -5,6 +5,7 @@ mod callbacks;
 mod cli;
 mod commands;
 mod history;
+mod terminal;
 
 pub use app::connect_to_daemon;
 use log::LevelFilter;

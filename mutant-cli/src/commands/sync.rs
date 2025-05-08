@@ -1,8 +1,8 @@
 use crate::callbacks;
 use crate::connect_to_daemon;
+use crate::terminal::ProgressWithDisabledStdin;
 use anyhow::Result;
 use colored::Colorize;
-use indicatif::MultiProgress;
 use mutant_protocol::TaskResult;
 use mutant_protocol::TaskResultType;
 
@@ -23,8 +23,8 @@ pub async fn handle_sync(background: bool, push_force: bool, quiet: bool) -> Res
     let (start_task, progress_rx) = client.sync(push_force).await?;
 
     if !quiet {
-        let multi_progress = MultiProgress::new();
-        callbacks::sync::create_sync_progress(progress_rx, &multi_progress);
+        let progress = ProgressWithDisabledStdin::new();
+        callbacks::sync::create_sync_progress(progress_rx, progress.multi_progress());
     }
 
     match start_task.await {

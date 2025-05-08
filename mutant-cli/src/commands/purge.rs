@@ -1,8 +1,8 @@
 use crate::callbacks;
 use crate::connect_to_daemon;
+use crate::terminal::ProgressWithDisabledStdin;
 use anyhow::Result;
 use colored::Colorize;
-use indicatif::MultiProgress;
 use mutant_protocol::TaskResult;
 use mutant_protocol::TaskResultType;
 
@@ -23,8 +23,8 @@ pub async fn handle_purge(background: bool, aggressive: bool, quiet: bool) -> Re
     let (start_task, progress_rx) = client.purge(aggressive).await?;
 
     if !quiet {
-        let multi_progress = MultiProgress::new();
-        callbacks::purge::create_purge_progress(progress_rx, &multi_progress);
+        let progress = ProgressWithDisabledStdin::new();
+        callbacks::purge::create_purge_progress(progress_rx, progress.multi_progress());
     }
 
     match start_task.await {

@@ -1,8 +1,8 @@
 use crate::callbacks;
 use crate::connect_to_daemon;
+use crate::terminal::ProgressWithDisabledStdin;
 use anyhow::Result;
 use colored::Colorize;
-use indicatif::MultiProgress;
 use mutant_protocol::{StorageMode, TaskResult};
 
 pub async fn handle_put(
@@ -37,8 +37,8 @@ pub async fn handle_put(
         .await?;
 
     if !quiet {
-        let multi_progress = MultiProgress::new();
-        callbacks::put::create_put_progress(progress_rx, multi_progress.clone());
+        let progress = ProgressWithDisabledStdin::new();
+        callbacks::put::create_put_progress(progress_rx, progress.multi_progress().clone());
     }
 
     match start_task.await {

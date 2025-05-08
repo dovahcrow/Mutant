@@ -2,10 +2,10 @@ use crate::callbacks;
 use crate::connect_to_daemon;
 use crate::history::append_history_entry;
 use crate::history::FetchHistoryEntry;
+use crate::terminal::ProgressWithDisabledStdin;
 use anyhow::Result;
 use chrono::Utc;
 use colored::Colorize;
-use indicatif::MultiProgress;
 use mutant_protocol::TaskResult;
 use mutant_protocol::TaskResultType;
 
@@ -33,8 +33,8 @@ pub async fn handle_get(
     let (start_task, progress_rx) = client.get(&key, &destination_path, public).await?;
 
     if !quiet {
-        let multi_progress = MultiProgress::new();
-        callbacks::get::create_get_progress(progress_rx, &multi_progress);
+        let progress = ProgressWithDisabledStdin::new();
+        callbacks::get::create_get_progress(progress_rx, progress.multi_progress());
     }
 
     match start_task.await {

@@ -1,8 +1,8 @@
 use crate::callbacks;
 use crate::connect_to_daemon;
+use crate::terminal::ProgressWithDisabledStdin;
 use anyhow::Result;
 use colored::Colorize;
-use indicatif::MultiProgress;
 use mutant_protocol::TaskResult;
 use mutant_protocol::TaskResultType;
 
@@ -28,8 +28,8 @@ pub async fn handle_health_check(
     let (start_task, progress_rx) = client.health_check(&key_name, recycle).await?;
 
     if !quiet {
-        let multi_progress = MultiProgress::new();
-        callbacks::health_check::create_health_check_progress(progress_rx, &multi_progress);
+        let progress = ProgressWithDisabledStdin::new();
+        callbacks::health_check::create_health_check_progress(progress_rx, progress.multi_progress());
     }
 
     match start_task.await {
