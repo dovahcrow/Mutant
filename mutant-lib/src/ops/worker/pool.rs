@@ -105,7 +105,13 @@ where
         let all_items_processed = Arc::new(tokio::sync::Notify::new());
 
         // Create a counter to track the number of active workers
-        let active_workers_counter = Arc::new(Mutex::new(0));
+        // Initialize it with the total number of worker tasks (worker_count * BATCH_SIZE)
+        let worker_count = self.worker_txs.len();
+        let batch_size = *crate::network::BATCH_SIZE as usize;
+        let total_tasks = worker_count * batch_size;
+        let active_workers_counter = Arc::new(Mutex::new(total_tasks));
+        debug!("Initializing active_workers_counter with {} tasks ({} workers * {} batch size)",
+               total_tasks, worker_count, batch_size);
 
         // Use the total items hint from the pool
         // This is the actual number of pads that need to be processed
@@ -138,9 +144,24 @@ where
                     monitor_all_items_processed.notify_waiters();
                     break;
                 } else if processed_items > 0 && active_workers == 0 {
-                    debug!("Monitor: All workers completed with {} processed items. Notifying...", processed_items);
+                    // If all workers are done but we haven't processed all expected items,
+                    // it means we had fewer actual pads than expected
+                    debug!("Monitor: All workers completed with {} processed items (expected {}). Notifying...",
+                           processed_items, monitor_total_items_hint);
                     monitor_all_items_processed.notify_waiters();
                     break;
+                } else if active_workers == 0 {
+                    // If all workers are done but we haven't processed any items,
+                    // something might be wrong, but we should still notify to avoid hanging
+                    warn!("Monitor: All workers completed but no items processed (expected {}). Notifying anyway...",
+                          monitor_total_items_hint);
+                    monitor_all_items_processed.notify_waiters();
+                    break;
+                } else if processed_items > 0 && processed_items % 50 == 0 {
+                    // For large files, log progress every 50 items
+                    info!("Monitor: Progress update - processed {} of {} items ({:.1}%)",
+                          processed_items, monitor_total_items_hint,
+                          (processed_items as f64 / monitor_total_items_hint as f64) * 100.0);
                 }
             }
         });
@@ -168,7 +189,7 @@ where
             global_rx_clones.push(worker_global_rx.clone());
 
             // We don't need to increment the active workers counter here
-            // It will be incremented in the worker's run method
+            // It's already initialized with the total number of tasks
 
             let worker: Worker<Item, Context, Client, Task, T, E> = Worker {
                 id: worker_id,
@@ -271,14 +292,48 @@ where
         // We'll wait for the all_items_processed notification before closing channels.
         debug!("Keeping all channels open to allow processing of items...");
 
-        // Wait for the all_items_processed notification with a timeout
-        let timeout = tokio::time::Duration::from_secs(60); // 60 seconds timeout
-        tokio::select! {
-            _ = all_items_processed.notified() => {
-                debug!("Received all_items_processed notification. Closing channels...");
-            }
-            _ = tokio::time::sleep(timeout) => {
-                debug!("Timeout waiting for all_items_processed notification. Closing channels anyway...");
+        // Wait for the all_items_processed notification with periodic progress checks
+        // For large files, we need to keep checking progress rather than using a fixed timeout
+
+        // Also check the progress periodically to see if we're still making progress
+        let mut last_processed_count = 0;
+        let mut stalled_count = 0;
+
+        loop {
+            tokio::select! {
+                _ = all_items_processed.notified() => {
+                    debug!("Received all_items_processed notification. Closing channels...");
+                    break;
+                }
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(30)) => {
+                    // Check if we're still making progress
+                    let current_processed = *processed_items_counter.lock().await;
+                    let active_workers = *active_workers_counter.lock().await;
+
+                    debug!("Progress check: processed_items={}, active_workers={}, expected_items={}",
+                           current_processed, active_workers, total_items_hint);
+
+                    if current_processed > last_processed_count {
+                        // We're still making progress, reset the stalled counter
+                        debug!("Still making progress: {} new items processed", current_processed - last_processed_count);
+                        last_processed_count = current_processed;
+                        stalled_count = 0;
+                    } else if active_workers == 0 {
+                        // No active workers and no progress, we're done
+                        debug!("No active workers and no progress. Closing channels...");
+                        break;
+                    } else {
+                        // No progress but workers are still active
+                        stalled_count += 1;
+                        debug!("No progress for {} checks, but {} workers still active", stalled_count, active_workers);
+
+                        // If we've been stalled for too long (5 minutes), close the channels
+                        if stalled_count >= 10 {
+                            debug!("No progress for 5 minutes. Closing channels anyway...");
+                            break;
+                        }
+                    }
+                }
             }
         }
 

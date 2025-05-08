@@ -46,11 +46,10 @@ where
     pub async fn run(self) -> Result<(), PoolError<E>> {
         let mut task_handles = FuturesUnordered::new();
 
-        // We'll increment the active workers counter once for the worker itself
-        // rather than for each task, to avoid overcounting
+        // We don't need to increment the active workers counter here
+        // It's already initialized with the total number of tasks in the pool
         {
-            let mut counter = self.active_workers_counter.lock().await;
-            *counter += 1;
+            let counter = self.active_workers_counter.lock().await;
             debug!("Worker {} started. Active workers: {}", self.id, *counter);
         }
 
@@ -89,8 +88,8 @@ where
             }
         }
 
-        // We don't need to decrement the active workers counter here anymore
-        // It's already decremented in the run_task_processor method when the last task completes
+        // We don't need to decrement the active workers counter here
+        // Each task decrements the counter when it completes
         debug!("Worker {} completed all tasks.", self.id);
 
         Ok(())
@@ -177,33 +176,17 @@ where
                         drop(counter); // Release the lock
 
                         // Check if we've processed all items
-                        // We notify in these cases:
-                        // 1. We've processed exactly the total_items_hint (all expected pads are Confirmed)
-                        // 2. We've processed all items that were actually in the queue (might be less than hint)
-                        // 3. We've processed some items and both queues are closed
+                        // We only notify when we've processed exactly the total_items_hint
+                        // This ensures we don't notify prematurely
                         if current_count == self.total_items_hint {
                             debug!("Worker {}.{}: Processed {} items (exact match with hint), notifying",
                                    self.id, task_id, current_count);
                             // Notify that all items have been processed
                             self.all_items_processed.notify_waiters();
-                        } else if self.local_queue.is_closed() && self.global_queue.is_closed() {
-                            // If both queues are closed and we've processed some items,
-                            // it means we've processed all actual items (which might be fewer than the hint)
-                            debug!("Worker {}.{}: Processed {} items and queues are closed, notifying",
-                                   self.id, task_id, current_count);
-                            self.all_items_processed.notify_waiters();
-                        } else if current_count > 0 {
-                            // If we've processed some items, check if this is the last item we expect to process
-                            let counter = self.active_workers_counter.lock().await;
-                            if *counter <= 1 {
-                                debug!("Worker {}.{}: Processed {} items with only {} active workers, notifying",
-                                       self.id, task_id, current_count, *counter);
-                                drop(counter);
-                                self.all_items_processed.notify_waiters();
-                            } else {
-                                drop(counter);
-                            }
                         }
+                        // We don't notify based on queues being closed anymore
+                        // This prevents premature notification when channels are closed
+                        // The monitor task will handle completion detection
 
                         self.results_collector.lock().await.push((item_id, result));
                     }
@@ -222,28 +205,33 @@ where
                     }
                 }
             } else {
+                // Check if both queues are closed
+                let local_closed = self.local_queue.is_closed();
+                let global_closed = self.global_queue.is_closed();
+
                 trace!(
                     "Worker {}.{} terminating: Local closed={}, Global closed={}",
                     self.id,
                     task_id,
-                    self.local_queue.is_closed(),
-                    self.global_queue.is_closed()
+                    local_closed,
+                    global_closed
                 );
 
-                // Check if this is the last task for this worker
-                // If all tasks are done, we should decrement the active workers counter
+                // Always decrement the active workers counter when a task completes
                 debug!("Worker {}.{} task completed. No more items to process.", self.id, task_id);
 
-                // Decrement the active workers counter if this is the last task to finish
-                // We do this here to ensure the counter is decremented as soon as possible
-                // rather than waiting for the entire worker to complete
-                if task_id == *BATCH_SIZE - 1 {
-                    let mut counter = self.active_workers_counter.lock().await;
-                    if *counter > 0 {
-                        *counter -= 1;
-                    }
-                    debug!("Worker {} last task completed. Active workers: {}", self.id, *counter);
+                // Decrement the active workers counter for this task
+                let mut counter = self.active_workers_counter.lock().await;
+                if *counter > 0 {
+                    *counter -= 1;
                 }
+
+                // Log the current state
+                let processed_count = *self.processed_items_counter.lock().await;
+                debug!(
+                    "Worker {}.{} task completed. Active workers: {}, Processed items: {}, Expected: {}",
+                    self.id, task_id, *counter, processed_count, self.total_items_hint
+                );
 
                 break;
             }
