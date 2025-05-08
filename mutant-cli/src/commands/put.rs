@@ -5,6 +5,7 @@ use crate::utils::{ensure_progress_cleared, format_elapsed_time};
 use anyhow::Result;
 use colored::Colorize;
 use mutant_protocol::{StorageMode, TaskResult};
+use std::path::PathBuf;
 use std::time::Instant;
 
 pub async fn handle_put(
@@ -16,7 +17,15 @@ pub async fn handle_put(
     background: bool,
     quiet: bool,
 ) -> Result<()> {
-    let source_path = file;
+    // Convert to absolute path to ensure daemon can find the file
+    let path_buf = PathBuf::from(&file);
+    let absolute_path = if path_buf.is_absolute() {
+        path_buf
+    } else {
+        std::env::current_dir()?.join(path_buf)
+    };
+    let source_path = absolute_path.to_string_lossy().to_string();
+
     if background {
         let _ = tokio::spawn(async move {
             let mut client = connect_to_daemon().await.unwrap();
