@@ -37,7 +37,7 @@ pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap) {
         let msg = match result {
             Ok(msg) => msg,
             Err(e) => {
-                log::error!("WebSocket receive error: {}", e);
+                log::trace!("WebSocket receive error: {}", e);
                 // Don't need to send error here, forwarder handles closure
                 break;
             }
