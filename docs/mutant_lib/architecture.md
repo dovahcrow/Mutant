@@ -6,29 +6,51 @@ This document provides an in-depth guide to the design, core data structures, co
 
 `mutant-lib` addresses the challenge of storing arbitrarily sized data blobs on the Autonomi network, which offers fixed-size scratchpads. It presents a cohesive key-value store abstraction with the following key concepts:
 
-- **User Keys**: Human-friendly string identifiers for data blobs (e.g., `"config_v1"`).
-- **Master Index**: A dedicated scratchpad storing a serialized `MasterIndex`, mapping user keys to metadata and tracking free pads.
-- **Data Scratchpads**: Regular scratchpads used to store encrypted chunks of user data.
-- **Pad Manager**: Coordinates allocation, reuse, chunking, and verification of data scratchpads.
-- **Network Layer**: Low-level interface to the Autonomi network client (`autonomi::Client`), handling serialization, encryption, and network retries for scratchpad persistence.
+- **User Keys**: Human-friendly string identifiers for data blobs (e.g., `"config_v1"`)
+- **Master Index**: A central data structure mapping user keys to metadata and tracking free pads
+- **Data Scratchpads**: Regular scratchpads used to store encrypted chunks of user data
+- **Worker Pool**: Manages concurrent operations with work distribution and recycling
+- **Network Layer**: Low-level interface to the Autonomi network client, handling serialization, encryption, and network operations
 
 ## 2. Architecture Diagram
 
 ```
-Application  ──>  MutAnt API  ──>  Pad Manager  ────────────> Index Manager ──┐
-                                                                               │
-                                   ┌───────────────────┐    ┌───────────────────┐
-                                   │ Mutex<MasterIndex>│<───┤      Index        │
-                                   │   (in-memory)     │    │    Manager        │
-                                   └───────────────────┘    └─────────┬─────────┘
-                                             ▲                        │
-                                             │                        ▼
-                             ┌─────────────┐         ┌───────────────────┐
-                             │ Network     │<───┬────┤  Data Scratchpads  │
-                             │ Adapter     │    │    │ (Autonomi Network)  │
-                             └─────────────┘    │    └───────────────────┘
-                                    ▲           │
-                                    └───────────┘
+                                 ┌───────────────────────────────────────────┐
+                                 │               MutAnt API                   │
+                                 └───────────────────────────────────────────┘
+                                                    │
+                                                    ▼
+                 ┌───────────────────────────────────────────────────────────────┐
+                 │                             Data                               │
+                 └───────────────────────────────────────────────────────────────┘
+                    │                │                 │                  │
+                    ▼                ▼                 ▼                  ▼
+        ┌─────────────────┐  ┌─────────────┐  ┌─────────────────┐  ┌────────────┐
+        │  Put Operation  │  │Get Operation│  │ Purge Operation │  │Other Ops   │
+        └─────────────────┘  └─────────────┘  └─────────────────┘  └────────────┘
+                    │                │                 │                  │
+                    ▼                ▼                 ▼                  ▼
+        ┌─────────────────────────────────────────────────────────────────────────┐
+        │                           Worker Pool                                    │
+        │  ┌─────────┐ ┌─────────┐ ┌─────────┐      ┌─────────┐                   │
+        │  │ Worker 1 │ │ Worker 2│ │ Worker 3│ ... │ Worker N│                   │
+        │  └─────────┘ └─────────┘ └─────────┘      └─────────┘                   │
+        │        │           │           │                │                        │
+        │        ▼           ▼           ▼                ▼                        │
+        │  ┌─────────┐ ┌─────────┐ ┌─────────┐      ┌─────────┐                   │
+        │  │ Client 1 │ │ Client 2│ │ Client 3│ ... │ Client N│                   │
+        │  └─────────┘ └─────────┘ └─────────┘      └─────────┘                   │
+        └─────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+                            ┌───────────────────────┐
+                            │      Network          │
+                            └───────────────────────┘
+                                        │
+                                        ▼
+                            ┌───────────────────────┐
+                            │  Autonomi Network     │
+                            └───────────────────────┘
 ```
 
 ## 3. Public API (`MutAnt`)
@@ -36,153 +58,209 @@ Application  ──>  MutAnt API  ──>  Pad Manager  ────────
 All operations are async and return `Result<_, Error>`:
 
 - **Initialization**
-  - `init(private_key_hex, config, callback)`
-  - `init_with_progress(private_key_hex, config, callback)`
+  - `init(private_key_hex)` - Initialize with mainnet
+  - `init_public()` - Initialize for public fetching only
+  - `init_local()` - Initialize with devnet
+  - `init_alphanet(private_key_hex)` - Initialize with alphanet
 
 - **Data Operations**
-  - `store(key: String, data: &[u8])`
-  - `store_with_progress(key, data, callback)`
-  - `fetch(key: &str) -> Vec<u8>`
-  - `fetch_with_progress(key, callback)`
-  - `remove(key: &str)`
-  - `update(key: String, data: &[u8])` (unimplemented; use remove + store)
+  - `put(key: &str, data: Arc<Vec<u8>>, mode: StorageMode, public: bool, no_verify: bool, callback: Option<PutCallback>)` - Store data
+  - `get(key: &str, callback: Option<GetCallback>)` - Fetch data
+  - `get_public(address: &ScratchpadAddress, callback: Option<GetCallback>)` - Fetch public data
+  - `rm(key: &str)` - Remove data
 
 - **Inspection & Maintenance**
-  - `list_keys() -> Vec<String>`
-  - `list_key_details() -> Vec<KeyDetails>`
-  - `get_storage_stats() -> StorageStats`
-  - `import_free_pad(private_key_hex: &str)`
-  - `reserve_pads(count: usize)`
-  - `purge(callback)`
+  - `list() -> BTreeMap<String, IndexEntry>` - List all keys
+  - `contains_key(key: &str) -> bool` - Check if key exists
+  - `get_public_index_address(key: &str) -> String` - Get public address for a key
+  - `get_storage_stats() -> StorageStats` - Get storage statistics
+  - `purge(aggressive: bool, callback: Option<PurgeCallback>)` - Purge invalid pads
+  - `health_check(key: &str, recycle: bool, callback: Option<HealthCheckCallback>)` - Check health of a key
+  - `sync(force: bool, callback: Option<SyncCallback>)` - Sync with remote index
 
-- **Index Management**
-  - `save_master_index()`
-  - `fetch_remote_master_index() -> MasterIndex`
-  - `save_index_cache()`
-  - `update_internal_master_index(index: MasterIndex)`
-  - `get_index_copy() -> MasterIndex`
+- **Import/Export**
+  - `export_raw_pads_private_key() -> Vec<PadInfo>` - Export pad private keys
+  - `import_raw_pads_private_key(pads: Vec<PadInfo>)` - Import pad private keys
 
 ## 4. Layer Breakdown
 
-### 4.1 Data Layer (`DataManager`)
+### 4.1 Data Layer (`Data`)
 
-- Defines `store`, `fetch`, `remove`, `update`.
-- Default implementation (`DefaultDataManager`) delegates to `data::ops`:
-  - `store_op` handles chunking, pad lifecycle, network writes, index updates.
-  - `fetch_op` handles index lookup, pad fetches, reassembly.
-  - `remove_op` handles index removal and pad recycling.
+- Central coordinator for all data operations
+- Delegates to specialized operation modules:
+  - `put` module handles storing data, chunking, pad lifecycle, network writes, index updates
+  - `get` module handles index lookup, pad fetches, reassembly
+  - `purge` module handles verification and cleanup of invalid pads
+  - `health_check` module verifies the integrity of stored data
+  - `sync` module synchronizes the local index with the remote index
 
-### 4.2 Indexing Layer (`IndexManager`)
+### 4.2 Indexing Layer (`MasterIndex`)
 
-- Maintains `MasterIndex` in-memory and persists via the network layer.
-- Provides query and persistence interfaces.
-- Ensures index consistency and supports remote index creation prompts.
+- Maintains the mapping between user keys and pad information
+- Tracks free pads for reuse
+- Handles public/private key management
+- Provides methods for key operations (create, remove, update)
+- Manages pad status tracking
 
-### 4.3 Network Layer (`NetworkAdapter`)
+### 4.3 Network Layer (`Network`)
 
-- Abstract interface for network operations, including pad persistence:
-  - Scratchpad reads/writes, existence checks.
-- Default Autonomi adapter (`AutonomiNetworkAdapter`) uses `autonomi::Client`.
-- Handles address/key derivation, serialization, encryption/decryption, and error translation.
+- Provides an interface to the Autonomi network
+- Manages client creation and configuration
+- Handles scratchpad operations:
+  - Reading and writing scratchpads
+  - Encryption and decryption
+  - Error handling and retries
 
-### 4.4 Pad Lifecycle Layer (`PadLifecycleManager`)
+### 4.4 Worker Pool (`WorkerPool`)
 
-- Manages free pad pool, allocation, preparation, and verification:
-  - **Pool**: Tracks reusable pads harvested via `remove`.
-  - **Prepare**: Generates new scratchpads when free pool is insufficient.
-  - **Cache**: Persists index cache locally for performance.
-  - **Import**: Imports external pads into free pool.
-  - **Verification**: Confirms scratchpad writes before index update.
+- Manages concurrent operations with configurable parallelism
+- Distributes tasks to workers in round-robin fashion
+- Implements work-stealing for efficient resource utilization
+- Handles recycling of failed operations
+- Monitors progress and completion of tasks
 
 ## 5. Core Data Structures
 
 ### 5.1 `MasterIndex`
 
 ```rust
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct MasterIndex {
-    pub(crate) index: Vec<(String, KeyInfo)>,
-    pub(crate) free_pads: Vec<(ScratchpadAddress, Vec<u8>)>,
-    pub(crate) scratchpad_size: usize,
+    /// Mapping from key names to their detailed information
+    index: BTreeMap<String, IndexEntry>,
+
+    /// List of scratchpads that are currently free and available for allocation
+    free_pads: Vec<PadInfo>,
+
+    /// List of scratchpads that are awaiting verification
+    pending_verification_pads: Vec<PadInfo>,
+
+    network_choice: NetworkChoice,
 }
 ```
 
-- `index`: Maps each user key to its `KeyInfo`.
-- `free_pads`: Recycled scratchpads with private keys for reuse.
-- `scratchpad_size`: Configured usable byte size per pad.
-
-### 5.2 `KeyInfo`
+### 5.2 `IndexEntry`
 
 ```rust
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct KeyInfo {
-    pub(crate) pads: Vec<(ScratchpadAddress, Vec<u8>)>,
-    pub(crate) data_size: usize,
-    #[serde(default = "Utc::now")]
-    pub(crate) modified: DateTime<Utc>,
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum IndexEntry {
+    PrivateKey(Vec<PadInfo>),
+    PublicUpload(PadInfo, Vec<PadInfo>),
 }
 ```
 
-- `pads`: Addresses and public keys for each data chunk.
-- `data_size`: Original data length.
-- `modified`: Last update timestamp.
+### 5.3 `PadInfo`
+
+```rust
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct PadInfo {
+    pub address: ScratchpadAddress,
+    pub private_key: Vec<u8>,
+    pub status: PadStatus,
+    pub size: usize,
+    pub checksum: u64,
+    pub last_known_counter: u64,
+}
+```
+
+### 5.4 `PadStatus`
+
+```rust
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum PadStatus {
+    Generated,
+    Written,
+    Confirmed,
+    Free,
+    Invalid,
+}
+```
+
+### 5.5 `WorkerPool`
+
+```rust
+pub struct WorkerPool<Item, Context, Client, Task, T, E> {
+    pub(crate) task: Arc<Task>,
+    pub(crate) clients: Vec<Arc<Client>>,
+    pub(crate) worker_txs: Vec<Sender<Item>>,
+    pub(crate) worker_rxs: Vec<Receiver<Item>>,
+    pub(crate) global_tx: Sender<Item>,
+    pub(crate) global_rx: Receiver<Item>,
+    pub(crate) retry_sender: Option<Sender<(E, Item)>>,
+    pub(crate) retry_rx: Option<Receiver<(E, Item)>>,
+    pub(crate) total_items_hint: usize,
+    // ... other fields
+}
+```
 
 ## 6. Operation Flows
 
-### 6.1 Store
+### 6.1 Put Operation
 
-1. Determine chunk count from `data.len()` & `scratchpad_size`.
-2. Check `IndexManager` for existing key/resume info.
-3. Ask `PadLifecycleManager` to acquire/prepare necessary pads (from free pool or generate new).
-4. Chunk data; spawn concurrent write tasks via `NetworkAdapter`:
-   - `put_raw` handles create/update logic based on pad status.
-   - Report progress via `PutCallback`.
-5. Update `IndexManager` with `KeyInfo` (pad addresses, keys, status).
-6. Persist `IndexManager` state via `NetworkAdapter` (save master index).
+1. Check if key exists:
+   - If it exists with same data, resume the operation
+   - If it exists with different data, update the key
+   - If it doesn't exist, create a new key
+2. For new keys:
+   - Calculate chunk count based on data size and storage mode
+   - Create pad entries in the index
+   - Prepare worker pool with the appropriate task
+3. For updates:
+   - For public keys, preserve the public index pad
+   - Remove the existing key
+   - Create a new key with the updated data
+   - For public keys, update the index pad
+4. For all operations:
+   - Distribute pads to workers in round-robin fashion
+   - Workers process pads concurrently
+   - Failed operations are recycled and retried
+   - Update pad status as operations complete
+   - Report progress via callbacks
 
-### 6.2 Fetch
+### 6.2 Get Operation
 
-1. Query `IndexManager` for `KeyInfo`.
-2. Spawn concurrent fetch tasks via `NetworkAdapter` (`get_raw_scratchpad`) to read & decrypt chunks using keys from `KeyInfo`.
-3. Reassemble chunks in order; verify total size matches.
-4. Return full `Vec<u8>`; report progress via `GetCallback`.
+1. Query the index for the key's pad information
+2. Create a worker pool with the appropriate task
+3. Distribute pads to workers
+4. Workers fetch and decrypt pad data concurrently
+5. Reassemble chunks in order
+6. Return the complete data
+7. Report progress via callbacks
 
-### 6.3 Remove
+### 6.3 Remove Operation
 
-1. Remove key entry from `IndexManager`.
-2. Harvest pads associated with the removed key using `IndexManager::harvest_pads`.
-3. Persist updated `IndexManager` state via `NetworkAdapter`.
+1. Remove the key entry from the index
+2. Move associated pads to the free pad pool
+3. Update the index
 
-## 7. Error Model
+## 7. Worker Architecture
 
-Central `Error` enum unifies:
-
-- Configuration errors
-- Network, Index, PadLifecycle, Data errors (via `#[from]`)
-- Callback cancellations & failures
-- `NotImplemented`, `Internal` cases
+- Each worker manages a batch of concurrent tasks (default: 10)
+- Workers are assigned a dedicated client to prevent blocking
+- Tasks are distributed in round-robin fashion initially
+- Workers can steal work from the global queue when their local queue is empty
+- Failed operations are sent to a recycling queue
+- A dedicated recycler task processes failed operations and redistributes them
+- Completion is determined by counting confirmed pads
 
 ## 8. Concurrency & Thread Safety
 
-- The `MasterIndex` is wrapped in `Arc<Mutex<>>` within `IndexManager`, ensuring atomic updates.
-- Data scratchpad operations run in parallel via `tokio::spawn` + `FuturesUnordered`.
-- CPU-bound decryption handled within Autonomi SDK or potentially via `spawn_blocking` if needed elsewhere.
+- The `MasterIndex` is wrapped in `Arc<RwLock<>>`, allowing concurrent reads with exclusive writes
+- The `Data` struct is wrapped in `Arc<RwLock<>>` for thread safety
+- Worker pools use channels for communication between components
+- Tasks are processed concurrently using tokio's async runtime
+- Recycling mechanism ensures failed operations are retried
 
-## 9. Encryption & Key Derivation
+## 9. Public/Private Key Management
 
-- Master index private key is derived from user key hex via SHA-256 → `SecretKey`.
-- Pad private keys for new pads are randomly generated; for recycled pads loaded from `free_pads`.
-- Data pad keys *are* stored encrypted within the `KeyInfo` in the `MasterIndex`.
+- Private keys are stored with encryption in the index
+- Public keys have a special index pad that contains metadata about the data pads
+- The public index pad address is used as the public address for the key
+- When updating public keys, the index pad is preserved to maintain the same public address
 
-## 10. Extensibility & Customization
+## 10. Further Reading
 
-- Trait-based abstractions primarily for `NetworkAdapter`.
-- `DataManager`, `IndexManager`, `PadLifecycleManager` use concrete types (`Default...`).
-- Users can implement custom network backends.
-- `MutAntConfig` allows selecting network or tuning scratchpad size.
-
-## 11. Further Reading
-
-- `overview.md` for a concise introduction.
-- `internals.md` for deep dives into algorithms and test coverage.
-- Crate API docs on https://docs.rs/mutant_lib 
+- `overview.md` for a concise introduction
+- `core_concepts.md` for fundamental concepts
+- `internals/` directory for deep dives into specific components
+- API docs on https://docs.rs/mutant_lib

@@ -4,166 +4,229 @@ This guide provides a basic example of how to use `mutant-lib` to store and retr
 
 ## 1. Prerequisites
 
-*   **Rust Environment:** Ensure you have a working Rust development environment installed.
-*   **Autonomi Account:** You need an Autonomi wallet (specifically, the private key) to interact with the network.
-*   **`mutant-lib` Dependency:** Add `mutant-lib` to your `Cargo.toml`:
+* **Rust Environment:** Ensure you have a working Rust development environment installed.
+* **Autonomi Account:** You need an Autonomi wallet (specifically, the private key) to interact with the network.
+* **`mutant-lib` Dependency:** Add `mutant-lib` to your `Cargo.toml`:
 
-    ```toml
-    [dependencies]
-    mutant-lib = { version = "0.1" } # Use the appropriate version
-    tokio = { version = "1", features = ["full"] }
-    hex = "0.4"
-    # Add other necessary dependencies
-    ```
+```toml
+[dependencies]
+mutant-lib = "0.6.0"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0"
+```
 
 ## 2. Basic Example
 
 This example demonstrates initializing the library, storing a piece of data, fetching it back, and then removing it.
 
 ```rust
-use mutant_lib::{
-    api::MutAnt, // The main API entry point
-    types::MutAntConfig, // Configuration options
-    error::Error, // Library's error type
-    events::{InitCallback, InitEvent, ProgressCallback, ProgressEvent}
-};
-use std::sync::{Arc, Mutex};
-
-// --- Callback Setup (Optional, for progress reporting) ---
-
-// Example Init Callback
-fn my_init_callback(event: InitEvent) {
-    match event {
-        InitEvent::Starting => println!("Initialization starting..."),
-        InitEvent::Connecting => println!("Connecting to network..."),
-        InitEvent::LoadingIndex => println!("Loading master index..."),
-        InitEvent::CreatingIndex => println!("Master index not found, creating new one..."),
-        InitEvent::SavingIndex => println!("Saving master index..."),
-        InitEvent::Finished(Ok(_)) => println!("Initialization successful!"),
-        InitEvent::Finished(Err(e)) => eprintln!("Initialization failed: {}", e),
-    }
-}
-
-// Example Progress Callback (for Store/Fetch)
-fn my_progress_callback(event: ProgressEvent) {
-    match event {
-        ProgressEvent::Starting(op_type, total_bytes) => {
-            println!("{} operation started for {} bytes", op_type, total_bytes);
-        }
-        ProgressEvent::Progress(op_type, bytes_processed, total_bytes) => {
-            let percent = (bytes_processed as f64 / total_bytes as f64) * 100.0;
-            println!("{} progress: {:.2}% ({}/{})", op_type, percent, bytes_processed, total_bytes);
-        }
-        ProgressEvent::Retrying(op_type, attempt, max_attempts, delay) => {
-            println!("{} failed, retrying (attempt {}/{}) after {:?}...", op_type, attempt, max_attempts, delay);
-        }
-        ProgressEvent::Finished(op_type, Ok(_)) => {
-            println!("{} operation successful!", op_type);
-        }
-        ProgressEvent::Finished(op_type, Err(e)) => {
-            eprintln!("{} operation failed: {}", op_type, e);
-        }
-    }
-}
-
-// --- Main Application Logic ---
+use mutant_lib::{MutAnt, storage::StorageMode, error::Error};
+use std::sync::Arc;
+use anyhow::Result;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     // Replace with your actual Autonomi private key hex string
-    let private_key_hex = "YOUR_PRIVATE_KEY_HEX";
-
-    // Basic configuration (can be customized)
-    let config = MutAntConfig::default();
-
-    // Wrap callbacks in Arc/Mutex if needed across threads, or just pass function pointers
-    let init_cb: Option<InitCallback> = Some(Arc::new(Mutex::new(my_init_callback)));
-    let progress_cb: Option<ProgressCallback> = Some(Arc::new(Mutex::new(my_progress_callback)));
+    let private_key_hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 
     println!("Initializing MutAnt...");
-    let mutant = match MutAnt::init_with_progress(private_key_hex.to_string(), config, init_cb).await {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("Failed to initialize MutAnt: {}", e);
-            return Err(Box::new(e));
-        }
-    };
+    let mutant = MutAnt::init(private_key_hex).await?;
     println!("MutAnt initialized.");
 
     // -- Store Data --
-    let key = "my_first_data".to_string();
-    let data_to_store = b"Hello, MutAnt World!".to_vec();
+    let key = "my_first_data";
+    let data_to_store = b"Hello, MutAnt World!";
 
     println!("Storing data under key: '{}'", key);
-    match mutant.store_with_progress(&key, &data_to_store, progress_cb.clone()).await {
-        Ok(_) => println!("Successfully stored data."),
-        Err(e) => {
-            eprintln!("Failed to store data: {}", e);
-            // Decide how to handle the error (e.g., retry, exit)
-        }
-    }
+    let address = mutant.put(
+        key,
+        Arc::new(data_to_store.to_vec()),
+        StorageMode::Medium,
+        false, // not public
+        false, // verify
+        None,  // no callback
+    ).await?;
+    println!("Successfully stored data at address: {}", address);
 
     // -- Fetch Data --
     println!("Fetching data for key: '{}'", key);
-    match mutant.fetch_with_progress(&key, progress_cb.clone()).await {
-        Ok(retrieved_data) => {
-            println!("Successfully fetched data.");
-            assert_eq!(data_to_store, retrieved_data);
-            println!("Retrieved data matches stored data!");
-            // Convert to string for display (if applicable)
-            if let Ok(s) = String::from_utf8(retrieved_data) {
-                println!("Data content: '{}'", s);
-            } else {
-                println!("Data is not valid UTF-8");
-            }
-        }
-        Err(Error::KeyNotFound(k)) => {
-            eprintln!("Key '{}' not found on the network.", k);
-        }
-        Err(e) => {
-            eprintln!("Failed to fetch data: {}", e);
-        }
-    }
+    let retrieved_data = mutant.get(key, None).await?;
+    println!("Successfully fetched data.");
+    assert_eq!(data_to_store.to_vec(), retrieved_data);
+    println!("Retrieved data matches stored data!");
+
+    // Convert to string for display
+    let data_string = String::from_utf8_lossy(&retrieved_data);
+    println!("Data content: '{}'", data_string);
 
     // -- Remove Data --
     println!("Removing data for key: '{}'", key);
-    match mutant.remove(&key).await {
-        Ok(_) => println!("Successfully removed data."),
-        Err(e) => {
-            eprintln!("Failed to remove data: {}", e);
-        }
-    }
+    mutant.rm(key).await?;
+    println!("Successfully removed data.");
 
     // -- Verify Removal (Optional) --
     println!("Verifying removal by fetching again...");
-    match mutant.fetch(&key).await {
+    match mutant.get(key, None).await {
         Ok(_) => {
             eprintln!("Error: Data still exists after removal!");
         }
-        Err(Error::KeyNotFound(k)) => {
-            println!("Confirmed: Key '{}' not found after removal.", k);
-        }
         Err(e) => {
-            eprintln!("Failed to fetch data during verification: {}", e);
+            println!("Confirmed: Key '{}' not found after removal: {}", key, e);
         }
     }
 
     println!("Example finished.");
     Ok(())
 }
-
 ```
 
-## 3. Running the Example
+## 3. Public Data Example
 
-1.  Replace `"YOUR_PRIVATE_KEY_HEX"` with your actual Autonomi private key.
-2.  Save the code as `main.rs` (or similar).
-3.  Run `cargo run`.
+This example demonstrates storing and retrieving public data:
+
+```rust
+use mutant_lib::{MutAnt, storage::StorageMode, storage::ScratchpadAddress};
+use std::sync::Arc;
+use anyhow::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Initialize with a private key
+    let private_key_hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+    let mutant = MutAnt::init(private_key_hex).await?;
+
+    // Store data publicly
+    let key = "public_data";
+    let data = b"This data is publicly accessible";
+
+    let address = mutant.put(
+        key,
+        Arc::new(data.to_vec()),
+        StorageMode::Medium,
+        true,  // public flag set to true
+        false, // verify
+        None,  // no callback
+    ).await?;
+
+    // Get the public index address
+    let public_address = mutant.get_public_index_address(key).await?;
+    println!("Data stored publicly at address: {}", public_address);
+
+    // Now anyone can fetch this data without the private key
+    let public_fetcher = MutAnt::init_public().await?;
+
+    // Convert the hex address to a ScratchpadAddress
+    let address = ScratchpadAddress::from_hex(&public_address)?;
+
+    // Fetch the public data
+    let retrieved_data = public_fetcher.get_public(&address, None).await?;
+
+    // Verify the data
+    assert_eq!(data.to_vec(), retrieved_data);
+    println!("Successfully retrieved public data!");
+
+    Ok(())
+}
+```
+
+## 4. Using Callbacks
+
+This example demonstrates using callbacks to track progress:
+
+```rust
+use mutant_lib::{MutAnt, storage::StorageMode, events::{PutCallback, PutEvent}};
+use std::sync::Arc;
+use anyhow::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let private_key_hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+    let mutant = MutAnt::init(private_key_hex).await?;
+
+    // Create a callback function
+    let callback = |event: PutEvent| {
+        match event {
+            PutEvent::PadReserved(pad_info) => {
+                println!("Pad reserved: {}", pad_info.address);
+            }
+            PutEvent::PadWritten(pad_info) => {
+                println!("Pad written: {}", pad_info.address);
+            }
+            PutEvent::PadConfirmed(pad_info) => {
+                println!("Pad confirmed: {}", pad_info.address);
+            }
+            PutEvent::Complete => {
+                println!("Operation complete!");
+            }
+        }
+    };
+
+    // Create a large data set to see progress
+    let data = vec![0u8; 10 * 1024 * 1024]; // 10MB
+
+    // Store with callback
+    mutant.put(
+        "large_file",
+        Arc::new(data),
+        StorageMode::Medium,
+        false,
+        false,
+        Some(Box::new(callback)),
+    ).await?;
+
+    Ok(())
+}
+```
+
+## 5. Running the Examples
+
+1. Replace `"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"` with your actual Autonomi private key or use this test key for local development.
+2. Save the code as `main.rs` (or similar).
+3. Run `cargo run`.
 
 You should see output indicating the progress of initialization, storing, fetching, and removing the data.
 
-## 4. Next Steps
+## 6. Using the Daemon Architecture
 
-*   Explore `core_concepts.md` to understand the underlying mechanisms.
-*   Check `api_reference.md` for details on all available methods and configuration options.
-*   Review `best_practices.md` for tips on using the library effectively. 
+For most applications, it's recommended to use the daemon architecture:
+
+```rust
+use mutant_client::MutantClient;
+use mutant_protocol::StorageMode;
+use anyhow::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Connect to the daemon (must be running)
+    let mut client = MutantClient::new();
+    client.connect("ws://localhost:3030/ws").await?;
+
+    // Start a put operation in the background
+    let (start_task, progress_rx) = client.put(
+        "my_key",
+        "path/to/file.txt",
+        StorageMode::Medium,
+        false, // not public
+        false, // verify
+    ).await?;
+
+    // Monitor progress (optional)
+    tokio::spawn(async move {
+        while let Ok(progress) = progress_rx.recv().await {
+            println!("Progress: {:?}", progress);
+        }
+    });
+
+    // Wait for the task to complete
+    let result = start_task.await?;
+    println!("Task completed: {:?}", result);
+
+    Ok(())
+}
+```
+
+## 7. Next Steps
+
+* Explore `core_concepts.md` to understand the underlying mechanisms
+* Check `architecture.md` for details on the component layout
+* Review the internals documentation for deep dives into specific components

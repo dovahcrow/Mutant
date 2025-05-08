@@ -1,16 +1,17 @@
 # Internals: Operation Flows
 
-This document outlines the step-by-step internal process for the core `MutAnt` operations: `store`, `fetch`, and `remove`. It shows how the API layer, Pad Manager, Storage Layer, and data structures interact.
+This document outlines the step-by-step internal process for the core `MutAnt` operations: `put`, `get`, and `rm`. It shows how the API layer, worker pool, network layer, and data structures interact.
 
 **Legend:**
 
-*   `MutAnt`: The public API instance.
-*   `PadMgr`: The internal Pad Manager / Pad Lifecycle component.
-*   `StoreLayer`: The internal Storage Layer component.
-*   `IndexCache`: The `Arc<Mutex<MasterIndexStorage>>` holding the in-memory index.
-*   `NetClient`: The `autonomi::Client` instance.
+* `MutAnt`: The public API instance
+* `Data`: The central coordinator for data operations
+* `Index`: The `Arc<RwLock<MasterIndex>>` holding the in-memory index
+* `Network`: The network adapter for Autonomi operations
+* `WorkerPool`: The pool of workers that process operations concurrently
+* `Client`: The `autonomi::Client` instance
 
-## 1. Store Flow (`MutAnt::store`)
+## 1. Put Flow (`MutAnt::put`)
 
 **Goal:** Store `data` under `key`.
 
@@ -18,80 +19,103 @@ This document outlines the step-by-step internal process for the core `MutAnt` o
 sequenceDiagram
     actor User
     participant MutAnt
-    participant PadMgr
-    participant IndexCache
-    participant StoreLayer
-    participant NetClient
+    participant Data
+    participant Index
+    participant Network
+    participant WorkerPool
+    participant Client
 
-    User->>MutAnt: store(key, data)
-    MutAnt->>PadMgr: allocate_and_prepare_pads(data.len())
-    PadMgr->>IndexCache: lock() and read scratchpad_size
-    PadMgr->>IndexCache: lock() and check/take free_pads
-    PadMgr->>PadMgr: Generate new pads if needed (derive keys/addresses)
-    PadMgr->>IndexCache: unlock()
-    PadMgr-->>MutAnt: Return list of (address, private_key) for writes
-    MutAnt->>PadMgr: chunk_data(data, scratchpad_size)
-    PadMgr-->>MutAnt: Return data_chunks
-    
-    MutAnt->>PadMgr: orchestrate_writes(pads_for_write, data_chunks)
-    loop For each chunk/pad pair
-        PadMgr->>StoreLayer: create_or_update_pad(address, private_key, chunk)
-        StoreLayer->>StoreLayer: Encrypt chunk
-        alt Pad was from free_pads
-            StoreLayer->>NetClient: scratchpad_update(address, private_key, encrypted_chunk)
-        else Pad was new
-            StoreLayer->>NetClient: scratchpad_create(address, public_key, encrypted_chunk)
+    User->>MutAnt: put(key, data, mode, public, no_verify, callback)
+    MutAnt->>Data: put(key, data, mode, public, no_verify, callback)
+
+    Data->>Index: read().contains_key(key)
+
+    alt Key exists with same data
+        Data->>Index: read().verify_checksum(key, data, mode)
+        Index-->>Data: true (same data)
+        Data->>Data: resume(key, data, mode, public, no_verify, callback)
+    else Key exists with different data
+        Data->>Index: read().verify_checksum(key, data, mode)
+        Index-->>Data: false (different data)
+        Data->>Data: update(key, data, mode, public, no_verify, callback)
+    else Key doesn't exist
+        Data->>Data: first_store(key, data, mode, public, no_verify, callback)
+    end
+
+    alt First store or update
+        Data->>Index: write().create_key(key, data, mode, public)
+        Index->>Index: Calculate chunk count based on data size and mode
+        Index->>Index: Allocate pads (from free_pads or generate new)
+        Index->>Index: Create PadInfo entries with status=Generated
+        Index-->>Data: Return (pads, chunk_ranges)
+
+        Data->>Data: Create Context with index, network, name, data, chunk_ranges
+        Data->>Data: write_pipeline(context, pads, no_verify, callback)
+    end
+
+    Data->>WorkerPool: Create worker pool with PutTask
+    Data->>WorkerPool: send_items(pads)
+
+    WorkerPool->>WorkerPool: Distribute pads to workers in round-robin fashion
+
+    loop For each worker
+        WorkerPool->>WorkerPool: Create worker with batch_size tasks
+        loop For each task in worker
+            WorkerPool->>WorkerPool: Process pad with client
+            WorkerPool->>Client: put(pad_info, data_chunk, encoding, is_public)
+            Client-->>WorkerPool: PutResult
+            WorkerPool->>Index: Update pad status (Written -> Confirmed)
+            WorkerPool->>WorkerPool: Increment processed items counter
         end
-        NetClient-->>StoreLayer: Result (with retries)
-        StoreLayer-->>PadMgr: Write result
     end
-    PadMgr-->>MutAnt: Overall write success/failure
 
-    alt Writes Successful
-        MutAnt->>PadMgr: prepare_key_storage_info(key, public_keys, data.len())
-        PadMgr-->>MutAnt: Return KeyStorageInfo
-        MutAnt->>IndexCache: lock()
-        MutAnt->>IndexCache: insert(key, KeyStorageInfo)
-        MutAnt->>IndexCache: unlock()
-        MutAnt->>StoreLayer: save_master_index(IndexCache)
-        StoreLayer->>StoreLayer: Serialize IndexCache (CBOR)
-        StoreLayer->>NetClient: scratchpad_update(master_index_addr, master_index_key, serialized_index)
-        NetClient-->>StoreLayer: Result
-        StoreLayer-->>MutAnt: Save result
-        MutAnt-->>User: Ok(())
-    else Writes Failed
-        MutAnt-->>User: Err(WriteError)
+    WorkerPool->>WorkerPool: Process recycling queue for failed pads
+    WorkerPool-->>Data: Return results
+
+    alt Public key
+        Data->>Index: write().populate_index_pad(key)
+        Index-->>Data: Return (index_pad, index_data)
+        Data->>Data: Create index context
+        Data->>WorkerPool: write_pipeline for index pad
     end
+
+    Data->>Data: invoke_put_callback(PutEvent::Complete)
+    Data-->>MutAnt: Return address
+    MutAnt-->>User: Return address
 ```
 
 **Steps:**
 
-1.  **User Call:** `MutAnt::store(key, data)` is called.
-2.  **Pad Allocation (PadMgr):**
-    *   Calculates the number of pads needed.
-    *   Locks `IndexCache`, checks `scratchpad_size`.
-    *   Locks `IndexCache`, tries to acquire pads from `free_pads` (obtaining their private keys).
-    *   Generates any additional new pads required (creating new private/public key pairs and addresses).
-    *   Unlocks `IndexCache`.
-    *   Returns the list of `(address, private_key)` tuples needed for writing.
-3.  **Chunking (PadMgr):** Splits `data` into chunks based on `scratchpad_size`.
-4.  **Concurrent Writes (PadMgr -> StoreLayer -> NetClient):**
-    *   Iterates through chunks and the allocated pad list.
-    *   For each pair, calls `StoreLayer::create_or_update_pad`.
-    *   `StoreLayer` encrypts the chunk using the provided private key.
-    *   `StoreLayer` calls `NetClient::scratchpad_create` (for new pads, using the public key) or `NetClient::scratchpad_update` (for reused pads, using the private key).
-    *   Network results (including retries) propagate back.
-5.  **Index Update (MutAnt -> IndexCache):**
-    *   If all writes succeed, `MutAnt` asks `PadMgr` to format the `KeyStorageInfo` (using the *public* keys of the pads).
-    *   `MutAnt` locks `IndexCache` and inserts the new `(key, KeyStorageInfo)` mapping.
-    *   `MutAnt` unlocks `IndexCache`.
-6.  **Persist Index (MutAnt -> StoreLayer -> NetClient):**
-    *   `MutAnt` calls `StoreLayer::save_master_index`.
-    *   `StoreLayer` serializes the current `IndexCache` content to CBOR.
-    *   `StoreLayer` calls `NetClient::scratchpad_update` to save the serialized index to the Master Index pad.
-7.  **Return:** `MutAnt` returns `Ok(())` or an appropriate `Error` to the user.
+1. **User Call:** `MutAnt::put(key, data, mode, public, no_verify, callback)` is called.
+2. **Key Check:**
+   * Check if the key already exists in the index.
+   * If it exists with the same data (verified by checksum), resume the operation.
+   * If it exists with different data, update the key.
+   * If it doesn't exist, create a new key.
+3. **Key Creation:**
+   * Calculate chunk count based on data size and storage mode.
+   * Allocate pads from free_pads or generate new ones.
+   * Create PadInfo entries with status=Generated.
+   * Return the pads and chunk ranges.
+4. **Worker Pool Setup:**
+   * Create a Context with all necessary information.
+   * Create a worker pool with the appropriate task (PutTask).
+   * Distribute pads to workers in round-robin fashion.
+5. **Concurrent Processing:**
+   * Each worker processes its assigned pads.
+   * Each worker has a batch of concurrent tasks (default: 10).
+   * Each task writes a pad to the network.
+   * Update pad status as operations complete.
+   * Failed operations are sent to the recycling queue.
+6. **Public Index (if applicable):**
+   * For public keys, create and write a special index pad.
+   * This pad contains metadata about the data pads.
+   * The index pad address is used as the public address for the key.
+7. **Completion:**
+   * Invoke the completion callback.
+   * Return the address of the first pad (or index pad for public keys).
 
-## 2. Fetch Flow (`MutAnt::fetch`)
+## 2. Get Flow (`MutAnt::get`)
 
 **Goal:** Retrieve the data associated with `key`.
 
@@ -99,73 +123,71 @@ sequenceDiagram
 sequenceDiagram
     actor User
     participant MutAnt
-    participant PadMgr
-    participant IndexCache
-    participant StoreLayer
-    participant NetClient
+    participant Data
+    participant Index
+    participant Network
+    participant WorkerPool
+    participant Client
 
-    User->>MutAnt: fetch(key)
-    MutAnt->>IndexCache: lock() and read KeyStorageInfo for key
+    User->>MutAnt: get(key, callback)
+    MutAnt->>Data: get(key, callback)
+
+    Data->>Index: read().get_pads(key)
     alt Key Found
-        IndexCache-->>MutAnt: Return KeyStorageInfo { pads: Vec<(addr, pubkey)>, data_size }
-        MutAnt->>IndexCache: unlock()
-        MutAnt->>PadMgr: derive_private_keys(pads)
-        PadMgr->>PadMgr: For each pad, Derive(UserPrivateKey, addr)
-        PadMgr-->>MutAnt: Return Vec<(addr, private_key)>
-        
-        MutAnt->>PadMgr: orchestrate_reads(pads_with_private_keys)
-        loop For each (address, private_key) pair
-            PadMgr->>StoreLayer: fetch_pad(address, private_key)
-            StoreLayer->>NetClient: scratchpad_get(address, private_key)
-            NetClient-->>StoreLayer: Result (encrypted_chunk)
-            StoreLayer->>StoreLayer: Decrypt chunk (spawn_blocking)
-            StoreLayer-->>PadMgr: Decrypted chunk result
+        Index-->>Data: Return Vec<PadInfo>
+
+        Data->>WorkerPool: Create worker pool with GetTask
+        Data->>WorkerPool: send_items(pads)
+
+        WorkerPool->>WorkerPool: Distribute pads to workers in round-robin fashion
+
+        loop For each worker
+            WorkerPool->>WorkerPool: Create worker with batch_size tasks
+            loop For each task in worker
+                WorkerPool->>WorkerPool: Process pad with client
+                WorkerPool->>Client: get(address, private_key)
+                Client-->>WorkerPool: GetResult
+                WorkerPool->>WorkerPool: Decrypt data
+                WorkerPool->>WorkerPool: Increment processed items counter
+            end
         end
-        PadMgr->>PadMgr: Reassemble chunks in order
-        PadMgr->>PadMgr: Verify total size == data_size from KeyStorageInfo
-        alt Size OK
-             PadMgr-->>MutAnt: Return assembled Vec<u8>
-             MutAnt-->>User: Ok(Vec<u8>)
-        else Size Mismatch
-             PadMgr-->>MutAnt: Err(InternalError)
-             MutAnt-->>User: Err(InternalError)
-        end
+
+        WorkerPool->>WorkerPool: Process recycling queue for failed pads
+        WorkerPool-->>Data: Return results (pad_id, data_chunk)
+
+        Data->>Data: Reassemble chunks in order
+        Data->>Data: invoke_get_callback(GetEvent::Complete)
+        Data-->>MutAnt: Return assembled data
+        MutAnt-->>User: Return data
     else Key Not Found
-        IndexCache-->>MutAnt: KeyNotFound
-        MutAnt->>IndexCache: unlock()
+        Index-->>Data: Return empty Vec
+        Data-->>MutAnt: Err(KeyNotFound)
         MutAnt-->>User: Err(KeyNotFound)
     end
 ```
 
 **Steps:**
 
-1.  **User Call:** `MutAnt::fetch(key)` is called.
-2.  **Index Lookup (MutAnt -> IndexCache):**
-    *   `MutAnt` locks `IndexCache`.
-    *   Looks up `key` in the `index` map.
-    *   If found, retrieves the `KeyStorageInfo` (containing the list of `(address, public_key)` tuples and `data_size`).
-    *   If not found, unlocks and returns `Error::KeyNotFound`.
-    *   Unlocks `IndexCache`.
-3.  **Derive Private Keys (MutAnt -> PadMgr):**
-    *   `MutAnt` passes the list of `(address, public_key)` tuples to `PadMgr`.
-    *   `PadMgr` iterates through the list, deterministically deriving the *private key* for each `address` using the main user private key.
-    *   Returns the list of `(address, private_key)` tuples.
-4.  **Concurrent Reads (PadMgr -> StoreLayer -> NetClient):**
-    *   `PadMgr` iterates through the `(address, private_key)` list.
-    *   For each pair, calls `StoreLayer::fetch_pad`.
-    *   `StoreLayer` calls `NetClient::scratchpad_get` using the address and private key.
-    *   `StoreLayer` receives the encrypted chunk.
-    *   `StoreLayer` decrypts the chunk (potentially offloading to `spawn_blocking`).
-    *   Decrypted chunks are returned to `PadMgr`.
-5.  **Reassembly & Verification (PadMgr):**
-    *   `PadMgr` collects all decrypted chunks.
-    *   Reassembles them in the original order (based on the `KeyStorageInfo.pads` list).
-    *   Compares the size of the reassembled data with `KeyStorageInfo.data_size`.
-6.  **Return:**
-    *   If size matches, `PadMgr` returns the `Vec<u8>` to `MutAnt`, which returns `Ok(data)` to the user.
-    *   If size mismatches, returns `Error::InternalError`.
+1. **User Call:** `MutAnt::get(key, callback)` is called.
+2. **Index Lookup:**
+   * Look up the key in the index to get the associated pads.
+   * If the key is not found, return an error.
+3. **Worker Pool Setup:**
+   * Create a worker pool with the appropriate task (GetTask).
+   * Distribute pads to workers in round-robin fashion.
+4. **Concurrent Processing:**
+   * Each worker processes its assigned pads.
+   * Each worker has a batch of concurrent tasks (default: 10).
+   * Each task fetches a pad from the network and decrypts it.
+   * Failed operations are sent to the recycling queue.
+5. **Reassembly:**
+   * Collect all decrypted chunks.
+   * Reassemble them in the correct order based on pad IDs.
+6. **Completion:**
+   * Invoke the completion callback.
+   * Return the assembled data.
 
-## 3. Remove Flow (`MutAnt::remove`)
+## 3. Remove Flow (`MutAnt::rm`)
 
 **Goal:** Remove `key` and recycle its pads.
 
@@ -173,50 +195,175 @@ sequenceDiagram
 sequenceDiagram
     actor User
     participant MutAnt
-    participant PadMgr
-    participant IndexCache
-    participant StoreLayer
-    participant NetClient
+    participant Index
 
-    User->>MutAnt: remove(key)
-    MutAnt->>IndexCache: lock()
-    MutAnt->>IndexCache: remove(key) -> Option<KeyStorageInfo>
-    alt Key Found and Removed
-        IndexCache-->>MutAnt: Return removed KeyStorageInfo { pads: Vec<(addr, pubkey)> }
-        MutAnt->>PadMgr: harvest_pads(pads)
-        PadMgr->>PadMgr: For each pad, Derive(UserPrivateKey, addr) -> private_key
-        PadMgr-->>MutAnt: Return Vec<(addr, private_key)>
-        MutAnt->>IndexCache: append pads_with_private_keys to free_pads list
-        MutAnt->>IndexCache: unlock()
+    User->>MutAnt: rm(key)
+    MutAnt->>Index: write().remove_key(key)
 
-        MutAnt->>StoreLayer: save_master_index(IndexCache)
-        StoreLayer->>StoreLayer: Serialize IndexCache (CBOR)
-        StoreLayer->>NetClient: scratchpad_update(master_index_addr, master_index_key, serialized_index)
-        NetClient-->>StoreLayer: Result
-        StoreLayer-->>MutAnt: Save result
+    alt Key Found
+        Index->>Index: Remove key from index
+        Index->>Index: Move pads to free_pads list
+        Index-->>MutAnt: Ok(())
         MutAnt-->>User: Ok(())
     else Key Not Found
-        IndexCache-->>MutAnt: None (key wasn't present)
-        MutAnt->>IndexCache: unlock()
-        MutAnt-->>User: Ok(()) // Removing non-existent key is often OK
+        Index-->>MutAnt: Err(KeyNotFound)
+        MutAnt-->>User: Err(KeyNotFound)
     end
 ```
 
 **Steps:**
 
-1.  **User Call:** `MutAnt::remove(key)` is called.
-2.  **Index Update (MutAnt -> IndexCache):**
-    *   `MutAnt` locks `IndexCache`.
-    *   Calls `remove(key)` on the `index` map. This returns the `KeyStorageInfo` if the key existed.
-3.  **Pad Harvesting (MutAnt -> PadMgr):**
-    *   If a `KeyStorageInfo` was returned (key existed):
-        *   `MutAnt` passes the `pads` list (`Vec<(address, public_key)>`) to `PadMgr`.
-        *   `PadMgr` derives the *private key* for each address.
-        *   `PadMgr` returns the list of `(address, private_key)` tuples.
-        *   `MutAnt` appends this list to the `free_pads` vector within the locked `IndexCache`.
-4.  **Unlock Index:** `MutAnt` unlocks `IndexCache`.
-5.  **Persist Index (MutAnt -> StoreLayer -> NetClient):**
-    *   If the key existed and pads were harvested (or even if the key didn't exist, saving is often harmless), `MutAnt` calls `StoreLayer::save_master_index`.
-    *   `StoreLayer` serializes the potentially updated `IndexCache` content to CBOR.
-    *   `StoreLayer` calls `NetClient::scratchpad_update` to save the index.
-6.  **Return:** `MutAnt` returns `Ok(())` to the user (typically, removing a non-existent key is not an error). 
+1. **User Call:** `MutAnt::rm(key)` is called.
+2. **Index Update:**
+   * Acquire a write lock on the index.
+   * Remove the key from the index.
+   * Move the associated pads to the free_pads list.
+   * Release the lock.
+3. **Return:**
+   * Return success or an error if the key was not found.
+
+## 4. Purge Flow (`MutAnt::purge`)
+
+**Goal:** Verify and clean up invalid pads.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant MutAnt
+    participant Data
+    participant Index
+    participant Network
+    participant WorkerPool
+    participant Client
+
+    User->>MutAnt: purge(aggressive, callback)
+    MutAnt->>Data: purge(aggressive, callback)
+
+    Data->>Index: read().get_all_pads()
+    Index-->>Data: Return Vec<PadInfo>
+
+    Data->>WorkerPool: Create worker pool with PurgeTask
+    Data->>WorkerPool: send_items(pads)
+
+    WorkerPool->>WorkerPool: Distribute pads to workers in round-robin fashion
+
+    loop For each worker
+        WorkerPool->>WorkerPool: Create worker with batch_size tasks
+        loop For each task in worker
+            WorkerPool->>WorkerPool: Process pad with client
+            WorkerPool->>Client: get(address, private_key)
+            alt Pad is valid
+                Client-->>WorkerPool: GetResult
+                WorkerPool->>Index: Update pad status (Confirmed)
+            else Pad is invalid
+                Client-->>WorkerPool: Error
+                WorkerPool->>Index: Update pad status (Invalid)
+            end
+            WorkerPool->>WorkerPool: Increment processed items counter
+        end
+    end
+
+    WorkerPool->>WorkerPool: Process recycling queue for failed pads
+    WorkerPool-->>Data: Return results
+
+    Data->>Data: invoke_purge_callback(PurgeEvent::Complete)
+    Data-->>MutAnt: Return PurgeResult
+    MutAnt-->>User: Return PurgeResult
+```
+
+**Steps:**
+
+1. **User Call:** `MutAnt::purge(aggressive, callback)` is called.
+2. **Pad Collection:**
+   * Get all pads from the index.
+   * If aggressive is true, include all pads; otherwise, only include pads that need verification.
+3. **Worker Pool Setup:**
+   * Create a worker pool with the appropriate task (PurgeTask).
+   * Distribute pads to workers in round-robin fashion.
+4. **Concurrent Processing:**
+   * Each worker processes its assigned pads.
+   * Each worker has a batch of concurrent tasks (default: 10).
+   * Each task verifies a pad by attempting to fetch it from the network.
+   * Update pad status based on the result (Confirmed or Invalid).
+   * Failed operations are sent to the recycling queue.
+5. **Completion:**
+   * Invoke the completion callback.
+   * Return the purge result with statistics.
+
+## 5. Health Check Flow (`MutAnt::health_check`)
+
+**Goal:** Verify the integrity of a specific key.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant MutAnt
+    participant Data
+    participant Index
+    participant Network
+    participant WorkerPool
+    participant Client
+
+    User->>MutAnt: health_check(key, recycle, callback)
+    MutAnt->>Data: health_check(key, recycle, callback)
+
+    Data->>Index: read().get_pads(key)
+    alt Key Found
+        Index-->>Data: Return Vec<PadInfo>
+
+        Data->>WorkerPool: Create worker pool with HealthCheckTask
+        Data->>WorkerPool: send_items(pads)
+
+        WorkerPool->>WorkerPool: Distribute pads to workers in round-robin fashion
+
+        loop For each worker
+            WorkerPool->>WorkerPool: Create worker with batch_size tasks
+            loop For each task in worker
+                WorkerPool->>WorkerPool: Process pad with client
+                WorkerPool->>Client: get(address, private_key)
+                alt Pad is valid
+                    Client-->>WorkerPool: GetResult
+                    WorkerPool->>Index: Update pad status (Confirmed)
+                else Pad is invalid
+                    Client-->>WorkerPool: Error
+                    WorkerPool->>Index: Update pad status (Invalid)
+                    alt Recycle enabled
+                        WorkerPool->>Index: Move pad to free_pads
+                    end
+                end
+                WorkerPool->>WorkerPool: Increment processed items counter
+            end
+        end
+
+        WorkerPool->>WorkerPool: Process recycling queue for failed pads
+        WorkerPool-->>Data: Return results
+
+        Data->>Data: invoke_health_check_callback(HealthCheckEvent::Complete)
+        Data-->>MutAnt: Return HealthCheckResult
+        MutAnt-->>User: Return HealthCheckResult
+    else Key Not Found
+        Index-->>Data: Return empty Vec
+        Data-->>MutAnt: Err(KeyNotFound)
+        MutAnt-->>User: Err(KeyNotFound)
+    end
+```
+
+**Steps:**
+
+1. **User Call:** `MutAnt::health_check(key, recycle, callback)` is called.
+2. **Pad Collection:**
+   * Get all pads for the specified key.
+   * If the key is not found, return an error.
+3. **Worker Pool Setup:**
+   * Create a worker pool with the appropriate task (HealthCheckTask).
+   * Distribute pads to workers in round-robin fashion.
+4. **Concurrent Processing:**
+   * Each worker processes its assigned pads.
+   * Each worker has a batch of concurrent tasks (default: 10).
+   * Each task verifies a pad by attempting to fetch it from the network.
+   * Update pad status based on the result (Confirmed or Invalid).
+   * If recycle is enabled, move invalid pads to the free_pads list.
+   * Failed operations are sent to the recycling queue.
+5. **Completion:**
+   * Invoke the completion callback.
+   * Return the health check result with statistics.

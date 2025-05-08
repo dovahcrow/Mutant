@@ -1,57 +1,206 @@
 # Internals: Concurrency and Thread Safety
 
-`mutant-lib` is designed to be used in asynchronous Rust applications and needs to handle concurrent operations safely.
+`mutant-lib` is designed to be used in asynchronous Rust applications and needs to handle concurrent operations safely and efficiently. This document details the concurrency model used throughout the library.
 
-## 1. The Central Synchronization Point: `MasterIndexStorage` Cache
+## 1. Shared State Protection
 
-The most critical shared resource is the in-memory cache of the `MasterIndexStorage`. Multiple asynchronous tasks might want to read or modify this cache concurrently (e.g., one task storing data while another lists keys).
+### 1.1 Master Index Protection
 
-To ensure thread safety and prevent data races or inconsistent states, the `MasterIndexStorage` is wrapped in `Arc<Mutex<>>`:
+The most critical shared resource is the `MasterIndex`, which maps user keys to pad information and tracks free pads. Multiple operations might need to read or modify this data structure concurrently.
+
+To ensure thread safety and prevent data races, the `MasterIndex` is wrapped in `Arc<RwLock<>>`:
 
 ```rust
-// Within the MutAnt struct or a shared context
-index_cache: Arc<Mutex<MasterIndexStorage>>,
+// Within the MutAnt struct
+index: Arc<RwLock<MasterIndex>>,
 ```
 
-*   **`Arc` (Atomically Reference Counted):** Allows multiple owners of the data. The `MutAnt` instance and potentially background tasks can all hold references to the same `Mutex`-protected index cache.
-*   **`Mutex` (Mutual Exclusion):** Ensures that only one thread can access the `MasterIndexStorage` data *at any given time*. Any task needing to read or modify the index must first acquire the lock.
+- **`Arc` (Atomically Reference Counted):** Allows multiple owners of the data across different tasks and threads.
+- **`RwLock` (Read-Write Lock):** Provides more granular locking than a `Mutex`:
+  - Multiple readers can access the data simultaneously
+  - Writers get exclusive access, blocking all other readers and writers
+  - This is more efficient than a `Mutex` for read-heavy workloads
 
-**Implications:**
+**Usage Pattern:**
 
-*   **Blocking:** Acquiring the mutex lock (`index_cache.lock().await` in async code, or `index_cache.lock().unwrap()` in sync code called via `spawn_blocking`) is a potentially blocking operation. If another task holds the lock, the current task will pause until the lock is released.
-*   **Granularity:** The lock protects the *entire* `MasterIndexStorage`. This simplifies the locking logic but means that even read-only operations (like `list_keys`) need to acquire the lock, potentially blocking writes temporarily, and vice-versa.
-*   **Lock Duration:** It's crucial to hold the lock for the shortest duration necessary. For example:
-    *   **Good:** Lock -> Read needed value -> Unlock -> Perform network I/O -> Lock -> Write updated value -> Unlock.
-    *   **Bad:** Lock -> Read needed value -> Perform network I/O -> Write updated value -> Unlock. (Holds the lock during potentially long I/O).
-    *   The operation flows generally follow the "Good" pattern, releasing the lock before lengthy I/O operations like concurrent pad writes/reads, and re-acquiring it later if needed for updates.
+```rust
+// For read-only operations
+let index_guard = self.index.read().await;
+let result = index_guard.some_read_operation();
+drop(index_guard);  // Explicitly release the lock
 
-## 2. Concurrency in Data Operations
+// For write operations
+let mut index_guard = self.index.write().await;
+index_guard.some_write_operation()?;
+drop(index_guard);  // Explicitly release the lock
+```
 
-While access to the Master Index is serialized by the mutex, the actual network operations for reading and writing *data chunks* are performed concurrently to improve performance, especially for large files spanning multiple pads.
+### 1.2 Data Layer Protection
 
-*   **`store`:** After allocating pads and chunking the data, the Pad Manager spawns a separate asynchronous task (e.g., using `tokio::spawn`) for each chunk/pad pair. Each task instructs the Storage Layer to perform the `create_scratchpad` or `update_scratchpad` operation. `futures::future::join_all` (or a similar combinator) is used to wait for all these concurrent write tasks to complete.
-*   **`fetch`:** After looking up the `KeyStorageInfo` and deriving the necessary private keys, the Pad Manager spawns a separate asynchronous task for each data chunk to be fetched. Each task calls `StoreLayer::fetch_pad`, which handles the network call and subsequent decryption. `join_all` is used again to await all concurrent reads and decryptions.
+The `Data` struct, which coordinates operations, is also protected with an `Arc<RwLock<>>`:
 
-**Benefits:**
+```rust
+// Within the MutAnt struct
+data: Arc<RwLock<Data>>,
+```
 
-*   **Throughput:** Allows multiple network requests to the Autonomi network to happen in parallel, significantly speeding up operations involving many scratchpads.
-*   **Responsiveness:** Prevents a single slow network request from blocking the entire operation unduly.
+This allows multiple concurrent read operations (like `get` or `list`) while ensuring that write operations (like `put`) have exclusive access when needed.
 
-## 3. Asynchronous Execution (`tokio`)
+## 2. Worker Pool Architecture
 
-The library heavily relies on the `tokio` runtime for its asynchronous operations:
+The worker pool is the heart of MutAnt's concurrency model, designed to efficiently process operations in parallel.
 
-*   **`async`/`await`:** Used throughout the codebase for non-blocking I/O.
-*   **`tokio::spawn`:** Used to launch concurrent tasks for data pad operations.
-*   **`tokio::sync::Mutex`:** The mutex protecting the `IndexCache` is typically `tokio::sync::Mutex` to integrate seamlessly with the async runtime.
-*   **`tokio::task::spawn_blocking`:** Used within the Storage Layer for CPU-bound tasks like CBOR deserialization or chunk decryption. This moves the work to a dedicated blocking thread pool managed by Tokio, preventing it from blocking the main async worker threads responsible for I/O.
+### 2.1 Pool Structure
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Worker Pool                               │
+│                                                                  │
+│  ┌─────────┐   ┌─────────┐   ┌─────────┐        ┌─────────┐     │
+│  │ Worker 1 │   │ Worker 2 │   │ Worker 3 │  ...  │ Worker N │     │
+│  └─────────┘   └─────────┘   └─────────┘        └─────────┘     │
+│       │             │             │                  │           │
+│       ▼             ▼             ▼                  ▼           │
+│  ┌─────────┐   ┌─────────┐   ┌─────────┐        ┌─────────┐     │
+│  │ Client 1 │   │ Client 2 │   │ Client 3 │  ...  │ Client N │     │
+│  └─────────┘   └─────────┘   └─────────┘        └─────────┘     │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │                    Global Queue                          │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │                    Recycling Queue                       │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 2.2 Key Components
+
+1. **Workers**: Each worker manages a batch of concurrent tasks (default: 10 tasks per worker)
+2. **Clients**: Each worker has exactly ONE dedicated client to prevent blocking
+3. **Local Queues**: Each worker has a local queue for assigned tasks
+4. **Global Queue**: A shared queue that all workers can pull from when their local queue is empty
+5. **Recycling Queue**: A queue for failed operations that need to be retried
+
+### 2.3 Channel-Based Communication
+
+The worker pool uses `async_channel` for communication between components:
+
+```rust
+// Worker pool channels
+worker_txs: Vec<Sender<Item>>,      // Send items to specific workers
+worker_rxs: Vec<Receiver<Item>>,    // Workers receive items from their channel
+global_tx: Sender<Item>,            // Send items to the global queue
+global_rx: Receiver<Item>,          // Workers pull from global queue when local is empty
+retry_sender: Option<Sender<(E, Item)>>,  // Send failed items for recycling
+retry_rx: Option<Receiver<(E, Item)>>,    // Recycler receives failed items
+```
+
+This channel-based approach provides a blocking mechanism that doesn't consume CPU while waiting for work.
+
+## 3. Task Distribution and Work Stealing
+
+### 3.1 Initial Distribution
+
+Tasks are initially distributed to workers in a round-robin fashion:
+
+```rust
+let mut worker_index = 0;
+for item in items {
+    let target_tx = &self.worker_txs[worker_index % num_workers];
+    target_tx.send(item).await?;
+    worker_index += 1;
+}
+```
+
+### 3.2 Work Stealing
+
+Workers can "steal" work from the global queue when their local queue is empty:
+
+```rust
+// Simplified version of the worker's task processing loop
+tokio::select! {
+    biased;
+    result = self.local_queue.recv() => {
+        // Process item from local queue
+    },
+    result = self.global_queue.recv() => {
+        // Process item from global queue (work stealing)
+    },
+}
+```
+
+The `biased` keyword ensures that the local queue is always checked first, prioritizing assigned work.
+
+## 4. Recycling Mechanism
+
+Failed operations are sent to a recycling queue for retry:
+
+```rust
+// When an operation fails
+if let Some(retry_tx) = &self.retry_sender {
+    retry_tx.try_send((error.clone(), failed_item))?;
+}
+```
+
+A dedicated recycler task processes these failed items:
+
+```rust
+match recycle_function(error_cause, item_to_recycle).await {
+    Ok(Some(new_item)) => {
+        // Send recycled item back to the global queue
+        global_tx_for_recycler.send(new_item).await?;
+    },
+    Ok(None) => {
+        // Item cannot be recycled, drop it
+    },
+    Err(recycle_err) => {
+        // Recycling failed, log error
+    }
+}
+```
+
+## 5. Completion Detection
+
+The worker pool monitors completion using several mechanisms:
+
+1. **Processed Items Counter**: Tracks how many items have been successfully processed
+2. **Active Workers Counter**: Tracks how many worker tasks are still active
+3. **Total Items Hint**: The expected number of items to process
+
+Completion is determined when either:
+- The processed items count matches the total items hint (all pads confirmed)
+- All workers have completed and at least one item was processed
+
+```rust
+if processed_items > 0 && processed_items == monitor_total_items_hint {
+    // All expected items processed
+    monitor_all_items_processed.notify_waiters();
+} else if processed_items > 0 && active_workers == 0 {
+    // All workers done but fewer items than expected
+    monitor_all_items_processed.notify_waiters();
+}
+```
+
+## 6. Asynchronous Execution with Tokio
+
+The library heavily relies on the `tokio` runtime for asynchronous operations:
+
+- **`async`/`await`**: Used throughout the codebase for non-blocking I/O
+- **`tokio::spawn`**: Used to launch concurrent tasks for workers and recyclers
+- **`tokio::sync::RwLock`**: Used for protecting shared state with reader/writer semantics
+- **`tokio::sync::Notify`**: Used for signaling completion between tasks
+- **`tokio::select!`**: Used for efficiently waiting on multiple async operations
 
 ## Summary
 
 Concurrency in `mutant-lib` is managed through:
 
-1.  A `tokio::sync::Mutex` protecting the shared `MasterIndexStorage` cache, ensuring atomic updates to metadata.
-2.  Parallel execution of data scratchpad network operations using `tokio::spawn` and `join_all`.
-3.  Offloading CPU-bound tasks like decryption to a blocking thread pool using `spawn_blocking`.
+1. An `Arc<RwLock<>>` protecting shared state like the `MasterIndex` and `Data`
+2. A worker pool architecture with dedicated clients and channel-based communication
+3. Round-robin task distribution with work stealing for efficient resource utilization
+4. A recycling mechanism for handling failed operations
+5. Sophisticated completion detection based on processed items and active workers
 
-This combination provides both thread safety for shared state and high throughput for network-bound data transfer. 
+This architecture provides both thread safety and high throughput for network-bound operations, with efficient CPU utilization and resilience against transient failures.

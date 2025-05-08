@@ -1,6 +1,6 @@
 # MutAnt Library: API Reference
 
-This document details the public API provided by the `mutant_lib::api::MutAnt` struct.
+This document details the public API provided by the `mutant_lib::MutAnt` struct.
 
 All methods are asynchronous and typically return `Result<T, mutant_lib::error::Error>`.
 
@@ -11,44 +11,54 @@ These methods create and configure a `MutAnt` instance.
 ### `MutAnt::init`
 
 ```rust
-pub async fn init(
-    private_key_hex: String,
-    config: MutAntConfig
-) -> Result<Self, Error>
+pub async fn init(private_key_hex: &str) -> Result<Self, Error>
 ```
 
-Initializes the `MutAnt` instance with the given Autonomi private key (hex-encoded string) and configuration.
+Initializes the `MutAnt` instance with the given Autonomi private key (hex-encoded string) for the Mainnet network.
 
-*   Connects to the Autonomi network.
-*   Derives the Master Index address and key from `private_key_hex`.
-*   Attempts to load the `MasterIndexStorage` from the network.
-*   If the index is not found, creates a new, empty one and saves it to the network.
-*   Returns a `MutAnt` instance ready for use.
+* Connects to the Autonomi network.
+* Derives the Master Index address and key from `private_key_hex`.
+* Attempts to load the `MasterIndex` from the network.
+* If the index is not found, creates a new, empty one.
+* Returns a `MutAnt` instance ready for use.
 
 **Arguments:**
 
-*   `private_key_hex`: Your Autonomi wallet's private key as a hex string.
-*   `config`: A `MutAntConfig` struct specifying operational parameters (e.g., scratchpad size, network settings, retry behavior). Use `MutAntConfig::default()` for standard settings.
+* `private_key_hex`: Your Autonomi wallet's private key as a hex string.
 
 **Returns:** `Result<MutAnt, Error>`
 
-### `MutAnt::init_with_progress`
+### `MutAnt::init_public`
 
 ```rust
-pub async fn init_with_progress(
-    private_key_hex: String,
-    config: MutAntConfig,
-    callback: Option<InitCallback>
-) -> Result<Self, Error>
+pub async fn init_public() -> Result<Self, Error>
 ```
 
-Same as `init`, but accepts an optional callback function (`InitCallback`) to report the progress of the initialization steps.
+Initializes a `MutAnt` instance for public fetching only. This instance can only be used to fetch public data using `get_public`.
+
+**Returns:** `Result<MutAnt, Error>`
+
+### `MutAnt::init_local`
+
+```rust
+pub async fn init_local() -> Result<Self, Error>
+```
+
+Initializes a `MutAnt` instance for local development using the Devnet network.
+
+**Returns:** `Result<MutAnt, Error>`
+
+### `MutAnt::init_alphanet`
+
+```rust
+pub async fn init_alphanet(private_key_hex: &str) -> Result<Self, Error>
+```
+
+Initializes a `MutAnt` instance for the Alphanet network.
 
 **Arguments:**
 
-*   `private_key_hex`: Your Autonomi wallet's private key as a hex string.
-*   `config`: A `MutAntConfig` struct.
-*   `callback`: An `Option<InitCallback>` (typically `Option<Arc<Mutex<dyn FnMut(InitEvent) + Send + Sync>>>`). See `mutant_lib::events` for `InitEvent` details.
+* `private_key_hex`: Your Autonomi wallet's private key as a hex string.
 
 **Returns:** `Result<MutAnt, Error>`
 
@@ -56,180 +66,318 @@ Same as `init`, but accepts an optional callback function (`InitCallback`) to re
 
 Methods for storing, retrieving, and removing data.
 
-### `MutAnt::store`
+### `MutAnt::put`
 
 ```rust
-pub async fn store(&self, key: &str, data: &[u8]) -> Result<(), Error>
-```
-
-Stores the given `data` bytes under the specified `key`.
-
-*   Handles data chunking, pad allocation (reuse or creation), encryption, and concurrent writes to data scratchpads.
-*   Updates the `MasterIndexStorage` with the new key and metadata.
-*   Saves the updated `MasterIndexStorage` to the network.
-*   If the `key` already exists, this method will likely fail (use `update` or `remove`+`store`).
-
-**Arguments:**
-
-*   `key`: The string key to associate with the data.
-*   `data`: A byte slice (`&[u8]`) containing the data to store.
-
-**Returns:** `Result<(), Error>`
-
-### `MutAnt::store_with_progress`
-
-```rust
-pub async fn store_with_progress(
+pub async fn put(
     &self,
-    key: &str,
-    data: &[u8],
-    callback: Option<ProgressCallback>
-) -> Result<(), Error>
+    user_key: &str,
+    data_bytes: Arc<Vec<u8>>,
+    mode: StorageMode,
+    public: bool,
+    no_verify: bool,
+    put_callback: Option<PutCallback>
+) -> Result<ScratchpadAddress, Error>
 ```
 
-Same as `store`, but accepts an optional `ProgressCallback` to report the progress of chunk uploads and retries.
+Stores the given `data_bytes` under the specified `user_key`.
+
+* Handles data chunking, pad allocation (reuse or creation), encryption, and concurrent writes to data scratchpads.
+* Updates the `MasterIndex` with the new key and metadata.
+* If the `user_key` already exists with the same data, resumes the operation.
+* If the `user_key` already exists with different data, updates the key.
 
 **Arguments:**
 
-*   `key`: The string key.
-*   `data`: The byte slice data.
-*   `callback`: An `Option<ProgressCallback>`. See `mutant_lib::events` for `ProgressEvent` details.
+* `user_key`: The string key to associate with the data.
+* `data_bytes`: An `Arc<Vec<u8>>` containing the data to store.
+* `mode`: The `StorageMode` to use (Small, Medium, Large).
+* `public`: Whether to make the data publicly accessible.
+* `no_verify`: Whether to skip verification of written pads.
+* `put_callback`: An optional callback function to report progress.
 
-**Returns:** `Result<(), Error>`
+**Returns:** `Result<ScratchpadAddress, Error>` - The address of the first pad (or index pad for public keys).
 
-### `MutAnt::fetch`
-
-```rust
-pub async fn fetch(&self, key: &str) -> Result<Vec<u8>, Error>
-```
-
-Retrieves the data associated with the given `key`.
-
-*   Looks up the `key` in the `MasterIndexStorage`.
-*   Fetches encrypted data chunks concurrently from the relevant data scratchpads.
-*   Decrypts and reassembles the chunks in the correct order.
-*   Verifies the total data size.
-
-**Arguments:**
-
-*   `key`: The string key of the data to retrieve.
-
-**Returns:** `Result<Vec<u8>, Error>`. Returns `Error::KeyNotFound` if the key does not exist.
-
-### `MutAnt::fetch_with_progress`
+### `MutAnt::get`
 
 ```rust
-pub async fn fetch_with_progress(
+pub async fn get(
     &self,
-    key: &str,
-    callback: Option<ProgressCallback>
+    user_key: &str,
+    get_callback: Option<GetCallback>
 ) -> Result<Vec<u8>, Error>
 ```
 
-Same as `fetch`, but accepts an optional `ProgressCallback` to report the progress of chunk downloads and retries.
+Retrieves the data associated with the given `user_key`.
+
+* Looks up the `user_key` in the `MasterIndex`.
+* Fetches encrypted data chunks concurrently from the relevant data scratchpads.
+* Decrypts and reassembles the chunks in the correct order.
 
 **Arguments:**
 
-*   `key`: The string key.
-*   `callback`: An `Option<ProgressCallback>`.
+* `user_key`: The string key of the data to retrieve.
+* `get_callback`: An optional callback function to report progress.
+
+**Returns:** `Result<Vec<u8>, Error>`. Returns `Error::KeyNotFound` if the key does not exist.
+
+### `MutAnt::get_public`
+
+```rust
+pub async fn get_public(
+    &self,
+    address: &ScratchpadAddress,
+    get_callback: Option<GetCallback>
+) -> Result<Vec<u8>, Error>
+```
+
+Retrieves publicly accessible data using its public address.
+
+* Fetches the index pad at the given address.
+* Extracts the addresses of the data pads from the index pad.
+* Fetches and reassembles the data pads.
+
+**Arguments:**
+
+* `address`: The `ScratchpadAddress` of the public index pad.
+* `get_callback`: An optional callback function to report progress.
 
 **Returns:** `Result<Vec<u8>, Error>`.
 
-### `MutAnt::remove`
+### `MutAnt::rm`
 
 ```rust
-pub async fn remove(&self, key: &str) -> Result<(), Error>
+pub async fn rm(&self, user_key: &str) -> Result<(), Error>
 ```
 
-Removes the data and metadata associated with the given `key`.
+Removes the data and metadata associated with the given `user_key`.
 
-*   Removes the `key` entry from the `MasterIndexStorage`.
-*   Derives the private keys for the associated data pads.
-*   Adds the data pads (address and private key) to the `free_pads` list in the `MasterIndexStorage` for later reuse.
-*   Saves the updated `MasterIndexStorage`.
-*   Note: This does *not* immediately delete or overwrite the data on the data scratchpads, it just makes them available for reuse.
+* Removes the `user_key` entry from the `MasterIndex`.
+* Moves the associated pads to the `free_pads` list in the `MasterIndex` for later reuse.
+* Note: This does *not* immediately delete or overwrite the data on the data scratchpads, it just makes them available for reuse.
 
 **Arguments:**
 
-*   `key`: The string key of the data to remove.
+* `user_key`: The string key of the data to remove.
 
 **Returns:** `Result<(), Error>`.
-
-### `MutAnt::update` (Conceptual / Potential)
-
-*(Note: Based on `architecture.md`, a direct `update` might not be implemented yet. The current recommended approach is `remove` followed by `store`.)*
-
-```rust
-// Conceptual signature
-// pub async fn update(&self, key: &str, data: &[u8]) -> Result<(), Error>
-```
-
-Atomically updates the data associated with an existing key. This is often more complex than `remove` + `store` as it might involve resizing, changing pad allocation, and ensuring atomicity.
-
-**Current Recommendation:** Use `mutant.remove(key).await?` followed by `mutant.store(key, new_data).await?`.
 
 ## Inspection & Maintenance
 
 Methods for querying the state of stored data and managing resources.
 
-### `MutAnt::list_keys`
+### `MutAnt::list`
 
 ```rust
-pub async fn list_keys(&self) -> Result<Vec<String>, Error>
+pub async fn list(&self) -> Result<BTreeMap<String, IndexEntry>, Error>
 ```
 
-Returns a list of all keys currently stored in the Master Index.
+Returns a map of all keys and their associated index entries currently stored in the Master Index.
 
-**Returns:** `Result<Vec<String>, Error>`
+**Returns:** `Result<BTreeMap<String, IndexEntry>, Error>`
 
-### `MutAnt::list_key_details`
+### `MutAnt::contains_key`
 
 ```rust
-pub async fn list_key_details(&self) -> Result<Vec<KeyDetails>, Error>
+pub async fn contains_key(&self, user_key: &str) -> bool
 ```
 
-Returns a list of `KeyDetails` structs, providing more information about each stored key (like size and modification time). See `mutant_lib::types::KeyDetails`.
+Checks if the given key exists in the Master Index.
 
-**Returns:** `Result<Vec<KeyDetails>, Error>`
+**Arguments:**
+
+* `user_key`: The string key to check.
+
+**Returns:** `bool` - `true` if the key exists, `false` otherwise.
+
+### `MutAnt::get_public_index_address`
+
+```rust
+pub async fn get_public_index_address(&self, user_key: &str) -> Result<String, Error>
+```
+
+Gets the public address for a public key. This address can be used with `get_public` to fetch the data without a private key.
+
+**Arguments:**
+
+* `user_key`: The string key to get the public address for.
+
+**Returns:** `Result<String, Error>` - The hex-encoded public address.
 
 ### `MutAnt::get_storage_stats`
 
 ```rust
-pub async fn get_storage_stats(&self) -> Result<StorageStats, Error>
+pub async fn get_storage_stats(&self) -> StorageStats
 ```
 
-Provides statistics about storage usage, such as the number of keys, total data size, number of used pads, and number of free pads. See `mutant_lib::types::StorageStats`.
+Provides statistics about storage usage, such as the number of keys, total pads, occupied pads, and free pads.
 
-**Returns:** `Result<StorageStats, Error>`
+**Returns:** `StorageStats`
 
-### `MutAnt::reserve_pads`
+### `MutAnt::purge`
 
 ```rust
-pub async fn reserve_pads(&self, count: usize) -> Result<(), Error>
+pub async fn purge(
+    &self,
+    aggressive: bool,
+    purge_callback: Option<PurgeCallback>
+) -> Result<PurgeResult, Error>
 ```
 
-Pre-allocates a specified number of new scratchpads and adds them to the `free_pads` list in the Master Index. This can potentially speed up future `store` operations if you anticipate needing many new pads soon.
+Verifies and cleans up invalid pads.
 
 **Arguments:**
 
-*   `count`: The number of new scratchpads to create and reserve.
+* `aggressive`: Whether to check all pads or only those that need verification.
+* `purge_callback`: An optional callback function to report progress.
 
-**Returns:** `Result<(), Error>`
+**Returns:** `Result<PurgeResult, Error>`
 
-*(Other maintenance methods like `import_free_pad` and `purge` might exist - refer to source or specific documentation if needed)*
-
-## Index Management
-
-Advanced methods for interacting directly with the Master Index cache or remote storage. Use with caution.
-
-### `MutAnt::save_master_index`
+### `MutAnt::health_check`
 
 ```rust
-pub async fn save_master_index(&self) -> Result<(), Error>
+pub async fn health_check(
+    &self,
+    key_name: &str,
+    recycle: bool,
+    health_check_callback: Option<HealthCheckCallback>
+) -> Result<HealthCheckResult, Error>
 ```
 
-Forces the current in-memory `MasterIndexStorage` cache to be serialized and saved to its dedicated scratchpad on the network.
+Checks the health of a specific key by verifying all its pads.
+
+**Arguments:**
+
+* `key_name`: The string key to check.
+* `recycle`: Whether to recycle invalid pads.
+* `health_check_callback`: An optional callback function to report progress.
+
+**Returns:** `Result<HealthCheckResult, Error>`
+
+### `MutAnt::sync`
+
+```rust
+pub async fn sync(
+    &self,
+    force: bool,
+    sync_callback: Option<SyncCallback>
+) -> Result<SyncResult, Error>
+```
+
+Synchronizes the local index with the remote index.
+
+**Arguments:**
+
+* `force`: Whether to force synchronization even if the local index is up to date.
+* `sync_callback`: An optional callback function to report progress.
+
+**Returns:** `Result<SyncResult, Error>`
+
+## Import/Export
+
+Methods for importing and exporting pad private keys.
+
+### `MutAnt::export_raw_pads_private_key`
+
+```rust
+pub async fn export_raw_pads_private_key(&self) -> Result<Vec<PadInfo>, Error>
+```
+
+Exports the private keys of all pads in the Master Index.
+
+**Returns:** `Result<Vec<PadInfo>, Error>`
+
+### `MutAnt::import_raw_pads_private_key`
+
+```rust
+pub async fn import_raw_pads_private_key(&self, pads_hex: Vec<PadInfo>) -> Result<(), Error>
+```
+
+Imports pad private keys into the Master Index.
+
+**Arguments:**
+
+* `pads_hex`: A vector of `PadInfo` structs containing the pad information to import.
 
 **Returns:** `Result<(), Error>`
 
-*(Other index methods like `fetch_remote_master_index`, `save_index_cache`, `update_internal_master_index`, `get_index_copy` might exist for advanced use cases or debugging - refer to source or specific documentation if needed)* 
+## Storage Modes
+
+The `StorageMode` enum defines the chunk size used for storing data:
+
+```rust
+pub enum StorageMode {
+    Small,   // 128KB chunks
+    Medium,  // 2MB chunks
+    Large,   // 8MB chunks
+}
+```
+
+## Callback Types
+
+The library provides several callback types for progress reporting:
+
+* `PutCallback`: Reports progress of put operations.
+* `GetCallback`: Reports progress of get operations.
+* `PurgeCallback`: Reports progress of purge operations.
+* `HealthCheckCallback`: Reports progress of health check operations.
+* `SyncCallback`: Reports progress of sync operations.
+
+## Error Types
+
+The `Error` enum defines the possible errors that can occur:
+
+* `KeyNotFound`: The requested key was not found.
+* `NetworkError`: An error occurred in the network layer.
+* `IndexError`: An error occurred in the index layer.
+* `Internal`: An internal error occurred.
+* `Config`: An error occurred in the configuration.
+* `PoolError`: An error occurred in the worker pool.
+
+## Data Structures
+
+### `PadInfo`
+
+```rust
+pub struct PadInfo {
+    pub address: ScratchpadAddress,
+    pub private_key: Vec<u8>,
+    pub status: PadStatus,
+    pub size: usize,
+    pub checksum: u64,
+    pub last_known_counter: u64,
+}
+```
+
+### `PadStatus`
+
+```rust
+pub enum PadStatus {
+    Generated,
+    Written,
+    Confirmed,
+    Free,
+    Invalid,
+}
+```
+
+### `IndexEntry`
+
+```rust
+pub enum IndexEntry {
+    PrivateKey(Vec<PadInfo>),
+    PublicUpload(PadInfo, Vec<PadInfo>),
+}
+```
+
+### `StorageStats`
+
+```rust
+pub struct StorageStats {
+    pub nb_keys: u64,
+    pub total_pads: u64,
+    pub occupied_pads: u64,
+    pub free_pads: u64,
+    pub pending_verification_pads: u64,
+}
+```
