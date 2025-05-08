@@ -3,11 +3,13 @@ use crate::connect_to_daemon;
 use crate::history::append_history_entry;
 use crate::history::FetchHistoryEntry;
 use crate::terminal::ProgressWithDisabledStdin;
+use crate::utils::format_elapsed_time;
 use anyhow::Result;
 use chrono::Utc;
 use colored::Colorize;
 use mutant_protocol::TaskResult;
 use mutant_protocol::TaskResultType;
+use std::time::Instant;
 
 pub async fn handle_get(
     key: String,
@@ -30,6 +32,10 @@ pub async fn handle_get(
     }
 
     let mut client = connect_to_daemon().await?;
+
+    // Start timing the operation
+    let start_time = Instant::now();
+
     let (start_task, progress_rx) = client.get(&key, &destination_path, public).await?;
 
     // Create the progress bar wrapper that will disable stdin
@@ -56,9 +62,13 @@ pub async fn handle_get(
             }
             TaskResult::Result(result) => match result {
                 TaskResultType::Get(result) => {
+                    // Calculate and format elapsed time
+                    let time_str = format_elapsed_time(start_time.elapsed());
+
                     println!(
-                        "{} Get task completed. Result saved to {} on daemon.",
+                        "{} Get task completed in {}. Result saved to {} on daemon.",
                         "•".bright_green(),
+                        time_str,
                         destination_path
                     );
 

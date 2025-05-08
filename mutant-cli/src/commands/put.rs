@@ -1,9 +1,11 @@
 use crate::callbacks;
 use crate::connect_to_daemon;
 use crate::terminal::ProgressWithDisabledStdin;
+use crate::utils::format_elapsed_time;
 use anyhow::Result;
 use colored::Colorize;
 use mutant_protocol::{StorageMode, TaskResult};
+use std::time::Instant;
 
 pub async fn handle_put(
     key: String,
@@ -32,6 +34,9 @@ pub async fn handle_put(
 
     let mut client = connect_to_daemon().await?;
 
+    // Start timing the operation
+    let start_time = Instant::now();
+
     let (start_task, progress_rx) = client
         .put(&key, &source_path, mode, public, no_verify)
         .await?;
@@ -53,7 +58,10 @@ pub async fn handle_put(
                 eprintln!("{} {}", "Error:".bright_red(), error);
             }
             TaskResult::Result(result) => {
-                println!("{} Upload complete!", "•".bright_green());
+                // Calculate and format elapsed time
+                let time_str = format_elapsed_time(start_time.elapsed());
+
+                println!("{} Upload complete! (took {})", "•".bright_green(), time_str);
 
                 // If this is a public key, display the index address
                 if public {
