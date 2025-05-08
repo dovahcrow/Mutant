@@ -159,6 +159,11 @@ where
                                 "Recycler received item {:?} due to error: {:?}",
                                 item_to_recycle, error_cause
                             );
+                            // Ensure that the global_tx_for_recycler is not closed before attempting to send
+                            if global_tx_for_recycler.is_closed() {
+                                error!("Recycler attempted to send to a closed global channel. Item dropped.");
+                                break 'recycling_loop;
+                            }
                             match recycle_function(error_cause, item_to_recycle).await {
                                 Ok(Some(new_item)) => {
                                     recycled_count += 1;
@@ -191,6 +196,10 @@ where
                 debug!("Recycle channel closed. Recycler task finishing. Stats: recycled={}, dropped={}, errors={}",
                       recycled_count, dropped_count, error_count);
 
+                // Close the global_tx_for_recycler to signal that no more recycled items will be sent
+                debug!("Recycler finished processing, closing global_tx_for_recycler.");
+                global_tx_for_recycler.close(); // Recycler closes its global_tx clone
+
                 Ok::<(), PoolError<E>>(())
             }))
         } else {
@@ -201,24 +210,11 @@ where
             None
         };
 
-        // First, close all channels to signal workers to finish
-        debug!("Closing all channels to signal workers to finish...");
-
-        // Close the worker channels
-        for tx in self.worker_txs.iter() {
-            tx.close();
-        }
-        debug!("Closed worker channels.");
-
-        // Close the global_tx to prevent new items from being added
-        self.global_tx.close();
-        debug!("Closed global channel.");
-
-        // Close all global_rx clones to ensure workers can terminate
-        for rx in &global_rx_clones {
-            rx.close();
-        }
-        debug!("Closed all global_rx clones.");
+        // IMPORTANT: We DO NOT close any channels at this point.
+        // We'll let the workers process all items from their local queues first.
+        // The global channel will remain open for recycled items.
+        // We'll close channels only after all workers have completed or after the recycler has completed.
+        debug!("Keeping all channels open to allow processing of items...");
 
         // Wait for all workers to complete
         debug!("Waiting for {} workers to complete...", worker_handles.len());
@@ -255,10 +251,33 @@ where
 
         debug!("All {} workers completed.", total_workers);
 
-        // Now close the retry channel if it exists
-        if let Some(sender) = &self.retry_sender {
-            sender.close();
-            debug!("Closed retry channel.");
+        // Now that all workers have completed, we can close the worker channels
+        debug!("Now closing worker_txs channels after all workers have completed...");
+        for tx in self.worker_txs.iter() {
+            tx.close();
+        }
+        debug!("Closed worker channels.");
+
+        // Close the global_tx if recycling is not enabled
+        if recycler_handle.is_none() {
+            // If there's no recycler, no one else will use global_tx
+            debug!("No recycler active. Closing original global_tx.");
+            self.global_tx.close(); // Close the original global_tx
+
+            // Close all global_rx clones
+            debug!("No recycler active. Closing all global_rx clones.");
+            for rx in &global_rx_clones {
+                rx.close();
+            }
+            debug!("Closed all global_rx clones.");
+
+            // Close the retry channel if it exists
+            if let Some(sender) = &self.retry_sender {
+                sender.close();
+                debug!("Closed retry channel.");
+            }
+        } else {
+            debug!("Recycler active. Keeping channels open for recycling.");
         }
 
         // Wait for recycler to complete if it exists
@@ -268,14 +287,37 @@ where
             match handle.await {
                 Ok(Ok(())) => {
                     debug!("Internal recycler task completed successfully.");
+
+                    // Now that the recycler has completed, close all global_rx clones
+                    debug!("Recycler completed. Now closing all global_rx clones.");
+                    for rx in &global_rx_clones {
+                        rx.close();
+                    }
+                    debug!("Closed all global_rx clones after recycler completion.");
                 }
                 Ok(Err(recycler_pool_error)) => {
                     error!("Internal recycler task failed: {:?}", recycler_pool_error);
+
+                    // Close global_rx clones even if recycler failed
+                    debug!("Recycler failed. Closing all global_rx clones.");
+                    for rx in &global_rx_clones {
+                        rx.close();
+                    }
+                    debug!("Closed all global_rx clones after recycler failure.");
+
                     // Return the error to ensure the caller knows recycling failed
                     return Err(recycler_pool_error);
                 }
                 Err(join_err) => {
                     error!("Internal recycler task panicked: {:?}", join_err);
+
+                    // Close global_rx clones even if recycler panicked
+                    debug!("Recycler panicked. Closing all global_rx clones.");
+                    for rx in &global_rx_clones {
+                        rx.close();
+                    }
+                    debug!("Closed all global_rx clones after recycler panic.");
+
                     return Err(PoolError::JoinError(join_err));
                 }
             }

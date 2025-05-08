@@ -79,48 +79,68 @@ where
 
     async fn run_task_processor(self, task_id: usize) -> Result<(), PoolError<E>> {
         loop {
-            let item = tokio::select! {
-                biased;
-                result = self.local_queue.recv() => {
-                    match result {
-                        Ok(item) => Some(item),
-                        Err(_) => {
-                            // Local queue is closed or errored
-                            if self.global_queue.is_closed() {
-                                // Both channels are now closed
-                                trace!(
-                                    "Worker {}.{} terminating: Local channel error and Global closed",
-                                    self.id,
-                                    task_id
-                                );
-                                None
-                            } else {
-                                // Continue to try global queue
-                                continue;
-                            }
+            // Create a properly blocking approach that doesn't consume CPU
+            let item = if !self.local_queue.is_closed() && !self.global_queue.is_closed() {
+                // Both channels are open, use select to try both
+                tokio::select! {
+                    biased;
+                    result = self.local_queue.recv() => {
+                        match result {
+                            Ok(item) => Some(item),
+                            Err(_) => None, // Local queue closed during receive
                         }
-                    }
-                },
-                result = self.global_queue.recv() => {
-                    match result {
-                        Ok(item) => Some(item),
-                        Err(_) => {
-                            // Global queue is closed or errored
-                            if self.local_queue.is_closed() {
-                                // Both channels are now closed
-                                trace!(
-                                    "Worker {}.{} terminating: Global channel error and Local closed",
-                                    self.id,
-                                    task_id
-                                );
-                                None
-                            } else {
-                                // Continue to try local queue
-                                continue;
-                            }
+                    },
+                    result = self.global_queue.recv() => {
+                        match result {
+                            Ok(item) => Some(item),
+                            Err(_) => None, // Global queue closed during receive
                         }
+                    },
+                }
+            } else if !self.local_queue.is_closed() {
+                // Only local queue is open
+                trace!(
+                    "Worker {}.{}: Only local queue is open, blocking on it",
+                    self.id,
+                    task_id
+                );
+                match self.local_queue.recv().await {
+                    Ok(item) => Some(item),
+                    Err(_) => {
+                        trace!(
+                            "Worker {}.{} terminating: Local channel closed while waiting",
+                            self.id,
+                            task_id
+                        );
+                        None
                     }
-                },
+                }
+            } else if !self.global_queue.is_closed() {
+                // Only global queue is open
+                trace!(
+                    "Worker {}.{}: Only global queue is open, blocking on it",
+                    self.id,
+                    task_id
+                );
+                match self.global_queue.recv().await {
+                    Ok(item) => Some(item),
+                    Err(_) => {
+                        trace!(
+                            "Worker {}.{} terminating: Global channel closed while waiting",
+                            self.id,
+                            task_id
+                        );
+                        None
+                    }
+                }
+            } else {
+                // Both channels are closed
+                trace!(
+                    "Worker {}.{} terminating: Both channels are closed",
+                    self.id,
+                    task_id
+                );
+                None
             };
 
             if let Some(item) = item {
