@@ -53,13 +53,16 @@
 *   **Key-Value Storage:** Offers a clean, asynchronous key-value interface (`get`, `put`, `rm`).
 *   **Public/Private Uploads:** Store data publicly to share with others (no encryption) or store privately (encrypted with your private key).
 *   **Resumable Uploads:** Automatic resume of interrupted uploads; pick up right where you left off.
-*   **Configurable Upload Size:** Split the data into smaller of bigger chunks to optimize the upload speed and storage costs (default is 2MiB).
+*   **Configurable Upload Size:** Split the data into smaller or bigger chunks to optimize the upload speed and storage costs (default is 2MiB).
 *   **Fetch History:** Keep track of the public data you've fetched to re-fetch it later.
 *   **Efficient Space Reuse:** Frees and reuses storage pads, minimizing storage costs.
 *   **Local Cache Index:** Fast local lookups and seamless remote synchronization.
 *   **Sync:** Synchronize your local index with the remote storage.
 *   **Recycling Bad Pads:** Automatically recycle bad pads to stay performant.
 *   **Health Check:** Perform a health check on keys and reupload pads that give an error.
+*   **Background Processing:** Run operations in the background with task management.
+*   **Daemon Architecture:** Persistent daemon process handles network connections and operations.
+*   **Task Management:** Monitor, query, and control background tasks.
 *   **Async-first Design:** Built on `tokio` for high-performance non-blocking operations.
 *   **Dual Interface:** Use as a Rust library (`mutant-lib`) or via the `mutant` CLI.
 
@@ -123,12 +126,12 @@ $> cargo install mutant
 You can fetch the daily meme of the day with the following command:
 
 ```bash
-$> mutant get -p 80a9296e666d9f6d0dad8672e8a17fe15d00bae67e35ae4a471aabc2351ac85c4af654be0ea4c2ababf9a788b751ceac > daily_meme.jpg
+$> mutant get -p 80a9296e666d9f6d0dad8672e8a17fe15d00bae67e35ae4a471aabc2351ac85c4af654be0ea4c2ababf9a788b751ceac daily_meme.jpg
 ```
 
 ## Command-Line Interface (CLI)
 
-MutAnt includes the `mutant` command for convenient command-line access.
+MutAnt includes the `mutant` command for convenient command-line access. When run without arguments, it defaults to listing your stored keys.
 
 **CLI Usage Examples:**
 
@@ -137,25 +140,24 @@ $> mutant --help
 ```
 
 ```text
-Distributed mutable key value storage over the Autonomi network
-
-Usage: mutant [OPTIONS] <COMMAND>
+Usage: mutant [OPTIONS] [COMMAND]
 
 Commands:
   put           Store a value associated with a key
   get           Retrieve a value associated with a key
   rm            Remove a key-value pair
   ls            List stored keys
-  export        Export all scratchpad private key to a file
-  import        Import scratchpad private key from a file
   stats         Show storage statistics
+  tasks         Manage background tasks
+  daemon        Manage the daemon
   sync          Synchronize local index cache with remote storage
   purge         Perform a get check on scratchpads that should have been created but failed at some point. Removes the pads that are not found.
+  import        Import scratchpad private key from a file
+  export        Export all scratchpad private key to a file
   health-check  Perform a health check on scratchpads that should have been created but cannot be retrieved. Recycles the pads that are not found.
   help          Print this message or the help of the given subcommand(s)
 
 Options:
-  -l, --local    Use local network (Devnet)
   -q, --quiet    Suppress progress bar output
   -h, --help     Print help
   -V, --version  Print version
@@ -169,12 +171,14 @@ Options:
 # Store a value directly
 $> mutant put mykey "my value"
 
-# Get a value and print to stdout
-$> mutant get mykey
-# Output: my value
+# Get a value and save to a file
+$> mutant get mykey output.txt
 
-# Update a value (you can use the shorter -f)
-$> mutant put mykey "my new value" --force
+# Store with specific storage mode (lightest, light, medium, heavy, heaviest)
+$> mutant put mykey "my value" --mode medium
+
+# Run operations in the background
+$> mutant put large_file.zip mykey --background
 
 # Remove a value
 $> mutant rm mykey
@@ -188,40 +192,63 @@ $> mutant put -p my_key "some public content"
 # Output: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 
 # Get your own public data by name
-$> mutant get my_key
-# Output: some public content
+$> mutant get my_key output.txt
 
 # Get public data by address
-$> mutant get -p 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
-# Output: some public content
+$> mutant get -p 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef output.txt
 
-# You can update it all the same as the private data
-$> mutant put -p my_key "some updated public content" --force
+# You can update public data by using the same key
+$> mutant put -p my_key "some updated public content"
 ```
 
 #### Pipes and redirects
 
 ```bash
-# Store a value from stdin (e.g., piping a file)
-$> cat data.txt | mutant put mykey2
+# Store a file
+$> mutant put mykey2 data.txt
 
-$> mutant get mykey2 > fetched_data.txt
+# Get a value and save to a file
+$> mutant get mykey2 fetched_data.txt
 ```
 
-#### Stats and debug
+#### Daemon and task management
 
+```bash
+# Start the daemon (happens automatically when needed)
+$> mutant daemon start
+
+# Check daemon status
+$> mutant daemon status
+
+# List background tasks
+$> mutant tasks list
+
+# Get details of a specific task
+$> mutant tasks get <task_id>
+
+# Stop a running task
+$> mutant tasks stop <task_id>
+```
+
+#### Stats and management
 
 ```bash
 # List stored keys
 $> mutant ls
 # test         57 pads 55.80 MiB  (public @ 858105ad390518c26a75e48fdfe87358a76fb24a06b1fb04b634af317ab39efcf8faf95b0d4c5eaac01a3a3fe3f8f6d5)
-# mykey        1 pad   1.00 KiB  
+# mykey        1 pad   1.00 KiB
+
+# List stored keys with fetch history
+$> mutant ls --history
 
 # Sync local index with remote storage
 $> mutant sync
 
 # View storage statistics
 $> mutant stats
+
+# Perform health check on a specific key
+$> mutant health-check mykey --recycle
 ```
 
 
