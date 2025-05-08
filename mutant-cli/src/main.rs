@@ -5,7 +5,6 @@ mod callbacks;
 mod cli;
 mod commands;
 mod history;
-mod terminal;
 mod utils;
 
 pub use app::connect_to_daemon;

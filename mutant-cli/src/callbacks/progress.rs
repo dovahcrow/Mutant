@@ -1,5 +1,33 @@
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
+/// A simple wrapper for MultiProgress
+/// This replaces the ProgressWithDisabledStdin from the removed terminal module
+pub struct ProgressWrapper {
+    multi_progress: MultiProgress,
+}
+
+impl ProgressWrapper {
+    /// Create a new MultiProgress wrapper
+    pub fn new() -> Self {
+        Self {
+            multi_progress: MultiProgress::new(),
+        }
+    }
+
+    /// Get a reference to the underlying MultiProgress
+    pub fn multi_progress(&self) -> &MultiProgress {
+        &self.multi_progress
+    }
+}
+
+impl std::ops::Deref for ProgressWrapper {
+    type Target = MultiProgress;
+
+    fn deref(&self) -> &Self::Target {
+        &self.multi_progress
+    }
+}
+
 pub struct StyledProgressBar {
     progress_bar: ProgressBar,
 }

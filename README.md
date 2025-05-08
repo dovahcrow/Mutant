@@ -118,6 +118,7 @@ MutAnt will look for your ant wallets and ask you which one you want to use if y
 ## Installation
 
 ```bash
+$> cargo install mutant-daemon
 $> cargo install mutant
 ```
 
@@ -126,7 +127,7 @@ $> cargo install mutant
 You can fetch the daily meme of the day with the following command:
 
 ```bash
-$> mutant get -p 80a9296e666d9f6d0dad8672e8a17fe15d00bae67e35ae4a471aabc2351ac85c4af654be0ea4c2ababf9a788b751ceac daily_meme.jpg
+$> mutant get -p 9620303d41cd65177e6763809f4780b1fa7d864a14d4ed0ed0322c5d4524fe406db65fdc485f1737814c81ab6d61dab0 daily_meme.jpg
 ```
 
 ## Command-Line Interface (CLI)

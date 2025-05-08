@@ -1,6 +1,6 @@
 use crate::callbacks;
+use crate::callbacks::progress::ProgressWrapper;
 use crate::connect_to_daemon;
-use crate::terminal::ProgressWithDisabledStdin;
 use anyhow::Result;
 use colored::Colorize;
 use mutant_protocol::TaskResult;
@@ -22,11 +22,10 @@ pub async fn handle_sync(background: bool, push_force: bool, quiet: bool) -> Res
     let mut client = connect_to_daemon().await?;
     let (start_task, progress_rx) = client.sync(push_force).await?;
 
-    // Create the progress bar wrapper that will disable stdin
-    // Keep it in scope until the end of the function to ensure stdin remains disabled
-    // and progress bars are properly cleaned up
+    // Create the progress bar wrapper
+    // Keep it in scope until the end of the function to ensure progress bars are properly cleaned up
     let _progress = if !quiet {
-        let progress = ProgressWithDisabledStdin::new();
+        let progress = ProgressWrapper::new();
         callbacks::sync::create_sync_progress(progress_rx, progress.multi_progress());
         Some(progress)
     } else {
