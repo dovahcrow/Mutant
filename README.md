@@ -169,7 +169,7 @@ Options:
 #### Store/fetch private data
 
 ```bash
-# Store a file directly
+# Store a the file `data.txt` under the name `mykey`
 $> mutant put mykey data.txt
 
 # Get a value and save to a file
@@ -277,7 +277,6 @@ async fn main() -> anyhow::Result<()> {
     mutant.put("greeting", b"hello world", StorageMode::Medium, false).await?;
 
     let fetched_value = mutant.get("greeting").await?;
-
     println!("Fetched value: {}", String::from_utf8_lossy(&fetched_value));
 
     mutant.rm("greeting").await?;
@@ -353,45 +352,8 @@ async fn main() -> Result<()> {
 }
 ```
 
-## Development and Testing
+# Donate
 
-### Local Testnet Management (`scripts/manage_local_testnet.sh`)
+If you find this project useful, you can donate to support its development. <3
 
-### Running Integration Tests (`scripts/run_tests_with_env.sh`)
-
-## Migration
-
-## Architecture Overview
-
-MutAnt consists of five main components that work together to provide a complete storage solution:
-
-1. **mutant-lib**: Core library handling chunking, encryption, and storage operations
-2. **mutant-protocol**: Shared communication format definitions
-3. **mutant-daemon**: Background service maintaining Autonomi connection
-4. **mutant-client**: WebSocket client library for communicating with the daemon
-5. **mutant-cli**: Command-line interface for end users
-
-These components work together in a client-server architecture:
-
-- The **daemon** uses **mutant-lib** to interact with the Autonomi network
-- **Clients** (CLI or custom applications) connect to the daemon via WebSocket
-- Communication between clients and the daemon uses the protocol definitions
-- The daemon manages concurrent operations, background tasks, and network connections
-
-This architecture provides several benefits:
-- Persistent connection to the Autonomi network
-- Background processing of long-running operations
-- Task management and monitoring
-- Concurrent operations with efficient resource usage
-- Worker pools for optimized performance
-
-### Internal Architecture
-
-Under the hood, MutAnt uses a worker architecture for handling operations:
-- 10 workers, each with a dedicated client
-- Each worker manages 10 concurrent operations (tasks)
-- Total of 100 concurrent operations
-- Round-robin distribution of work with work stealing
-- Automatic recycling of failed pads
-
-## Configuration
+ETH/ANT `0x3376C33FdC0c885cef483690ffDd1e0Ff0Eb026c`
