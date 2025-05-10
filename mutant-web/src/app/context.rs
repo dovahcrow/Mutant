@@ -175,4 +175,16 @@ impl Context {
         *self.tasks_cache.write().unwrap() = None;
         *self.stats_cache.write().unwrap() = None;
     }
+
+    // Force a reconnection to the daemon
+    pub async fn reconnect(&self) -> Result<(), String> {
+        // Invalidate all caches
+        self.invalidate_caches();
+
+        // Set connection state to false
+        *self.connection_state.write().unwrap() = false;
+
+        // Trigger a reconnection in the client manager
+        client_manager::reconnect().await
+    }
 }

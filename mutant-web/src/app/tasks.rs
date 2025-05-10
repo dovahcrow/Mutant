@@ -237,7 +237,7 @@ impl TasksWindow {
 
         ui.add_space(12.0);
 
-        // Refresh button
+        // Refresh and Reconnect buttons
         ui.horizontal(|ui| {
             if ui.button("Refresh").clicked() {
                 let tasks = self.tasks.clone();
@@ -263,6 +263,41 @@ impl TasksWindow {
                         }
                     }
                 });
+
+                // Update the connected flag after spawning the task
+                self.connected = *connected_ref.read().unwrap();
+            }
+
+            if ui.button("Reconnect").clicked() {
+                log::info!("Reconnect clicked");
+                let tasks = self.tasks.clone();
+                let selected_task = self.selected_task.clone();
+                let connected_ref = Arc::new(RwLock::new(false));
+                let connected = connected_ref.clone();
+
+                wasm_bindgen_futures::spawn_local(async move {
+                    let ctx = crate::app::context::context();
+
+                    // Force a reconnection
+                    if let Err(e) = ctx.reconnect().await {
+                        log::error!("Failed to reconnect: {}", e);
+                    }
+
+                    // Refresh the tasks list
+                    let (task_list, is_connected) = ctx.list_tasks().await;
+                    *tasks.write().unwrap() = task_list;
+                    *connected.write().unwrap() = is_connected;
+
+                    // Refresh selected task if there is one
+                    if let Some(task) = &*selected_task.read().unwrap() {
+                        if let Ok(updated_task) = ctx.get_task(task.id).await {
+                            *selected_task.write().unwrap() = Some(updated_task);
+                        }
+                    }
+                });
+
+                // Update the connected flag after spawning the task
+                self.connected = *connected_ref.read().unwrap();
             }
         });
     }

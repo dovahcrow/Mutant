@@ -142,10 +142,38 @@ impl MainWindow {
                 let connected_clone = connected_ref.clone();
 
                 wasm_bindgen_futures::spawn_local(async move {
-                    let (new_keys, is_connected) = crate::app::context::context().list_keys().await;
+                    let ctx = crate::app::context::context();
+                    let (new_keys, is_connected) = ctx.list_keys().await;
                     *keys.write().unwrap() = new_keys;
                     *connected_clone.write().unwrap() = is_connected;
                 });
+
+                // Update the connected flag after spawning the task
+                self.connected = *connected_ref.read().unwrap();
+            }
+
+            if ui.button("Reconnect").clicked() {
+                log::info!("Reconnect clicked");
+                let keys = self.keys.clone();
+                let connected_ref = Arc::new(RwLock::new(false));
+                let connected_clone = connected_ref.clone();
+
+                wasm_bindgen_futures::spawn_local(async move {
+                    let ctx = crate::app::context::context();
+
+                    // Force a reconnection
+                    if let Err(e) = ctx.reconnect().await {
+                        log::error!("Failed to reconnect: {}", e);
+                    }
+
+                    // Refresh the keys list
+                    let (new_keys, is_connected) = ctx.list_keys().await;
+                    *keys.write().unwrap() = new_keys;
+                    *connected_clone.write().unwrap() = is_connected;
+                });
+
+                // Update the connected flag after spawning the task
+                self.connected = *connected_ref.read().unwrap();
             }
 
             if ui.button("Sync").clicked() {
