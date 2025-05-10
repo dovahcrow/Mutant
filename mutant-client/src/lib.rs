@@ -84,8 +84,8 @@ enum ConnectionState {
 
 /// A client for interacting with the Mutant Daemon over WebSocket (Cross-platform implementation).
 pub struct MutantClient {
-    sender: Option<ewebsock::WsSender>,
-    receiver: Option<ewebsock::WsReceiver>,
+    sender: Option<nash_ws::WebSocketSender>,
+    receiver: Option<nash_ws::WebSocketReceiver>,
     tasks: ClientTaskMap,
     task_channels: TaskChannelsMap,
     pending_requests: PendingRequestMap,
@@ -116,9 +116,10 @@ impl MutantClient {
 
         *self.state.lock().unwrap() = ConnectionState::Connecting;
 
-        let options = ewebsock::Options::default();
-        let (sender, receiver) = ewebsock::connect(url.as_str(), options)
-            .map_err(|e| ClientError::WebSocketError(e.to_string()))?;
+        // Connect using nash-ws
+        let (sender, receiver) = nash_ws::WebSocket::new(url.as_str())
+            .await
+            .map_err(|e| ClientError::WebSocketError(format!("{:?}", e)))?;
 
         self.sender = Some(sender);
         self.receiver = Some(receiver);

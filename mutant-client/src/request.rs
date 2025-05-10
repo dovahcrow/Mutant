@@ -13,7 +13,10 @@ impl MutantClient {
         let json =
             serde_json::to_string(&request).map_err(|e| ClientError::SerializationError(e))?;
 
-        sender.send(ewebsock::WsMessage::Text(json));
+        // Use nash-ws to send the message
+        sender.send(&nash_ws::Message::Text(json))
+            .await
+            .map_err(|e| ClientError::WebSocketError(format!("{:?}", e)))?;
 
         Ok(())
     }

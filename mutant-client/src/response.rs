@@ -318,11 +318,14 @@ impl MutantClient {
 
     pub async fn next_response(&mut self) -> Option<Result<Response, ClientError>> {
         if let Some(receiver) = &mut self.receiver {
+            // Use a loop to handle non-text messages without recursion
             loop {
-                match receiver.try_recv() {
-                    Some(event) => match event {
-                        ewebsock::WsEvent::Message(msg) => {
-                            if let ewebsock::WsMessage::Text(text) = msg {
+                // Use the async next() method from nash-ws to wait for the next message
+                match receiver.next().await {
+                    Some(Ok(message)) => {
+                        // Process the message
+                        match message {
+                            nash_ws::Message::Text(text) => {
                                 match serde_json::from_str::<Response>(&text) {
                                     Ok(response) => {
                                         Self::process_response(
@@ -338,26 +341,26 @@ impl MutantClient {
                                         return Some(Err(ClientError::DeserializationError(e)));
                                     }
                                 }
-                            } else {
-                                debug!("Received non-text WebSocket message");
+                            }
+                            nash_ws::Message::Binary(_) => {
+                                debug!("Received binary WebSocket message, expected text");
+                                // Continue the loop to wait for the next message
+                                continue;
+                            }
+                            _ => {
+                                debug!("Received unexpected WebSocket message type");
+                                // Continue the loop to wait for the next message
+                                continue;
                             }
                         }
-                        ewebsock::WsEvent::Error(e) => {
-                            error!("WebSocket error: {}", e);
-                            return Some(Err(ClientError::WebSocketError(e.to_string())));
-                        }
-                        ewebsock::WsEvent::Closed => {
-                            debug!("WebSocket connection closed");
-                            return None;
-                        }
-                        ewebsock::WsEvent::Opened => {
-                            debug!("WebSocket connection opened");
-                            continue;
-                        }
-                    },
+                    }
+                    Some(Err(e)) => {
+                        error!("WebSocket error: {:?}", e);
+                        return Some(Err(ClientError::WebSocketError(format!("{:?}", e))));
+                    }
                     None => {
-                        // tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                        continue;
+                        debug!("WebSocket connection closed");
+                        return None;
                     }
                 }
             }
