@@ -57,6 +57,15 @@ async fn handle_get_operation(
     destination: String,
     sender: oneshot::Sender<Result<(), String>>
 ) {
+    // Connect the client first since cloned clients don't have a connection
+    if let Err(e) = client.connect(DEFAULT_WS_URL).await {
+        error!("Failed to connect cloned client: {:?}", e);
+        if !sender.is_canceled() {
+            let _ = sender.send(Err(format!("Failed to connect: {:?}", e)));
+        }
+        return;
+    }
+
     // Execute the command
     match client.get(&name, &destination, false).await {
         Ok((task, _)) => {
