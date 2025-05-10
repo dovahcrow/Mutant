@@ -27,14 +27,14 @@ pub async fn handle_put(
     let source_path = absolute_path.to_string_lossy().to_string();
 
     if background {
-        let _ = tokio::spawn(async move {
-            let mut client = connect_to_daemon().await.unwrap();
-            let (start_task, _progress_rx) = client
-                .put(&key, &source_path, mode, public, no_verify)
-                .await
-                .unwrap();
-            start_task.await.unwrap();
-        });
+        // For background tasks, we'll just start the operation and return
+        // without waiting for it to complete
+        let mut client = connect_to_daemon().await?;
+        let (_start_task, _progress_rx) = client
+            .put(&key, &source_path, mode, public, no_verify)
+            .await?;
+
+        // Don't await the start_task, just let it run in the background
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 

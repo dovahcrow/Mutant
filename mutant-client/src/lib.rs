@@ -341,6 +341,14 @@ impl MutantClient {
 
         clone
     }
+
+    /// Create a new client with a WebSocket connection to the given URL
+    /// This is useful for background tasks that need their own connection
+    pub async fn new_with_connection(url: &str) -> Result<Self, ClientError> {
+        let mut client = Self::new();
+        client.connect(url).await?;
+        Ok(client)
+    }
 }
 
 // Need to run this once at the start of the WASM application

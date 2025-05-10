@@ -209,7 +209,7 @@ impl WindowSystem {
 
         let tree = if let Some(data) = data {
             let tree = serde_json::from_str(&data)
-                .unwrap_or_else(|_e| DockState::new(vec![MainWindow::default().into()]));
+                .unwrap_or_else(|_e| DockState::new(vec![]));
             tree
         } else {
             DockState::new(vec![MainWindow::default().into()])
@@ -223,7 +223,7 @@ impl WindowSystem {
 
 impl Default for WindowSystem {
     fn default() -> Self {
-        let tree = DockState::new(vec![MainWindow::default().into()]);
+        let tree = DockState::new(vec![]);
 
         Self {
             frame: 0,

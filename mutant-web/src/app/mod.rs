@@ -203,18 +203,42 @@ impl From<main::MainWindow> for WindowType {
 
 pub async fn init() {
     let mut client = mutant_client::MutantClient::new();
-    client.connect("ws://localhost:3030/ws").await.unwrap();
 
-    log::info!("CLIENT CONNECT !");
+    let connected = match client.connect("ws://localhost:3030/ws").await {
+        Ok(_) => {
+            log::info!("CLIENT CONNECTED!");
+            true
+        },
+        Err(e) => {
+            log::error!("Failed to connect to daemon: {:?}", e);
+            false
+        }
+    };
 
+    let keys = if connected {
+        match client.list_keys().await {
+            Ok(keys) => {
+                log::info!("Retrieved {} keys", keys.len());
+                for key in &keys {
+                    log::info!("Key: {:#?}", key);
+                }
+                keys
+            },
+            Err(e) => {
+                log::error!("Failed to list keys: {:?}", e);
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
 
+    // Initialize the window system
+    init_window_system().await;
 
-    let keys = client.list_keys().await.unwrap();
+    // Create the main window with the keys
+    let main_window = main::MainWindow::with_keys(keys, connected);
 
-    for key in keys {
-        log::info!("Key: {:#?}", key);
-    }
-
-
-    // init_window_system().await;
+    // Add the window to the system
+    window_system_mut().add_window(main_window.into());
 }
