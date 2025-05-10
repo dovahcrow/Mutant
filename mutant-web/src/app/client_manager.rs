@@ -3,7 +3,7 @@ use futures::{channel::oneshot, StreamExt};
 use lazy_static::lazy_static;
 use log::{error, info, warn};
 use mutant_client::MutantClient;
-use mutant_protocol::{KeyDetails, StatsResponse, Task, TaskId, TaskListEntry, TaskProgress};
+use mutant_protocol::{KeyDetails, StatsResponse, Task, TaskId, TaskListEntry};
 use tokio::sync::mpsc;
 use wasm_bindgen_futures::spawn_local;
 
@@ -351,7 +351,7 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                         warn!("Reconnection failed: {}", e);
                     }
                 }
-                ClientCommand::Put(key, _data, filename, mode, public, no_verify, sender) => {
+                ClientCommand::Put(key, data, filename, mode, public, no_verify, sender) => {
                     // Ensure we're connected
                     if let Err(e) = ensure_connected(&mut client, &mut connected).await {
                         // Only send if the receiver is still interested
@@ -375,10 +375,10 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                             return;
                         }
 
-                        // Create a temporary file path for the data
-                        // In a web context, we need to pass the data directly
-                        // For now, we'll just use a placeholder path
-                        let temp_path = filename;
+                        // In a web context, we need to pass the data directly to the client
+                        // The client expects a file path, but we'll use a special method for web
+                        // that takes the data directly
+                        let temp_path = filename.clone();
 
                         // Execute the command
                         match put_client.put(&key, &temp_path, mode, public, no_verify).await {

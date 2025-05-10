@@ -1,11 +1,14 @@
 use std::sync::{Arc, RwLock};
 
 use eframe::egui::{self, Color32, RichText};
+use js_sys::Uint8Array;
 use mutant_protocol::{StorageMode, TaskProgress, PutEvent};
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
-use web_time::{Duration, SystemTime};
+
+use wasm_bindgen::{JsCast, closure::Closure};
 use wasm_bindgen_futures::spawn_local;
+use web_sys::{FileReader, HtmlInputElement, HtmlElement, Event};
+use web_time::{Duration, SystemTime};
 
 use super::Window;
 use super::components::progress::progress;
@@ -253,22 +256,97 @@ impl PutWindow {
     }
 
     fn select_file(&self) {
-        // This function will be implemented to handle file selection using web-sys
         log::info!("File selection requested");
 
-        // For now, we'll just simulate file selection
-        // In a real implementation, we would use web-sys to create a file input element
+        // Get references to our state
         let selected_file = self.selected_file.clone();
         let file_size = self.file_size.clone();
         let file_data = self.file_data.clone();
 
-        // Simulate file selection
-        *selected_file.write().unwrap() = Some("test_file.txt".to_string());
-        *file_size.write().unwrap() = Some(1024);
-        *file_data.write().unwrap() = Some(vec![0; 1024]);
+        // Create a file input element
+        let window = web_sys::window().expect("no global window exists");
+        let document = window.document().expect("no document exists");
 
-        // Show notification
-        notifications::info("File selected: test_file.txt".to_string());
+        let input: HtmlInputElement = document
+            .create_element("input")
+            .expect("failed to create input element")
+            .dyn_into::<HtmlInputElement>()
+            .expect("failed to cast to HtmlInputElement");
+
+        // Set input attributes
+        input.set_type("file");
+
+        // Cast to HtmlElement to access style
+        let input_html: &HtmlElement = input.dyn_ref::<HtmlElement>()
+            .expect("input should be an HtmlElement");
+        input_html.style().set_property("display", "none").expect("failed to set style");
+
+        // Append to document body
+        let body = document.body().expect("document should have a body");
+        body.append_child(&input).expect("failed to append input to body");
+
+        // Create onchange handler
+        let onchange = Closure::once(move |event: Event| {
+            let input: HtmlInputElement = event
+                .target()
+                .expect("event should have a target")
+                .dyn_into::<HtmlInputElement>()
+                .expect("target should be an HtmlInputElement");
+
+            // Get the selected file
+            let file_list = input.files().expect("input should have files");
+            if let Some(file) = file_list.get(0) {
+                let file_name = file.name();
+                let file_size_js = file.size();
+
+                // Update state with file name and size
+                *selected_file.write().unwrap() = Some(file_name.clone());
+                *file_size.write().unwrap() = Some(file_size_js as u64);
+
+                // Read file content
+                let reader = FileReader::new().expect("failed to create FileReader");
+                let reader_clone = reader.clone();
+
+                // Create onload handler for the reader
+                let file_data_clone = file_data.clone();
+                let file_name_clone = file_name.clone();
+
+                let onload = Closure::once(move |_event: Event| {
+                    // Get array buffer from reader
+                    let array_buffer = reader_clone.result().expect("failed to get result");
+                    let array = Uint8Array::new(&array_buffer);
+
+                    // Convert to Rust Vec<u8>
+                    let mut data = vec![0; array.length() as usize];
+                    array.copy_to(&mut data);
+
+                    // Update state with file data
+                    *file_data_clone.write().unwrap() = Some(data);
+
+                    // Show notification
+                    notifications::info(format!("File selected: {}", file_name_clone));
+
+                    // Remove the input element
+                    if let Some(parent) = input.parent_node() {
+                        parent.remove_child(&input).expect("failed to remove input");
+                    }
+                });
+
+                // Set onload handler
+                reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+                onload.forget(); // Prevent closure from being dropped
+
+                // Read the file as array buffer
+                reader.read_as_array_buffer(&file).expect("failed to read file");
+            }
+        });
+
+        // Set onchange handler
+        input.set_onchange(Some(onchange.as_ref().unchecked_ref()));
+        onchange.forget(); // Prevent closure from being dropped
+
+        // Click the input to open file dialog
+        input.click();
     }
 
     fn start_upload(&self) {

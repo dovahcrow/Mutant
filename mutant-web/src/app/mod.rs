@@ -33,16 +33,12 @@ mod window_system;
 
 pub use context::context;
 
-pub use main::MainWindow;
-pub use put::PutWindow;
-pub use tasks::TasksWindow;
-
 use window_system::init_window_system;
 
 // pub use infobar::InfobarWindow;
 // pub use research::ResearchWindow;
 
-pub use window_system::{new_window, window_system_mut};
+pub use window_system::window_system_mut;
 
 pub trait Window: Send + Sync {
     fn name(&self) -> String;

@@ -5668,6 +5668,7 @@ dependencies = [
  "egui_dock",
  "futures",
  "humansize",
+ "js-sys",
  "lazy_static",
  "log",
  "mutant-client",

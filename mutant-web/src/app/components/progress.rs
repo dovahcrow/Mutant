@@ -1,5 +1,4 @@
 use eframe::egui::{self, text::LayoutJob, ProgressBar};
-use egui_dock::egui::{FontId, TextFormat};
 
 pub fn progress(completion: f32, duration: String) -> ProgressBar {
     let mut text = format!("{:.2}% - {}", completion * 100.0, duration,);
