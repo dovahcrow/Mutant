@@ -262,18 +262,29 @@ impl MutantClient {
                 }
             }
             Response::ListKeys(ListKeysResponse { keys }) => {
-                log::warn!("Received ListKeys response: {:#?}", keys);
-                let pending_sender = pending_requests
-                    .lock()
-                    .unwrap()
-                    .remove(&PendingRequestKey::ListKeys);
-                log::warn!("Pending sender");
-                if let Some(PendingSender::ListKeys(sender)) = pending_sender {
-                    log::warn!("Sending ListKeys response");
-                    if sender.send(Ok(keys)).is_err() {
-                        warn!("Failed to send ListKeys response (receiver dropped)");
+                log::debug!("Received ListKeys response with {} keys", keys.len());
+
+                // Safely get the pending sender
+                let pending_sender = match pending_requests.lock() {
+                    Ok(mut guard) => guard.remove(&PendingRequestKey::ListKeys),
+                    Err(e) => {
+                        error!("Failed to lock pending_requests mutex: {:?}", e);
+                        None
                     }
-                    log::info!("SENT");
+                };
+
+                // Process the sender if it exists
+                if let Some(PendingSender::ListKeys(sender)) = pending_sender {
+                    debug!("Sending ListKeys response to waiting future");
+
+                    // Clone the keys to avoid any potential memory issues
+                    let keys_clone = keys.clone();
+
+                    // Send the response and handle errors
+                    match sender.send(Ok(keys_clone)) {
+                        Ok(_) => debug!("Successfully sent ListKeys response"),
+                        Err(_) => warn!("Failed to send ListKeys response (receiver dropped)")
+                    }
                 } else {
                     warn!("Received ListKeys response but no ListKeys request was pending");
                 }

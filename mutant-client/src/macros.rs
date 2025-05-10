@@ -4,39 +4,67 @@ macro_rules! direct_request {
         let key = PendingRequestKey::$key;
         let req = Request::$key(mutant_protocol::$($req)*);
 
-        if $self.pending_requests.lock().unwrap().contains_key(&key) {
+        // Safely check if a request is already pending
+        let is_pending = match $self.pending_requests.lock() {
+            Ok(guard) => guard.contains_key(&key),
+            Err(e) => {
+                error!("Failed to lock pending_requests mutex: {:?}", e);
+                return Err(ClientError::InternalError(
+                    format!("Failed to lock pending_requests mutex: {:?}", e)
+                ));
+            }
+        };
+
+        if is_pending {
             return Err(ClientError::InternalError(
-                "Another list_keys request is already pending".to_string(),
+                format!("Another {} request is already pending", stringify!($key))
             ));
-        } else {
-            let (sender, receiver) = oneshot::channel();
-            let pending_sender = PendingSender::$key(sender);
+        }
 
-            $self
-                .pending_requests
-                .lock()
-                .unwrap()
-                .insert(key.clone(), pending_sender);
+        // Create the channel and pending sender
+        let (sender, receiver) = oneshot::channel();
+        let pending_sender = PendingSender::$key(sender);
 
-            match $self.send_request(req).await {
-                Ok(_) => {
-                    debug!("{} request sent, waiting for response...", stringify!($key));
-                    match receiver.await {
-                        Ok(result) => result,
-                        Err(_) => {
-                            $self.pending_requests.lock().unwrap().remove(&key);
-                            error!("{} response channel canceled", stringify!($key));
-                            Err(ClientError::InternalError(
-                                "{} response channel canceled".to_string(),
-                            ))
+        // Safely insert the pending request
+        if let Err(e) = $self.pending_requests.lock().map(|mut guard| {
+            guard.insert(key.clone(), pending_sender);
+        }) {
+            error!("Failed to lock pending_requests mutex for insert: {:?}", e);
+            return Err(ClientError::InternalError(
+                format!("Failed to lock pending_requests mutex for insert: {:?}", e)
+            ));
+        }
+
+        // Send the request and handle the response
+        match $self.send_request(req).await {
+            Ok(_) => {
+                debug!("{} request sent, waiting for response...", stringify!($key));
+
+                // Wait for the response
+                match receiver.await {
+                    Ok(result) => {
+                        debug!("{} response received", stringify!($key));
+                        result
+                    },
+                    Err(e) => {
+                        // Clean up on error
+                        if let Ok(mut guard) = $self.pending_requests.lock() {
+                            guard.remove(&key);
                         }
+                        error!("{} response channel canceled: {:?}", stringify!($key), e);
+                        Err(ClientError::InternalError(
+                            format!("{} response channel canceled", stringify!($key))
+                        ))
                     }
                 }
-                Err(e) => {
-                    $self.pending_requests.lock().unwrap().remove(&key);
-                    error!("Failed to send {} request: {:?}", stringify!($key), e);
-                    Err(e)
+            }
+            Err(e) => {
+                // Clean up on error
+                if let Ok(mut guard) = $self.pending_requests.lock() {
+                    guard.remove(&key);
                 }
+                error!("Failed to send {} request: {:?}", stringify!($key), e);
+                Err(e)
             }
         }
     }};
