@@ -1,6 +1,6 @@
 #![feature(mapped_lock_guards)]
 
-use app::window_system_mut;
+use app::{window_system_mut};
 use wasm_bindgen::prelude::*;
 
 // mod app;
@@ -22,7 +22,7 @@ pub fn init_panic_hook() {
 pub fn start() {
     init_panic_hook();
     wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
-
+    
     log::info!("Starting MutAnt Web Client");
 
     async_start();

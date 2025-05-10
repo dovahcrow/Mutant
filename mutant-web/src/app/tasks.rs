@@ -306,9 +306,9 @@ impl TasksWindow {
                     }
 
                     // Refresh the tasks list
-                    let (task_list, is_connected) = ctx.list_tasks().await;
-                    // *tasks.write().unwrap() = task_list;
-                    // *connected.write().unwrap() = is_connected;
+                    let (_task_list, _is_connected) = ctx.list_tasks().await;
+                    // *tasks.write().unwrap() = _task_list;
+                    // *connected.write().unwrap() = _is_connected;
 
                     // Refresh selected task if there is one
                     if let Some(task) = &*selected_task.read().unwrap() {

@@ -11,7 +11,7 @@ use web_sys::{FileReader, HtmlInputElement, HtmlElement, Event};
 use web_time::{Duration, SystemTime};
 
 use super::Window;
-use super::components::progress::progress;
+use super::components::progress::detailed_progress;
 use super::context;
 use super::notifications;
 
@@ -201,24 +201,40 @@ impl PutWindow {
 
             let elapsed_str = format_elapsed_time(elapsed);
 
+            // Get total chunks and current progress
+            let total_chunks = *self.total_chunks.read().unwrap();
+            let chunks_to_reserve = *self.chunks_to_reserve.read().unwrap();
+
+            // Calculate current counts based on progress
+            let reservation_progress = *self.reservation_progress.read().unwrap();
+            let upload_progress = *self.upload_progress.read().unwrap();
+            let confirmation_progress = *self.confirmation_progress.read().unwrap();
+
+            // Calculate current counts for each stage
+            let reserved_count = if chunks_to_reserve > 0 {
+                (reservation_progress * total_chunks as f32) as usize
+            } else {
+                total_chunks
+            };
+
+            let uploaded_count = (upload_progress * total_chunks as f32) as usize;
+            let confirmed_count = (confirmation_progress * total_chunks as f32) as usize;
+
             // Reservation progress bar
             ui.label("Reserving pads:");
-            let reservation_progress = *self.reservation_progress.read().unwrap();
-            ui.add(progress(reservation_progress, elapsed_str.clone()));
+            ui.add(detailed_progress(reservation_progress, reserved_count, total_chunks, elapsed_str.clone()));
 
             ui.add_space(5.0);
 
             // Upload progress bar
             ui.label("Uploading pads:");
-            let upload_progress = *self.upload_progress.read().unwrap();
-            ui.add(progress(upload_progress, elapsed_str.clone()));
+            ui.add(detailed_progress(upload_progress, uploaded_count, total_chunks, elapsed_str.clone()));
 
             ui.add_space(5.0);
 
             // Confirmation progress bar
             ui.label("Confirming pads:");
-            let confirmation_progress = *self.confirmation_progress.read().unwrap();
-            ui.add(progress(confirmation_progress, elapsed_str));
+            ui.add(detailed_progress(confirmation_progress, confirmed_count, total_chunks, elapsed_str));
 
             // Cancel button
             ui.add_space(10.0);
@@ -415,13 +431,28 @@ impl PutWindow {
 
                                         // Update progress bars
                                         if tc > 0 {
+                                            // Calculate initial reservation progress
+                                            let mut res_progress = reservation_progress.write().unwrap();
                                             if ctr > 0 {
-                                                *reservation_progress.write().unwrap() = iwc as f32 / tc as f32;
+                                                // If we have chunks to reserve, calculate based on how many are already reserved
+                                                let reserved = tc - ctr;
+                                                *res_progress = reserved as f32 / tc as f32;
+                                                log::info!("Initial reservation progress: {}/{} = {}", reserved, tc, *res_progress);
                                             } else {
-                                                *reservation_progress.write().unwrap() = 1.0;
+                                                // If no chunks to reserve, we're done with reservation
+                                                *res_progress = 1.0;
+                                                log::info!("No chunks to reserve, setting reservation progress to 1.0");
                                             }
-                                            *upload_progress.write().unwrap() = iwc as f32 / tc as f32;
-                                            *confirmation_progress.write().unwrap() = icc as f32 / tc as f32;
+
+                                            // Update upload progress based on written chunks
+                                            let mut up_progress = upload_progress.write().unwrap();
+                                            *up_progress = iwc as f32 / tc as f32;
+                                            log::info!("Initial upload progress: {}/{} = {}", iwc, tc, *up_progress);
+
+                                            // Update confirmation progress based on confirmed chunks
+                                            let mut conf_progress = confirmation_progress.write().unwrap();
+                                            *conf_progress = icc as f32 / tc as f32;
+                                            log::info!("Initial confirmation progress: {}/{} = {}", icc, tc, *conf_progress);
                                         }
                                     },
                                     PutEvent::PadReserved => {
@@ -430,10 +461,9 @@ impl PutWindow {
                                         if tc > 0 {
                                             let mut res_progress = reservation_progress.write().unwrap();
                                             if *res_progress < 1.0 {
-                                                *res_progress += 1.0 / tc as f32;
-                                                if *res_progress > 1.0 {
-                                                    *res_progress = 1.0;
-                                                }
+                                                let new_progress = *res_progress + (1.0 / tc as f32);
+                                                *res_progress = if new_progress > 1.0 { 1.0 } else { new_progress };
+                                                log::info!("Updated reservation progress: {}", *res_progress);
                                             }
                                         }
                                     },
@@ -443,10 +473,9 @@ impl PutWindow {
                                         if tc > 0 {
                                             let mut up_progress = upload_progress.write().unwrap();
                                             if *up_progress < 1.0 {
-                                                *up_progress += 1.0 / tc as f32;
-                                                if *up_progress > 1.0 {
-                                                    *up_progress = 1.0;
-                                                }
+                                                let new_progress = *up_progress + (1.0 / tc as f32);
+                                                *up_progress = if new_progress > 1.0 { 1.0 } else { new_progress };
+                                                log::info!("Updated upload progress: {}", *up_progress);
                                             }
                                         }
                                     },
@@ -456,10 +485,9 @@ impl PutWindow {
                                         if tc > 0 {
                                             let mut conf_progress = confirmation_progress.write().unwrap();
                                             if *conf_progress < 1.0 {
-                                                *conf_progress += 1.0 / tc as f32;
-                                                if *conf_progress > 1.0 {
-                                                    *conf_progress = 1.0;
-                                                }
+                                                let new_progress = *conf_progress + (1.0 / tc as f32);
+                                                *conf_progress = if new_progress > 1.0 { 1.0 } else { new_progress };
+                                                log::info!("Updated confirmation progress: {}", *conf_progress);
                                             }
                                         }
                                     },

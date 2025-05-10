@@ -382,13 +382,12 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
 
                         // Execute the command
                         match put_client.put(&key, &temp_path, mode, public, no_verify).await {
-                            Ok((_task, mut progress_rx)) => {
-                                // For now, we'll use a placeholder task ID
-                                // In a real implementation, we would extract the task ID from the task
-                                let task_id = TaskId::new_v4();
-
+                            Ok((task_future, mut progress_rx)) => {
                                 // Create a channel to forward progress updates
                                 let (progress_tx, progress_rx_out) = mpsc::unbounded_channel();
+
+                                // Extract the task ID before we move the task_future into the spawn_local
+                                let task_id = TaskId::new_v4(); // We'll still use a placeholder for now
 
                                 // Forward progress updates in a separate task
                                 spawn_local(async move {
@@ -405,9 +404,25 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                                     }
                                 });
 
-                                // Send the task ID and progress receiver
+                                // Send the task ID and progress receiver immediately
+                                // so the UI can start showing progress
                                 if !sender.is_canceled() {
                                     let _ = sender.send(Ok((task_id, progress_rx_out)));
+                                }
+
+                                // Now await the task_future directly
+                                // This is crucial - without this, the task won't actually start executing
+                                info!("Awaiting put task future");
+
+                                // We need to handle the task future here to avoid lifetime issues
+                                // with spawning another task
+                                match task_future.await {
+                                    Ok(result) => {
+                                        info!("Put task completed with result: {:?}", result);
+                                    }
+                                    Err(e) => {
+                                        error!("Put task failed: {:?}", e);
+                                    }
                                 }
                             }
                             Err(e) => {
