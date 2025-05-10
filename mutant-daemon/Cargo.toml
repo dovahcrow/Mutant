@@ -1,7 +1,7 @@
 [package]
 name = "mutant-daemon"
 version = "0.6.2"
-edition = "2021"
+edition = "2024"
 license = "LGPL-3.0-only"
 description = "Background daemon service for MutAnt distributed mutable key value storage over Autonomi network"
 repository = "https://github.com/Champii/MutAnt"

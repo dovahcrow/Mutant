@@ -74,7 +74,6 @@ pub(crate) async fn create_client(
                     addrs: addrs, // either provide a vec of multiaddr
                     network_contacts_url: network_contacts_url, // see other earlier list
                     local: false,
-                    disable_mainnet_contacts: true,
                     ignore_cache: false,
                     bootstrap_cache_dir: None,
                 },

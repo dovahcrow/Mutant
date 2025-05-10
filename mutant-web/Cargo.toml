@@ -1,0 +1,66 @@
+[package]
+name = "mutant-web"
+version = "0.6.2"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+
+# [package.metadata.wasm-pack.profile.release]
+# wasm-opt = ['-Os']
+
+
+[dependencies]
+
+wasm-bindgen = "0.2.95"
+wasm-bindgen-futures = "0.4.45"
+serde_cbor = "0.11.2"
+serde = { version = "1.0.214", features = ["derive"] }
+tokio = { version = "1.41.0", features = ["rt", "tokio-macros", "macros"] }
+#reqwest = { version = "0.12.9", features = ["json", "stream"] }
+#reqwasm = "0.5.0"
+console_error_panic_hook = "0.1.7"
+
+#egui_extras = "0.29.1"
+#egui_dock = { git = "https://github.com/Adanos020/egui_dock.git", branch = "release-0.15" , features = ["serde"] }
+egui_dock = { version = "0.16.0", features = ["serde"] }
+egui-toast = "0.15.0"
+wasm-logger = "0.2.0"
+log = "0.4.22"
+#chrono = "0.4.38"
+#rand = "0.8.5"
+serde_json = "1.0.133"
+#rayon = "1.10.0"
+eframe = "0.31.1"
+lazy_static = "1.5.0"
+futures = "0.3.31"
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+    "Window",
+    "Storage",
+    "HtmlDocument",
+]
+
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3.18"
+
+[profile.release]
+panic = 'abort'
+# opt-level = 'z'
+lto = true
+codegen-units = 1
+opt-level = 3
+incremental = false
+debug = false
+
+# Enable a small amount of optimization in the dev profile.
+[profile.dev]
+opt-level = 1
+
+# Enable a large amount of optimization in the dev profile for dependencies.
+[profile.dev.package."*"]
+opt-level = 3

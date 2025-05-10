@@ -13,3 +13,8 @@ test_network_data/
 # IntelliJ IDEA
 .idea/
 *.iml
+
+
+node_modules/
+dist/
+pkg/
