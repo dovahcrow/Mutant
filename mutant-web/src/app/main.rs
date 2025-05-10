@@ -1,10 +1,7 @@
 use eframe::egui;
 
 
-use super::{
-    new_window,
-    Window,
-};
+use super::Window;
 
 use serde::{Deserialize, Serialize};
 #[derive(Default, Clone, Serialize, Deserialize)]
@@ -18,7 +15,7 @@ impl Window for MainWindow {
         "Main".to_string()
     }
 
-    fn draw(&mut self, ui: &mut egui::Ui) {
+    fn draw(&mut self, _ui: &mut egui::Ui) {
         // self.base_infos(ui);
     }
 }

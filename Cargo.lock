@@ -5669,6 +5669,7 @@ dependencies = [
  "futures",
  "lazy_static",
  "log",
+ "mutant-client",
  "serde",
  "serde_cbor",
  "serde_json",

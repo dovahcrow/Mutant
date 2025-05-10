@@ -34,7 +34,7 @@ use window_system::init_window_system;
 // pub use infobar::InfobarWindow;
 // pub use research::ResearchWindow;
 
-pub use window_system::{new_window, window_system_mut, WindowSystem};
+pub use window_system::{new_window, window_system_mut};
 
 pub trait Window: Send + Sync {
     fn name(&self) -> String;
@@ -202,5 +202,19 @@ impl From<main::MainWindow> for WindowType {
 // }
 
 pub async fn init() {
-    init_window_system().await;
+    let mut client = mutant_client::MutantClient::new();
+    client.connect("ws://localhost:3030/ws").await.unwrap();
+
+    log::info!("CLIENT CONNECT !");
+
+
+
+    let keys = client.list_keys().await.unwrap();
+
+    for key in keys {
+        log::info!("Key: {:#?}", key);
+    }
+
+
+    // init_window_system().await;
 }

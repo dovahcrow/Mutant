@@ -28,8 +28,7 @@ log = "0.4" # Required by tracing-wasm/console_log
 console_error_panic_hook = "0.1"
 
 # Native-specific dependencies (conditional compilation)
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
 
 [dependencies.web-sys]
 version = "0.3"

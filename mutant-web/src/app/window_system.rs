@@ -1,6 +1,6 @@
 use std::sync::{Arc, MappedRwLockWriteGuard, RwLock, RwLockWriteGuard};
 
-use eframe::egui::{self, Align2, Id, RichText, SidePanel, TopBottomPanel};
+use eframe::egui::{self, Id, RichText, SidePanel};
 use egui_dock::{DockArea, DockState, Style};
 use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
@@ -162,7 +162,7 @@ impl WindowSystem {
                     //     new_window(BlueprintsWindow::new());
                     // }
 
-                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |_ui| {
                         // if ui.button("🚪").on_hover_text("Logout").clicked() {
                         //     // SessionCookie::logout();
                         //     let window = web_sys::window().unwrap();
