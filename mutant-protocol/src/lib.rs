@@ -324,9 +324,19 @@ pub struct Task {
 // --- Incoming Requests ---
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PutSource {
+    /// Path to a file on the daemon's filesystem
+    FilePath(String),
+    /// Direct byte data to upload
+    Bytes(Vec<u8>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PutRequest {
     pub user_key: String,
-    pub source_path: String, // Path to the file on the daemon's filesystem
+    pub source: PutSource,
+    /// Original filename (used for display purposes)
+    pub filename: Option<String>,
     pub mode: StorageMode,
     pub public: bool,
     pub no_verify: bool,

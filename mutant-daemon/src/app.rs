@@ -218,15 +218,20 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     let active_keys: handlers::ActiveKeysMap = Arc::new(RwLock::new(HashMap::new()));
     log::info!("Active keys manager initialized.");
 
-    // Define WebSocket route using the actual handler
+    // Define WebSocket route using the actual handler with increased message size limit
+    // Set max message size to 2GB (2 * 1024 * 1024 * 1024)
+    let max_message_size = 2 * 1024 * 1024 * 1024;
+
     let ws_route = warp::path("ws")
         .and(warp::ws())
         .and(warp::any().map(move || mutant.clone()))
         .and(warp::any().map(move || tasks.clone()))
         .and(warp::any().map(move || active_keys.clone()))
         .map(
-            |ws: warp::ws::Ws, mutant_instance: Arc<MutAnt>, task_map: TaskMap, active_keys_map: handlers::ActiveKeysMap| {
-                ws.on_upgrade(move |socket| handlers::handle_ws(socket, mutant_instance, task_map, active_keys_map))
+            move |ws: warp::ws::Ws, mutant_instance: Arc<MutAnt>, task_map: TaskMap, active_keys_map: handlers::ActiveKeysMap| {
+                // Configure WebSocket with increased message size limit
+                ws.max_message_size(max_message_size)
+                  .on_upgrade(move |socket| handlers::handle_ws(socket, mutant_instance, task_map, active_keys_map))
             },
         );
 

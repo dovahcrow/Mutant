@@ -11,9 +11,9 @@ use url::Url;
 use wasm_bindgen_futures::spawn_local;
 
 use mutant_protocol::{
-    ExportResult, HealthCheckResult, ImportResult, KeyDetails, PurgeResult, Request, StatsResponse,
-    StorageMode, SyncResult, Task, TaskId, TaskListEntry, TaskProgress, TaskResult, TaskStatus,
-    TaskStoppedResponse, TaskType,
+    ExportResult, HealthCheckResult, ImportResult, KeyDetails, PurgeResult, PutSource, Request,
+    StatsResponse, StorageMode, SyncResult, Task, TaskId, TaskListEntry, TaskProgress, TaskResult,
+    TaskStatus, TaskStoppedResponse, TaskType,
 };
 
 pub mod error;
@@ -171,7 +171,41 @@ impl MutantClient {
             Put,
             PutRequest {
                 user_key: user_key.to_string(),
-                source_path: source_path.to_string(),
+                source: PutSource::FilePath(source_path.to_string()),
+                filename: Some(std::path::Path::new(source_path)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| source_path.to_string())),
+                mode,
+                public,
+                no_verify,
+            }
+        )
+    }
+
+    /// Put operation with direct byte data instead of a file path
+    pub async fn put_bytes<'a>(
+        &'a mut self,
+        user_key: &str,
+        data: Vec<u8>,
+        filename: Option<String>,
+        mode: StorageMode,
+        public: bool,
+        no_verify: bool,
+    ) -> Result<
+        (
+            impl Future<Output = Result<TaskResult, ClientError>> + 'a,
+            ProgressReceiver,
+        ),
+        ClientError,
+    > {
+        long_request!(
+            self,
+            Put,
+            PutRequest {
+                user_key: user_key.to_string(),
+                source: PutSource::Bytes(data),
+                filename,
                 mode,
                 public,
                 no_verify,

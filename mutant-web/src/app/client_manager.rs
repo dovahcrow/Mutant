@@ -376,12 +376,10 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                         }
 
                         // In a web context, we need to pass the data directly to the client
-                        // The client expects a file path, but we'll use a special method for web
-                        // that takes the data directly
-                        let temp_path = filename.clone();
+                        // Use the new put_bytes method that takes data directly
 
                         // Execute the command
-                        match put_client.put(&key, &temp_path, mode, public, no_verify).await {
+                        match put_client.put_bytes(&key, data, Some(filename.clone()), mode, public, no_verify).await {
                             Ok((task_future, mut progress_rx)) => {
                                 // Create a channel to forward progress updates
                                 let (progress_tx, progress_rx_out) = mpsc::unbounded_channel();
