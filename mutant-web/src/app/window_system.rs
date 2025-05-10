@@ -5,7 +5,7 @@ use egui_dock::{DockArea, DockState, Style};
 use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 
-use super::{main::MainWindow, Window, WindowType};
+use super::{main::MainWindow, tasks::TasksWindow, Window, WindowType};
 
 
 lazy_static! {
@@ -123,8 +123,12 @@ impl WindowSystem {
                             ui.add(button).on_hover_text(hover)
                         };
 
-                    if menu_button(ui, "🛸", "Main", is_window_open("Main")).clicked() {
+                    if menu_button(ui, "🛸", "Main", is_window_open("MutAnt Keys")).clicked() {
                         new_window(MainWindow::new());
+                    }
+
+                    if menu_button(ui, "⚙️", "Tasks", is_window_open("MutAnt Tasks")).clicked() {
+                        new_window(TasksWindow::new());
                     }
 
                     // if menu_button(ui, "🚀", "Ships", is_window_open("Ships")).clicked() {

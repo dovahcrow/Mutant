@@ -24,10 +24,15 @@ use serde::{Deserialize, Serialize};
 // mod ships;
 // mod trades;
 
+mod context;
 mod main;
+mod tasks;
 mod window_system;
 
+pub use context::context;
+
 pub use main::MainWindow;
+pub use tasks::TasksWindow;
 
 use window_system::init_window_system;
 
@@ -43,7 +48,8 @@ pub trait Window: Send + Sync {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum WindowType {
-    Main(main::MainWindow)
+    Main(main::MainWindow),
+    Tasks(tasks::TasksWindow)
     // Bases(bases::BasesWindow),
     // Base(base::BaseWindow),
     // Buildings(buildings::BuildingsWindow),
@@ -65,6 +71,7 @@ impl Window for WindowType {
     fn name(&self) -> String {
         match self {
             Self::Main(window) => window.name(),
+            Self::Tasks(window) => window.name(),
             // Self::Bases(window) => window.name(),
             // Self::Base(window) => window.name(),
             // Self::Buildings(window) => window.name(),
@@ -86,6 +93,7 @@ impl Window for WindowType {
     fn draw(&mut self, ui: &mut egui::Ui) {
         match self {
             Self::Main(window) => window.draw(ui),
+            Self::Tasks(window) => window.draw(ui),
             // Self::Bases(window) => window.draw(ui),
             // Self::Base(window) => window.draw(ui),
             // Self::Buildings(window) => window.draw(ui),
@@ -108,6 +116,12 @@ impl Window for WindowType {
 impl From<main::MainWindow> for WindowType {
     fn from(window: main::MainWindow) -> Self {
         Self::Main(window)
+    }
+}
+
+impl From<tasks::TasksWindow> for WindowType {
+    fn from(window: tasks::TasksWindow) -> Self {
+        Self::Tasks(window)
     }
 }
 
@@ -202,36 +216,18 @@ impl From<main::MainWindow> for WindowType {
 // }
 
 pub async fn init() {
-    let mut client = mutant_client::MutantClient::new();
+    // Get the shared context
+    let ctx = context::context();
 
-    let connected = match client.connect("ws://localhost:3030/ws").await {
-        Ok(_) => {
-            log::info!("CLIENT CONNECTED!");
-            true
-        },
-        Err(e) => {
-            log::error!("Failed to connect to daemon: {:?}", e);
-            false
-        }
-    };
+    // Fetch keys using the context
+    let (keys, connected) = ctx.list_keys().await;
 
-    let keys = if connected {
-        match client.list_keys().await {
-            Ok(keys) => {
-                log::info!("Retrieved {} keys", keys.len());
-                for key in &keys {
-                    log::info!("Key: {:#?}", key);
-                }
-                keys
-            },
-            Err(e) => {
-                log::error!("Failed to list keys: {:?}", e);
-                Vec::new()
-            }
-        }
+    if connected {
+        log::info!("Connected to daemon");
+        log::info!("Retrieved {} keys", keys.len());
     } else {
-        Vec::new()
-    };
+        log::error!("Failed to connect to daemon");
+    }
 
     // Initialize the window system
     init_window_system().await;
@@ -239,6 +235,10 @@ pub async fn init() {
     // Create the main window with the keys
     let main_window = main::MainWindow::with_keys(keys, connected);
 
-    // Add the window to the system
+    // Create the tasks window
+    let tasks_window = tasks::TasksWindow::new();
+
+    // Add the windows to the system
     window_system_mut().add_window(main_window.into());
+    window_system_mut().add_window(tasks_window.into());
 }

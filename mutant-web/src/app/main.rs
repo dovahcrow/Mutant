@@ -136,12 +136,15 @@ impl MainWindow {
         // Actions section
         ui.horizontal(|ui| {
             if ui.button("Refresh").clicked() {
-                // This will be implemented later to refresh the keys list
                 log::info!("Refresh clicked");
                 let keys = self.keys.clone();
+                let connected_ref = Arc::new(RwLock::new(false));
+                let connected_clone = connected_ref.clone();
+
                 wasm_bindgen_futures::spawn_local(async move {
-                    let new_keys = fetch_keys().await;
+                    let (new_keys, is_connected) = crate::app::context::context().list_keys().await;
                     *keys.write().unwrap() = new_keys;
+                    *connected_clone.write().unwrap() = is_connected;
                 });
             }
 
@@ -153,76 +156,20 @@ impl MainWindow {
     }
 }
 
-async fn fetch_keys() -> Vec<KeyDetails> {
-    let mut client = mutant_client::MutantClient::new();
-
-    let connected = match client.connect("ws://localhost:3030/ws").await {
-        Ok(_) => {
-            log::info!("CLIENT CONNECTED!");
-            true
-        },
-        Err(e) => {
-            log::error!("Failed to connect to daemon: {:?}", e);
-            false
-        }
-    };
-
-    if connected {
-        match client.list_keys().await {
-            Ok(keys) => {
-                log::info!("Retrieved {} keys", keys.len());
-                for key in &keys {
-                    log::info!("Key: {:#?}", key);
-                }
-                keys
-            },
-            Err(e) => {
-                log::error!("Failed to list keys: {:?}", e);
-                Vec::new()
-            }
-        }
-    } else {
-        Vec::new()
-    }
 
 
-}
 
 async fn get_key(name: &str) -> Result<Vec<u8>, String> {
-    let mut client = mutant_client::MutantClient::new();
+    let ctx = crate::app::context::context();
 
-    let connected = match client.connect("ws://localhost:3030/ws").await {
+    match ctx.get_key(name, "/tmp/test").await {
         Ok(_) => {
-            log::info!("CLIENT CONNECTED!");
-            true
+            log::info!("Get task completed");
+            Ok(Vec::new())
         },
         Err(e) => {
-            log::error!("Failed to connect to daemon: {:?}", e);
-            false
+            log::error!("Get task failed: {}", e);
+            Err(e)
         }
-    };
-
-    if connected {
-        match client.get(name, "/tmp/test", false).await {
-            Ok((task, _)) => {
-                match task.await {
-                    Ok(result) => {
-                        log::info!("Get task completed: {:?}", result);
-
-                        Ok(Vec::new())
-                    },
-                    Err(e) => {
-                        log::error!("Get task failed: {:?}", e);
-                        Err(format!("{:?}", e))
-                    }
-                }
-            },
-            Err(e) => {
-                log::error!("Failed to start get task: {:?}", e);
-                Err(format!("{:?}", e))
-            }
-        }
-    } else {
-        Err("Not connected".to_string())
     }
 }
