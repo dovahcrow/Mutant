@@ -312,7 +312,7 @@ impl PutWindow {
             // Get the selected file
             let file_list = input.files().expect("input should have files");
             if let Some(file) = file_list.get(0) {
-                let file_name = file.name();
+                let file_name = input.dir();
                 let file_size_js = file.size();
 
                 // Update state with file name and size
