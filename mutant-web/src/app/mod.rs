@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 // mod ships;
 // mod trades;
 
+mod client_manager;
 mod context;
 mod main;
 mod tasks;
