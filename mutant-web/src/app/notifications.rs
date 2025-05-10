@@ -1,6 +1,6 @@
 use std::sync::RwLock;
 
-use bevy_egui::egui::{self, Align2};
+use eframe::egui::{self, Align2};
 use egui_toast::Toasts;
 use lazy_static::lazy_static;
 

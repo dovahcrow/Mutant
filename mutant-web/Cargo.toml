@@ -25,7 +25,7 @@ console_error_panic_hook = "0.1.7"
 #egui_extras = "0.29.1"
 #egui_dock = { git = "https://github.com/Adanos020/egui_dock.git", branch = "release-0.15" , features = ["serde"] }
 egui_dock = { version = "0.16.0", features = ["serde"] }
-egui-toast = "0.15.0"
+egui-toast = "0.17.0"
 wasm-logger = "0.2.0"
 log = "0.4.22"
 #chrono = "0.4.38"
@@ -36,7 +36,7 @@ eframe = "0.31.1"
 lazy_static = "1.5.0"
 futures = "0.3.31"
 
-instant = { version = "0.1", features = [ "wasm-bindgen" ] }
+web-time = { version = "1.1.0", features = [ "serde" ] }
 
 mutant-client = { path = "../mutant-client", version = "0.6.2" }
 mutant-protocol = { path = "../mutant-protocol", version = "0.6.2" }

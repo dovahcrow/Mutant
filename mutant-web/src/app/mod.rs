@@ -8,13 +8,13 @@ use serde::{Deserialize, Serialize};
 // mod blueprints;
 // mod buildings;
 // mod chart;
-// mod components;
+mod components;
 // mod flights;
 // mod infobar;
 // mod inventory;
 // pub mod loading;
 // pub mod login;
-// pub mod notifications;
+pub mod notifications;
 // mod orders;
 // mod overview;
 // pub mod planet;
@@ -27,12 +27,14 @@ use serde::{Deserialize, Serialize};
 mod client_manager;
 mod context;
 mod main;
+mod put;
 mod tasks;
 mod window_system;
 
 pub use context::context;
 
 pub use main::MainWindow;
+pub use put::PutWindow;
 pub use tasks::TasksWindow;
 
 use window_system::init_window_system;
@@ -50,7 +52,8 @@ pub trait Window: Send + Sync {
 #[derive(Clone, Serialize, Deserialize)]
 pub enum WindowType {
     Main(main::MainWindow),
-    Tasks(tasks::TasksWindow)
+    Tasks(tasks::TasksWindow),
+    Put(put::PutWindow)
     // Bases(bases::BasesWindow),
     // Base(base::BaseWindow),
     // Buildings(buildings::BuildingsWindow),
@@ -73,6 +76,7 @@ impl Window for WindowType {
         match self {
             Self::Main(window) => window.name(),
             Self::Tasks(window) => window.name(),
+            Self::Put(window) => window.name(),
             // Self::Bases(window) => window.name(),
             // Self::Base(window) => window.name(),
             // Self::Buildings(window) => window.name(),
@@ -95,6 +99,7 @@ impl Window for WindowType {
         match self {
             Self::Main(window) => window.draw(ui),
             Self::Tasks(window) => window.draw(ui),
+            Self::Put(window) => window.draw(ui),
             // Self::Bases(window) => window.draw(ui),
             // Self::Base(window) => window.draw(ui),
             // Self::Buildings(window) => window.draw(ui),
@@ -123,6 +128,12 @@ impl From<main::MainWindow> for WindowType {
 impl From<tasks::TasksWindow> for WindowType {
     fn from(window: tasks::TasksWindow) -> Self {
         Self::Tasks(window)
+    }
+}
+
+impl From<put::PutWindow> for WindowType {
+    fn from(window: put::PutWindow) -> Self {
+        Self::Put(window)
     }
 }
 
