@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use lazy_static::lazy_static;
@@ -13,12 +13,12 @@ const DEFAULT_WS_URL: &str = "ws://localhost:3030/ws";
 const CACHE_EXPIRY_SECONDS: u64 = 5;
 
 // Struct to hold cached data with expiration
-struct CachedData<T> {
+struct CachedData<T: Clone> {
     data: T,
     timestamp: Instant,
 }
 
-impl<T> CachedData<T> {
+impl<T: Clone> CachedData<T> {
     fn new(data: T) -> Self {
         Self {
             data,
@@ -29,12 +29,17 @@ impl<T> CachedData<T> {
     fn is_expired(&self) -> bool {
         self.timestamp.elapsed() > Duration::from_secs(CACHE_EXPIRY_SECONDS)
     }
+
+    fn get_data(&self) -> T {
+        self.data.clone()
+    }
 }
 
-// Context struct to manage client and cached data
+// Context struct to manage cached data
 pub struct Context {
-    client: Arc<RwLock<MutantClient>>,
-    connected: RwLock<bool>,
+    // We use a Mutex for the client to ensure only one operation uses it at a time
+    client: Mutex<Option<MutantClient>>,
+    connection_state: RwLock<bool>,
     keys_cache: RwLock<Option<CachedData<Vec<KeyDetails>>>>,
     tasks_cache: RwLock<Option<CachedData<Vec<TaskListEntry>>>>,
     stats_cache: RwLock<Option<CachedData<StatsResponse>>>,
@@ -53,32 +58,39 @@ pub fn context() -> Arc<Context> {
 impl Context {
     fn new() -> Self {
         Self {
-            client: Arc::new(RwLock::new(MutantClient::new())),
-            connected: RwLock::new(false),
+            client: Mutex::new(None),
+            connection_state: RwLock::new(false),
             keys_cache: RwLock::new(None),
             tasks_cache: RwLock::new(None),
             stats_cache: RwLock::new(None),
         }
     }
 
-    // Connect to the daemon if not already connected
-    pub async fn ensure_connected(&self) -> bool {
-        if *self.connected.read().unwrap() {
-            return true;
-        }
+    // Ensure we have a connected client
+    async fn ensure_client(&self) -> Result<(), String> {
+        let mut client_guard = match self.client.lock() {
+            Ok(guard) => guard,
+            Err(e) => return Err(format!("Failed to lock client mutex: {:?}", e)),
+        };
 
-        let mut client = self.client.write().unwrap();
-        match client.connect(DEFAULT_WS_URL).await {
-            Ok(_) => {
-                info!("Connected to daemon");
-                *self.connected.write().unwrap() = true;
-                true
+        // If we don't have a client or it's not connected, create a new one
+        if client_guard.is_none() {
+            let mut client = MutantClient::new();
+            match client.connect(DEFAULT_WS_URL).await {
+                Ok(_) => {
+                    info!("Connected to daemon");
+                    *client_guard = Some(client);
+                    *self.connection_state.write().unwrap() = true;
+                    Ok(())
+                }
+                Err(e) => {
+                    error!("Failed to connect to daemon: {:?}", e);
+                    *self.connection_state.write().unwrap() = false;
+                    Err(format!("Failed to connect: {:?}", e))
+                }
             }
-            Err(e) => {
-                error!("Failed to connect to daemon: {:?}", e);
-                *self.connected.write().unwrap() = false;
-                false
-            }
+        } else {
+            Ok(())
         }
     }
 
@@ -89,19 +101,23 @@ impl Context {
             let cache = self.keys_cache.read().unwrap();
             if let Some(cached) = &*cache {
                 if !cached.is_expired() {
-                    return (cached.data.clone(), *self.connected.read().unwrap());
+                    return (cached.get_data(), *self.connection_state.read().unwrap());
                 }
             }
         }
 
         // Cache expired or not present, fetch fresh data
-        if !self.ensure_connected().await {
+        if let Err(_) = self.ensure_client().await {
             return (Vec::new(), false);
         }
 
         let result = {
-            let mut client = self.client.write().unwrap();
-            client.list_keys().await
+            let mut client_guard = self.client.lock().unwrap();
+            if let Some(client) = &mut *client_guard {
+                client.list_keys().await
+            } else {
+                return (Vec::new(), false);
+            }
         };
 
         match result {
@@ -112,7 +128,7 @@ impl Context {
             }
             Err(e) => {
                 error!("Failed to list keys: {:?}", e);
-                (Vec::new(), *self.connected.read().unwrap())
+                (Vec::new(), *self.connection_state.read().unwrap())
             }
         }
     }
@@ -124,19 +140,23 @@ impl Context {
             let cache = self.tasks_cache.read().unwrap();
             if let Some(cached) = &*cache {
                 if !cached.is_expired() {
-                    return (cached.data.clone(), *self.connected.read().unwrap());
+                    return (cached.get_data(), *self.connection_state.read().unwrap());
                 }
             }
         }
 
         // Cache expired or not present, fetch fresh data
-        if !self.ensure_connected().await {
+        if let Err(_) = self.ensure_client().await {
             return (Vec::new(), false);
         }
 
         let result = {
-            let mut client = self.client.write().unwrap();
-            client.list_tasks().await
+            let mut client_guard = self.client.lock().unwrap();
+            if let Some(client) = &mut *client_guard {
+                client.list_tasks().await
+            } else {
+                return (Vec::new(), false);
+            }
         };
 
         match result {
@@ -147,7 +167,7 @@ impl Context {
             }
             Err(e) => {
                 error!("Failed to list tasks: {:?}", e);
-                (Vec::new(), *self.connected.read().unwrap())
+                (Vec::new(), *self.connection_state.read().unwrap())
             }
         }
     }
@@ -159,19 +179,23 @@ impl Context {
             let cache = self.stats_cache.read().unwrap();
             if let Some(cached) = &*cache {
                 if !cached.is_expired() {
-                    return (Some(cached.data.clone()), *self.connected.read().unwrap());
+                    return (Some(cached.get_data()), *self.connection_state.read().unwrap());
                 }
             }
         }
 
         // Cache expired or not present, fetch fresh data
-        if !self.ensure_connected().await {
+        if let Err(_) = self.ensure_client().await {
             return (None, false);
         }
 
         let result = {
-            let mut client = self.client.write().unwrap();
-            client.get_stats().await
+            let mut client_guard = self.client.lock().unwrap();
+            if let Some(client) = &mut *client_guard {
+                client.get_stats().await
+            } else {
+                return (None, false);
+            }
         };
 
         match result {
@@ -182,20 +206,24 @@ impl Context {
             }
             Err(e) => {
                 error!("Failed to get stats: {:?}", e);
-                (None, *self.connected.read().unwrap())
+                (None, *self.connection_state.read().unwrap())
             }
         }
     }
 
     // Get task details (not cached)
     pub async fn get_task(&self, task_id: TaskId) -> Result<Task, String> {
-        if !self.ensure_connected().await {
-            return Err("Not connected to daemon".to_string());
+        if let Err(e) = self.ensure_client().await {
+            return Err(e);
         }
 
         let result = {
-            let mut client = self.client.write().unwrap();
-            client.query_task(task_id).await
+            let mut client_guard = self.client.lock().unwrap();
+            if let Some(client) = &mut *client_guard {
+                client.query_task(task_id).await
+            } else {
+                return Err("Client not available".to_string());
+            }
         };
 
         match result {
@@ -209,13 +237,17 @@ impl Context {
 
     // Stop a task
     pub async fn stop_task(&self, task_id: TaskId) -> Result<(), String> {
-        if !self.ensure_connected().await {
-            return Err("Not connected to daemon".to_string());
+        if let Err(e) = self.ensure_client().await {
+            return Err(e);
         }
 
         let result = {
-            let mut client = self.client.write().unwrap();
-            client.stop_task(task_id).await
+            let mut client_guard = self.client.lock().unwrap();
+            if let Some(client) = &mut *client_guard {
+                client.stop_task(task_id).await
+            } else {
+                return Err("Client not available".to_string());
+            }
         };
 
         match result {
@@ -233,39 +265,40 @@ impl Context {
 
     // Get a key (not cached)
     pub async fn get_key(&self, name: &str, destination: &str) -> Result<(), String> {
-        if !self.ensure_connected().await {
-            return Err("Not connected to daemon".to_string());
+        if let Err(e) = self.ensure_client().await {
+            return Err(e);
         }
 
-        // Clone the client to avoid borrowing issues with async
-        let mut client_clone = {
-            let client = self.client.read().unwrap();
-            client.clone()
-        };
+        // We need to clone the name and destination since they need to live beyond this function
+        let name = name.to_string();
+        let destination = destination.to_string();
 
-        // Connect the cloned client
-        if let Err(e) = client_clone.connect(DEFAULT_WS_URL).await {
-            error!("Failed to connect cloned client: {:?}", e);
-            return Err(format!("Failed to connect: {:?}", e));
-        }
-
-        // Use the cloned client for the get operation
-        match client_clone.get(name, destination, false).await {
-            Ok((task, _)) => {
-                match task.await {
-                    Ok(result) => {
-                        info!("Get task completed: {:?}", result);
-                        Ok(())
+        // Create a new client for this operation to avoid borrowing issues
+        let mut new_client = MutantClient::new();
+        match new_client.connect(DEFAULT_WS_URL).await {
+            Ok(_) => {
+                match new_client.get(&name, &destination, false).await {
+                    Ok((task, _)) => {
+                        match task.await {
+                            Ok(result) => {
+                                info!("Get task completed: {:?}", result);
+                                Ok(())
+                            },
+                            Err(e) => {
+                                error!("Get task failed: {:?}", e);
+                                Err(format!("Get task failed: {:?}", e))
+                            }
+                        }
                     },
                     Err(e) => {
-                        error!("Get task failed: {:?}", e);
-                        Err(format!("Get task failed: {:?}", e))
+                        error!("Failed to start get task: {:?}", e);
+                        Err(format!("Failed to start get task: {:?}", e))
                     }
                 }
             },
             Err(e) => {
-                error!("Failed to start get task: {:?}", e);
-                Err(format!("Failed to start get task: {:?}", e))
+                error!("Failed to connect to daemon: {:?}", e);
+                Err(format!("Failed to connect: {:?}", e))
             }
         }
     }

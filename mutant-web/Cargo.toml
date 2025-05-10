@@ -36,6 +36,8 @@ eframe = "0.31.1"
 lazy_static = "1.5.0"
 futures = "0.3.31"
 
+instant = { version = "0.1", features = [ "wasm-bindgen" ] }
+
 mutant-client = { path = "../mutant-client", version = "0.6.2" }
 mutant-protocol = { path = "../mutant-protocol", version = "0.6.2" }
 humansize = "2.1.3"
@@ -62,9 +64,9 @@ incremental = false
 debug = false
 
 # Enable a small amount of optimization in the dev profile.
-[profile.dev]
-opt-level = 1
+#[profile.dev]
+#opt-level = 1
 
 # Enable a large amount of optimization in the dev profile for dependencies.
-[profile.dev.package."*"]
-opt-level = 3
+#[profile.dev.package."*"]
+#opt-level = 3

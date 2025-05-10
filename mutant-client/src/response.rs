@@ -22,6 +22,7 @@ impl MutantClient {
         task_channels: &TaskChannelsMap,
         pending_requests: &PendingRequestMap,
     ) {
+        log::warn!("PROCESS RESPONSE: {:#?}", response);
         match response {
             Response::TaskCreated(TaskCreatedResponse { task_id }) => {
                 let pending_sender = pending_requests
@@ -261,14 +262,18 @@ impl MutantClient {
                 }
             }
             Response::ListKeys(ListKeysResponse { keys }) => {
+                log::warn!("Received ListKeys response: {:#?}", keys);
                 let pending_sender = pending_requests
                     .lock()
                     .unwrap()
                     .remove(&PendingRequestKey::ListKeys);
+                log::warn!("Pending sender");
                 if let Some(PendingSender::ListKeys(sender)) = pending_sender {
+                    log::warn!("Sending ListKeys response");
                     if sender.send(Ok(keys)).is_err() {
                         warn!("Failed to send ListKeys response (receiver dropped)");
                     }
+                    log::info!("SENT");
                 } else {
                     warn!("Received ListKeys response but no ListKeys request was pending");
                 }
