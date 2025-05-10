@@ -11,9 +11,9 @@ use crate::app::client_manager;
 pub struct Context {
     // We don't store the client directly since it's not Sync
     connection_state: RwLock<bool>,
-    keys_cache: RwLock<Option<Vec<KeyDetails>>>,
-    tasks_cache: RwLock<Option<Vec<TaskListEntry>>>,
-    stats_cache: RwLock<Option<StatsResponse>>,
+    keys_cache: Arc<RwLock<Option<Vec<KeyDetails>>>>,
+    tasks_cache: Arc<RwLock<Option<Vec<TaskListEntry>>>>,
+    stats_cache: Arc<RwLock<Option<StatsResponse>>>,
 }
 
 // Create a global context instance
@@ -30,13 +30,13 @@ impl Context {
     fn new() -> Self {
         Self {
             connection_state: RwLock::new(false),
-            keys_cache: RwLock::new(None),
-            tasks_cache: RwLock::new(None),
-            stats_cache: RwLock::new(None),
+            keys_cache: Arc::new(RwLock::new(None)),
+            tasks_cache: Arc::new(RwLock::new(None)),
+            stats_cache: Arc::new(RwLock::new(None)),
         }
     }
 
-    // Get list of keys with caching
+    // Get list of keys from cache only
     pub async fn list_keys(&self) -> (Vec<KeyDetails>, bool) {
         // Check cache first
         {
@@ -49,7 +49,12 @@ impl Context {
         }
 
         // No cache, fetch fresh data
-        info!("No cached keys, fetching from daemon");
+        self._list_keys().await
+    }
+
+    // Get list of keys directly from daemon
+    pub async fn _list_keys(&self) -> (Vec<KeyDetails>, bool) {
+        info!("Fetching keys from daemon");
 
         // Create a simple direct call to avoid complex operations
         let result = client_manager::list_keys().await;
@@ -96,7 +101,7 @@ impl Context {
         }
     }
 
-    // Get list of tasks with caching
+    // Get list of tasks from cache only
     pub async fn list_tasks(&self) -> (Vec<TaskListEntry>, bool) {
         // Check cache first
         {
@@ -109,7 +114,12 @@ impl Context {
         }
 
         // No cache, fetch fresh data
-        info!("No cached tasks, fetching from daemon");
+        self._list_tasks().await
+    }
+
+    // Get list of tasks directly from daemon
+    pub async fn _list_tasks(&self) -> (Vec<TaskListEntry>, bool) {
+        info!("Fetching tasks from daemon");
 
         // Create a simple direct call to avoid complex operations
         let result = client_manager::list_tasks().await;
@@ -153,7 +163,7 @@ impl Context {
         }
     }
 
-    // Get stats with caching
+    // Get stats from cache only
     pub async fn get_stats(&self) -> (Option<StatsResponse>, bool) {
         // Check cache first
         {
@@ -166,7 +176,12 @@ impl Context {
         }
 
         // No cache, fetch fresh data
-        info!("No cached stats, fetching from daemon");
+        self._get_stats().await
+    }
+
+    // Get stats directly from daemon
+    pub async fn _get_stats(&self) -> (Option<StatsResponse>, bool) {
+        info!("Fetching stats from daemon");
 
         // Create a simple direct call to avoid complex operations
         let result = client_manager::get_stats().await;
@@ -208,6 +223,13 @@ impl Context {
 
     // Get task details (not cached)
     pub async fn get_task(&self, task_id: TaskId) -> Result<Task, String> {
+        self._get_task(task_id).await
+    }
+
+    // Get task details directly from daemon
+    pub async fn _get_task(&self, task_id: TaskId) -> Result<Task, String> {
+        info!("Fetching task details for task {} from daemon", task_id);
+
         // Safely call the client manager
         let result = client_manager::get_task(task_id).await;
 
@@ -238,6 +260,13 @@ impl Context {
 
     // Stop a task
     pub async fn stop_task(&self, task_id: TaskId) -> Result<(), String> {
+        self._stop_task(task_id).await
+    }
+
+    // Stop a task directly from daemon
+    pub async fn _stop_task(&self, task_id: TaskId) -> Result<(), String> {
+        info!("Stopping task {} via daemon", task_id);
+
         // Safely call the client manager
         let result = client_manager::stop_task(task_id).await;
 
@@ -258,10 +287,17 @@ impl Context {
 
     // Get a key (not cached)
     pub async fn get_key(&self, name: &str, destination: &str) -> Result<(), String> {
+        self._get_key(name, destination).await
+    }
+
+    // Get a key directly from daemon
+    pub async fn _get_key(&self, name: &str, destination: &str) -> Result<(), String> {
+        info!("Getting key {} via daemon", name);
+
         // Safely call the client manager
         let result = client_manager::get_key(name, destination).await;
 
-        let res = match result {
+        match result {
             Ok(_) => {
                 *self.connection_state.write().unwrap() = true;
                 Ok(())
@@ -271,12 +307,7 @@ impl Context {
                 *self.connection_state.write().unwrap() = false;
                 Err(e)
             }
-        };
-
-        // Refresh the tasks list after a get operation
-        let _ = self.list_tasks().await;
-
-        res
+        }
     }
 
     // Invalidate all caches
@@ -288,8 +319,15 @@ impl Context {
 
     // Force a reconnection to the daemon
     pub async fn reconnect(&self) -> Result<(), String> {
+        self._reconnect().await
+    }
+
+    // Force a reconnection to the daemon directly
+    pub async fn _reconnect(&self) -> Result<(), String> {
+        info!("Reconnecting to daemon");
+
         // Invalidate all caches
-        self.invalidate_caches();
+        // self.invalidate_caches();
 
         // Set connection state to false
         *self.connection_state.write().unwrap() = false;
@@ -307,5 +345,17 @@ impl Context {
                 Err(e)
             }
         }
+    }
+
+    pub fn get_key_cache(&self) -> Arc<RwLock<Option<Vec<KeyDetails>>>> {
+        self.keys_cache.clone()
+    }
+
+    pub fn get_task_cache(&self) -> Arc<RwLock<Option<Vec<TaskListEntry>>>> {
+        self.tasks_cache.clone()
+    }
+
+    pub fn get_stats_cache(&self) -> Arc<RwLock<Option<StatsResponse>>> {
+        self.stats_cache.clone()
     }
 }

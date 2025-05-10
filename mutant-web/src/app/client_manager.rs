@@ -523,16 +523,19 @@ pub async fn get_key(name: &str, destination: &str) -> Result<(), String> {
             match rx.await {
                 Ok(result) => {
                     info!("Received get_key response from client manager");
+
                     result
                 },
                 Err(e) => {
                     error!("Failed to receive get_key response: {:?}", e);
+
                     Err(format!("Failed to receive response: {:?}", e))
                 }
             }
         },
         Err(e) => {
             error!("Failed to send get_key command: {:?}", e);
+
             Err(format!("Failed to send command: {:?}", e))
         }
     }
