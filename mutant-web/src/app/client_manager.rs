@@ -138,16 +138,35 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                     // Only send if the receiver is still interested
                     if !sender.is_canceled() {
                         info!("Sending list_keys response to caller");
-                        if let Err(send_err) = sender.send(result) {
-                            error!("Failed to send list_keys response: {:?}", send_err);
+
+                        // Create a safe copy of the result to avoid memory issues
+                        let safe_result = match &result {
+                            Ok(keys) => {
+                                // Create a new vector with cloned keys to avoid memory issues
+                                let safe_keys = keys.clone();
+                                Ok(safe_keys)
+                            },
+                            Err(e) => {
+                                // Create a new error string to avoid memory issues
+                                Err(e.clone())
+                            }
+                        };
+
+                        // Send the safe result
+                        match sender.send(safe_result) {
+                            Ok(_) => info!("Successfully sent list_keys response to caller"),
+                            Err(e) => error!("Failed to send list_keys response: {:?}", e)
                         }
                     } else {
                         info!("Receiver canceled, not sending list_keys response");
                     }
                 }
                 ClientCommand::ListTasks(sender) => {
+                    info!("Processing ListTasks command");
+
                     // Ensure we're connected
                     if let Err(e) = ensure_connected(&mut client, &mut connected).await {
+                        info!("Connection failed for ListTasks: {}", e);
                         // Only send if the receiver is still interested
                         if !sender.is_canceled() {
                             let _ = sender.send(Err(e));
@@ -155,26 +174,50 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                         continue;
                     }
 
-                    // Execute the command
-                    match client.list_tasks().await {
+                    info!("Connection established, sending list_tasks request");
+
+                    // Execute the command with proper error handling
+                    let result = match client.list_tasks().await {
                         Ok(tasks) => {
-                            // Only send if the receiver is still interested
-                            if !sender.is_canceled() {
-                                let _ = sender.send(Ok(tasks));
-                            }
+                            info!("Successfully retrieved {} tasks", tasks.len());
+                            Ok(tasks)
                         }
                         Err(e) => {
                             // Check if it's a connection error
                             if e.to_string().contains("connection") || e.to_string().contains("websocket") {
                                 connected = false;
-                                warn!("Connection lost, will reconnect on next request");
+                                warn!("Connection lost during list_tasks, will reconnect on next request: {:?}", e);
+                            } else {
+                                error!("Failed to list tasks: {:?}", e);
                             }
-
-                            // Only send if the receiver is still interested
-                            if !sender.is_canceled() {
-                                let _ = sender.send(Err(format!("Failed to list tasks: {:?}", e)));
-                            }
+                            Err(format!("Failed to list tasks: {:?}", e))
                         }
+                    };
+
+                    // Only send if the receiver is still interested
+                    if !sender.is_canceled() {
+                        info!("Sending list_tasks response to caller");
+
+                        // Create a safe copy of the result to avoid memory issues
+                        let safe_result = match &result {
+                            Ok(tasks) => {
+                                // Create a new vector with cloned tasks to avoid memory issues
+                                let safe_tasks = tasks.clone();
+                                Ok(safe_tasks)
+                            },
+                            Err(e) => {
+                                // Create a new error string to avoid memory issues
+                                Err(e.clone())
+                            }
+                        };
+
+                        // Send the safe result
+                        match sender.send(safe_result) {
+                            Ok(_) => info!("Successfully sent list_tasks response to caller"),
+                            Err(e) => error!("Failed to send list_tasks response: {:?}", e)
+                        }
+                    } else {
+                        info!("Receiver canceled, not sending list_tasks response");
                     }
                 }
                 ClientCommand::GetStats(sender) => {
@@ -307,19 +350,23 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
 
 // Public API to send commands to the client manager
 pub async fn list_keys() -> Result<Vec<KeyDetails>, String> {
+    info!("Starting list_keys request");
+
+    // Create a oneshot channel for the response
     let (tx, rx) = oneshot::channel();
 
     // Send the command to the client manager
     match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::ListKeys(tx)) {
         Ok(_) => {
+            info!("ListKeys command sent to client manager");
+
             // Wait for the response
             match rx.await {
                 Ok(result) => {
-                    // Return the result (which might be Ok or Err)
+                    info!("Received list_keys response from client manager");
                     result
                 },
                 Err(e) => {
-                    // Handle channel error
                     error!("Failed to receive list_keys response: {:?}", e);
                     Err(format!("Failed to receive response: {:?}", e))
                 }
@@ -333,12 +380,22 @@ pub async fn list_keys() -> Result<Vec<KeyDetails>, String> {
 }
 
 pub async fn list_tasks() -> Result<Vec<TaskListEntry>, String> {
+    info!("Starting list_tasks request");
+
+    // Create a oneshot channel for the response
     let (tx, rx) = oneshot::channel();
 
+    // Send the command to the client manager
     match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::ListTasks(tx)) {
         Ok(_) => {
+            info!("ListTasks command sent to client manager");
+
+            // Wait for the response
             match rx.await {
-                Ok(result) => result,
+                Ok(result) => {
+                    info!("Received list_tasks response from client manager");
+                    result
+                },
                 Err(e) => {
                     error!("Failed to receive list_tasks response: {:?}", e);
                     Err(format!("Failed to receive response: {:?}", e))
@@ -353,12 +410,22 @@ pub async fn list_tasks() -> Result<Vec<TaskListEntry>, String> {
 }
 
 pub async fn get_stats() -> Result<StatsResponse, String> {
+    info!("Starting get_stats request");
+
+    // Create a oneshot channel for the response
     let (tx, rx) = oneshot::channel();
 
+    // Send the command to the client manager
     match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::GetStats(tx)) {
         Ok(_) => {
+            info!("GetStats command sent to client manager");
+
+            // Wait for the response
             match rx.await {
-                Ok(result) => result,
+                Ok(result) => {
+                    info!("Received get_stats response from client manager");
+                    result
+                },
                 Err(e) => {
                     error!("Failed to receive get_stats response: {:?}", e);
                     Err(format!("Failed to receive response: {:?}", e))
@@ -373,12 +440,22 @@ pub async fn get_stats() -> Result<StatsResponse, String> {
 }
 
 pub async fn get_task(task_id: TaskId) -> Result<Task, String> {
+    info!("Starting get_task request for task {}", task_id);
+
+    // Create a oneshot channel for the response
     let (tx, rx) = oneshot::channel();
 
+    // Send the command to the client manager
     match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::GetTask(task_id, tx)) {
         Ok(_) => {
+            info!("GetTask command sent to client manager");
+
+            // Wait for the response
             match rx.await {
-                Ok(result) => result,
+                Ok(result) => {
+                    info!("Received get_task response from client manager");
+                    result
+                },
                 Err(e) => {
                     error!("Failed to receive get_task response: {:?}", e);
                     Err(format!("Failed to receive response: {:?}", e))
@@ -393,12 +470,22 @@ pub async fn get_task(task_id: TaskId) -> Result<Task, String> {
 }
 
 pub async fn stop_task(task_id: TaskId) -> Result<(), String> {
+    info!("Starting stop_task request for task {}", task_id);
+
+    // Create a oneshot channel for the response
     let (tx, rx) = oneshot::channel();
 
+    // Send the command to the client manager
     match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::StopTask(task_id, tx)) {
         Ok(_) => {
+            info!("StopTask command sent to client manager");
+
+            // Wait for the response
             match rx.await {
-                Ok(result) => result,
+                Ok(result) => {
+                    info!("Received stop_task response from client manager");
+                    result
+                },
                 Err(e) => {
                     error!("Failed to receive stop_task response: {:?}", e);
                     Err(format!("Failed to receive response: {:?}", e))
@@ -413,12 +500,22 @@ pub async fn stop_task(task_id: TaskId) -> Result<(), String> {
 }
 
 pub async fn get_key(name: &str, destination: &str) -> Result<(), String> {
+    info!("Starting get_key request for key {}", name);
+
+    // Create a oneshot channel for the response
     let (tx, rx) = oneshot::channel();
 
+    // Send the command to the client manager
     match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::GetKey(name.to_string(), destination.to_string(), tx)) {
         Ok(_) => {
+            info!("GetKey command sent to client manager");
+
+            // Wait for the response
             match rx.await {
-                Ok(result) => result,
+                Ok(result) => {
+                    info!("Received get_key response from client manager");
+                    result
+                },
                 Err(e) => {
                     error!("Failed to receive get_key response: {:?}", e);
                     Err(format!("Failed to receive response: {:?}", e))
@@ -433,8 +530,14 @@ pub async fn get_key(name: &str, destination: &str) -> Result<(), String> {
 }
 
 pub async fn reconnect() -> Result<(), String> {
+    info!("Starting reconnect request");
+
+    // Send the command to the client manager
     match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::Reconnect) {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            info!("Reconnect command sent to client manager");
+            Ok(())
+        },
         Err(e) => {
             error!("Failed to send reconnect command: {:?}", e);
             Err(format!("Failed to send reconnect command: {:?}", e))
