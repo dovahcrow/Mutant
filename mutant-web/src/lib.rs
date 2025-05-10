@@ -22,7 +22,7 @@ pub fn init_panic_hook() {
 pub fn start() {
     init_panic_hook();
     wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
-    
+
     log::info!("Starting MutAnt Web Client");
 
     async_start();
@@ -60,7 +60,7 @@ impl eframe::App for MyApp {
 }
 
 pub fn run() {
-    use eframe::wasm_bindgen::JsCast as _;
+    use wasm_bindgen::JsCast as _;
 
     // Redirect `log` message to `console.log` and friends:
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();

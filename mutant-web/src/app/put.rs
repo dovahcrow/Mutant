@@ -20,6 +20,7 @@ pub struct PutWindow {
     // File selection state
     selected_file: Arc<RwLock<Option<String>>>,
     file_size: Arc<RwLock<Option<u64>>>,
+    #[serde(skip)] // Skip serializing file data to avoid localStorage quota issues
     file_data: Arc<RwLock<Option<Vec<u8>>>>,
 
     // Key name input
@@ -312,7 +313,7 @@ impl PutWindow {
             // Get the selected file
             let file_list = input.files().expect("input should have files");
             if let Some(file) = file_list.get(0) {
-                let file_name = input.dir();
+                let file_name = file.name();
                 let file_size_js = file.size();
 
                 // Update state with file name and size

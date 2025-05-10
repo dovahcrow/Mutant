@@ -220,7 +220,15 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
 
     // Define WebSocket route using the actual handler with increased message size limit
     // Set max message size to 2GB (2 * 1024 * 1024 * 1024)
+    // This is the maximum size for WebSocket messages
     let max_message_size = 2 * 1024 * 1024 * 1024;
+
+    // Set max frame size to 2GB (2 * 1024 * 1024 * 1024)
+    // This needs to be large enough to handle the largest expected frame
+    let max_frame_size = 2 * 1024 * 1024 * 1024;
+
+    log::info!("Configuring WebSocket with max_message_size={} bytes, max_frame_size={} bytes",
+               max_message_size, max_frame_size);
 
     let ws_route = warp::path("ws")
         .and(warp::ws())
@@ -229,8 +237,9 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
         .and(warp::any().map(move || active_keys.clone()))
         .map(
             move |ws: warp::ws::Ws, mutant_instance: Arc<MutAnt>, task_map: TaskMap, active_keys_map: handlers::ActiveKeysMap| {
-                // Configure WebSocket with increased message size limit
+                // Configure WebSocket with increased message size limit and frame size
                 ws.max_message_size(max_message_size)
+                  .max_frame_size(max_frame_size)
                   .on_upgrade(move |socket| handlers::handle_ws(socket, mutant_instance, task_map, active_keys_map))
             },
         );

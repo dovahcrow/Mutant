@@ -189,17 +189,24 @@ impl WindowSystem {
 
         if self.frame >= 10 {
             let window = web_sys::window().unwrap();
-            let serie = serde_json::to_string(&self.tree).unwrap();
-            // let serie = serie.iter().map(|x| *x as char).collect::<String>();
-            window
-                .local_storage()
-                .unwrap()
-                .unwrap()
-                .set(
-                    "egui_dock::DockArea",
-                    &serie,
-                )
-                .unwrap();
+
+            // Try to serialize the dock state
+            match serde_json::to_string(&self.tree) {
+                Ok(serie) => {
+                    // Try to save to localStorage, but handle quota exceeded errors gracefully
+                    if let Some(storage) = window.local_storage().ok().flatten() {
+                        // Attempt to set the value, but don't unwrap to avoid panicking
+                        if let Err(e) = storage.set("egui_dock::DockArea", &serie) {
+                            log::warn!("Failed to save window state to localStorage: {:?}", e);
+                            // Continue without crashing - the user will just lose window state
+                        }
+                    }
+                },
+                Err(e) => {
+                    log::warn!("Failed to serialize window state: {:?}", e);
+                    // Continue without crashing
+                }
+            }
 
             self.frame = 0;
         }
@@ -207,23 +214,37 @@ impl WindowSystem {
 
 
     pub fn from_memory(user_id: String) -> Self {
-        let window = web_sys::window().unwrap();
-        let data = window
-            .local_storage()
-            .unwrap()
-            .unwrap()
-            .get(format!("egui_dock::DockArea{}", user_id).as_str())
-            .unwrap();
-
-        let tree = if let Some(data) = data {
-            let tree = serde_json::from_str(&data)
-                .unwrap_or_else(|_e| DockState::new(vec![]));
-            tree
-        } else {
-            DockState::new(vec![MainWindow::default().into()])
+        let window = match web_sys::window() {
+            Some(w) => w,
+            None => return Self::default_with_main_window(),
         };
+
+        let storage = match window.local_storage().ok().flatten() {
+            Some(s) => s,
+            None => return Self::default_with_main_window(),
+        };
+
+        let key = format!("egui_dock::DockArea{}", user_id);
+        let data = match storage.get(key.as_str()).ok().flatten() {
+            Some(d) => d,
+            None => return Self::default_with_main_window(),
+        };
+
+        match serde_json::from_str::<DockState<WindowType>>(&data) {
+            Ok(tree) => Self {
+                tree,
+                ..Default::default()
+            },
+            Err(e) => {
+                log::warn!("Failed to deserialize window state: {:?}", e);
+                Self::default_with_main_window()
+            }
+        }
+    }
+
+    fn default_with_main_window() -> Self {
         Self {
-            tree,
+            tree: DockState::new(vec![MainWindow::default().into()]),
             ..Default::default()
         }
     }
