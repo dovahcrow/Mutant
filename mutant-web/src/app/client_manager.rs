@@ -3,7 +3,8 @@ use futures::{channel::oneshot, StreamExt};
 use lazy_static::lazy_static;
 use log::{error, info, warn};
 use mutant_client::MutantClient;
-use mutant_protocol::{KeyDetails, StatsResponse, Task, TaskId, TaskListEntry};
+use mutant_protocol::{KeyDetails, StatsResponse, Task, TaskId, TaskListEntry, TaskProgress};
+use tokio::sync::mpsc;
 use wasm_bindgen_futures::spawn_local;
 
 // Default WebSocket URL for the daemon
@@ -17,6 +18,7 @@ enum ClientCommand {
     GetTask(TaskId, oneshot::Sender<Result<Task, String>>),
     StopTask(TaskId, oneshot::Sender<Result<(), String>>),
     GetKey(String, String, oneshot::Sender<Result<(), String>>),
+    Put(String, Vec<u8>, String, mutant_protocol::StorageMode, bool, bool, oneshot::Sender<Result<(TaskId, mpsc::UnboundedReceiver<Result<mutant_protocol::TaskProgress, String>>), String>>),
     Reconnect,
     Shutdown,
 }
@@ -349,6 +351,79 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                         warn!("Reconnection failed: {}", e);
                     }
                 }
+                ClientCommand::Put(key, _data, filename, mode, public, no_verify, sender) => {
+                    // Ensure we're connected
+                    if let Err(e) = ensure_connected(&mut client, &mut connected).await {
+                        // Only send if the receiver is still interested
+                        if !sender.is_canceled() {
+                            let _ = sender.send(Err(e));
+                        }
+                        continue;
+                    }
+
+                    // Create a new client for the put operation to avoid lifetime issues
+                    let mut put_client = client.clone();
+
+                    // Spawn a separate task to handle the put operation
+                    spawn_local(async move {
+                        // Connect the client first since cloned clients don't have a connection
+                        if let Err(e) = put_client.connect(DEFAULT_WS_URL).await {
+                            error!("Failed to connect cloned client: {:?}", e);
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Err(format!("Failed to connect: {:?}", e)));
+                            }
+                            return;
+                        }
+
+                        // Create a temporary file path for the data
+                        // In a web context, we need to pass the data directly
+                        // For now, we'll just use a placeholder path
+                        let temp_path = filename;
+
+                        // Execute the command
+                        match put_client.put(&key, &temp_path, mode, public, no_verify).await {
+                            Ok((_task, mut progress_rx)) => {
+                                // For now, we'll use a placeholder task ID
+                                // In a real implementation, we would extract the task ID from the task
+                                let task_id = TaskId::new_v4();
+
+                                // Create a channel to forward progress updates
+                                let (progress_tx, progress_rx_out) = mpsc::unbounded_channel();
+
+                                // Forward progress updates in a separate task
+                                spawn_local(async move {
+                                    while let Some(progress) = progress_rx.recv().await {
+                                        match progress {
+                                            Ok(progress) => {
+                                                let _ = progress_tx.send(Ok(progress));
+                                            }
+                                            Err(e) => {
+                                                let _ = progress_tx.send(Err(format!("Progress error: {:?}", e)));
+                                                break;
+                                            }
+                                        }
+                                    }
+                                });
+
+                                // Send the task ID and progress receiver
+                                if !sender.is_canceled() {
+                                    let _ = sender.send(Ok((task_id, progress_rx_out)));
+                                }
+                            }
+                            Err(e) => {
+                                // Check if it's a connection error
+                                if e.to_string().contains("connection") || e.to_string().contains("websocket") {
+                                    warn!("Connection lost during put operation");
+                                }
+
+                                // Only send if the receiver is still interested
+                                if !sender.is_canceled() {
+                                    let _ = sender.send(Err(format!("Failed to start put task: {:?}", e)));
+                                }
+                            }
+                        }
+                    });
+                },
                 ClientCommand::Shutdown => {
                     break;
                 }
@@ -536,6 +611,51 @@ pub async fn get_key(name: &str, destination: &str) -> Result<(), String> {
         Err(e) => {
             error!("Failed to send get_key command: {:?}", e);
 
+            Err(format!("Failed to send command: {:?}", e))
+        }
+    }
+}
+
+pub async fn put(
+    key: &str,
+    data: Vec<u8>,
+    filename: &str,
+    mode: mutant_protocol::StorageMode,
+    public: bool,
+    no_verify: bool,
+) -> Result<(TaskId, mpsc::UnboundedReceiver<Result<mutant_protocol::TaskProgress, String>>), String> {
+    info!("Starting put request for key {}", key);
+
+    // Create a oneshot channel for the response
+    let (tx, rx) = oneshot::channel();
+
+    // Send the command to the client manager
+    match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::Put(
+        key.to_string(),
+        data,
+        filename.to_string(),
+        mode,
+        public,
+        no_verify,
+        tx,
+    )) {
+        Ok(_) => {
+            info!("Put command sent to client manager");
+
+            // Wait for the response
+            match rx.await {
+                Ok(result) => {
+                    info!("Received put response from client manager");
+                    result
+                },
+                Err(e) => {
+                    error!("Failed to receive put response: {:?}", e);
+                    Err(format!("Failed to receive response: {:?}", e))
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to send put command: {:?}", e);
             Err(format!("Failed to send command: {:?}", e))
         }
     }

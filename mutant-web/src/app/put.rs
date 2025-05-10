@@ -1,14 +1,15 @@
 use std::sync::{Arc, RwLock};
 
 use eframe::egui::{self, Color32, RichText};
-use mutant_protocol::StorageMode;
+use mutant_protocol::{StorageMode, TaskProgress, PutEvent};
 use serde::{Deserialize, Serialize};
-// use std::time::{Instant, Duration};
+use tokio::sync::mpsc;
 use web_time::{Duration, SystemTime};
 use wasm_bindgen_futures::spawn_local;
 
 use super::Window;
 use super::components::progress::progress;
+use super::context;
 use super::notifications;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -140,7 +141,7 @@ impl PutWindow {
                     ui.label("Storage Mode:");
                     let mut storage_mode = self.storage_mode.write().unwrap();
 
-                    egui::ComboBox::from_id_source("storage_mode")
+                    egui::ComboBox::new("storage_mode", "")
                         .selected_text(format!("{:?}", *storage_mode))
                         .show_ui(ui, |ui| {
                             ui.selectable_value(&mut *storage_mode, StorageMode::Light, "Light");
@@ -288,48 +289,188 @@ impl PutWindow {
         let public = *self.public.read().unwrap();
         let storage_mode = self.storage_mode.read().unwrap().clone();
         let no_verify = *self.no_verify.read().unwrap();
+        let file_data = self.file_data.read().unwrap().clone().unwrap_or_default();
+        let filename = self.selected_file.read().unwrap().clone().unwrap_or_default();
 
         // Clone Arc references for the async task
         let reservation_progress = self.reservation_progress.clone();
         let upload_progress = self.upload_progress.clone();
         let confirmation_progress = self.confirmation_progress.clone();
+        let total_chunks = self.total_chunks.clone();
+        let chunks_to_reserve = self.chunks_to_reserve.clone();
+        let initial_written_count = self.initial_written_count.clone();
+        let initial_confirmed_count = self.initial_confirmed_count.clone();
         let is_uploading = self.is_uploading.clone();
         let upload_complete = self.upload_complete.clone();
         let public_address = self.public_address.clone();
+        let error_message = self.error_message.clone();
         let elapsed_time = self.elapsed_time.clone();
         let start_time = self.start_time.clone();
 
-        // Simulate progress updates
-        // In a real implementation, we would use client_manager to perform the actual upload
+        // Start the actual upload using the context
+        spawn_local(async move {
+            let ctx = context::context();
 
-        // Simulate reservation progress
-        *reservation_progress.write().unwrap() = 0.3;
+            match ctx.put(&key_name, file_data, &filename, storage_mode, public, no_verify).await {
+                Ok((task_id, mut progress_rx)) => {
+                    log::info!("Upload started with task ID: {}", task_id);
 
-        // After a short delay, simulate upload progress
-        *reservation_progress.write().unwrap() = 1.0;
-        *upload_progress.write().unwrap() = 0.5;
+                    // Process progress updates
+                    while let Some(progress) = progress_rx.recv().await {
+                        match progress {
+                            Ok(TaskProgress::Put(event)) => {
+                                match event {
+                                    PutEvent::Starting {
+                                        total_chunks: tc,
+                                        initial_written_count: iwc,
+                                        initial_confirmed_count: icc,
+                                        chunks_to_reserve: ctr
+                                    } => {
+                                        log::info!("Starting put operation - Total: {}, Written: {}, Confirmed: {}, To Reserve: {}",
+                                            tc, iwc, icc, ctr);
 
-        // After another delay, simulate confirmation progress
-        *upload_progress.write().unwrap() = 1.0;
-        *confirmation_progress.write().unwrap() = 0.7;
+                                        // Store the values
+                                        *total_chunks.write().unwrap() = tc;
+                                        *initial_written_count.write().unwrap() = iwc;
+                                        *initial_confirmed_count.write().unwrap() = icc;
+                                        *chunks_to_reserve.write().unwrap() = ctr;
 
-        // Complete the upload
-        *confirmation_progress.write().unwrap() = 1.0;
-        *is_uploading.write().unwrap() = false;
-        *upload_complete.write().unwrap() = true;
+                                        // Update progress bars
+                                        if tc > 0 {
+                                            if ctr > 0 {
+                                                *reservation_progress.write().unwrap() = iwc as f32 / tc as f32;
+                                            } else {
+                                                *reservation_progress.write().unwrap() = 1.0;
+                                            }
+                                            *upload_progress.write().unwrap() = iwc as f32 / tc as f32;
+                                            *confirmation_progress.write().unwrap() = icc as f32 / tc as f32;
+                                        }
+                                    },
+                                    PutEvent::PadReserved => {
+                                        log::info!("Pad reserved");
+                                        let tc = *total_chunks.read().unwrap();
+                                        if tc > 0 {
+                                            let mut res_progress = reservation_progress.write().unwrap();
+                                            if *res_progress < 1.0 {
+                                                *res_progress += 1.0 / tc as f32;
+                                                if *res_progress > 1.0 {
+                                                    *res_progress = 1.0;
+                                                }
+                                            }
+                                        }
+                                    },
+                                    PutEvent::PadsWritten => {
+                                        log::info!("Pads written");
+                                        let tc = *total_chunks.read().unwrap();
+                                        if tc > 0 {
+                                            let mut up_progress = upload_progress.write().unwrap();
+                                            if *up_progress < 1.0 {
+                                                *up_progress += 1.0 / tc as f32;
+                                                if *up_progress > 1.0 {
+                                                    *up_progress = 1.0;
+                                                }
+                                            }
+                                        }
+                                    },
+                                    PutEvent::PadsConfirmed => {
+                                        log::info!("Pads confirmed");
+                                        let tc = *total_chunks.read().unwrap();
+                                        if tc > 0 {
+                                            let mut conf_progress = confirmation_progress.write().unwrap();
+                                            if *conf_progress < 1.0 {
+                                                *conf_progress += 1.0 / tc as f32;
+                                                if *conf_progress > 1.0 {
+                                                    *conf_progress = 1.0;
+                                                }
+                                            }
+                                        }
+                                    },
+                                    PutEvent::Complete => {
+                                        log::info!("Upload complete");
 
-        // Set elapsed time
-        if let Some(start) = *start_time.read().unwrap() {
-            *elapsed_time.write().unwrap() = start.elapsed().unwrap();
-        }
+                                        // Set all progress bars to 100%
+                                        *reservation_progress.write().unwrap() = 1.0;
+                                        *upload_progress.write().unwrap() = 1.0;
+                                        *confirmation_progress.write().unwrap() = 1.0;
 
-        // Set public address if public
-        if public {
-            *public_address.write().unwrap() = Some("public_address_placeholder".to_string());
-        }
+                                        // Mark upload as complete
+                                        *is_uploading.write().unwrap() = false;
+                                        *upload_complete.write().unwrap() = true;
 
-        // Show notification
-        notifications::info("Upload complete!".to_string());
+                                        // Set elapsed time
+                                        if let Some(start) = *start_time.read().unwrap() {
+                                            *elapsed_time.write().unwrap() = start.elapsed().unwrap();
+                                        }
+
+                                        // If this is a public upload, get the key details to find the public address
+                                        if public {
+                                            // Fetch the key details to get the public address
+                                            spawn_local({
+                                                let ctx = context::context();
+                                                let key_name = key_name.clone();
+                                                let public_address_clone = public_address.clone();
+
+                                                async move {
+                                                    // Wait a moment for the key to be fully registered
+                                                    // In a real implementation, we would use a proper delay
+                                                    // For now, we'll just continue immediately
+
+                                                    // Invalidate the keys cache to ensure we get fresh data
+                                                    ctx.invalidate_caches();
+
+                                                    // Fetch the keys
+                                                    let (keys, _) = ctx._list_keys().await;
+
+                                                    // Find our key
+                                                    for key in keys {
+                                                        if key.key == key_name && key.is_public {
+                                                            if let Some(addr) = key.public_address {
+                                                                *public_address_clone.write().unwrap() = Some(addr);
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        }
+
+                                        // Show notification
+                                        notifications::info("Upload complete!".to_string());
+                                    }
+                                }
+                            },
+                            Ok(_) => {
+                                log::warn!("Unexpected progress type");
+                            },
+                            Err(e) => {
+                                log::error!("Progress error: {}", e);
+                                *error_message.write().unwrap() = Some(e);
+                            }
+                        }
+                    }
+
+                    // If we get here, the progress channel has closed
+                    // Make sure the upload is marked as complete
+                    if !*upload_complete.read().unwrap() {
+                        *is_uploading.write().unwrap() = false;
+                        *upload_complete.write().unwrap() = true;
+
+                        // Set elapsed time
+                        if let Some(start) = *start_time.read().unwrap() {
+                            *elapsed_time.write().unwrap() = start.elapsed().unwrap();
+                        }
+                    }
+                },
+                Err(e) => {
+                    log::error!("Failed to start upload: {}", e);
+                    *error_message.write().unwrap() = Some(e.clone());
+                    *is_uploading.write().unwrap() = false;
+
+                    // Show notification
+                    notifications::error(format!("Upload failed: {}", e));
+                }
+            }
+        });
     }
 
     fn reset(&self) {

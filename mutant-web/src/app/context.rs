@@ -2,7 +2,8 @@ use std::sync::{Arc, RwLock};
 
 use lazy_static::lazy_static;
 use log::{error, info};
-use mutant_protocol::{KeyDetails, StatsResponse, Task, TaskId, TaskListEntry};
+use mutant_protocol::{KeyDetails, StatsResponse, StorageMode, Task, TaskId, TaskListEntry, TaskProgress};
+use tokio::sync::mpsc;
 
 // Import our client manager
 use crate::app::client_manager;
@@ -357,5 +358,50 @@ impl Context {
 
     pub fn get_stats_cache(&self) -> Arc<RwLock<Option<StatsResponse>>> {
         self.stats_cache.clone()
+    }
+
+    // Put a key (not cached)
+    pub async fn put(
+        &self,
+        key: &str,
+        data: Vec<u8>,
+        filename: &str,
+        mode: StorageMode,
+        public: bool,
+        no_verify: bool,
+    ) -> Result<(TaskId, mpsc::UnboundedReceiver<Result<TaskProgress, String>>), String> {
+        self._put(key, data, filename, mode, public, no_verify).await
+    }
+
+    // Put a key directly to daemon
+    pub async fn _put(
+        &self,
+        key: &str,
+        data: Vec<u8>,
+        filename: &str,
+        mode: StorageMode,
+        public: bool,
+        no_verify: bool,
+    ) -> Result<(TaskId, mpsc::UnboundedReceiver<Result<TaskProgress, String>>), String> {
+        info!("Putting key {} via daemon", key);
+
+        // Safely call the client manager
+        let result = client_manager::put(key, data, filename, mode, public, no_verify).await;
+
+        match result {
+            Ok((task_id, progress_rx)) => {
+                *self.connection_state.write().unwrap() = true;
+
+                // Invalidate keys cache since we're adding a new key
+                *self.keys_cache.write().unwrap() = None;
+
+                Ok((task_id, progress_rx))
+            },
+            Err(e) => {
+                error!("Failed to put key: {}", e);
+                *self.connection_state.write().unwrap() = false;
+                Err(e)
+            }
+        }
     }
 }
