@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use eframe::egui::{self, Color32, RichText};
 use humansize::{format_size, BINARY};
 use mutant_protocol::KeyDetails;
+use std::sync::RwLock;
 
 use super::Window;
 
@@ -8,14 +11,14 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MainWindow {
-    keys: Vec<KeyDetails>,
+    keys: Arc<RwLock<Vec<KeyDetails>>>,
     connected: bool,
 }
 
 impl Default for MainWindow {
     fn default() -> Self {
         Self {
-            keys: Vec::new(),
+            keys: Arc::new(RwLock::new(Vec::new())),
             connected: false,
         }
     }
@@ -34,13 +37,13 @@ impl Window for MainWindow {
 impl MainWindow {
     pub fn new() -> Self {
         Self {
-            keys: Vec::new(),
+            keys: Arc::new(RwLock::new(Vec::new())),
             connected: false,
         }
     }
 
     pub fn with_keys(keys: Vec<KeyDetails>, connected: bool) -> Self {
-        Self { keys, connected }
+        Self { keys: Arc::new(RwLock::new(keys)), connected }
     }
 
     pub fn draw_keys_list(&mut self, ui: &mut egui::Ui) {
@@ -60,7 +63,7 @@ impl MainWindow {
 
         ui.add_space(12.0);
 
-        if self.keys.is_empty() {
+        if self.keys.read().unwrap().is_empty() {
             ui.label(RichText::new("No keys stored.").color(Color32::GRAY));
         } else {
             // Create a table to display the keys
@@ -78,9 +81,14 @@ impl MainWindow {
                     ui.end_row();
 
                     // Data rows
-                    for key in &self.keys {
+                    for key in &*self.keys.read().unwrap() {
                         // Key name
-                        ui.label(&key.key);
+                       if ui.label(&key.key).clicked() {
+                            let key = key.clone();
+                            wasm_bindgen_futures::spawn_local(async move {
+                                let _ = get_key(&key.key).await;
+                            });
+                        }
 
                         // Size
                         ui.label(format_size(key.total_size, BINARY));
@@ -130,6 +138,11 @@ impl MainWindow {
             if ui.button("Refresh").clicked() {
                 // This will be implemented later to refresh the keys list
                 log::info!("Refresh clicked");
+                let keys = self.keys.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let new_keys = fetch_keys().await;
+                    *keys.write().unwrap() = new_keys;
+                });
             }
 
             if ui.button("Sync").clicked() {
@@ -137,5 +150,79 @@ impl MainWindow {
                 log::info!("Sync clicked");
             }
         });
+    }
+}
+
+async fn fetch_keys() -> Vec<KeyDetails> {
+    let mut client = mutant_client::MutantClient::new();
+
+    let connected = match client.connect("ws://localhost:3030/ws").await {
+        Ok(_) => {
+            log::info!("CLIENT CONNECTED!");
+            true
+        },
+        Err(e) => {
+            log::error!("Failed to connect to daemon: {:?}", e);
+            false
+        }
+    };
+
+    if connected {
+        match client.list_keys().await {
+            Ok(keys) => {
+                log::info!("Retrieved {} keys", keys.len());
+                for key in &keys {
+                    log::info!("Key: {:#?}", key);
+                }
+                keys
+            },
+            Err(e) => {
+                log::error!("Failed to list keys: {:?}", e);
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    }
+
+
+}
+
+async fn get_key(name: &str) -> Result<Vec<u8>, String> {
+    let mut client = mutant_client::MutantClient::new();
+
+    let connected = match client.connect("ws://localhost:3030/ws").await {
+        Ok(_) => {
+            log::info!("CLIENT CONNECTED!");
+            true
+        },
+        Err(e) => {
+            log::error!("Failed to connect to daemon: {:?}", e);
+            false
+        }
+    };
+
+    if connected {
+        match client.get(name, "/tmp/test", false).await {
+            Ok((task, _)) => {
+                match task.await {
+                    Ok(result) => {
+                        log::info!("Get task completed: {:?}", result);
+
+                        Ok(Vec::new())
+                    },
+                    Err(e) => {
+                        log::error!("Get task failed: {:?}", e);
+                        Err(format!("{:?}", e))
+                    }
+                }
+            },
+            Err(e) => {
+                log::error!("Failed to start get task: {:?}", e);
+                Err(format!("{:?}", e))
+            }
+        }
+    } else {
+        Err("Not connected".to_string())
     }
 }
