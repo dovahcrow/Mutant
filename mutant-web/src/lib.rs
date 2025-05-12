@@ -180,6 +180,9 @@ impl Client {
                                                 initial_confirmed_count,
                                                 chunks_to_reserve
                                             } => {
+                                                log::info!("Progress update - Starting: total_chunks={}, initial_written={}, initial_confirmed={}, to_reserve={}",
+                                                    total_chunks, initial_written_count, initial_confirmed_count, chunks_to_reserve);
+
                                                 // Initialize the operation
                                                 progress_guard.operation.insert("put".to_string(), app::context::ProgressOperation {
                                                     nb_to_reserve: chunks_to_reserve,
@@ -188,23 +191,32 @@ impl Client {
                                                     nb_written: initial_written_count,
                                                     nb_confirmed: initial_confirmed_count,
                                                 });
+
+                                                // Log the initial state
+                                                if let Some(op) = progress_guard.operation.get("put") {
+                                                    log::info!("Progress initialized: total_pads={}, reserved={}, written={}, confirmed={}",
+                                                        op.total_pads, op.nb_reserved, op.nb_written, op.nb_confirmed);
+                                                }
                                             },
                                             mutant_protocol::PutEvent::PadReserved => {
                                                 // Update reserved count
                                                 if let Some(op) = progress_guard.operation.get_mut("put") {
                                                     op.nb_reserved += 1;
+                                                    log::info!("Progress update - PadReserved: reserved={}/{}", op.nb_reserved, op.total_pads);
                                                 }
                                             },
                                             mutant_protocol::PutEvent::PadsWritten => {
                                                 // Update written count
                                                 if let Some(op) = progress_guard.operation.get_mut("put") {
                                                     op.nb_written += 1;
+                                                    log::info!("Progress update - PadsWritten: written={}/{}", op.nb_written, op.total_pads);
                                                 }
                                             },
                                             mutant_protocol::PutEvent::PadsConfirmed => {
                                                 // Update confirmed count
                                                 if let Some(op) = progress_guard.operation.get_mut("put") {
                                                     op.nb_confirmed += 1;
+                                                    log::info!("Progress update - PadsConfirmed: confirmed={}/{}", op.nb_confirmed, op.total_pads);
                                                 }
                                             },
                                             mutant_protocol::PutEvent::MultipartUploadProgress { bytes_uploaded, total_bytes } => {
@@ -214,6 +226,8 @@ impl Client {
                                                     let progress_percentage = bytes_uploaded as f32 / total_bytes as f32;
                                                     op.nb_reserved = (progress_percentage * op.total_pads as f32) as usize;
                                                     op.nb_written = op.nb_reserved;
+                                                    log::info!("Progress update - MultipartUpload: {}/{} bytes, progress={:.2}%, reserved={}, written={}",
+                                                        bytes_uploaded, total_bytes, progress_percentage * 100.0, op.nb_reserved, op.nb_written);
                                                 }
                                             },
                                             mutant_protocol::PutEvent::Complete => {
@@ -222,6 +236,7 @@ impl Client {
                                                     op.nb_reserved = op.total_pads;
                                                     op.nb_written = op.total_pads;
                                                     op.nb_confirmed = op.total_pads;
+                                                    log::info!("Progress update - Complete: All {} pads reserved, written, and confirmed", op.total_pads);
                                                 }
                                             }
                                         }
@@ -452,6 +467,52 @@ impl eframe::App for MyApp {
         });
     }
 }
+
+// pub fn run() {
+//     use wasm_bindgen::JsCast as _;
+
+//     // Initialize the app
+//     wasm_bindgen_futures::spawn_local(async {
+//         let document = web_sys::window()
+//             .expect("No window")
+//             .document()
+//             .expect("No document");
+
+//         // Canvas is not used with run_native, but we still check if it exists
+//         let _canvas = document
+//             .get_element_by_id("canvas")
+//             .expect("Failed to find the_canvas_id")
+//             .dyn_into::<web_sys::HtmlCanvasElement>()
+//             .expect("the_canvas_id was not a HtmlCanvasElement");
+
+//         app::init().await;
+
+//         // Create native options
+//         let options = eframe::NativeOptions::default();
+
+//         // Start the app
+//         let start_result = eframe::run_native(
+//             "MutAnt Web",
+//             options,
+//             Box::new(|_cc| Ok(Box::new(MyApp::default()))),
+//         );
+
+//         // Remove the loading text and spinner:
+//         if let Some(loading_text) = document.get_element_by_id("loading_text") {
+//             match start_result {
+//                 Ok(_) => {
+//                     loading_text.remove();
+//                 }
+//                 Err(e) => {
+//                     loading_text.set_inner_html(
+//                         "<p> The app has crashed. See the developer console for details. </p>",
+//                     );
+//                     panic!("Failed to start eframe: {e:?}");
+//                 }
+//             }
+//         }
+//     });
+// }
 
 pub fn run() {
     use wasm_bindgen::JsCast as _;

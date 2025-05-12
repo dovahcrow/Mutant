@@ -235,13 +235,13 @@ pub async fn init() {
     // Fetch keys using the context
     let keys = ctx.list_keys().await;
 
-    log::info!("Retrieved {} keys", keys.len());
+    // log::info!("Retrieved {} keys", keys.len());
 
     // Initialize the window system
     init_window_system().await;
 
     // Create the main window with the keys
-    let main_window = main::MainWindow::with_keys(keys);
+    let main_window = main::MainWindow::new();
 
     // Create the tasks window
     // let tasks_window = tasks::TasksWindow::new();

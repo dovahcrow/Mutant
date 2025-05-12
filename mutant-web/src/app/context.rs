@@ -88,6 +88,8 @@ impl Context {
                 *cache = safe_keys.clone();
             }
 
+            info!("Updated keys cache with {} keys", safe_keys.len());
+
             safe_keys
         } else {
             error!("Failed to list keys: {:?}", result.err());

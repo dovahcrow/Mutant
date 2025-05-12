@@ -17,7 +17,7 @@ pub struct MainWindow {
 impl Default for MainWindow {
     fn default() -> Self {
         Self {
-            keys: Arc::new(RwLock::new(Vec::new())),
+            keys: crate::app::context::context().get_key_cache(),
         }
     }
 }
@@ -34,13 +34,7 @@ impl Window for MainWindow {
 
 impl MainWindow {
     pub fn new() -> Self {
-        Self {
-            keys: Arc::new(RwLock::new(Vec::new())),
-        }
-    }
-
-    pub fn with_keys(keys: Vec<KeyDetails>) -> Self {
-        Self { keys: Arc::new(RwLock::new(keys))}
+        Default::default()
     }
 
     pub fn draw_keys_list(&mut self, ui: &mut egui::Ui) {

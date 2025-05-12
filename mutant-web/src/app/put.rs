@@ -50,6 +50,7 @@ pub struct PutWindow {
     // Timing
     start_time: Arc<RwLock<Option<SystemTime>>>,
     elapsed_time: Arc<RwLock<Duration>>,
+    last_progress_check: Arc<RwLock<SystemTime>>,
 
     // Progress tracking ID
     current_put_id: Arc<RwLock<Option<String>>>,
@@ -78,6 +79,7 @@ impl Default for PutWindow {
             error_message: Arc::new(RwLock::new(None)),
             start_time: Arc::new(RwLock::new(None)),
             elapsed_time: Arc::new(RwLock::new(Duration::from_secs(0))),
+            last_progress_check: Arc::new(RwLock::new(SystemTime::now())),
             current_put_id: Arc::new(RwLock::new(None)),
         }
     }
@@ -89,12 +91,26 @@ impl Window for PutWindow {
     }
 
     fn draw(&mut self, ui: &mut egui::Ui) {
+        // Log that we're drawing the window
+        log::debug!("Drawing PutWindow");
+
+        // If we're uploading, check the progress before drawing the form
+        // This ensures we have the latest progress values when drawing
+        if *self.is_uploading.read().unwrap() && !*self.upload_complete.read().unwrap() {
+            log::debug!("Upload in progress, checking progress");
+            self.check_progress();
+        } else {
+            log::debug!("Upload not in progress: is_uploading={}, upload_complete={}",
+                *self.is_uploading.read().unwrap(),
+                *self.upload_complete.read().unwrap());
+        }
+
+        // Draw the form with the updated progress values
         self.draw_upload_form(ui);
 
-        // If we're uploading, check the progress
-        if *self.is_uploading.read().unwrap() && !*self.upload_complete.read().unwrap() {
-            self.check_progress();
-        }
+        // Request a repaint to ensure we update frequently
+        // This is crucial for smooth progress bar updates
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
     }
 }
 
@@ -104,8 +120,27 @@ impl PutWindow {
     }
 
     fn check_progress(&self) {
+        // Check if we should update the progress based on the timer
+        let now = SystemTime::now();
+        let last_check = *self.last_progress_check.read().unwrap();
+
+        // Only check progress every 100ms to avoid excessive updates
+        let should_check = match now.duration_since(last_check) {
+            Ok(duration) => duration.as_millis() >= 100,
+            Err(_) => true, // If there's an error, just check anyway
+        };
+
+        if !should_check {
+            return;
+        }
+
+        // Update the last check time
+        *self.last_progress_check.write().unwrap() = now;
+
         // Get the current put ID
         let put_id_opt = self.current_put_id.read().unwrap().clone();
+
+        log::debug!("Checking progress for put ID: {:?}", put_id_opt);
 
         if let Some(put_id) = put_id_opt {
             // Get the context
@@ -116,8 +151,13 @@ impl PutWindow {
                 // Read the progress
                 let progress_guard = progress.read().unwrap();
 
+                log::debug!("Found progress object for put ID: {}", put_id);
+
                 // Check if we have an operation
                 if let Some(op) = progress_guard.operation.get("put") {
+                    log::debug!("Found operation in progress: total_pads={}, reserved={}, written={}, confirmed={}",
+                        op.total_pads, op.nb_reserved, op.nb_written, op.nb_confirmed);
+
                     // Update UI based on progress
                     let total_chunks = op.total_pads;
                     let reserved_count = op.nb_reserved;
@@ -143,6 +183,9 @@ impl PutWindow {
                         0.0
                     };
 
+                    log::debug!("Calculated progress: reservation={:.2}%, upload={:.2}%, confirmation={:.2}%",
+                        reservation_progress * 100.0, upload_progress * 100.0, confirmation_progress * 100.0);
+
                     // Update progress bars
                     *self.reservation_progress.write().unwrap() = reservation_progress;
                     *self.upload_progress.write().unwrap() = upload_progress;
@@ -150,6 +193,11 @@ impl PutWindow {
 
                     // Update total chunks
                     *self.total_chunks.write().unwrap() = total_chunks;
+
+                    log::debug!("Updated progress bars: reservation={:.2}%, upload={:.2}%, confirmation={:.2}%",
+                        *self.reservation_progress.read().unwrap() * 100.0,
+                        *self.upload_progress.read().unwrap() * 100.0,
+                        *self.confirmation_progress.read().unwrap() * 100.0);
 
                     // Check if operation is complete
                     if confirmed_count == total_chunks && total_chunks > 0 {
@@ -311,6 +359,9 @@ impl PutWindow {
         let file_data = self.file_data.read().unwrap().clone().unwrap_or_default();
         let filename = self.selected_file.read().unwrap().clone().unwrap_or_default();
 
+        log::info!("Upload parameters: key={}, filename={}, size={} bytes, public={}, mode={:?}, no_verify={}",
+            key_name, filename, file_data.len(), public, storage_mode, no_verify);
+
         // Clone Arc references for the async task
         let current_put_id = self.current_put_id.clone();
         let error_message = self.error_message.clone();
@@ -321,11 +372,24 @@ impl PutWindow {
             let ctx = context::context();
 
             match ctx.put(&key_name, file_data, &filename, storage_mode, public, no_verify).await {
-                Ok((put_id, _progress)) => {
+                Ok((put_id, progress)) => {
                     log::info!("Upload started with put ID: {}", put_id);
 
+                    // Log the progress object
+                    {
+                        let progress_guard = progress.read().unwrap();
+                        log::info!("Progress object created with {} operations", progress_guard.operation.len());
+
+                        for (op_name, op) in &progress_guard.operation {
+                            log::info!("Operation {}: total_pads={}, reserved={}, written={}, confirmed={}",
+                                op_name, op.total_pads, op.nb_reserved, op.nb_written, op.nb_confirmed);
+                        }
+                    }
+
                     // Store the put ID for progress tracking
+                    let put_id_clone = put_id.clone();
                     *current_put_id.write().unwrap() = Some(put_id);
+                    log::info!("Stored put ID for progress tracking: {}", put_id_clone);
                 },
                 Err(e) => {
                     log::error!("Failed to start upload: {}", e);
@@ -474,15 +538,62 @@ impl PutWindow {
             let upload_progress = *self.upload_progress.read().unwrap();
             let confirmation_progress = *self.confirmation_progress.read().unwrap();
 
+            // Get the latest progress values directly from the context
+            let (reservation_progress, upload_progress, confirmation_progress, total_chunks) = {
+                if let Some(put_id) = &*self.current_put_id.read().unwrap() {
+                    let ctx = context::context();
+                    if let Some(progress) = ctx.get_progress(put_id) {
+                        let progress_guard = progress.read().unwrap();
+                        if let Some(op) = progress_guard.operation.get("put") {
+                            // Calculate progress percentages
+                            let res_progress = if op.total_pads > 0 {
+                                op.nb_reserved as f32 / op.total_pads as f32
+                            } else {
+                                0.0
+                            };
+
+                            let up_progress = if op.total_pads > 0 {
+                                op.nb_written as f32 / op.total_pads as f32
+                            } else {
+                                0.0
+                            };
+
+                            let conf_progress = if op.total_pads > 0 {
+                                op.nb_confirmed as f32 / op.total_pads as f32
+                            } else {
+                                0.0
+                            };
+
+                            // Update the stored progress values
+                            *self.reservation_progress.write().unwrap() = res_progress;
+                            *self.upload_progress.write().unwrap() = up_progress;
+                            *self.confirmation_progress.write().unwrap() = conf_progress;
+                            *self.total_chunks.write().unwrap() = op.total_pads;
+
+                            (res_progress, up_progress, conf_progress, op.total_pads)
+                        } else {
+                            (reservation_progress, upload_progress, confirmation_progress, total_chunks)
+                        }
+                    } else {
+                        (reservation_progress, upload_progress, confirmation_progress, total_chunks)
+                    }
+                } else {
+                    (reservation_progress, upload_progress, confirmation_progress, total_chunks)
+                }
+            };
+
             // Calculate current counts for each stage
             let reserved_count = if chunks_to_reserve > 0 {
                 (reservation_progress * total_chunks as f32) as usize
             } else {
-                total_chunks
+                (reservation_progress * total_chunks as f32) as usize
             };
 
             let uploaded_count = (upload_progress * total_chunks as f32) as usize;
             let confirmed_count = (confirmation_progress * total_chunks as f32) as usize;
+
+            log::debug!("Drawing progress bars: reservation={:.2}%, upload={:.2}%, confirmation={:.2}%",
+                reservation_progress * 100.0, upload_progress * 100.0, confirmation_progress * 100.0);
 
             // Reservation progress bar
             ui.label("Reserving pads:");
