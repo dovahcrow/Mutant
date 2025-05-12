@@ -25,13 +25,14 @@ pub mod notifications;
 // mod trades;
 
 mod client_manager;
-mod context;
+pub mod context;
 mod main;
 mod put;
-mod tasks;
+// mod tasks;
 mod window_system;
 
 pub use context::context;
+pub use context::{Progress, ProgressOperation};
 
 use window_system::init_window_system;
 pub use client_manager::DEFAULT_WS_URL;
@@ -49,7 +50,7 @@ pub trait Window: Send + Sync {
 #[derive(Clone, Serialize, Deserialize)]
 pub enum WindowType {
     Main(main::MainWindow),
-    Tasks(tasks::TasksWindow),
+    // Tasks(tasks::TasksWindow),
     Put(put::PutWindow)
     // Bases(bases::BasesWindow),
     // Base(base::BaseWindow),
@@ -72,7 +73,7 @@ impl Window for WindowType {
     fn name(&self) -> String {
         match self {
             Self::Main(window) => window.name(),
-            Self::Tasks(window) => window.name(),
+            // Self::Tasks(window) => window.name(),
             Self::Put(window) => window.name(),
             // Self::Bases(window) => window.name(),
             // Self::Base(window) => window.name(),
@@ -95,7 +96,7 @@ impl Window for WindowType {
     fn draw(&mut self, ui: &mut egui::Ui) {
         match self {
             Self::Main(window) => window.draw(ui),
-            Self::Tasks(window) => window.draw(ui),
+            // Self::Tasks(window) => window.draw(ui),
             Self::Put(window) => window.draw(ui),
             // Self::Bases(window) => window.draw(ui),
             // Self::Base(window) => window.draw(ui),
@@ -122,11 +123,11 @@ impl From<main::MainWindow> for WindowType {
     }
 }
 
-impl From<tasks::TasksWindow> for WindowType {
-    fn from(window: tasks::TasksWindow) -> Self {
-        Self::Tasks(window)
-    }
-}
+// impl From<tasks::TasksWindow> for WindowType {
+//     fn from(window: tasks::TasksWindow) -> Self {
+//         Self::Tasks(window)
+//     }
+// }
 
 impl From<put::PutWindow> for WindowType {
     fn from(window: put::PutWindow) -> Self {
@@ -240,9 +241,9 @@ pub async fn init() {
     let main_window = main::MainWindow::with_keys(keys);
 
     // Create the tasks window
-    let tasks_window = tasks::TasksWindow::new();
+    // let tasks_window = tasks::TasksWindow::new();
 
     // Add the windows to the system
     window_system_mut().add_window(main_window.into());
-    window_system_mut().add_window(tasks_window.into());
+    // window_system_mut().add_window(tasks_window.into());
 }

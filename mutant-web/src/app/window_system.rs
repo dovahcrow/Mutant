@@ -5,7 +5,7 @@ use egui_dock::{DockArea, DockState, Style};
 use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 
-use super::{main::MainWindow, put::PutWindow, tasks::TasksWindow, Window, WindowType};
+use super::{main::MainWindow, put::PutWindow, Window, WindowType};
 
 
 lazy_static! {
@@ -127,9 +127,9 @@ impl WindowSystem {
                         new_window(MainWindow::new());
                     }
 
-                    if menu_button(ui, "⚙️", "Tasks", is_window_open("MutAnt Tasks")).clicked() {
-                        new_window(TasksWindow::new());
-                    }
+                    // if menu_button(ui, "⚙️", "Tasks", is_window_open("MutAnt Tasks")).clicked() {
+                    //     new_window(TasksWindow::new());
+                    // }
 
                     if menu_button(ui, "📤", "Upload", is_window_open("MutAnt Upload")).clicked() {
                         new_window(PutWindow::new());

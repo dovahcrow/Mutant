@@ -6,7 +6,7 @@ use app::{DEFAULT_WS_URL, window_system_mut};
 use futures::{channel::oneshot, StreamExt};
 use log::error;
 use mutant_client::{MutantClient, ProgressReceiver};
-use mutant_protocol::TaskResult;
+use mutant_protocol::{TaskProgress, TaskResult};
 use wasm_bindgen::prelude::*;
 
 // mod app;
@@ -154,10 +154,98 @@ impl Client {
         public: bool,
         no_verify: bool,
     ) -> Result<TaskResult, String> {
+        // Get the response name for this put operation
+        let response_name = format!("put_{}_{}", key, filename);
+
+        // Check if we have a progress object for this operation
+        let progress_obj = {
+            if let Some(sender) = Client::get_client_sender() {
+                let put_progress = sender.put_progress.read().unwrap();
+                put_progress.get(&response_name).cloned()
+            } else {
+                None
+            }
+        };
+
         match self.client.put_bytes(key, data, Some(filename.to_string()), mode, public, no_verify).await {
             Ok((task_future, progress_rx)) => {
-                handle_put_progress(progress_rx);
+                // If we have a progress object, update it based on the progress events
+                if let Some(progress) = progress_obj {
+                    // Spawn a task to update the progress object
+                    spawn_local({
+                        let mut progress_rx = progress_rx;
+                        async move {
+                            while let Some(progress_update) = progress_rx.recv().await {
+                                match progress_update {
+                                    Ok(TaskProgress::Put(event)) => {
+                                        // Update the progress based on the event
+                                        let mut progress_guard = progress.write().unwrap();
+                                        match event {
+                                            mutant_protocol::PutEvent::Starting {
+                                                total_chunks,
+                                                initial_written_count,
+                                                initial_confirmed_count,
+                                                chunks_to_reserve
+                                            } => {
+                                                // Initialize the operation
+                                                progress_guard.operation.insert("put".to_string(), app::context::ProgressOperation {
+                                                    nb_to_reserve: chunks_to_reserve,
+                                                    nb_reserved: total_chunks - chunks_to_reserve,
+                                                    total_pads: total_chunks,
+                                                    nb_written: initial_written_count,
+                                                    nb_confirmed: initial_confirmed_count,
+                                                });
+                                            },
+                                            mutant_protocol::PutEvent::PadReserved => {
+                                                // Update reserved count
+                                                if let Some(op) = progress_guard.operation.get_mut("put") {
+                                                    op.nb_reserved += 1;
+                                                }
+                                            },
+                                            mutant_protocol::PutEvent::PadsWritten => {
+                                                // Update written count
+                                                if let Some(op) = progress_guard.operation.get_mut("put") {
+                                                    op.nb_written += 1;
+                                                }
+                                            },
+                                            mutant_protocol::PutEvent::PadsConfirmed => {
+                                                // Update confirmed count
+                                                if let Some(op) = progress_guard.operation.get_mut("put") {
+                                                    op.nb_confirmed += 1;
+                                                }
+                                            },
+                                            mutant_protocol::PutEvent::MultipartUploadProgress { bytes_uploaded, total_bytes } => {
+                                                // Update multipart upload progress
+                                                if let Some(op) = progress_guard.operation.get_mut("put") {
+                                                    // Calculate progress as a percentage of total pads
+                                                    let progress_percentage = bytes_uploaded as f32 / total_bytes as f32;
+                                                    op.nb_reserved = (progress_percentage * op.total_pads as f32) as usize;
+                                                    op.nb_written = op.nb_reserved;
+                                                }
+                                            },
+                                            mutant_protocol::PutEvent::Complete => {
+                                                // Mark operation as complete
+                                                if let Some(op) = progress_guard.operation.get_mut("put") {
+                                                    op.nb_reserved = op.total_pads;
+                                                    op.nb_written = op.total_pads;
+                                                    op.nb_confirmed = op.total_pads;
+                                                }
+                                            }
+                                        }
+                                    },
+                                    _ => {
+                                        // Ignore other progress types
+                                    }
+                                }
+                            }
+                        }
+                    });
+                } else {
+                    // If we don't have a progress object, just log the progress
+                    handle_put_progress(progress_rx);
+                }
 
+                // Wait for the task to complete and return the result
                 task_future.await.map_err(|e| format!("{:?}", e))
             }
             Err(e) => {
@@ -165,6 +253,13 @@ impl Client {
                 Err(format!("{:?}", e))
             }
         }
+    }
+
+    // Helper method to get the ClientSender instance
+    fn get_client_sender() -> Option<Arc<ClientSender>> {
+        // Use the context function directly
+        let ctx = app::context::context();
+        Some(ctx.get_client_sender())
     }
 
     pub async fn list_keys(&mut self) -> Result<Vec<mutant_protocol::KeyDetails>, String> {
@@ -179,11 +274,26 @@ impl Client {
 pub struct ClientSender {
     tx: futures::channel::mpsc::UnboundedSender<ClientRequest>,
     responses: Arc<RwLock<HashMap<String, oneshot::Sender<ClientResponse>>>>,
+    put_progress: Arc<RwLock<HashMap<String, Arc<RwLock<app::context::Progress>>>>>,
+}
+
+impl Clone for ClientSender {
+    fn clone(&self) -> Self {
+        Self {
+            tx: self.tx.clone(),
+            responses: self.responses.clone(),
+            put_progress: self.put_progress.clone(),
+        }
+    }
 }
 
 impl ClientSender {
     pub fn new(tx: futures::channel::mpsc::UnboundedSender<ClientRequest>) -> Self {
-        Self { tx, responses: Arc::new(RwLock::new(HashMap::new())) }
+        Self {
+            tx,
+            responses: Arc::new(RwLock::new(HashMap::new())),
+            put_progress: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 
     pub async fn get(&self, name: String, destination: String, public: bool) -> Result<TaskResult, String> {
@@ -216,6 +326,7 @@ impl ClientSender {
         mode: mutant_protocol::StorageMode,
         public: bool,
         no_verify: bool,
+        progress: Option<Arc<RwLock<app::context::Progress>>>,
     ) -> Result<TaskResult, String> {
         let response_name = format!("put_{}_{}", key, filename);
 
@@ -224,8 +335,14 @@ impl ClientSender {
             return Err("Put request already pending".to_string());
         }
 
+        // Store the progress object if provided
+        if let Some(progress_obj) = progress {
+            let mut put_progress = self.put_progress.write().unwrap();
+            put_progress.insert(response_name.clone(), progress_obj);
+        }
+
         let (tx, rx) = oneshot::channel();
-        self.responses.write().unwrap().insert(response_name, tx);
+        self.responses.write().unwrap().insert(response_name.clone(), tx);
 
         let _ = self.tx.unbounded_send(ClientRequest::Put(key, data, filename, mode, public, no_verify));
 
@@ -236,7 +353,6 @@ impl ClientSender {
                 _ => Err("Unexpected response".to_string()),
             }
         }).map_err(|e| format!("{:?}", e))?
-
     }
 
     pub async fn list_keys(&self) -> Result<Vec<mutant_protocol::KeyDetails>, String> {
@@ -303,6 +419,7 @@ fn handle_get_progress(mut progress_rx: ProgressReceiver) {
 }
 
 fn handle_put_progress(mut progress_rx: ProgressReceiver) {
+    // Simply log the progress for now
     spawn_local(async move {
         while let Some(progress) = progress_rx.recv().await {
             match progress {

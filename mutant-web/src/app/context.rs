@@ -1,13 +1,23 @@
-use std::{collections::HashMap, sync::{Arc, Mutex, MutexGuard, RwLock}};
+use std::{collections::{BTreeMap, HashMap}, sync::{Arc, Mutex, RwLock}};
 
 use lazy_static::lazy_static;
 use log::{error, info};
-use mutant_client::ProgressReceiver;
-use mutant_protocol::{KeyDetails, StatsResponse, StorageMode, Task, TaskId, TaskListEntry, TaskProgress};
-use tokio::sync::mpsc;
+use mutant_protocol::{KeyDetails, StatsResponse, StorageMode, TaskListEntry};
 
 // Import our client manager
-use crate::{app::client_manager, Client, ClientSender};
+use crate::{Client, ClientSender};
+
+pub struct ProgressOperation {
+    pub nb_to_reserve: usize,
+    pub nb_reserved: usize,
+    pub total_pads: usize,
+    pub nb_written: usize,
+    pub nb_confirmed: usize,
+}
+
+pub struct Progress {
+    pub operation: BTreeMap<String, ProgressOperation>,
+}
 
 // Context struct to manage cached data
 pub struct Context {
@@ -15,7 +25,7 @@ pub struct Context {
     keys_cache: Arc<RwLock<Vec<KeyDetails>>>,
     tasks_cache: Arc<RwLock<Vec<TaskListEntry>>>,
     stats_cache: Arc<RwLock<Option<StatsResponse>>>,
-    put_progress: Arc<RwLock<HashMap<String, ProgressReceiver>>>,
+    put_progress: Arc<RwLock<HashMap<String, Arc<RwLock<Progress>>>>>,
 }
 
 // Create a global context instance
@@ -66,7 +76,7 @@ impl Context {
                 safe_keys.push(key_detail);
             }
 
-            // Update cache 
+            // Update cache
             {
                 let mut cache = self.keys_cache.write().unwrap();
 
@@ -256,21 +266,55 @@ impl Context {
         mode: StorageMode,
         public: bool,
         no_verify: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(String, Arc<RwLock<Progress>>), String> {
         info!("Putting key {} via daemon", key);
 
-        // Safely call the client manager
-        let result = self.client.put(key.to_string(), data, filename.to_string(), mode, public, no_verify).await;
+        // Generate a unique ID for this put operation
+        let put_id = format!("put_{}_{}", key, filename);
+
+        // Create a new Progress object
+        let progress = Arc::new(RwLock::new(Progress {
+            operation: BTreeMap::new(),
+        }));
+
+        // Store the progress in our map
+        {
+            let mut put_progress = self.put_progress.write().unwrap();
+            put_progress.insert(put_id.clone(), progress.clone());
+        }
+
+        // Safely call the client manager with the progress object
+        let result = self.client.put(
+            key.to_string(),
+            data,
+            filename.to_string(),
+            mode,
+            public,
+            no_verify,
+            Some(progress.clone())
+        ).await;
 
         match result {
-            Ok(_) => {
-
-                Ok(())
+            Ok(_task_result) => {
+                // Return the put_id and progress
+                Ok((put_id, progress))
             },
             Err(e) => {
                 error!("Failed to put key: {}", e);
                 Err(e)
             }
         }
+    }
+
+    // Get a progress object for a put operation
+    pub fn get_progress(&self, put_id: &str) -> Option<Arc<RwLock<Progress>>> {
+        let put_progress = self.put_progress.read().unwrap();
+
+        put_progress.get(put_id).cloned()
+    }
+
+    // Get the client sender
+    pub fn get_client_sender(&self) -> Arc<ClientSender> {
+        Arc::new(self.client.clone())
     }
 }
