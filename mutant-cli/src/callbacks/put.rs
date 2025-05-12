@@ -168,6 +168,45 @@ pub fn create_put_progress(mut progress_rx: ProgressReceiver, multi_progress: Mu
                     drop(confirm_pb_guard);
                     Ok::<bool, Box<dyn std::error::Error + Send + Sync>>(true)
                 }
+                PutEvent::MultipartUploadProgress { bytes_uploaded, total_bytes } => {
+                    info!("Multipart upload progress: {}/{} bytes", bytes_uploaded, total_bytes);
+
+                    // For multipart uploads, we'll use the upload progress bar to show the progress
+                    // of uploading the file to the daemon
+                    let mut upload_pb_guard = ctx.upload_pb_opt.lock().await;
+                    let upload_pb = upload_pb_guard.get_or_insert_with(|| {
+                        info!("Creating multipart upload progress bar");
+                        let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
+                        pb.set_message("Uploading to daemon...".to_string());
+                        pb
+                    });
+
+                    // Set the length to the total bytes if not already set
+                    if upload_pb.length().unwrap_or(0) != total_bytes as u64 {
+                        upload_pb.set_length(total_bytes as u64);
+                    }
+
+                    // Update the position
+                    upload_pb.set_position(bytes_uploaded as u64);
+                    drop(upload_pb_guard);
+
+                    // Also create a reservation progress bar if it doesn't exist
+                    // and set it to the same progress as the upload bar
+                    let mut res_pb_guard = ctx.res_pb_opt.lock().await;
+                    if res_pb_guard.is_none() {
+                        let res_pb = res_pb_guard.get_or_insert_with(|| {
+                            info!("Creating multipart reservation progress bar");
+                            let pb = StyledProgressBar::new_for_steps(&ctx.multi_progress);
+                            pb.set_message("Preparing upload...".to_string());
+                            pb
+                        });
+                        res_pb.set_length(100);
+                        res_pb.set_position((bytes_uploaded as f64 / total_bytes as f64 * 100.0) as u64);
+                    }
+                    drop(res_pb_guard);
+
+                    Ok::<bool, Box<dyn std::error::Error + Send + Sync>>(true)
+                },
                 PutEvent::Complete => {
                     // Check if this is the first or second Complete event
                     let mut first_complete_seen_guard = ctx.first_complete_seen.lock().await;

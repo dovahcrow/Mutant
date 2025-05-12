@@ -34,6 +34,7 @@ mod window_system;
 pub use context::context;
 
 use window_system::init_window_system;
+pub use client_manager::DEFAULT_WS_URL;
 
 // pub use infobar::InfobarWindow;
 // pub use research::ResearchWindow;
@@ -228,20 +229,15 @@ pub async fn init() {
     let ctx = context::context();
 
     // Fetch keys using the context
-    let (keys, connected) = ctx.list_keys().await;
+    let keys = ctx.list_keys().await;
 
-    if connected {
-        log::info!("Connected to daemon");
-        log::info!("Retrieved {} keys", keys.len());
-    } else {
-        log::error!("Failed to connect to daemon");
-    }
+    log::info!("Retrieved {} keys", keys.len());
 
     // Initialize the window system
     init_window_system().await;
 
     // Create the main window with the keys
-    let main_window = main::MainWindow::with_keys(keys, connected);
+    let main_window = main::MainWindow::with_keys(keys);
 
     // Create the tasks window
     let tasks_window = tasks::TasksWindow::new();

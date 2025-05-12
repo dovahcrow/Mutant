@@ -28,6 +28,7 @@ console_error_panic_hook = "0.1.7"
 egui_dock = { version = "0.16.0", features = ["serde"] }
 egui-toast = "0.17.0"
 wasm-logger = "0.2.0"
+console_log = "1.0"
 log = "0.4.22"
 #chrono = "0.4.38"
 #rand = "0.8.5"

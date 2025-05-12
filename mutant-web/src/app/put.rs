@@ -492,6 +492,18 @@ impl PutWindow {
                                             }
                                         }
                                     },
+                                    PutEvent::MultipartUploadProgress { bytes_uploaded, total_bytes } => {
+                                        log::info!("Multipart upload progress: {}/{} bytes", bytes_uploaded, total_bytes);
+
+                                        // Update the upload progress bar based on bytes uploaded
+                                        let mut up_progress = upload_progress.write().unwrap();
+                                        *up_progress = bytes_uploaded as f32 / total_bytes as f32;
+
+                                        // Also update the reservation progress to show we're making progress
+                                        // For multipart uploads, we'll just set reservation to match upload progress
+                                        let mut res_progress = reservation_progress.write().unwrap();
+                                        *res_progress = *up_progress;
+                                    },
                                     PutEvent::Complete => {
                                         log::info!("Upload complete");
 

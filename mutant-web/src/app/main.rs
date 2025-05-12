@@ -12,14 +12,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MainWindow {
     keys: Arc<RwLock<Vec<KeyDetails>>>,
-    connected: bool,
 }
 
 impl Default for MainWindow {
     fn default() -> Self {
         Self {
             keys: Arc::new(RwLock::new(Vec::new())),
-            connected: false,
         }
     }
 }
@@ -38,28 +36,15 @@ impl MainWindow {
     pub fn new() -> Self {
         Self {
             keys: Arc::new(RwLock::new(Vec::new())),
-            connected: false,
         }
     }
 
-    pub fn with_keys(keys: Vec<KeyDetails>, connected: bool) -> Self {
-        Self { keys: Arc::new(RwLock::new(keys)), connected }
+    pub fn with_keys(keys: Vec<KeyDetails>) -> Self {
+        Self { keys: Arc::new(RwLock::new(keys))}
     }
 
     pub fn draw_keys_list(&mut self, ui: &mut egui::Ui) {
         ui.heading(RichText::new("MutAnt Storage").size(24.0).color(Color32::from_rgb(100, 200, 255)));
-
-        // Connection status
-        ui.horizontal(|ui| {
-            let (status_text, status_color) = if self.connected {
-                ("Connected", Color32::from_rgb(100, 255, 100))
-            } else {
-                ("Disconnected", Color32::from_rgb(255, 100, 100))
-            };
-
-            ui.label("Status: ");
-            ui.label(RichText::new(status_text).color(status_color));
-        });
 
         ui.add_space(12.0);
 
@@ -143,38 +128,10 @@ impl MainWindow {
 
                 wasm_bindgen_futures::spawn_local(async move {
                     let ctx = crate::app::context::context();
-                    let (new_keys, is_connected) = ctx.list_keys().await;
-                    *keys.write().unwrap() = new_keys;
-                    *connected_clone.write().unwrap() = is_connected;
+                    let _ = ctx.list_keys().await;
                 });
-
-                // Update the connected flag after spawning the task
-                self.connected = *connected_ref.read().unwrap();
             }
 
-            if ui.button("Reconnect").clicked() {
-                log::info!("Reconnect clicked");
-                let keys = self.keys.clone();
-                let connected_ref = Arc::new(RwLock::new(false));
-                let connected_clone = connected_ref.clone();
-
-                wasm_bindgen_futures::spawn_local(async move {
-                    let ctx = crate::app::context::context();
-
-                    // Force a reconnection
-                    if let Err(e) = ctx.reconnect().await {
-                        log::error!("Failed to reconnect: {}", e);
-                    }
-
-                    // Refresh the keys list
-                    let (new_keys, is_connected) = ctx.list_keys().await;
-                    *keys.write().unwrap() = new_keys;
-                    *connected_clone.write().unwrap() = is_connected;
-                });
-
-                // Update the connected flag after spawning the task
-                self.connected = *connected_ref.read().unwrap();
-            }
 
             if ui.button("Sync").clicked() {
                 // This will be implemented later to sync with the network
