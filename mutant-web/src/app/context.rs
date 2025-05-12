@@ -264,18 +264,8 @@ impl Context {
         self.stats_cache.clone()
     }
 
-    // Put a key (not cached)
-    pub async fn put(
-        &self,
-        key: &str,
-        data: Vec<u8>,
-        filename: &str,
-        mode: StorageMode,
-        public: bool,
-        no_verify: bool,
-    ) -> Result<(String, Arc<RwLock<Progress>>), String> {
-        info!("Putting key {} via daemon", key);
-
+    // Create a new progress object for tracking a put operation
+    pub fn create_progress(&self, key: &str, filename: &str) -> (String, Arc<RwLock<Progress>>) {
         // Generate a unique ID for this put operation
         let put_id = format!("put_{}_{}", key, filename);
 
@@ -289,6 +279,29 @@ impl Context {
             let mut put_progress = self.put_progress.write().unwrap();
             put_progress.insert(put_id.clone(), progress.clone());
         }
+
+        info!("Created progress object with ID: {}", put_id);
+        (put_id, progress)
+    }
+
+    // Put a key (not cached)
+    pub async fn put(
+        &self,
+        key: &str,
+        data: Vec<u8>,
+        filename: &str,
+        mode: StorageMode,
+        public: bool,
+        no_verify: bool,
+        progress_opt: Option<(String, Arc<RwLock<Progress>>)>,
+    ) -> Result<(String, Arc<RwLock<Progress>>), String> {
+        info!("Putting key {} via daemon", key);
+
+        // Use the provided progress object or create a new one
+        let (put_id, progress) = match progress_opt {
+            Some((id, prog)) => (id, prog),
+            None => self.create_progress(key, filename)
+        };
 
         // Safely call the client manager with the progress object
         let result = self.client.put(

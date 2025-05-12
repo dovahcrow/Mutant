@@ -110,7 +110,8 @@ impl Window for PutWindow {
 
         // Request a repaint to ensure we update frequently
         // This is crucial for smooth progress bar updates
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+        // Use a shorter interval (16ms = ~60fps) for smoother updates
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
     }
 }
 
@@ -124,9 +125,9 @@ impl PutWindow {
         let now = SystemTime::now();
         let last_check = *self.last_progress_check.read().unwrap();
 
-        // Only check progress every 100ms to avoid excessive updates
+        // Only check progress every 50ms to avoid excessive updates but still be responsive
         let should_check = match now.duration_since(last_check) {
-            Ok(duration) => duration.as_millis() >= 100,
+            Ok(duration) => duration.as_millis() >= 50,
             Err(_) => true, // If there's an error, just check anyway
         };
 
@@ -155,7 +156,7 @@ impl PutWindow {
 
                 // Check if we have an operation
                 if let Some(op) = progress_guard.operation.get("put") {
-                    log::debug!("Found operation in progress: total_pads={}, reserved={}, written={}, confirmed={}",
+                    log::info!("Found operation in progress: total_pads={}, reserved={}, written={}, confirmed={}",
                         op.total_pads, op.nb_reserved, op.nb_written, op.nb_confirmed);
 
                     // Update UI based on progress
@@ -163,6 +164,11 @@ impl PutWindow {
                     let reserved_count = op.nb_reserved;
                     let written_count = op.nb_written;
                     let confirmed_count = op.nb_confirmed;
+
+                    // Store the chunks to reserve
+                    *self.chunks_to_reserve.write().unwrap() = op.nb_to_reserve;
+                    *self.initial_written_count.write().unwrap() = op.nb_written;
+                    *self.initial_confirmed_count.write().unwrap() = op.nb_confirmed;
 
                     // Calculate progress percentages
                     let reservation_progress = if total_chunks > 0 {
@@ -183,7 +189,7 @@ impl PutWindow {
                         0.0
                     };
 
-                    log::debug!("Calculated progress: reservation={:.2}%, upload={:.2}%, confirmation={:.2}%",
+                    log::info!("Calculated progress: reservation={:.2}%, upload={:.2}%, confirmation={:.2}%",
                         reservation_progress * 100.0, upload_progress * 100.0, confirmation_progress * 100.0);
 
                     // Update progress bars
@@ -194,7 +200,7 @@ impl PutWindow {
                     // Update total chunks
                     *self.total_chunks.write().unwrap() = total_chunks;
 
-                    log::debug!("Updated progress bars: reservation={:.2}%, upload={:.2}%, confirmation={:.2}%",
+                    log::info!("Updated progress bars: reservation={:.2}%, upload={:.2}%, confirmation={:.2}%",
                         *self.reservation_progress.read().unwrap() * 100.0,
                         *self.upload_progress.read().unwrap() * 100.0,
                         *self.confirmation_progress.read().unwrap() * 100.0);
@@ -371,28 +377,39 @@ impl PutWindow {
         spawn_local(async move {
             let ctx = context::context();
 
-            match ctx.put(&key_name, file_data, &filename, storage_mode, public, no_verify).await {
-                Ok((put_id, progress)) => {
-                    log::info!("Upload started with put ID: {}", put_id);
+            // Create a progress object first
+            let (put_id, progress) = ctx.create_progress(&key_name, &filename);
+            log::info!("Created progress object with ID: {}", put_id);
 
-                    // Log the progress object
+            // Store the put ID for progress tracking immediately
+            // This allows the UI to start showing progress before the put operation completes
+            *current_put_id.write().unwrap() = Some(put_id.clone());
+            log::info!("Stored put ID for progress tracking: {}", put_id);
+
+            // Log the initial progress object
+            {
+                let progress_guard = progress.read().unwrap();
+                log::info!("Initial progress object with {} operations", progress_guard.operation.len());
+            }
+
+            // Now start the put operation with the progress object
+            match ctx.put(&key_name, file_data, &filename, storage_mode, public, no_verify, Some((put_id.clone(), progress.clone()))).await {
+                Ok((_put_id, _progress)) => {
+                    log::info!("Upload completed with put ID: {}", put_id);
+
+                    // Log the final progress state
                     {
                         let progress_guard = progress.read().unwrap();
-                        log::info!("Progress object created with {} operations", progress_guard.operation.len());
+                        log::info!("Final progress state with {} operations", progress_guard.operation.len());
 
                         for (op_name, op) in &progress_guard.operation {
                             log::info!("Operation {}: total_pads={}, reserved={}, written={}, confirmed={}",
                                 op_name, op.total_pads, op.nb_reserved, op.nb_written, op.nb_confirmed);
                         }
                     }
-
-                    // Store the put ID for progress tracking
-                    let put_id_clone = put_id.clone();
-                    *current_put_id.write().unwrap() = Some(put_id);
-                    log::info!("Stored put ID for progress tracking: {}", put_id_clone);
                 },
                 Err(e) => {
-                    log::error!("Failed to start upload: {}", e);
+                    log::error!("Failed to complete upload: {}", e);
                     *error_message.write().unwrap() = Some(e.clone());
                     *is_uploading.write().unwrap() = false;
 

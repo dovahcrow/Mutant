@@ -233,7 +233,7 @@ pub async fn init() {
     let ctx = context::context();
 
     // Fetch keys using the context
-    let keys = ctx.list_keys().await;
+    let _ = ctx.list_keys().await;
 
     // log::info!("Retrieved {} keys", keys.len());
 
