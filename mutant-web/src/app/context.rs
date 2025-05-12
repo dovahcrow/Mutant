@@ -33,6 +33,11 @@ lazy_static! {
     static ref CONTEXT: Arc<Mutex<Option<Arc<Context>>>> = Arc::new(Mutex::new(None));
 }
 
+pub async fn init_context() {
+    let context = Context::new().await;
+    *CONTEXT.lock().unwrap() = Some(Arc::new(context));
+}
+
 // Public function to get the context
 pub fn context() -> Arc<Context> {
     CONTEXT.lock().unwrap().as_ref().unwrap().clone()

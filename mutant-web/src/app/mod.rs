@@ -24,18 +24,21 @@ pub mod notifications;
 // mod ships;
 // mod trades;
 
-mod client_manager;
+// mod client_manager;
 pub mod context;
 mod main;
 mod put;
 // mod tasks;
 mod window_system;
 
+pub const DEFAULT_WS_URL: &str = "ws://localhost:3030/ws";
+
+
 pub use context::context;
 pub use context::{Progress, ProgressOperation};
 
 use window_system::init_window_system;
-pub use client_manager::DEFAULT_WS_URL;
+// pub use client_manager::DEFAULT_WS_URL;
 
 // pub use infobar::InfobarWindow;
 // pub use research::ResearchWindow;

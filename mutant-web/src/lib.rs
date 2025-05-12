@@ -2,9 +2,9 @@
 
 use std::{collections::HashMap, sync::{Arc, RwLock}};
 
-use app::{DEFAULT_WS_URL, window_system_mut};
+use app::{context::init_context, window_system_mut, DEFAULT_WS_URL};
 use futures::{channel::oneshot, StreamExt};
-use log::error;
+use log::{error, info};
 use mutant_client::{MutantClient, ProgressReceiver};
 use mutant_protocol::{TaskProgress, TaskResult};
 use wasm_bindgen::prelude::*;
@@ -37,19 +37,9 @@ pub fn start() {
 }
 
 pub async fn async_start() {
-    let mut client = Client::spawn().await;
+    init_context().await;
+    run();
 
-    let name = "ppp".to_string();
-    let destination = "/tmp/test".to_string();
-
-    match client.get(name.clone(), destination.clone(), false).await {
-        Ok(result) => {
-            log::info!("Get task completed: {:?}", result);
-        }
-        Err(e) => {
-            error!("Get task failed: {:?}", e);
-        }
-    }
 }
 
 pub enum ClientRequest {
@@ -73,6 +63,7 @@ pub struct Client {
 
 impl Client {
     pub async fn spawn() -> ClientSender {
+        info!("Spawning client");
         let (tx, rx) = futures::channel::mpsc::unbounded();
 
         let sender = ClientSender::new(tx);
@@ -85,7 +76,9 @@ impl Client {
                 request_rx: rx,
             };
 
+            info!("Connecting to daemon");
             this.connect(DEFAULT_WS_URL).await.unwrap();
+            info!("Client connected");
 
             while let Some(request) = this.request_rx.next().await {
                 match request {
