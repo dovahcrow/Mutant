@@ -119,7 +119,9 @@ impl TreeNode {
                     }
                 }).header_response.clicked() || self.expanded;
             } else {
-                // File node
+                // File node - add extra space to align with folder names (accounting for arrow)
+                ui.add_space(18.0); // Add space to compensate for the arrow in front of folders
+
                 let icon = "📄";
                 let details = self.key_details.as_ref().unwrap();
 
