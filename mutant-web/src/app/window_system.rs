@@ -130,6 +130,25 @@ impl WindowSystem {
         }
     }
 
+    // Get a mutable reference to a specific window type by ID
+    pub fn get_window_mut<T: 'static>(&mut self, _window_id: egui::Id) -> Option<&mut T> {
+        // For now, we'll just return the first window of the requested type
+
+        // Iterate through all tabs in the tree
+        for (_, window_type) in self.tree.iter_all_tabs_mut() {
+            // Try to downcast to the requested type based on the window type
+            if let WindowType::Fs(fs_window) = window_type {
+                // Check if this is the type we're looking for
+                if std::any::TypeId::of::<T>() == std::any::TypeId::of::<FsWindow>() {
+                    // This is unsafe, but we've verified the type
+                    return Some(unsafe { &mut *(fs_window as *mut FsWindow as *mut T) });
+                }
+            }
+            // Add other window types as needed
+        }
+        None
+    }
+
     pub fn draw(&mut self, ui: &mut egui::Ui) {
         // Change from SidePanel::right to SidePanel::left
         SidePanel::left("left_menu")

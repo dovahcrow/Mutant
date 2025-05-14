@@ -11,7 +11,7 @@ pub async fn handle_purge(background: bool, aggressive: bool, quiet: bool) -> Re
         // For background tasks, we'll just start the operation and return
         // without waiting for it to complete
         let mut client = connect_to_daemon().await?;
-        let (_start_task, _progress_rx) = client.purge(aggressive).await?;
+        let (_start_task, _progress_rx, _) = client.purge(aggressive).await?;
 
         // Don't await the start_task, just let it run in the background
 
@@ -21,7 +21,7 @@ pub async fn handle_purge(background: bool, aggressive: bool, quiet: bool) -> Re
     }
 
     let mut client = connect_to_daemon().await?;
-    let (start_task, progress_rx) = client.purge(aggressive).await?;
+    let (start_task, progress_rx, _) = client.purge(aggressive).await?;
 
     // Create the progress bar wrapper
     // Keep it in scope until the end of the function to ensure progress bars are properly cleaned up

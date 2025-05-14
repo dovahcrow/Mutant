@@ -95,7 +95,7 @@ impl Client {
                         };
 
                         // Execute the get operation
-                        let result = this.get(&name, dest_option, public).await;
+                        let result = this.get(&name, dest_option.map(|s| s.as_str()), public).await;
 
                         // Send the response
                         if let Some(tx) = responses.write().unwrap().remove(&response_name) {
@@ -219,7 +219,7 @@ impl Client {
         };
 
         match self.client.put_bytes(key, data, Some(filename.to_string()), mode, public, no_verify).await {
-            Ok((task_future, progress_rx)) => {
+            Ok((task_future, progress_rx, _)) => {
                 // If we have a progress object, update it based on the progress events
                 if let Some(progress) = progress_obj {
                     // Spawn a task to update the progress object
@@ -589,7 +589,8 @@ pub fn run() {
     use wasm_bindgen::JsCast as _;
 
     // Redirect `log` message to `console.log` and friends:
-    eframe::WebLogger::init(log::LevelFilter::Debug).ok();
+    // Use wasm_logger instead of eframe::WebLogger
+    // wasm_logger is already initialized in the start function
 
     let web_options = eframe::WebOptions::default();
 

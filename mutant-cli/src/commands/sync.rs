@@ -11,7 +11,7 @@ pub async fn handle_sync(background: bool, push_force: bool, quiet: bool) -> Res
         // For background tasks, we'll just start the operation and return
         // without waiting for it to complete
         let mut client = connect_to_daemon().await?;
-        let (_start_task, _progress_rx) = client.sync(push_force).await?;
+        let (_start_task, _progress_rx, _) = client.sync(push_force).await?;
 
         // Don't await the start_task, just let it run in the background
 
@@ -21,7 +21,7 @@ pub async fn handle_sync(background: bool, push_force: bool, quiet: bool) -> Res
     }
 
     let mut client = connect_to_daemon().await?;
-    let (start_task, progress_rx) = client.sync(push_force).await?;
+    let (start_task, progress_rx, _) = client.sync(push_force).await?;
 
     // Create the progress bar wrapper
     // Keep it in scope until the end of the function to ensure progress bars are properly cleaned up

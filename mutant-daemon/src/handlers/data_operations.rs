@@ -301,7 +301,7 @@ pub(crate) async fn handle_get(
         let active_keys = active_keys_clone;
         let user_key = user_key_clone;
 
-        log::info!("Starting GET task: task_id={}, user_key={}, destination_path={}", task_id, user_key, destination_path);
+        log::info!("Starting GET task: task_id={}, user_key={}, destination_path={:?}", task_id, user_key, destination_path);
 
         // Update status in TaskMap
         {

@@ -231,17 +231,66 @@ impl MutantClient {
         ),
         ClientError,
     > {
-        long_request!(
-            self,
-            Get,
-            GetRequest {
-                user_key: user_key.to_string(),
-                destination_path: destination_path.map(|s| s.to_string()),
-                public,
-                stream_data,
-            },
-            stream_data
-        )
+        // Create the request
+        let key = PendingRequestKey::TaskCreation;
+        let req = Request::Get(mutant_protocol::GetRequest {
+            user_key: user_key.to_string(),
+            destination_path: destination_path.map(|s| s.to_string()),
+            public,
+            stream_data,
+        });
+
+        if self.pending_requests.lock().unwrap().contains_key(&key) {
+            return Err(ClientError::InternalError(
+                "Another put/get request is already pending".to_string(),
+            ));
+        }
+
+        let (completion_tx, completion_rx) = oneshot::channel();
+        let (progress_tx, progress_rx) = mpsc::unbounded_channel();
+
+        // Create data stream channel if streaming is enabled
+        let (data_stream_tx, data_stream_rx) = if stream_data {
+            let (tx, rx) = mpsc::unbounded_channel();
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
+
+        let (task_creation_tx, task_creation_rx) = oneshot::channel();
+        self.pending_requests.lock().unwrap().insert(
+            key.clone(),
+            PendingSender::TaskCreation(
+                task_creation_tx,
+                (completion_tx, progress_tx, data_stream_tx),
+                TaskType::Get,
+            ),
+        );
+
+        let start_task = async move {
+            match self.send_request(req).await {
+                Ok(_) => {
+                    debug!("Get request sent, waiting for TaskCreated response...");
+                    let task_id = task_creation_rx.await.map_err(|_| {
+                        ClientError::InternalError("TaskCreated channel canceled".to_string())
+                    })??;
+
+                    info!("Task created with ID: {}", task_id);
+
+                    completion_rx.await.map_err(|_| {
+                        error!("Completion channel canceled");
+                        ClientError::InternalError("Completion channel canceled".to_string())
+                    })?
+                }
+                Err(e) => {
+                    error!("Failed to send Get request: {:?}", e);
+                    self.pending_requests.lock().unwrap().remove(&key);
+                    Err(e)
+                }
+            }
+        };
+
+        Ok((start_task, progress_rx, data_stream_rx))
     }
 
     pub async fn sync(

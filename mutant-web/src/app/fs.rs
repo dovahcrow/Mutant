@@ -156,7 +156,7 @@ impl TreeNode {
 
                 // Style the text based on selection and public status
                 let text = if details.is_public {
-                    let mut text = RichText::new(format!("{} {} (public)", icon, self.name))
+                    let text = RichText::new(format!("{} {} (public)", icon, self.name))
                         .color(Color32::from_rgb(0, 128, 0));
 
                     if is_selected {
@@ -335,21 +335,19 @@ impl FsWindow {
                     match ctx.get_file_content(&key, is_public).await {
                         Ok(content) => {
                             // Get a mutable reference to the window system
-                            if let Some(window_system) = crate::app::window_system::window_system_mut() {
-                                // Find our window and update its content
-                                if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
-                                    window.file_content = content;
-                                    window.is_loading = false;
-                                }
+                            let mut window_system = crate::app::window_system::window_system_mut();
+                            // Find our window and update its content
+                            if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
+                                window.file_content = content;
+                                window.is_loading = false;
                             }
                         },
                         Err(e) => {
                             // Handle error
-                            if let Some(window_system) = crate::app::window_system::window_system_mut() {
-                                if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
-                                    window.file_content = format!("Error loading file content: {}", e);
-                                    window.is_loading = false;
-                                }
+                            let mut window_system = crate::app::window_system::window_system_mut();
+                            if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
+                                window.file_content = format!("Error loading file content: {}", e);
+                                window.is_loading = false;
                             }
                         }
                     }

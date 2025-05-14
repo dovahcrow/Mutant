@@ -30,7 +30,7 @@ pub async fn handle_put(
         // For background tasks, we'll just start the operation and return
         // without waiting for it to complete
         let mut client = connect_to_daemon().await?;
-        let (_start_task, _progress_rx) = client
+        let (_start_task, _progress_rx, _) = client
             .put(&key, &source_path, mode, public, no_verify)
             .await?;
 
@@ -46,7 +46,7 @@ pub async fn handle_put(
     // Start timing the operation
     let start_time = Instant::now();
 
-    let (start_task, progress_rx) = client
+    let (start_task, progress_rx, _) = client
         .put(&key, &source_path, mode, public, no_verify)
         .await?;
 

@@ -53,7 +53,7 @@ pub async fn handle_get(
         client.get(&key, None, public, true).await?
     } else {
         // Normal mode - with destination path
-        client.get(&key, destination_path.as_ref(), public, false).await?
+        client.get(&key, destination_path.as_ref().map(|s| s.as_str()), public, false).await?
     };
 
     // Create the progress bar wrapper

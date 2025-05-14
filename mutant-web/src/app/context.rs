@@ -260,7 +260,7 @@ impl Context {
         let result = self.client.get(name.to_string(), None, is_public).await;
 
         match result {
-            Ok((task_result, Some(data))) => {
+            Ok((_, Some(data))) => {
                 info!("Successfully retrieved file content for key {}, size: {} bytes", name, data.len());
 
                 // Try to convert the data to a string
