@@ -96,7 +96,7 @@ impl TreeNode {
             if self.is_dir() {
                 // Directory node
                 let icon = if self.expanded { "📂" } else { "📁" };
-                let text = format!("{} {}", icon, self.name);
+                let text = format!("{} {}/", icon, self.name); // Add '/' at the end of folder names
 
                 let header = egui::CollapsingHeader::new(text)
                     .id_salt(format!("dir_{}", self.path)) // Use full path for unique ID
@@ -223,6 +223,13 @@ impl FsWindow {
 
         // Draw the tree
         egui::ScrollArea::vertical().show(ui, |ui| {
+            // First, show the root folder (always expanded)
+            ui.horizontal(|ui| {
+                // Root folder icon
+                let icon = "📂";
+                ui.label(format!("{} /", icon));
+            });
+
             // Sort children: directories first, then files
             let mut sorted_children: Vec<_> = self.root.children.iter_mut().collect();
             sorted_children.sort_by(|(_, a), (_, b)| {
@@ -233,9 +240,9 @@ impl FsWindow {
                 }
             });
 
-            // Draw the sorted children
+            // Draw the sorted children with indentation
             for (_, child) in sorted_children {
-                child.ui(ui, 0);
+                child.ui(ui, 1); // Start with indent level 1 since we're inside root
             }
         });
     }
