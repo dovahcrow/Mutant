@@ -219,17 +219,7 @@ impl Client {
                                                     log::info!("Progress update - PadsConfirmed: confirmed={}/{}", op.nb_confirmed, op.total_pads);
                                                 }
                                             },
-                                            mutant_protocol::PutEvent::MultipartUploadProgress { bytes_uploaded, total_bytes } => {
-                                                // Update multipart upload progress
-                                                if let Some(op) = progress_guard.operation.get_mut("put") {
-                                                    // Calculate progress as a percentage of total pads
-                                                    let progress_percentage = bytes_uploaded as f32 / total_bytes as f32;
-                                                    op.nb_reserved = (progress_percentage * op.total_pads as f32) as usize;
-                                                    op.nb_written = op.nb_reserved;
-                                                    log::info!("Progress update - MultipartUpload: {}/{} bytes, progress={:.2}%, reserved={}, written={}",
-                                                        bytes_uploaded, total_bytes, progress_percentage * 100.0, op.nb_reserved, op.nb_written);
-                                                }
-                                            },
+
                                             mutant_protocol::PutEvent::Complete => {
                                                 // Mark operation as complete
                                                 if let Some(op) = progress_guard.operation.get_mut("put") {

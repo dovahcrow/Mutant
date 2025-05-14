@@ -376,100 +376,20 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                         }
 
                         // In a web context, we need to pass the data directly to the client
-                        // Use the multipart upload for large files to avoid blocking the WebSocket
 
-                        // Define a threshold for using multipart upload (e.g., 10MB)
-                        const MULTIPART_THRESHOLD: usize = 10 * 1024 * 1024; // 10MB
-                        const CHUNK_SIZE: usize = 1 * 1024 * 1024; // 1MB chunks
-
-                        // Execute the command based on file size
-                        // Clone the data once before checking the size
+                        // Clone the data once before using it
                         let data_clone = data.clone();
 
-                        // Determine which upload method to use based on file size
-                        let is_large_file = data_clone.len() > MULTIPART_THRESHOLD;
-
-                        // Handle the upload - we need to handle each case separately to avoid type issues
-                        if is_large_file {
-                            info!("Using multipart upload for large file: {} bytes", data_clone.len());
-                            // For large files, use multipart upload
-                            let result = put_client.put_bytes_multipart(
-                                &key,
-                                data_clone,
-                                Some(filename.clone()),
-                                mode,
-                                public,
-                                no_verify,
-                                CHUNK_SIZE
-                            ).await;
-
-                            match result {
-                                Ok((task_future, mut progress_rx)) => {
-                                    // Create a channel to forward progress updates
-                                    let (progress_tx, progress_rx_out) = mpsc::unbounded_channel();
-
-                                    // Extract the task ID before we move the task_future into the spawn_local
-                                    let task_id = TaskId::new_v4(); // We'll still use a placeholder for now
-
-                                    // Forward progress updates in a separate task
-                                    spawn_local(async move {
-                                        while let Some(progress) = progress_rx.recv().await {
-                                            match progress {
-                                                Ok(progress) => {
-                                                    let _ = progress_tx.send(Ok(progress));
-                                                }
-                                                Err(e) => {
-                                                    let _ = progress_tx.send(Err(format!("Progress error: {:?}", e)));
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    });
-
-                                    // Send the task ID and progress receiver immediately
-                                    // so the UI can start showing progress
-                                    if !sender.is_canceled() {
-                                        let _ = sender.send(Ok((task_id, progress_rx_out)));
-                                    }
-
-                                    // Now await the task_future directly
-                                    // This is crucial - without this, the task won't actually start executing
-                                    info!("Awaiting multipart put task future");
-
-                                    // We need to handle the task future here to avoid lifetime issues
-                                    // with spawning another task
-                                    match task_future.await {
-                                        Ok(result) => {
-                                            info!("Multipart put task completed with result: {:?}", result);
-                                        }
-                                        Err(e) => {
-                                            error!("Multipart put task failed: {:?}", e);
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    // Check if it's a connection error
-                                    if e.to_string().contains("connection") || e.to_string().contains("websocket") {
-                                        warn!("Connection lost during multipart put operation");
-                                    }
-
-                                    // Only send if the receiver is still interested
-                                    if !sender.is_canceled() {
-                                        let _ = sender.send(Err(format!("Failed to start multipart put task: {:?}", e)));
-                                    }
-                                }
-                            }
-                        } else {
-                            info!("Using standard upload for small file: {} bytes", data_clone.len());
-                            // For small files, use standard upload
-                            let result = put_client.put_bytes(
-                                &key,
-                                data_clone,
-                                Some(filename.clone()),
-                                mode,
-                                public,
-                                no_verify
-                            ).await;
+                        info!("Uploading file: {} bytes", data_clone.len());
+                        // Use standard upload
+                        let result = put_client.put_bytes(
+                            &key,
+                            data_clone,
+                            Some(filename.clone()),
+                            mode,
+                            public,
+                            no_verify
+                        ).await;
 
                             match result {
                                 Ok((task_future, mut progress_rx)) => {

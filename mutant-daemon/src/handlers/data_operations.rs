@@ -1,7 +1,5 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::fs;
-use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::error::Error as DaemonError;
@@ -9,8 +7,7 @@ use super::{TaskEntry, TaskMap, ActiveKeysMap, try_register_key, release_key, is
 use mutant_lib::storage::ScratchpadAddress;
 use mutant_lib::MutAnt;
 use mutant_protocol::{
-    ErrorResponse, GetCallback, GetEvent, GetRequest, GetResult, MultipartChunkRequest,
-    MultipartChunkResponse, MultipartCompleteRequest, MultipartInitRequest, MultipartInitResponse,
+    ErrorResponse, GetCallback, GetEvent, GetRequest, GetResult,
     PutCallback, PutEvent, PutRequest, PutResult, PutSource, Response, RmRequest, RmSuccessResponse,
     Task, TaskCreatedResponse, TaskProgress, TaskResult, TaskResultResponse, TaskResultType,
     TaskStatus, TaskType, TaskUpdateResponse
@@ -84,22 +81,6 @@ pub(crate) async fn handle_put(
 
             let filename = req.filename.clone().unwrap_or_else(|| "direct-bytes".to_string());
             (format!("bytes:{}", filename), Arc::new(bytes.clone()))
-        },
-        PutSource::MultipartRef(total_size) => {
-            // Try to register the key for this task
-            try_register_key(
-                &active_keys,
-                &user_key,
-                task_id,
-                TaskType::Put,
-                &update_tx,
-                original_request_str,
-            ).await?;
-
-            let filename = req.filename.clone().unwrap_or_else(|| "multipart-upload".to_string());
-            // For MultipartRef, we create an empty Vec with the specified capacity
-            // The actual data will be filled in by the multipart chunks
-            (format!("multipart:{}", filename), Arc::new(Vec::with_capacity(*total_size)))
         }
     };
 
@@ -472,216 +453,7 @@ pub(crate) async fn handle_get(
     Ok(())
 }
 
-// Structure to hold multipart upload data
-struct MultipartUploadData {
-    user_key: String,
-    total_size: usize,
-    chunks: HashMap<usize, Vec<u8>>,
-    received_chunks: usize,
-    total_chunks: usize,
-    mode: mutant_protocol::StorageMode,
-    public: bool,
-    no_verify: bool,
-    filename: Option<String>,
-}
 
-// Global storage for multipart uploads
-type MultipartUploads = Arc<RwLock<HashMap<Uuid, Arc<RwLock<MultipartUploadData>>>>>;
-
-lazy_static::lazy_static! {
-    static ref MULTIPART_UPLOADS: MultipartUploads = Arc::new(RwLock::new(HashMap::new()));
-}
-
-pub(crate) async fn handle_multipart_init(
-    req: MultipartInitRequest,
-    update_tx: UpdateSender,
-    tasks: TaskMap,
-    active_keys: ActiveKeysMap,
-    original_request_str: &str,
-) -> Result<(), DaemonError> {
-    // Check if we're in public-only mode
-    if is_public_only_mode() {
-        return update_tx
-            .send(Response::Error(ErrorResponse {
-                error: PUBLIC_ONLY_ERROR_MSG.to_string(),
-                original_request: Some(original_request_str.to_string()),
-            }))
-            .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)));
-    }
-
-    let task_id = Uuid::new_v4();
-    let user_key = req.user_key.clone();
-
-    // Try to register the key for this task
-    try_register_key(
-        &active_keys,
-        &user_key,
-        task_id,
-        TaskType::Put,
-        &update_tx,
-        original_request_str,
-    ).await?;
-
-    // Calculate total chunks based on a reasonable chunk size (e.g., 1MB)
-    let chunk_size = 1024 * 1024; // 1MB chunks
-    let total_chunks = (req.total_size + chunk_size - 1) / chunk_size;
-
-    // Create multipart upload data
-    let upload_data = MultipartUploadData {
-        user_key: user_key.clone(),
-        total_size: req.total_size,
-        chunks: HashMap::new(),
-        received_chunks: 0,
-        total_chunks,
-        mode: req.mode,
-        public: req.public,
-        no_verify: req.no_verify,
-        filename: req.filename,
-    };
-
-    // Store the upload data
-    MULTIPART_UPLOADS.write().await.insert(task_id, Arc::new(RwLock::new(upload_data)));
-
-    // Create a task entry
-    let task = Task {
-        id: task_id,
-        task_type: TaskType::Put,
-        status: TaskStatus::Pending,
-        progress: None,
-        result: TaskResult::Pending,
-        key: Some(user_key.clone()),
-    };
-
-    // Insert the task into the task map
-    let task_entry = TaskEntry {
-        task,
-        abort_handle: None, // No abort handle yet
-    };
-    tasks.write().await.insert(task_id, task_entry);
-
-    // Send the response
-    update_tx
-        .send(Response::MultipartInit(MultipartInitResponse { task_id }))
-        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
-
-    log::info!("Initialized multipart upload: task_id={}, user_key={}, total_size={}, total_chunks={}",
-               task_id, user_key, req.total_size, total_chunks);
-
-    Ok(())
-}
-
-pub(crate) async fn handle_multipart_chunk(
-    req: MultipartChunkRequest,
-    update_tx: UpdateSender,
-) -> Result<(), DaemonError> {
-    let task_id = req.task_id;
-    let chunk_index = req.chunk_index;
-    let chunk_data = req.data;
-
-    // Get the upload data
-    let uploads = MULTIPART_UPLOADS.read().await;
-    let upload_data_arc = uploads.get(&task_id).ok_or_else(|| {
-        DaemonError::Internal(format!("Multipart upload not found for task_id={}", task_id))
-    })?;
-
-    // Update the upload data
-    {
-        let mut upload_data = upload_data_arc.write().await;
-        upload_data.chunks.insert(chunk_index, chunk_data.clone());
-        upload_data.received_chunks += 1;
-
-        log::debug!("Received chunk {} for task_id={}, size={} bytes, progress={}/{}",
-                   chunk_index, task_id, chunk_data.len(), upload_data.received_chunks, upload_data.total_chunks);
-    }
-
-    // Send the response
-    update_tx
-        .send(Response::MultipartChunk(MultipartChunkResponse {
-            chunk_index,
-            bytes_received: chunk_data.len(),
-        }))
-        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
-
-    Ok(())
-}
-
-pub(crate) async fn handle_multipart_complete(
-    req: MultipartCompleteRequest,
-    update_tx: UpdateSender,
-    mutant: Arc<MutAnt>,
-    tasks: TaskMap,
-    active_keys: ActiveKeysMap,
-) -> Result<(), DaemonError> {
-    let task_id = req.task_id;
-
-    // Get the upload data
-    let mut uploads = MULTIPART_UPLOADS.write().await;
-    let upload_data_arc = uploads.remove(&task_id).ok_or_else(|| {
-        DaemonError::Internal(format!("Multipart upload not found for task_id={}", task_id))
-    })?;
-
-    // Assemble the complete data
-    let upload_data = upload_data_arc.read().await;
-    let mut complete_data = Vec::with_capacity(upload_data.total_size);
-
-    // Sort chunks by index and append them
-    let mut sorted_chunks: Vec<(&usize, &Vec<u8>)> = upload_data.chunks.iter().collect();
-    sorted_chunks.sort_by_key(|(idx, _)| *idx);
-
-    for (_, chunk) in sorted_chunks {
-        complete_data.extend_from_slice(chunk);
-    }
-
-    // Check if we received all the data
-    if complete_data.len() != upload_data.total_size {
-        return Err(DaemonError::Internal(format!(
-            "Incomplete multipart upload: received {} bytes, expected {} bytes",
-            complete_data.len(), upload_data.total_size
-        )));
-    }
-
-    // Create a PutRequest with the assembled data
-    let put_request = PutRequest {
-        user_key: upload_data.user_key.clone(),
-        source: PutSource::Bytes(complete_data),
-        filename: upload_data.filename.clone(),
-        mode: upload_data.mode.clone(),
-        public: upload_data.public,
-        no_verify: upload_data.no_verify,
-    };
-
-    // Update task status
-    {
-        let mut tasks_guard = tasks.write().await;
-        if let Some(entry) = tasks_guard.get_mut(&task_id) {
-            entry.task.status = TaskStatus::InProgress;
-
-            // Send task update
-            update_tx
-                .send(Response::TaskUpdate(TaskUpdateResponse {
-                    task_id,
-                    status: TaskStatus::InProgress,
-                    progress: Some(TaskProgress::Put(PutEvent::Starting {
-                        total_chunks: 0, // Will be set by the actual put operation
-                        initial_written_count: 0,
-                        initial_confirmed_count: 0,
-                        chunks_to_reserve: 0,
-                    })),
-                }))
-                .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
-        }
-    }
-
-    log::info!("Completed multipart upload assembly: task_id={}, user_key={}, total_size={} bytes",
-               task_id, upload_data.user_key, upload_data.total_size);
-
-    // Now handle the put operation with the assembled data
-    // We'll reuse the existing task_id
-    drop(upload_data); // Release the lock before calling handle_put
-
-    // Call handle_put with the assembled data
-    handle_put(put_request, update_tx, mutant, tasks, active_keys, "multipart_complete").await
-}
 
 pub(crate) async fn handle_rm(
     req: RmRequest,

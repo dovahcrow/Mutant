@@ -7,7 +7,7 @@ use mutant_lib::MutAnt;
 use mutant_protocol::Request;
 
 use super::common::UpdateSender;
-use super::data_operations::{handle_get, handle_multipart_chunk, handle_multipart_complete, handle_multipart_init, handle_put, handle_rm};
+use super::data_operations::{handle_get, handle_put, handle_rm};
 use super::import_export::{handle_export, handle_import};
 use super::metadata::{handle_list_keys, handle_stats};
 use super::system_operations::{handle_health_check, handle_purge, handle_sync};
@@ -42,15 +42,6 @@ pub(crate) async fn handle_request(
         }
         Request::StopTask(stop_task_req) => {
             handle_stop_task(stop_task_req, update_tx, tasks).await?
-        }
-        Request::MultipartInit(init_req) => {
-            handle_multipart_init(init_req, update_tx, tasks, active_keys, original_request_str).await?
-        }
-        Request::MultipartChunk(chunk_req) => {
-            handle_multipart_chunk(chunk_req, update_tx).await?
-        }
-        Request::MultipartComplete(complete_req) => {
-            handle_multipart_complete(complete_req, update_tx, mutant, tasks, active_keys).await?
         }
     }
     Ok(())

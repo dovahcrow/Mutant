@@ -261,13 +261,6 @@ pub enum PutEvent {
     PadReserved,
     PadsWritten,
     PadsConfirmed,
-    /// Indicates progress during multipart upload to the daemon
-    MultipartUploadProgress {
-        /// Bytes uploaded so far
-        bytes_uploaded: usize,
-        /// Total bytes to upload
-        total_bytes: usize,
-    },
     Complete,
 }
 
@@ -336,9 +329,6 @@ pub enum PutSource {
     FilePath(String),
     /// Direct byte data to upload
     Bytes(Vec<u8>),
-    /// Reference to a multipart upload that will be sent in chunks
-    /// Contains the total size of the data that will be uploaded
-    MultipartRef(usize),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -385,39 +375,7 @@ pub struct PurgeRequest {
     pub aggressive: bool,
 }
 
-/// Represents all possible requests the client can send to the daemon.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MultipartInitRequest {
-    pub user_key: String,
-    pub total_size: usize,
-    pub filename: Option<String>,
-    pub mode: StorageMode,
-    pub public: bool,
-    pub no_verify: bool,
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MultipartChunkRequest {
-    pub task_id: TaskId,
-    pub chunk_index: usize,
-    pub data: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MultipartCompleteRequest {
-    pub task_id: TaskId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MultipartInitResponse {
-    pub task_id: TaskId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MultipartChunkResponse {
-    pub chunk_index: usize,
-    pub bytes_received: usize,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
@@ -435,9 +393,6 @@ pub enum Request {
     Import(ImportRequest),
     Export(ExportRequest),
     HealthCheck(HealthCheckRequest),
-    MultipartInit(MultipartInitRequest),
-    MultipartChunk(MultipartChunkRequest),
-    MultipartComplete(MultipartCompleteRequest),
 }
 
 // --- Outgoing Responses ---
@@ -616,8 +571,6 @@ pub enum Response {
     Stats(StatsResponse),
     Import(ImportResponse),
     Export(ExportResponse),
-    MultipartInit(MultipartInitResponse),
-    MultipartChunk(MultipartChunkResponse),
 }
 
 // Helper moved to where Response is used (client/server)

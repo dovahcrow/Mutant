@@ -330,16 +330,6 @@ impl MutantClient {
                 }
             }
             Response::TaskStopped(res) => handle_task_stopped(res, pending_requests.clone()),
-            Response::MultipartInit(init_response) => {
-                debug!("Received MultipartInit response for task ID: {}", init_response.task_id);
-                // This response is handled directly in the put_bytes_multipart method
-                // No need to do anything here as the method is waiting for this response
-            },
-            Response::MultipartChunk(chunk_response) => {
-                debug!("Received MultipartChunk response for chunk index: {}", chunk_response.chunk_index);
-                // This response is handled directly in the upload_chunks method
-                // No need to do anything here as the method is waiting for this response
-            },
         }
     }
 
