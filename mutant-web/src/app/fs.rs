@@ -2,10 +2,16 @@ use std::sync::{Arc, RwLock};
 use std::collections::BTreeMap;
 
 use eframe::egui::{self, Color32, RichText};
+use humansize::{format_size, BINARY};
 use mutant_protocol::KeyDetails;
 use serde::{Deserialize, Serialize};
 
 use super::Window;
+
+/// Helper function to format file sizes in a human-readable way
+fn humanize_size(size: usize) -> String {
+    format_size(size, BINARY)
+}
 
 /// A node in the filesystem tree
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -87,10 +93,13 @@ impl TreeNode {
     }
 
     /// Draw this node and its children
-    fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize) {
+    /// Returns true if a file in this node or its children was clicked
+    fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize) -> bool {
         // Use a very small fixed indentation to avoid exponential growth
         let indent_per_level = 2.0;
         let total_indent = indent_per_level * (indent_level as f32);
+
+        let mut file_clicked = false;
 
         ui.horizontal(|ui| {
             // Apply the base indentation
@@ -105,6 +114,8 @@ impl TreeNode {
                     .id_salt(format!("dir_{}", self.path)) // Use full path for unique ID
                     .default_open(self.expanded);
 
+                let mut file_clicked = false;
+
                 self.expanded = header.show(ui, |ui| {
                     // Sort children: directories first, then files
                     let mut sorted_children: Vec<_> = self.children.iter_mut().collect();
@@ -118,9 +129,14 @@ impl TreeNode {
 
                     // Draw the sorted children with exactly one more level of indentation
                     for (_, child) in sorted_children {
-                        child.ui(ui, indent_level + 1);
+                        if child.ui(ui, indent_level + 1) {
+                            file_clicked = true;
+                        }
                     }
                 }).header_response.clicked() || self.expanded;
+
+                // Update file_clicked with any clicks from children
+                // but don't return early
             } else {
                 // File node - add extra space to align with folder names (accounting for arrow)
                 ui.add_space(18.0); // Add space to compensate for the arrow in front of folders
@@ -135,9 +151,17 @@ impl TreeNode {
                     RichText::new(format!("{} {}", icon, self.name))
                 };
 
-                ui.label(text);
+                // Make the file node clickable
+                if ui.selectable_label(false, text).clicked() {
+                    // Set file_clicked to true
+                    file_clicked = true;
+                }
             }
+
         });
+
+        // Return whether a file was clicked
+        file_clicked
     }
 }
 
@@ -146,6 +170,10 @@ impl TreeNode {
 pub struct FsWindow {
     keys: Arc<RwLock<Vec<KeyDetails>>>,
     root: TreeNode,
+    /// Currently selected file (if any)
+    selected_file: Option<KeyDetails>,
+    /// Content of the selected file (placeholder for now)
+    file_content: String,
 }
 
 impl Default for FsWindow {
@@ -153,6 +181,8 @@ impl Default for FsWindow {
         Self {
             keys: crate::app::context::context().get_key_cache(),
             root: TreeNode::default(),
+            selected_file: None,
+            file_content: String::new(),
         }
     }
 }
@@ -164,7 +194,19 @@ impl Window for FsWindow {
 
     fn draw(&mut self, ui: &mut egui::Ui) {
         self.build_tree();
-        self.draw_tree(ui);
+
+        // Use a horizontal layout with two panels
+        egui::SidePanel::left("file_tree_panel")
+            .resizable(true)
+            .min_width(200.0)
+            .default_width(300.0)
+            .show_inside(ui, |ui| {
+                self.draw_tree(ui);
+            });
+
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            self.draw_file_viewer(ui);
+        });
     }
 }
 
@@ -229,10 +271,69 @@ impl FsWindow {
                 }
             });
 
-            // Draw the sorted children with indentation
+            // Track clicked nodes to handle after the loop
+            let mut clicked_node: Option<KeyDetails> = None;
+
+            // Draw the sorted children with indentation and check if any file was clicked
             for (_, child) in sorted_children {
-                child.ui(ui, 1); // Start with indent level 1 since we're inside root
+                if child.ui(ui, 1) { // Start with indent level 1 since we're inside root
+                    // A file was clicked, get its details
+                    if let Some(details) = &child.key_details {
+                        clicked_node = Some(details.clone());
+                    }
+                }
+            }
+
+            // Handle the clicked node outside the loop to avoid borrow issues
+            if let Some(details) = clicked_node {
+                self.selected_file = Some(details.clone());
+
+                // For now, just set a placeholder content
+                self.file_content = format!(
+                    "Content of file: {}\n\nThis is a placeholder. Actual file content will be implemented in a future task.",
+                    details.key
+                );
             }
         });
+    }
+
+    /// Draw the file viewer/editor panel
+    fn draw_file_viewer(&mut self, ui: &mut egui::Ui) {
+        if let Some(file) = &self.selected_file {
+            // Show file details at the top
+            ui.heading(&file.key);
+
+            ui.horizontal(|ui| {
+                ui.label(format!("Size: {}", humanize_size(file.total_size)));
+                ui.separator();
+                ui.label(format!("Pads: {}/{}", file.confirmed_pads, file.pad_count));
+                ui.separator();
+                if file.is_public {
+                    ui.label(RichText::new("Public").color(Color32::from_rgb(0, 128, 0)));
+                    if let Some(addr) = &file.public_address {
+                        ui.separator();
+                        ui.label(format!("Address: {}", addr));
+                    }
+                } else {
+                    ui.label("Private");
+                }
+            });
+
+            ui.separator();
+
+            // File content area
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let text_edit = egui::TextEdit::multiline(&mut self.file_content)
+                    .desired_width(f32::INFINITY)
+                    .font(egui::TextStyle::Monospace);
+
+                ui.add(text_edit);
+            });
+        } else {
+            // No file selected
+            ui.centered_and_justified(|ui| {
+                ui.heading("Select a file to view its content");
+            });
+        }
     }
 }
