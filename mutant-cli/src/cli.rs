@@ -29,11 +29,14 @@ pub enum Commands {
     #[command(about = "Retrieve a value associated with a key")]
     Get {
         key: String,
-        destination_path: String,
+        #[arg(default_value = None)]
+        destination_path: Option<String>,
         #[arg(short, long)]
         background: bool,
         #[arg(short, long)]
         public: bool,
+        #[arg(short, long, help = "Output to stdout instead of a file")]
+        stdout: bool,
     },
     #[command(about = "Remove a key-value pair")]
     Rm { key: String },

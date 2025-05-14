@@ -199,6 +199,8 @@ pub struct FsWindow {
     selected_path: Option<String>,
     /// Content of the selected file (placeholder for now)
     file_content: String,
+    /// Whether we're currently loading file content
+    is_loading: bool,
 }
 
 impl Default for FsWindow {
@@ -209,6 +211,7 @@ impl Default for FsWindow {
             selected_file: None,
             selected_path: None,
             file_content: String::new(),
+            is_loading: false,
         }
     }
 }
@@ -316,11 +319,41 @@ impl FsWindow {
                 self.selected_file = Some(details.clone());
                 self.selected_path = Some(details.key.clone());
 
-                // For now, just set a placeholder content
-                self.file_content = format!(
-                    "Content of file: {}\n\nThis is a placeholder. Actual file content will be implemented in a future task.",
-                    details.key
-                );
+                // Fetch the file content
+                let key = details.key.clone();
+                let is_public = details.is_public;
+
+                // Start loading
+                self.is_loading = true;
+                self.file_content = "Loading file content...".to_string();
+
+                // Spawn a task to fetch the content
+                let window_id = ui.id();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let ctx = crate::app::context::context();
+
+                    match ctx.get_file_content(&key, is_public).await {
+                        Ok(content) => {
+                            // Get a mutable reference to the window system
+                            if let Some(window_system) = crate::app::window_system::window_system_mut() {
+                                // Find our window and update its content
+                                if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
+                                    window.file_content = content;
+                                    window.is_loading = false;
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            // Handle error
+                            if let Some(window_system) = crate::app::window_system::window_system_mut() {
+                                if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
+                                    window.file_content = format!("Error loading file content: {}", e);
+                                    window.is_loading = false;
+                                }
+                            }
+                        }
+                    }
+                });
             }
         });
     }
@@ -348,6 +381,14 @@ impl FsWindow {
             });
 
             ui.separator();
+
+            // Show loading indicator if we're loading content
+            if self.is_loading {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Loading file content...");
+                });
+            }
 
             // File content area
             egui::ScrollArea::vertical().show(ui, |ui| {

@@ -43,14 +43,14 @@ pub async fn async_start() {
 }
 
 pub enum ClientRequest {
-    Get(String, String, bool),
+    Get(String, String, bool), // We'll keep this signature but handle None internally
     Put(String, Vec<u8>, String, mutant_protocol::StorageMode, bool, bool),
     ListKeys,
     ListTasks
 }
 
 pub enum ClientResponse {
-    Get(Result<TaskResult, String>),
+    Get(Result<(TaskResult, Option<Vec<u8>>), String>),
     Put(Result<TaskResult, String>),
     ListKeys(Result<Vec<mutant_protocol::KeyDetails>, String>),
     ListTasks(Result<Vec<mutant_protocol::TaskListEntry>, String>),
@@ -83,8 +83,21 @@ impl Client {
             while let Some(request) = this.request_rx.next().await {
                 match request {
                     ClientRequest::Get(name, destination, public) => {
-                        let result = this.get(&name, &destination, public).await;
-                        let response_name = format!("get_{}_{}", name, destination);
+                        // Determine if we're streaming data (empty destination means we want the data directly)
+                        let stream_data = destination.is_empty();
+                        let dest_option = if stream_data { None } else { Some(&destination) };
+
+                        // Generate the response name based on whether we're streaming
+                        let response_name = if stream_data {
+                            format!("get_{}_stream", name)
+                        } else {
+                            format!("get_{}_{}", name, destination)
+                        };
+
+                        // Execute the get operation
+                        let result = this.get(&name, dest_option, public).await;
+
+                        // Send the response
                         if let Some(tx) = responses.write().unwrap().remove(&response_name) {
                             let _ = tx.send(ClientResponse::Get(result));
                         }
@@ -124,12 +137,57 @@ impl Client {
             .map_err(|e| format!("{:?}", e))
     }
 
-    pub async fn get(&mut self, name: &str, destination: &str, public: bool) -> Result<TaskResult, String> {
-        match self.client.get(name, destination, public).await {
-            Ok((task_future, progress_rx)) => {
+    pub async fn get(&mut self, name: &str, destination: Option<&str>, public: bool) -> Result<(TaskResult, Option<Vec<u8>>), String> {
+        // Determine if we're streaming data (no destination means we want the data directly)
+        let stream_data = destination.is_none();
+
+        match self.client.get(name, destination, public, stream_data).await {
+            Ok((task_future, progress_rx, data_stream_rx)) => {
+                // Handle progress updates
                 handle_get_progress(progress_rx);
 
-                task_future.await.map_err(|e| format!("{:?}", e))
+                // If we're streaming data, collect it
+                let collected_data = if let Some(mut data_rx) = data_stream_rx {
+                    // Create a vector to collect all data chunks
+                    let mut all_data = Vec::new();
+
+                    // Spawn a task to collect the data
+                    let (tx, rx) = oneshot::channel();
+
+                    spawn_local(async move {
+                        while let Some(data_result) = data_rx.recv().await {
+                            match data_result {
+                                Ok(chunk) => {
+                                    info!("Received data chunk: {} bytes", chunk.len());
+                                    all_data.extend(chunk);
+                                }
+                                Err(e) => {
+                                    error!("Error receiving data chunk: {:?}", e);
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Send the collected data
+                        let _ = tx.send(all_data);
+                    });
+
+                    // Wait for all data to be collected
+                    match rx.await {
+                        Ok(data) => Some(data),
+                        Err(_) => {
+                            error!("Failed to collect data chunks");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                // Wait for the task to complete
+                let task_result = task_future.await.map_err(|e| format!("{:?}", e))?;
+
+                Ok((task_result, collected_data))
             }
             Err(e) => {
                 error!("Failed to start get task: {:?}", e);
@@ -294,8 +352,12 @@ impl ClientSender {
         }
     }
 
-    pub async fn get(&self, name: String, destination: String, public: bool) -> Result<TaskResult, String> {
-        let response_name = format!("get_{}_{}", name, destination);
+    pub async fn get(&self, name: String, destination: Option<String>, public: bool) -> Result<(TaskResult, Option<Vec<u8>>), String> {
+        // Generate a unique response name
+        let response_name = match &destination {
+            Some(dest) => format!("get_{}_{}", name, dest),
+            None => format!("get_{}_stream", name),
+        };
 
         if self.responses.read().unwrap().contains_key(&response_name) {
             error!("Get request already pending for {}", response_name);
@@ -305,7 +367,8 @@ impl ClientSender {
         let (tx, rx) = oneshot::channel();
         self.responses.write().unwrap().insert(response_name, tx);
 
-        let _ = self.tx.unbounded_send(ClientRequest::Get(name, destination, public));
+        // Send the request with the destination (which may be None)
+        let _ = self.tx.unbounded_send(ClientRequest::Get(name, destination.unwrap_or_default(), public));
 
         rx.await.map(|result| {
             match result {

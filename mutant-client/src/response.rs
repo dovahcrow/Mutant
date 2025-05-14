@@ -73,7 +73,7 @@ impl MutantClient {
                     task.progress = progress.clone();
 
                     if let Some(progress_update) = progress {
-                        if let Some((_, progress_tx)) = task_channels.lock().unwrap().get(&task_id)
+                        if let Some((_, progress_tx, _)) = task_channels.lock().unwrap().get(&task_id)
                         {
                             if progress_tx.send(Ok(progress_update)).is_err() {
                                 warn!("Failed to send progress update for task {}", task_id);
@@ -133,7 +133,7 @@ impl MutantClient {
                     task.status = status;
                     task.result = result.clone();
 
-                    if let Some((completion_tx, _)) = task_channels.lock().unwrap().remove(&task_id)
+                    if let Some((completion_tx, _, _)) = task_channels.lock().unwrap().remove(&task_id)
                     {
                         if completion_tx.send(Ok(result.clone())).is_err() {
                             warn!(
@@ -329,6 +329,21 @@ impl MutantClient {
                     warn!("Received Export response but no Export request was pending");
                 }
             }
+            Response::GetData(data_response) => {
+                let task_id = data_response.task_id;
+                debug!("Received GetData response for task {}, chunk {}/{}",
+                       task_id, data_response.chunk_index + 1, data_response.total_chunks);
+
+                // Get the data stream sender from the task channels
+                if let Some((_, _, Some(data_stream_tx))) = task_channels.lock().unwrap().get(&task_id) {
+                    // Send the data to the client
+                    if data_stream_tx.send(Ok(data_response.data)).is_err() {
+                        warn!("Failed to send data chunk for task {} (receiver dropped)", task_id);
+                    }
+                } else {
+                    warn!("Received GetData for task {} but no data stream channel found", task_id);
+                }
+            },
             Response::TaskStopped(res) => handle_task_stopped(res, pending_requests.clone()),
         }
     }

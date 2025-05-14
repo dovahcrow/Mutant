@@ -7,7 +7,7 @@ use super::{TaskEntry, TaskMap, ActiveKeysMap, try_register_key, release_key, is
 use mutant_lib::storage::ScratchpadAddress;
 use mutant_lib::MutAnt;
 use mutant_protocol::{
-    ErrorResponse, GetCallback, GetEvent, GetRequest, GetResult,
+    ErrorResponse, GetCallback, GetDataResponse, GetEvent, GetRequest, GetResult,
     PutCallback, PutEvent, PutRequest, PutResult, PutSource, Response, RmRequest, RmSuccessResponse,
     Task, TaskCreatedResponse, TaskProgress, TaskResult, TaskResultResponse, TaskResultType,
     TaskStatus, TaskType, TaskUpdateResponse
@@ -261,6 +261,7 @@ pub(crate) async fn handle_get(
     let task_id = Uuid::new_v4();
     let user_key = req.user_key.clone();
     let destination_path = req.destination_path.clone(); // Keep path for logging and writing
+    let stream_data = req.stream_data; // Whether to stream data back to client
 
     // Try to register the key for this task
     try_register_key(
@@ -314,12 +315,43 @@ pub(crate) async fn handle_get(
         let update_tx_clone = update_tx.clone();
         let task_id_clone = task_id;
         let tasks_clone = tasks.clone();
+        let stream_data_clone = stream_data;
+        let total_chunks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let total_chunks_clone = total_chunks.clone();
+
         let callback: GetCallback = Arc::new(move |event: GetEvent| {
             let tx = update_tx_clone.clone();
             let task_id = task_id_clone;
             let tasks = tasks_clone.clone();
+            let stream_data = stream_data_clone;
+            let total_chunks = total_chunks_clone.clone();
+
             Box::pin(async move {
+                // If this is a Starting event, store the total chunks
+                if let GetEvent::Starting { total_chunks: chunks } = &event {
+                    total_chunks.store(*chunks, std::sync::atomic::Ordering::SeqCst);
+                }
+
+                // Handle streaming data if enabled
+                if stream_data {
+                    if let GetEvent::PadData { chunk_index, data } = &event {
+                        // Send the data chunk directly to the client
+                        let total = total_chunks.load(std::sync::atomic::Ordering::SeqCst);
+                        let is_last = *chunk_index == total - 1;
+
+                        let _ = tx.send(Response::GetData(GetDataResponse {
+                            task_id,
+                            chunk_index: *chunk_index,
+                            total_chunks: total,
+                            data: data.clone(),
+                            is_last,
+                        }));
+                    }
+                }
+
+                // Always send the regular progress update
                 let progress = TaskProgress::Get(event);
+
                 // Update task progress
                 let mut tasks_guard = tasks.write().await;
                 if let Some(entry) = tasks_guard.get_mut(&task_id) {
@@ -346,7 +378,7 @@ pub(crate) async fn handle_get(
         let get_result = if req.public {
             // TODO: Fix public key handling if necessary, ScratchpadAddress requires valid hex
             match ScratchpadAddress::from_hex(&user_key) {
-                Ok(address) => mutant.get_public(&address, Some(callback)).await,
+                Ok(address) => mutant.get_public(&address, Some(callback), stream_data).await,
                 Err(hex_err) => {
                     // Wrap the underlying lib error in DaemonError::LibError
                     let lib_err = mutant_lib::error::Error::Internal(format!(
@@ -364,22 +396,34 @@ pub(crate) async fn handle_get(
                     user_key
                 )))
             } else {
-                mutant.get(&user_key, Some(callback)).await // Pass callback
+                mutant.get(&user_key, Some(callback), stream_data).await // Pass callback and stream_data
             }
         };
 
         let write_result = match get_result {
             Ok(data_bytes) => {
-                // Write the received bytes to the destination path
-                fs::write(&destination_path, &data_bytes)
-                    .await
-                    .map_err(|e| {
-                        DaemonError::IoError(format!(
-                            "Failed to write to destination file {}: {}",
-                            destination_path, e
-                        ))
-                    })
-                    .map(|_| data_bytes) // Pass data_bytes through on success for tracing length maybe
+                // If streaming is enabled, we don't need to write to a file
+                // The data has already been sent to the client via the callback
+                if stream_data {
+                    // Just return the empty data bytes for success
+                    Ok(data_bytes)
+                } else if let Some(path) = &destination_path {
+                    // Write the received bytes to the destination path
+                    fs::write(path, &data_bytes)
+                        .await
+                        .map_err(|e| {
+                            DaemonError::IoError(format!(
+                                "Failed to write to destination file {}: {}",
+                                path, e
+                            ))
+                        })
+                        .map(|_| data_bytes) // Pass data_bytes through on success for tracing length maybe
+                } else {
+                    // No destination path provided but not streaming - this shouldn't happen
+                    // but we'll handle it gracefully
+                    log::warn!("No destination path provided for non-streaming GET: task_id={}", task_id);
+                    Ok(data_bytes)
+                }
             }
             Err(e) => Err(DaemonError::LibError(e)), // Propagate the lib error
         };
@@ -395,9 +439,19 @@ pub(crate) async fn handle_get(
                             entry.task.result =
                                 TaskResult::Result(TaskResultType::Get(GetResult {
                                     size: data_bytes.len(),
+                                    streamed: stream_data,
                                 }));
                             entry.abort_handle = None; // Task finished, remove handle
-                            log::info!("GET task completed successfully: task_id={}, user_key={}, destination_path={}, bytes_written={}", task_id, user_key, destination_path, data_bytes.len());
+
+                            // Format log message based on whether we have a destination path
+                            if let Some(path) = &destination_path {
+                                log::info!("GET task completed successfully: task_id={}, user_key={}, destination_path={}, bytes_written={}",
+                                    task_id, user_key, path, data_bytes.len());
+                            } else {
+                                log::info!("GET task completed successfully: task_id={}, user_key={}, streamed=true, bytes_processed={}",
+                                    task_id, user_key, data_bytes.len());
+                            }
+
                             Some(Response::TaskResult(TaskResultResponse {
                                 task_id,
                                 status: TaskStatus::Completed,
@@ -409,7 +463,16 @@ pub(crate) async fn handle_get(
                             entry.task.status = TaskStatus::Failed;
                             entry.task.result = TaskResult::Error(error_msg.clone());
                             entry.abort_handle = None; // Task finished, remove handle
-                            log::error!("GET task failed: task_id={}, user_key={}, destination_path={}, error={}", task_id, user_key, destination_path, error_msg);
+
+                            // Format log message based on whether we have a destination path
+                            if let Some(path) = &destination_path {
+                                log::error!("GET task failed: task_id={}, user_key={}, destination_path={}, error={}",
+                                    task_id, user_key, path, error_msg);
+                            } else {
+                                log::error!("GET task failed: task_id={}, user_key={}, streamed=true, error={}",
+                                    task_id, user_key, error_msg);
+                            }
+
                             Some(Response::TaskResult(TaskResultResponse {
                                 task_id,
                                 status: TaskStatus::Failed,

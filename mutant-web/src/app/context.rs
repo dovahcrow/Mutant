@@ -239,7 +239,7 @@ impl Context {
         info!("Getting key {} via daemon", name);
 
         // Safely call the client manager
-        let result = self.client.get(name.to_string(), destination.to_string(), false).await;
+        let result = self.client.get(name.to_string(), Some(destination.to_string()), false).await;
 
         match result {
             Ok(_) => {
@@ -247,6 +247,37 @@ impl Context {
             },
             Err(e) => {
                 error!("Failed to get key: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    // Get file content directly without saving to disk
+    pub async fn get_file_content(&self, name: &str, is_public: bool) -> Result<String, String> {
+        info!("Getting file content for key {} via daemon", name);
+
+        // Call the client with no destination to stream the data
+        let result = self.client.get(name.to_string(), None, is_public).await;
+
+        match result {
+            Ok((task_result, Some(data))) => {
+                info!("Successfully retrieved file content for key {}, size: {} bytes", name, data.len());
+
+                // Try to convert the data to a string
+                match String::from_utf8(data) {
+                    Ok(content) => Ok(content),
+                    Err(_) => {
+                        // If it's not valid UTF-8, return a binary data message
+                        Err("File contains binary data that cannot be displayed as text".to_string())
+                    }
+                }
+            },
+            Ok((_, None)) => {
+                error!("No data received for key {}", name);
+                Err("No data received".to_string())
+            },
+            Err(e) => {
+                error!("Failed to get file content: {}", e);
                 Err(e)
             }
         }

@@ -68,11 +68,13 @@ type PendingRequestMap = Arc<Mutex<HashMap<PendingRequestKey, PendingSender>>>;
 
 pub type CompletionReceiver = oneshot::Receiver<Result<TaskResult, ClientError>>;
 pub type ProgressReceiver = mpsc::UnboundedReceiver<Result<TaskProgress, ClientError>>;
+pub type DataStreamReceiver = mpsc::UnboundedReceiver<Result<Vec<u8>, ClientError>>;
 
 type CompletionSender = oneshot::Sender<Result<TaskResult, ClientError>>;
 type ProgressSender = mpsc::UnboundedSender<Result<TaskProgress, ClientError>>;
+type DataStreamSender = mpsc::UnboundedSender<Result<Vec<u8>, ClientError>>;
 
-type TaskChannels = (CompletionSender, ProgressSender);
+type TaskChannels = (CompletionSender, ProgressSender, Option<DataStreamSender>);
 type TaskChannelsMap = Arc<Mutex<HashMap<TaskId, TaskChannels>>>;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -163,6 +165,7 @@ impl MutantClient {
         (
             impl Future<Output = Result<TaskResult, ClientError>> + 'a,
             ProgressReceiver,
+            Option<DataStreamReceiver>,
         ),
         ClientError,
     > {
@@ -196,6 +199,7 @@ impl MutantClient {
         (
             impl Future<Output = Result<TaskResult, ClientError>> + 'a,
             ProgressReceiver,
+            Option<DataStreamReceiver>,
         ),
         ClientError,
     > {
@@ -216,12 +220,14 @@ impl MutantClient {
     pub async fn get(
         &mut self,
         user_key: &str,
-        destination_path: &str,
+        destination_path: Option<&str>,
         public: bool,
+        stream_data: bool,
     ) -> Result<
         (
             impl Future<Output = Result<TaskResult, ClientError>> + '_,
             ProgressReceiver,
+            Option<DataStreamReceiver>,
         ),
         ClientError,
     > {
@@ -230,9 +236,11 @@ impl MutantClient {
             Get,
             GetRequest {
                 user_key: user_key.to_string(),
-                destination_path: destination_path.to_string(),
+                destination_path: destination_path.map(|s| s.to_string()),
                 public,
-            }
+                stream_data,
+            },
+            stream_data
         )
     }
 
@@ -243,6 +251,7 @@ impl MutantClient {
         (
             impl Future<Output = Result<TaskResult, ClientError>> + '_,
             ProgressReceiver,
+            Option<DataStreamReceiver>,
         ),
         ClientError,
     > {
@@ -256,6 +265,7 @@ impl MutantClient {
         (
             impl Future<Output = Result<TaskResult, ClientError>> + '_,
             ProgressReceiver,
+            Option<DataStreamReceiver>,
         ),
         ClientError,
     > {
@@ -270,6 +280,7 @@ impl MutantClient {
         (
             impl Future<Output = Result<TaskResult, ClientError>> + '_,
             ProgressReceiver,
+            Option<DataStreamReceiver>,
         ),
         ClientError,
     > {

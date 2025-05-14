@@ -47,8 +47,9 @@ pub async fn run() -> Result<()> {
             destination_path,
             background,
             public,
+            stdout,
         } => {
-            commands::get::handle_get(key, destination_path, public, background, cli.quiet).await?;
+            commands::get::handle_get(key, destination_path, public, background, stdout, cli.quiet).await?;
         }
         Commands::Rm { key } => {
             commands::rm::handle_rm(key).await?;

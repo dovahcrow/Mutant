@@ -80,19 +80,21 @@ impl MutAnt {
         &self,
         user_key: &str,
         get_callback: Option<GetCallback>,
+        stream_data: bool,
     ) -> Result<Vec<u8>, Error> {
-        self.data.read().await.get(user_key, get_callback).await
+        self.data.read().await.get(user_key, get_callback, stream_data).await
     }
 
     pub async fn get_public(
         &self,
         address: &ScratchpadAddress,
         get_callback: Option<GetCallback>,
+        stream_data: bool,
     ) -> Result<Vec<u8>, Error> {
         self.data
             .read()
             .await
-            .get_public(address, get_callback)
+            .get_public(address, get_callback, stream_data)
             .await
     }
 
@@ -233,7 +235,7 @@ mod tests {
         assert!(keys.contains_key(&user_key));
 
         // check of the data
-        let data = mutant.get(&user_key, None).await.unwrap();
+        let data = mutant.get(&user_key, None, false).await.unwrap();
         assert_eq!(data, data_bytes);
     }
 
@@ -271,7 +273,7 @@ mod tests {
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
 
-        let data = mutant.get(&user_key, None).await.unwrap();
+        let data = mutant.get(&user_key, None, false).await.unwrap();
         assert_eq!(data, data_bytes_updated);
     }
 
@@ -310,7 +312,7 @@ mod tests {
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
 
         // Verify that the data is correctly stored
-        let data = mutant.get(&user_key, None).await.unwrap();
+        let data = mutant.get(&user_key, None, false).await.unwrap();
         assert_eq!(data, data_bytes);
     }
 }

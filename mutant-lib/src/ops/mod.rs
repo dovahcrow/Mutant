@@ -66,16 +66,18 @@ impl Data {
         &self,
         address: &ScratchpadAddress,
         get_callback: Option<GetCallback>,
+        stream_data: bool,
     ) -> Result<Vec<u8>, Error> {
-        get::get_public(self.network.clone(), address, get_callback).await
+        get::get_public(self.network.clone(), address, get_callback, stream_data).await
     }
 
     pub async fn get(
         &self,
         name: &str,
         get_callback: Option<GetCallback>,
+        stream_data: bool,
     ) -> Result<Vec<u8>, Error> {
-        get::get(self.index.clone(), self.network.clone(), name, get_callback).await
+        get::get(self.index.clone(), self.network.clone(), name, get_callback, stream_data).await
     }
 
     pub async fn purge(

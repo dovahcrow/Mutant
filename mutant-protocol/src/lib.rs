@@ -130,6 +130,14 @@ pub enum GetEvent {
     },
     /// Indicates that a single pad (chunk) has been fetched.
     PadFetched,
+    /// Contains data from a fetched pad (chunk).
+    /// Only sent when streaming is enabled.
+    PadData {
+        /// The index of the chunk in the overall file.
+        chunk_index: usize,
+        /// The actual data from the pad.
+        data: Vec<u8>,
+    },
     /// Indicates that the `get` operation has completed successfully.
     Complete,
 }
@@ -345,8 +353,9 @@ pub struct PutRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetRequest {
     pub user_key: String,
-    pub destination_path: String, // Path where the fetched file should be saved on the daemon
+    pub destination_path: Option<String>, // Optional path where the fetched file should be saved on the daemon
     pub public: bool,
+    pub stream_data: bool, // Whether to stream data back to the client
 }
 
 #[derive(Deserialize, Debug, PartialEq, Eq, Serialize, Clone)]
@@ -497,6 +506,8 @@ pub struct SyncResult {
 pub struct GetResult {
     /// Total size of the retrieved data in bytes.
     pub size: usize,
+    /// Indicates if data was streamed back to the client.
+    pub streamed: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -556,6 +567,21 @@ pub struct HealthCheckResult {
     pub nb_keys_recycled: usize,
 }
 
+/// Response containing a chunk of data from a get operation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetDataResponse {
+    /// The task ID associated with this data chunk.
+    pub task_id: TaskId,
+    /// The index of this chunk in the overall file.
+    pub chunk_index: usize,
+    /// The total number of chunks in the file.
+    pub total_chunks: usize,
+    /// The actual data for this chunk.
+    pub data: Vec<u8>,
+    /// Whether this is the last chunk of the file.
+    pub is_last: bool,
+}
+
 /// Represents all possible responses the daemon can send to the client.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
@@ -571,6 +597,8 @@ pub enum Response {
     Stats(StatsResponse),
     Import(ImportResponse),
     Export(ExportResponse),
+    /// A chunk of data from a get operation.
+    GetData(GetDataResponse),
 }
 
 // Helper moved to where Response is used (client/server)
