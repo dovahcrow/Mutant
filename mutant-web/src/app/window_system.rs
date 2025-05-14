@@ -71,18 +71,20 @@ impl WindowSystem {
         }
 
         let size = Self::default_window_size(&window);
+        let position = [60.0, 20.0];
 
         let surface = self.tree.add_window(vec![window]);
 
         self.tree
             .get_window_state_mut(surface)
             .unwrap()
-            .set_size(size.into());
+            .set_size(size.into())
+            .set_position(position.into());
     }
 
     fn default_window_size(window_type: &WindowType) -> [f32; 2] {
         match window_type {
-            // WindowType::Chart(_) => [1000.0, 300.0],
+            WindowType::Fs(_) => [300.0, 600.0],
             // WindowType::Overview(_) => [300.0, 600.0],
             // WindowType::Ships(_) => [300.0, 600.0],
             // WindowType::Bases(_) => [600.0, 400.0],

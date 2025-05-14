@@ -250,7 +250,7 @@ pub async fn init() {
     init_window_system().await;
 
     // Create the main window with the keys
-    let main_window = main::MainWindow::new();
+    let main_window = fs::FsWindow::new();
 
     // Create the tasks window
     // let tasks_window = tasks::TasksWindow::new();

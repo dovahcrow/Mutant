@@ -88,10 +88,13 @@ impl TreeNode {
 
     /// Draw this node and its children
     fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize) {
-        let indent = (indent_level as f32) * 10.0; // 10 pixels per indent level
+        // Use a very small fixed indentation to avoid exponential growth
+        let indent_per_level = 5.0;
+        let total_indent = indent_per_level * (indent_level as f32);
 
         ui.horizontal(|ui| {
-            ui.add_space(indent);
+            // Apply the base indentation
+            ui.add_space(total_indent);
 
             if self.is_dir() {
                 // Directory node
@@ -113,7 +116,7 @@ impl TreeNode {
                         }
                     });
 
-                    // Draw the sorted children
+                    // Draw the sorted children with exactly one more level of indentation
                     for (_, child) in sorted_children {
                         child.ui(ui, indent_level + 1);
                     }
@@ -207,25 +210,11 @@ impl FsWindow {
 
         ui.separator();
 
-        // Add refresh button
-        if ui.button("🔄 Refresh").clicked() {
-            // Clear the tree to force rebuild
-            self.root.children.clear();
-
-            // Fetch fresh keys
-            let ctx = crate::app::context::context();
-            wasm_bindgen_futures::spawn_local(async move {
-                let _ = ctx.list_keys().await;
-            });
-        }
-
-        ui.separator();
-
         // Draw the tree
         egui::ScrollArea::vertical().show(ui, |ui| {
             // First, show the root folder (always expanded)
             ui.horizontal(|ui| {
-                // Root folder icon
+                // Root folder icon with zero indentation
                 let icon = "📂";
                 ui.label(format!("{} /", icon));
             });
