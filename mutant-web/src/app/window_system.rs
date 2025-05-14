@@ -53,6 +53,11 @@ impl egui_dock::TabViewer for TabViewer {
     }
 }
 
+// Static counter to track window positions
+lazy_static! {
+    static ref WINDOW_COUNTER: RwLock<usize> = RwLock::new(0);
+}
+
 pub struct WindowSystem {
     tree: DockState<WindowType>,
     need_focus: Option<(i32, i32)>,
@@ -71,7 +76,14 @@ impl WindowSystem {
         }
 
         let size = Self::default_window_size(&window);
-        let position = [60.0, 20.0];
+
+        // Get the current window counter and increment it
+        let mut counter = WINDOW_COUNTER.write().unwrap();
+        *counter = (*counter + 1) % 10; // Cycle through 10 positions to avoid going off-screen
+
+        // Calculate position with an offset based on the counter
+        // Start at [60.0, 20.0] and cascade each window by [20.0, 20.0]
+        let position = [60.0 + (*counter as f32 * 20.0), 20.0 + (*counter as f32 * 20.0)];
 
         let surface = self.tree.add_window(vec![window]);
 
@@ -220,6 +232,9 @@ impl WindowSystem {
 
 
     pub fn from_memory(user_id: String) -> Self {
+        // Reset the window counter when loading from memory
+        *WINDOW_COUNTER.write().unwrap() = 0;
+
         let window = match web_sys::window() {
             Some(w) => w,
             None => return Self::default_with_main_window(),
@@ -249,6 +264,9 @@ impl WindowSystem {
     }
 
     fn default_with_main_window() -> Self {
+        // Reset the window counter when initializing the window system
+        *WINDOW_COUNTER.write().unwrap() = 0;
+
         Self {
             tree: DockState::new(vec![MainWindow::default().into()]),
             ..Default::default()
@@ -258,6 +276,9 @@ impl WindowSystem {
 
 impl Default for WindowSystem {
     fn default() -> Self {
+        // Reset the window counter when creating a new window system
+        *WINDOW_COUNTER.write().unwrap() = 0;
+
         let tree = DockState::new(vec![]);
 
         Self {
