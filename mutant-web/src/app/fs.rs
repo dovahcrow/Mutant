@@ -21,6 +21,9 @@ struct TreeNode {
 
     /// Whether this directory is expanded (only relevant for directories)
     expanded: bool,
+
+    /// Full path to this node (for debugging and unique IDs)
+    path: String,
 }
 
 impl TreeNode {
@@ -31,6 +34,7 @@ impl TreeNode {
             key_details: None,
             children: BTreeMap::new(),
             expanded: false,
+            path: name.to_string(),
         }
     }
 
@@ -41,6 +45,7 @@ impl TreeNode {
             key_details: Some(key_details),
             children: BTreeMap::new(),
             expanded: false,
+            path: name.to_string(),
         }
     }
 
@@ -50,29 +55,40 @@ impl TreeNode {
     }
 
     /// Insert a key into the tree at the appropriate location
-    fn insert_key(&mut self, path_parts: &[&str], key_details: KeyDetails) {
+    fn insert_key(&mut self, path_parts: &[&str], key_details: KeyDetails, parent_path: &str) {
         if path_parts.is_empty() {
             return;
         }
 
         let current = path_parts[0];
+        let current_path = if parent_path.is_empty() {
+            current.to_string()
+        } else {
+            format!("{}/{}", parent_path, current)
+        };
 
         if path_parts.len() == 1 {
             // This is a file (leaf node)
-            self.children.insert(current.to_string(), TreeNode::new_file(current, key_details));
+            let mut file_node = TreeNode::new_file(current, key_details);
+            file_node.path = current_path;
+            self.children.insert(current.to_string(), file_node);
         } else {
             // This is a directory
             let dir_node = self.children
                 .entry(current.to_string())
-                .or_insert_with(|| TreeNode::new_dir(current));
+                .or_insert_with(|| {
+                    let mut node = TreeNode::new_dir(current);
+                    node.path = current_path.clone();
+                    node
+                });
 
-            dir_node.insert_key(&path_parts[1..], key_details);
+            dir_node.insert_key(&path_parts[1..], key_details, &current_path);
         }
     }
 
     /// Draw this node and its children
     fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize) {
-        let indent = (indent_level as f32) * 1.0; // Reduced from 20 to 10 pixels per indent level
+        let indent = (indent_level as f32) * 10.0; // 10 pixels per indent level
 
         ui.horizontal(|ui| {
             ui.add_space(indent);
@@ -83,7 +99,7 @@ impl TreeNode {
                 let text = format!("{} {}", icon, self.name);
 
                 let header = egui::CollapsingHeader::new(text)
-                    .id_salt(format!("dir_{}", self.name))
+                    .id_salt(format!("dir_{}", self.path)) // Use full path for unique ID
                     .default_open(self.expanded);
 
                 self.expanded = header.show(ui, |ui| {
@@ -103,7 +119,6 @@ impl TreeNode {
                     }
                 }).header_response.clicked() || self.expanded;
             } else {
-                ui.add_space(indent_level as f32 * 3.0);
                 // File node
                 let icon = "📄";
                 let details = self.key_details.as_ref().unwrap();
@@ -179,7 +194,7 @@ impl FsWindow {
                     .collect();
 
                 // Insert into the tree
-                self.root.insert_key(&parts, key.clone());
+                self.root.insert_key(&parts, key.clone(), "");
             }
         }
     }
