@@ -44,12 +44,23 @@ impl egui_dock::TabViewer for TabViewer {
     type Tab = WindowType;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        (&*tab.name()).into()
+        // Add an icon to the title to indicate the tab type
+        let icon = match tab {
+            WindowType::Main(_) => "🛸 ",
+            WindowType::Put(_) => "📤 ",
+            WindowType::Fs(_) => "📁 ",
+        };
+
+        format!("{}{}", icon, tab.name()).into()
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        // ui.label(format!("Content of {tab}"));
         tab.draw(ui);
+    }
+
+    // Allow all tabs to be closable
+    fn closeable(&mut self, _tab: &mut Self::Tab) -> bool {
+        true
     }
 }
 
@@ -67,6 +78,7 @@ pub struct WindowSystem {
 
 impl WindowSystem {
     pub fn add_window(&mut self, window: WindowType) {
+        // Check if a window with the same name already exists
         if self
             .tree
             .iter_all_tabs()
@@ -85,13 +97,20 @@ impl WindowSystem {
         // Start at [60.0, 20.0] and cascade each window by [20.0, 20.0]
         let position = [60.0 + (*counter as f32 * 20.0), 20.0 + (*counter as f32 * 20.0)];
 
+        // Create a new window
         let surface = self.tree.add_window(vec![window]);
 
+        // Set the window position and size
         self.tree
             .get_window_state_mut(surface)
             .unwrap()
             .set_size(size.into())
             .set_position(position.into());
+    }
+
+    pub fn add_main_dock_area(&mut self, window: WindowType) {
+        // Add to main surface - this will allow docking
+        self.tree.main_surface_mut().push_to_focused_leaf(window);
     }
 
     fn default_window_size(window_type: &WindowType) -> [f32; 2] {
@@ -198,8 +217,16 @@ impl WindowSystem {
                 });
             });
 
+        // Create a custom style for the dock area
+        let mut style = Style::from_egui(ui.ctx().style().as_ref());
+
+        // Configure the style to make docking more visible and user-friendly
+        style.tab_bar.fill_tab_bar = true;
+        style.tab_bar.bg_fill = ui.style().visuals.window_fill;
+
+        // Create the dock area with docking enabled
         DockArea::new(&mut self.tree)
-            .style(Style::from_egui(ui.ctx().style().as_ref()))
+            .style(style)
             .id(Id::new("egui_dock::DockArea"))
             .show_inside(ui, &mut TabViewer {});
 
@@ -267,8 +294,14 @@ impl WindowSystem {
         // Reset the window counter when initializing the window system
         *WINDOW_COUNTER.write().unwrap() = 0;
 
+        // Create a new DockState with the main window
+        // This will create a main surface with a single tab that can be used for docking
+        let tree = DockState::new(vec![MainWindow::default().into()]);
+
+        log::info!("Initialized main window for docking");
+
         Self {
-            tree: DockState::new(vec![MainWindow::default().into()]),
+            tree,
             ..Default::default()
         }
     }

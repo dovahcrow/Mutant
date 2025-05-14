@@ -244,18 +244,24 @@ pub async fn init() {
     // Fetch keys using the context
     let _ = ctx.list_keys().await;
 
-    // log::info!("Retrieved {} keys", keys.len());
-
     // Initialize the window system
     init_window_system().await;
 
-    // Create the main window with the keys
+    // Create the main window with the keys (file system view)
     let main_window = fs::FsWindow::new();
 
-    // Create the tasks window
-    // let tasks_window = tasks::TasksWindow::new();
+    // Add the main window to the system - this will be the primary docking area
+    window_system_mut().add_main_dock_area(main_window.into());
 
-    // Add the windows to the system
-    window_system_mut().add_window(main_window.into());
-    // window_system_mut().add_window(tasks_window.into());
+    // // Create and add the put window (upload functionality)
+    // // This will be added as a tab to the main window, allowing for docking
+    // let put_window = put::PutWindow::new();
+    // window_system_mut().add_window(put_window.into());
+
+    // // Create and add the keys window
+    // let keys_window = main::MainWindow::new();
+    // window_system_mut().add_window(keys_window.into());
+
+    // Log that the window system is ready with docking enabled
+    log::info!("Window system initialized with docking enabled");
 }
