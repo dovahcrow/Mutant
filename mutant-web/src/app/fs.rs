@@ -89,7 +89,7 @@ impl TreeNode {
     /// Draw this node and its children
     fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize) {
         // Use a very small fixed indentation to avoid exponential growth
-        let indent_per_level = 5.0;
+        let indent_per_level = 2.0;
         let total_indent = indent_per_level * (indent_level as f32);
 
         ui.horizontal(|ui| {

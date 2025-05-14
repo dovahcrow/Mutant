@@ -11,10 +11,8 @@ lazy_static! {
     .direction(egui::Direction::BottomUp));
 }
 
-pub fn show_notifications(context: &mut egui::Context) {
-    context.style_mut(|style| {
-        style.visuals.window_fill = egui::Color32::from_rgb(0, 0, 0);
-    });
+pub fn show_notifications(context: &egui::Context) {
+    // Don't modify the style here since we're doing it in the main app
     NOTIFICATIONS.write().unwrap().show(context);
 }
 

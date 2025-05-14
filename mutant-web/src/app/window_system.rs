@@ -1,6 +1,6 @@
 use std::sync::{Arc, MappedRwLockWriteGuard, RwLock, RwLockWriteGuard};
 
-use eframe::egui::{self, Id, RichText, SidePanel};
+use eframe::egui::{self, CornerRadius, Id, RichText, SidePanel};
 use egui_dock::{DockArea, DockState, Style};
 use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
@@ -224,7 +224,17 @@ impl WindowSystem {
 
         // Configure the style to make docking more visible and user-friendly
         style.tab_bar.fill_tab_bar = false; // Don't fill the entire tab bar
-        style.tab_bar.bg_fill = ui.style().visuals.window_fill;
+        // Keep the original background color for the tab bar
+        style.tab_bar.bg_fill = egui::Color32::from_rgb(40, 40, 40);
+        style.tab.tab_body.bg_fill = egui::Color32::from_rgb(40, 40, 40);
+
+        style.tab.active.bg_fill = egui::Color32::from_rgb(50, 50, 50);
+        style.tab.focused.bg_fill = egui::Color32::from_rgb(50, 50, 50);
+
+
+        // Use darker colors for the horizontal line to increase contrast
+        style.tab_bar.hline_color = egui::Color32::from_rgb(70, 70, 70); // Darker line color
+        style.tab_bar.corner_radius = CornerRadius::default();
 
         // Create the dock area with docking enabled
         DockArea::new(&mut self.tree)
