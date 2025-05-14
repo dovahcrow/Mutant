@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 // mod buildings;
 // mod chart;
 mod components;
+mod fs;
 // mod flights;
 // mod infobar;
 // mod inventory;
@@ -35,7 +36,6 @@ pub const DEFAULT_WS_URL: &str = "ws://localhost:3030/ws";
 
 
 pub use context::context;
-pub use context::{Progress, ProgressOperation};
 
 use window_system::init_window_system;
 // pub use client_manager::DEFAULT_WS_URL;
@@ -54,7 +54,8 @@ pub trait Window: Send + Sync {
 pub enum WindowType {
     Main(main::MainWindow),
     // Tasks(tasks::TasksWindow),
-    Put(put::PutWindow)
+    Put(put::PutWindow),
+    Fs(fs::FsWindow)
     // Bases(bases::BasesWindow),
     // Base(base::BaseWindow),
     // Buildings(buildings::BuildingsWindow),
@@ -78,6 +79,7 @@ impl Window for WindowType {
             Self::Main(window) => window.name(),
             // Self::Tasks(window) => window.name(),
             Self::Put(window) => window.name(),
+            Self::Fs(window) => window.name(),
             // Self::Bases(window) => window.name(),
             // Self::Base(window) => window.name(),
             // Self::Buildings(window) => window.name(),
@@ -101,6 +103,7 @@ impl Window for WindowType {
             Self::Main(window) => window.draw(ui),
             // Self::Tasks(window) => window.draw(ui),
             Self::Put(window) => window.draw(ui),
+            Self::Fs(window) => window.draw(ui),
             // Self::Bases(window) => window.draw(ui),
             // Self::Base(window) => window.draw(ui),
             // Self::Buildings(window) => window.draw(ui),
@@ -135,6 +138,12 @@ impl From<main::MainWindow> for WindowType {
 impl From<put::PutWindow> for WindowType {
     fn from(window: put::PutWindow) -> Self {
         Self::Put(window)
+    }
+}
+
+impl From<fs::FsWindow> for WindowType {
+    fn from(window: fs::FsWindow) -> Self {
+        Self::Fs(window)
     }
 }
 
