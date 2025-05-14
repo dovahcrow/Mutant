@@ -72,7 +72,7 @@ impl TreeNode {
 
     /// Draw this node and its children
     fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize) {
-        let indent = (indent_level as f32) * 20.0; // 20 pixels per indent level
+        let indent = (indent_level as f32) * 1.0; // Reduced from 20 to 10 pixels per indent level
 
         ui.horizontal(|ui| {
             ui.add_space(indent);
@@ -83,16 +83,27 @@ impl TreeNode {
                 let text = format!("{} {}", icon, self.name);
 
                 let header = egui::CollapsingHeader::new(text)
-                    .id_source(format!("dir_{}", self.name))
+                    .id_salt(format!("dir_{}", self.name))
                     .default_open(self.expanded);
 
                 self.expanded = header.show(ui, |ui| {
-                    // Draw children
-                    for (_, child) in self.children.iter_mut() {
+                    // Sort children: directories first, then files
+                    let mut sorted_children: Vec<_> = self.children.iter_mut().collect();
+                    sorted_children.sort_by(|(_, a), (_, b)| {
+                        match (a.is_dir(), b.is_dir()) {
+                            (true, false) => std::cmp::Ordering::Less,    // Directories come before files
+                            (false, true) => std::cmp::Ordering::Greater, // Files come after directories
+                            _ => a.name.cmp(&b.name),                     // Sort alphabetically within each group
+                        }
+                    });
+
+                    // Draw the sorted children
+                    for (_, child) in sorted_children {
                         child.ui(ui, indent_level + 1);
                     }
                 }).header_response.clicked() || self.expanded;
             } else {
+                ui.add_space(indent_level as f32 * 3.0);
                 // File node
                 let icon = "📄";
                 let details = self.key_details.as_ref().unwrap();
@@ -155,8 +166,17 @@ impl FsWindow {
             for key in keys.iter() {
                 let path = &key.key;
 
-                // Split the path into parts
-                let parts: Vec<&str> = path.split('/').collect();
+                // Ensure the path starts with a slash
+                let normalized_path = if path.starts_with('/') {
+                    path.to_string()
+                } else {
+                    format!("/{}", path)
+                };
+
+                // Split the path into parts, skipping empty parts (consecutive slashes)
+                let parts: Vec<&str> = normalized_path.split('/')
+                    .filter(|part| !part.is_empty())
+                    .collect();
 
                 // Insert into the tree
                 self.root.insert_key(&parts, key.clone());
@@ -186,7 +206,18 @@ impl FsWindow {
 
         // Draw the tree
         egui::ScrollArea::vertical().show(ui, |ui| {
-            for (_, child) in self.root.children.iter_mut() {
+            // Sort children: directories first, then files
+            let mut sorted_children: Vec<_> = self.root.children.iter_mut().collect();
+            sorted_children.sort_by(|(_, a), (_, b)| {
+                match (a.is_dir(), b.is_dir()) {
+                    (true, false) => std::cmp::Ordering::Less,    // Directories come before files
+                    (false, true) => std::cmp::Ordering::Greater, // Files come after directories
+                    _ => a.name.cmp(&b.name),                     // Sort alphabetically within each group
+                }
+            });
+
+            // Draw the sorted children
+            for (_, child) in sorted_children {
                 child.ui(ui, 0);
             }
         });
