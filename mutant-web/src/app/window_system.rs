@@ -51,7 +51,9 @@ impl egui_dock::TabViewer for TabViewer {
             WindowType::Fs(_) => "📁 ",
         };
 
-        format!("{}{}", icon, tab.name()).into()
+        // Create a compact title that doesn't expand to fill all space
+        let title = format!("{}{}", icon, tab.name());
+        egui::RichText::new(title).into()
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
@@ -221,7 +223,7 @@ impl WindowSystem {
         let mut style = Style::from_egui(ui.ctx().style().as_ref());
 
         // Configure the style to make docking more visible and user-friendly
-        style.tab_bar.fill_tab_bar = true;
+        style.tab_bar.fill_tab_bar = false; // Don't fill the entire tab bar
         style.tab_bar.bg_fill = ui.style().visuals.window_fill;
 
         // Create the dock area with docking enabled
