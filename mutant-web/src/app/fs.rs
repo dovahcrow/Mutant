@@ -93,13 +93,14 @@ impl TreeNode {
     }
 
     /// Draw this node and its children
-    /// Returns true if a file in this node or its children was clicked
-    fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize) -> bool {
+    /// Returns (clicked, key_details) if a file in this node or its children was clicked
+    fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize, selected_path: Option<&str>) -> (bool, Option<KeyDetails>) {
         // Use a very small fixed indentation to avoid exponential growth
         let indent_per_level = 2.0;
         let total_indent = indent_per_level * (indent_level as f32);
 
         let mut file_clicked = false;
+        let mut clicked_details = None;
 
         ui.horizontal(|ui| {
             // Apply the base indentation
@@ -114,7 +115,8 @@ impl TreeNode {
                     .id_salt(format!("dir_{}", self.path)) // Use full path for unique ID
                     .default_open(self.expanded);
 
-                let mut file_clicked = false;
+                let mut child_clicked = false;
+                let mut child_details = None;
 
                 self.expanded = header.show(ui, |ui| {
                     // Sort children: directories first, then files
@@ -129,14 +131,19 @@ impl TreeNode {
 
                     // Draw the sorted children with exactly one more level of indentation
                     for (_, child) in sorted_children {
-                        if child.ui(ui, indent_level + 1) {
-                            file_clicked = true;
+                        let (clicked, details) = child.ui(ui, indent_level + 1, selected_path);
+                        if clicked {
+                            child_clicked = true;
+                            child_details = details;
                         }
                     }
                 }).header_response.clicked() || self.expanded;
 
-                // Update file_clicked with any clicks from children
-                // but don't return early
+                // Propagate click from children
+                if child_clicked {
+                    file_clicked = true;
+                    clicked_details = child_details;
+                }
             } else {
                 // File node - add extra space to align with folder names (accounting for arrow)
                 ui.add_space(18.0); // Add space to compensate for the arrow in front of folders
@@ -144,24 +151,40 @@ impl TreeNode {
                 let icon = "📄";
                 let details = self.key_details.as_ref().unwrap();
 
+                // Check if this file is selected
+                let is_selected = selected_path.map_or(false, |path| path == &details.key);
+
+                // Style the text based on selection and public status
                 let text = if details.is_public {
-                    RichText::new(format!("{} {} (public)", icon, self.name))
-                        .color(Color32::from_rgb(0, 128, 0))
+                    let mut text = RichText::new(format!("{} {} (public)", icon, self.name))
+                        .color(Color32::from_rgb(0, 128, 0));
+
+                    if is_selected {
+                        // text = text.strong().background_color(Color32::from_rgb(30, 30, 30));
+                    }
+
+                    text
                 } else {
-                    RichText::new(format!("{} {}", icon, self.name))
+                    let mut text = RichText::new(format!("{} {}", icon, self.name));
+
+                    if is_selected {
+                        // text = text.strong().background_color(Color32::from_rgb(30, 30, 30));
+                    }
+
+                    text
                 };
 
                 // Make the file node clickable
-                if ui.selectable_label(false, text).clicked() {
-                    // Set file_clicked to true
+                if ui.selectable_label(is_selected, text).clicked() {
+                    // Set file_clicked to true and return the details
                     file_clicked = true;
+                    clicked_details = Some(details.clone());
                 }
             }
-
         });
 
-        // Return whether a file was clicked
-        file_clicked
+        // Return whether a file was clicked and the details if available
+        (file_clicked, clicked_details)
     }
 }
 
@@ -172,6 +195,8 @@ pub struct FsWindow {
     root: TreeNode,
     /// Currently selected file (if any)
     selected_file: Option<KeyDetails>,
+    /// Path of the selected file (for highlighting in the tree)
+    selected_path: Option<String>,
     /// Content of the selected file (placeholder for now)
     file_content: String,
 }
@@ -182,6 +207,7 @@ impl Default for FsWindow {
             keys: crate::app::context::context().get_key_cache(),
             root: TreeNode::default(),
             selected_file: None,
+            selected_path: None,
             file_content: String::new(),
         }
     }
@@ -271,22 +297,24 @@ impl FsWindow {
                 }
             });
 
+            // Get the currently selected path for highlighting
+            let selected_path_ref = self.selected_path.as_deref();
+
             // Track clicked nodes to handle after the loop
-            let mut clicked_node: Option<KeyDetails> = None;
+            let mut clicked_details: Option<KeyDetails> = None;
 
             // Draw the sorted children with indentation and check if any file was clicked
             for (_, child) in sorted_children {
-                if child.ui(ui, 1) { // Start with indent level 1 since we're inside root
-                    // A file was clicked, get its details
-                    if let Some(details) = &child.key_details {
-                        clicked_node = Some(details.clone());
-                    }
+                let (clicked, details) = child.ui(ui, 1, selected_path_ref); // Start with indent level 1 since we're inside root
+                if clicked && details.is_some() {
+                    clicked_details = details;
                 }
             }
 
             // Handle the clicked node outside the loop to avoid borrow issues
-            if let Some(details) = clicked_node {
+            if let Some(details) = clicked_details {
                 self.selected_file = Some(details.clone());
+                self.selected_path = Some(details.key.clone());
 
                 // For now, just set a placeholder content
                 self.file_content = format!(
