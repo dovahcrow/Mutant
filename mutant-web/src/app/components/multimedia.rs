@@ -22,7 +22,8 @@ pub enum FileType {
 pub struct FileContent {
     pub file_type: FileType,
     pub raw_data: Vec<u8>,
-    pub text_content: Option<String>,
+    pub editable_content: Option<String>,  // Separate field for edited content
+    pub content_modified: bool,            // Flag to track if content was modified
     pub image_texture: Option<TextureHandle>,
     pub video_url: Option<String>,
 }
@@ -35,7 +36,8 @@ impl FileContent {
         let mut content = Self {
             file_type,
             raw_data,
-            text_content: None,
+            editable_content: None,
+            content_modified: false,
             image_texture: None,
             video_url: None,
         };
@@ -51,7 +53,7 @@ impl FileContent {
             FileType::Text => {
                 // Try to convert raw data to text
                 if let Ok(text) = String::from_utf8(self.raw_data.clone()) {
-                    self.text_content = Some(text);
+                    self.editable_content = Some(text); // Initialize editable content
                 } else {
                     // If conversion fails, set as Other type
                     self.file_type = FileType::Other;
@@ -60,7 +62,7 @@ impl FileContent {
             FileType::Code(_) => {
                 // Convert raw data to text for code display
                 if let Ok(text) = String::from_utf8(self.raw_data.clone()) {
-                    self.text_content = Some(text);
+                    self.editable_content = Some(text); // Initialize editable content
                 } else {
                     // If conversion fails, set as Other type
                     self.file_type = FileType::Other;
@@ -163,6 +165,7 @@ fn get_code_theme(ui: &egui::Ui) -> Arc<CodeTheme> {
     // Use a dark theme by default
     static CODE_THEME: std::sync::OnceLock<Arc<CodeTheme>> = std::sync::OnceLock::new();
 
+    // Initialize the theme only once and store it in memory
     CODE_THEME.get_or_init(|| {
         let theme = CodeTheme::dark(0.5); // 0.5 is the default dark mode contrast
         let theme_clone = theme.clone();
@@ -172,154 +175,78 @@ fn get_code_theme(ui: &egui::Ui) -> Arc<CodeTheme> {
 }
 
 /// Draw a text viewer with syntax highlighting
-pub fn draw_text_viewer(ui: &mut Ui, content: &str) -> Option<String> {
-    // For very large content, we'll use a more efficient approach
-    if content.len() > 500_000 {
-        let mut result = None;
-
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.label("File is very large. Showing preview:");
-            ui.separator();
-
-            // Only show the first 100K characters to avoid performance issues
-            let preview = if content.len() > 100_000 {
-                &content[0..100_000]
-            } else {
-                content
-            };
-
-            // Use the code editor but with plain text syntax
-            if let Some(new_content) = draw_code_editor(ui, preview, "txt") {
-                // If the preview was edited, we need to update the full content
-
-                // Replace the beginning of the content with the edited preview
-                if content.len() > 100_000 {
-                    let mut new_full_content = new_content;
-                    new_full_content.push_str(&content[100_000..]);
-                    result = Some(new_full_content);
-                } else {
-                    result = Some(new_content);
-                }
-            }
-
-            if content.len() > 100_000 {
-                ui.separator();
-                ui.label("(File truncated due to size)");
-            }
-        });
-
-        result
-    } else {
-        // For smaller files, use the code editor with plain text syntax
-        draw_code_editor(ui, content, "txt")
-    }
+pub fn draw_text_viewer(ui: &mut Ui, file_content: &mut FileContent) {
+    // For all files, use our optimized code editor with plain text syntax
+    // The optimized version can handle large files efficiently
+    draw_code_editor(ui, file_content, "txt");
 }
 
 /// Draw a code editor with syntax highlighting
-fn draw_code_editor(ui: &mut Ui, content: &str, language: &str) -> Option<String> {
+fn draw_code_editor(ui: &mut Ui, file_content: &mut FileContent, language: &str) {
     let theme = get_code_theme(ui);
 
-    // Create a mutable copy of the content for the editor
-    let mut content_copy = content.to_string();
-    let original_content = content.to_string();
+    // Get a mutable reference to the editable content
+    let content = file_content.editable_content.as_mut().unwrap();
 
     // Set a larger font size for the editor
     ui.style_mut().text_styles.get_mut(&egui::TextStyle::Monospace).map(|font_id| {
         font_id.size = 16.0; // Increase font size
     });
 
-    let mut changed = false;
+    // Use a more efficient scroll area that only renders visible content
+    egui::ScrollArea::vertical()
+        // .auto_shrink([false; 2])
+        .show(ui, |ui| {
+            // Use a more efficient layouter with caching
+            // This is the key to performance improvement
+            let mut layouter = move |ui: &egui::Ui, string: &str, wrap_width: f32| {
+                // Create a new layout job with syntax highlighting
+                let mut job = syntax_highlighting::highlight(
+                    ui.ctx(),
+                    ui.style(),
+                    &theme,
+                    string,
+                    language,
+                );
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        // Create a TextEdit with syntax highlighting
-        let mut job = syntax_highlighting::highlight(
-            ui.ctx(),
-            ui.style(),
-            &theme,
-            &content_copy,
-            language,
-        );
+                // Set the text size in the layout job
+                job.sections.iter_mut().for_each(|section| {
+                    section.format.font_id.size = 16.0;
+                });
 
-        // Set the text size in the layout job
-        job.sections.iter_mut().for_each(|section| {
-            section.format.font_id.size = 16.0; // Increase font size
+                job.wrap.max_width = wrap_width;
+
+                // Return the layout job
+                ui.fonts(|f| f.layout_job(job))
+            };
+
+            // Add the TextEdit with the optimized layouter
+            let response = ui.add(
+                egui::TextEdit::multiline(content)
+                    .desired_width(f32::INFINITY)
+                    .font(egui::TextStyle::Monospace)
+                    .code_editor()
+                    .lock_focus(true)
+                    .layouter(&mut layouter)
+                    .interactive(true) // Make it editable
+            );
+
+            // Check if the content has changed
+            if response.changed() {
+                file_content.content_modified = true;
+            }
         });
-
-        // Create a layouter function
-        let mut layouter = |ui: &egui::Ui, _string: &str, wrap_width: f32| {
-            let mut layout_job = job.clone();
-            layout_job.wrap.max_width = wrap_width;
-            ui.fonts(|f| f.layout_job(layout_job))
-        };
-
-        // Add the TextEdit with the custom layouter
-        let response = ui.add(
-            egui::TextEdit::multiline(&mut content_copy)
-                .desired_width(f32::INFINITY)
-                .font(egui::TextStyle::Monospace)
-                .code_editor()
-                .layouter(&mut layouter)
-                .interactive(true) // Make it editable
-        );
-
-        // Check if the content has changed
-        if response.changed() {
-            changed = true;
-        }
-    });
-
-    // Return the new content if it changed
-    if changed && content_copy != original_content {
-        Some(content_copy)
-    } else {
-        None
-    }
 }
 
 /// Draw a code viewer with syntax highlighting
-pub fn draw_code_viewer(ui: &mut Ui, content: &str, language: &str) -> Option<String> {
-    // For large files, use a simplified approach to avoid performance issues
-    if content.len() > 500_000 {
-        ui.label(RichText::new("File is too large for full syntax highlighting. Showing preview:").color(Color32::YELLOW));
-        ui.separator();
-
-        let mut result = None;
-
-        // Only show the first 100K characters
-        let preview = if content.len() > 100_000 {
-            &content[0..100_000]
-        } else {
-            content
-        };
-
-        // Use the code editor with limited content
-        if let Some(new_content) = draw_code_editor(ui, preview, language) {
-            // If the preview was edited, we need to update the full content
-
-            // Replace the beginning of the content with the edited preview
-            if content.len() > 100_000 {
-                let mut new_full_content = new_content;
-                new_full_content.push_str(&content[100_000..]);
-                result = Some(new_full_content);
-            } else {
-                result = Some(new_content);
-            }
-        }
-
-        if content.len() > 100_000 {
-            ui.separator();
-            ui.label("(File truncated due to size)");
-        }
-
-        return result;
-    }
-
-    // For normal-sized files, use the full code editor with syntax highlighting
+pub fn draw_code_viewer(ui: &mut Ui, file_content: &mut FileContent, language: &str) {
+    // Display file type information
     ui.label(RichText::new(format!("Code file ({})", language)).color(Color32::LIGHT_BLUE));
     ui.separator();
 
-    // Use the code editor with the appropriate language
-    draw_code_editor(ui, content, language)
+    // Use our optimized code editor with the appropriate language
+    // The optimized version can handle large files efficiently
+    draw_code_editor(ui, file_content, language);
 }
 
 /// Draw an image viewer

@@ -315,19 +315,49 @@ impl FileViewerTab {
         if let Some(file_type) = &self.file_type {
             match file_type {
                 multimedia::FileType::Text => {
+                    // Create a FileContent struct that directly references our content
+                    let mut file_content = multimedia::FileContent {
+                        file_type: multimedia::FileType::Text,
+                        raw_data: self.file_binary.clone().unwrap_or_else(|| self.content.as_bytes().to_vec()),
+                        editable_content: Some(self.content.clone()),
+                        content_modified: false,
+                        image_texture: None,
+                        video_url: None,
+                    };
+
                     // Text viewer with syntax highlighting
-                    if let Some(new_content) = multimedia::draw_text_viewer(ui, &self.content) {
-                        // Content was edited
-                        self.content = new_content;
-                        self.file_modified = true;
+                    multimedia::draw_text_viewer(ui, &mut file_content);
+
+                    // Check if content was modified
+                    if file_content.content_modified {
+                        // Update our content directly from the editable_content
+                        if let Some(text) = &file_content.editable_content {
+                            self.content = text.clone();
+                            self.file_modified = true;
+                        }
                     }
                 },
                 multimedia::FileType::Code(lang) => {
+                    // Create a FileContent struct that directly references our content
+                    let mut file_content = multimedia::FileContent {
+                        file_type: multimedia::FileType::Code(lang.clone()),
+                        raw_data: self.file_binary.clone().unwrap_or_else(|| self.content.as_bytes().to_vec()),
+                        editable_content: Some(self.content.clone()),
+                        content_modified: false,
+                        image_texture: None,
+                        video_url: None,
+                    };
+
                     // Code viewer with syntax highlighting
-                    if let Some(new_content) = multimedia::draw_code_viewer(ui, &self.content, lang) {
-                        // Content was edited
-                        self.content = new_content;
-                        self.file_modified = true;
+                    multimedia::draw_code_viewer(ui, &mut file_content, lang);
+
+                    // Check if content was modified
+                    if file_content.content_modified {
+                        // Update our content directly from the editable_content
+                        if let Some(text) = &file_content.editable_content {
+                            self.content = text.clone();
+                            self.file_modified = true;
+                        }
                     }
                 },
                 multimedia::FileType::Image => {
@@ -353,11 +383,25 @@ impl FileViewerTab {
             }
         } else {
             // Fallback to text display if file type is not determined
-            // Use our text viewer with syntax highlighting
-            if let Some(new_content) = multimedia::draw_text_viewer(ui, &self.content) {
-                // Content was edited
-                self.content = new_content;
-                self.file_modified = true;
+            // Create a FileContent struct that directly references our content
+            let mut file_content = multimedia::FileContent {
+                file_type: multimedia::FileType::Text,
+                raw_data: self.file_binary.clone().unwrap_or_else(|| self.content.as_bytes().to_vec()),
+                editable_content: Some(self.content.clone()),
+                content_modified: false,
+                image_texture: None,
+                video_url: None,
+            };
+
+            multimedia::draw_text_viewer(ui, &mut file_content);
+
+            // Check if content was modified
+            if file_content.content_modified {
+                // Update our content directly from the editable_content
+                if let Some(text) = &file_content.editable_content {
+                    self.content = text.clone();
+                    self.file_modified = true;
+                }
             }
         }
     }
