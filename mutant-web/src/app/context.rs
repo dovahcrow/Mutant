@@ -289,6 +289,31 @@ impl Context {
         }
     }
 
+    // Get file binary data directly without saving to disk
+    pub async fn get_file_binary(&self, name: &str, is_public: bool) -> Result<Vec<u8>, String> {
+        info!("Getting binary file content for key {} via daemon (is_public={})", name, is_public);
+
+        // Call the client with no destination to stream the data
+        info!("Calling client.get with streaming enabled");
+        let result = self.client.get(name.to_string(), None, is_public).await;
+
+        match result {
+            Ok((task_result, Some(data))) => {
+                info!("Successfully retrieved binary file content for key {}, size: {} bytes", name, data.len());
+                info!("Task result: {:?}", task_result);
+                Ok(data)
+            },
+            Ok((task_result, None)) => {
+                error!("No data received for key {}, task result: {:?}", name, task_result);
+                Err("No data received".to_string())
+            },
+            Err(e) => {
+                error!("Failed to get file content: {}", e);
+                Err(e)
+            }
+        }
+    }
+
     pub fn get_key_cache(&self) -> Arc<RwLock<Vec<KeyDetails>>> {
         self.keys_cache.clone()
     }
