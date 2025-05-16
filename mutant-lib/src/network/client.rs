@@ -47,7 +47,7 @@ pub(crate) async fn create_client(
     let mut config = get_config(config);
 
     match network_choice {
-        NetworkChoice::Mainnet => config.evm_network = autonomi::Network::new(false).unwrap(),
+        NetworkChoice::Mainnet => config.evm_network = autonomi::Network::ArbitrumOne,
         NetworkChoice::Devnet => config.evm_network = autonomi::Network::new(true).unwrap(),
         NetworkChoice::Alphanet => {}
     };

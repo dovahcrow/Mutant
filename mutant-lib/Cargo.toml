@@ -13,8 +13,8 @@ name = "mutant_lib"
 path = "src/lib.rs"
 
 [dependencies]
-autonomi = "0.4.4" # never change this for the git.
-ant-networking = "0.3.10"
+autonomi = "0.4.6" # never change this for the git.
+ant-networking = "0.3.12"
 async-stream = "0.3.5"
 blsttc = "8.0.2"
 bytes = "1.6.0"

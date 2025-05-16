@@ -13,8 +13,11 @@ pub(crate) fn create_wallet(
         "Creating Autonomi wallet and key for network: {:?}",
         network_choice
     );
-    let network = Network::new(network_choice == NetworkChoice::Devnet)
-        .map_err(|e| NetworkError::NetworkInitError(format!("Network init failed: {}", e)))?;
+    let network = match network_choice {
+        NetworkChoice::Mainnet => Network::ArbitrumOne,
+        NetworkChoice::Devnet => Network::new(true).map_err(|e| NetworkError::NetworkInitError(format!("Network init failed: {}", e)))?,
+        NetworkChoice::Alphanet => Network::ArbitrumSepoliaTest,
+    };
 
     let hex_to_decode = private_key_hex
         .strip_prefix("0x")
