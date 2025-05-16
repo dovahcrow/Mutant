@@ -49,6 +49,7 @@ pub enum ClientRequest {
     ListTasks
 }
 
+#[derive(Debug)]
 pub enum ClientResponse {
     Get(Result<(TaskResult, Option<Vec<u8>>), String>),
     Put(Result<TaskResult, String>),
@@ -94,12 +95,34 @@ impl Client {
                             format!("get_{}_{}", name, destination)
                         };
 
+                        info!("Client worker: Processing Get request for key={}, destination={}, public={}, stream_data={}",
+                              name, destination, public, stream_data);
+
                         // Execute the get operation
+                        info!("Client worker: Calling get method");
                         let result = this.get(&name, dest_option.map(|s| s.as_str()), public).await;
 
+                        match &result {
+                            Ok((task_result, data_opt)) => {
+                                let data_size = data_opt.as_ref().map_or(0, |d| d.len());
+                                info!("Client worker: Get operation completed successfully. Task result: {:?}, Data size: {}",
+                                     task_result, data_size);
+                            },
+                            Err(e) => {
+                                error!("Client worker: Get operation failed: {}", e);
+                            }
+                        }
+
                         // Send the response
+                        info!("Client worker: Sending response for {}", response_name);
                         if let Some(tx) = responses.write().unwrap().remove(&response_name) {
-                            let _ = tx.send(ClientResponse::Get(result));
+                            if let Err(e) = tx.send(ClientResponse::Get(result)) {
+                                error!("Client worker: Failed to send response: {:?}", e);
+                            } else {
+                                info!("Client worker: Response sent successfully");
+                            }
+                        } else {
+                            error!("Client worker: No response channel found for {}", response_name);
                         }
                     }
                     ClientRequest::Put(key, data, filename, mode, public, no_verify) => {
@@ -140,14 +163,34 @@ impl Client {
     pub async fn get(&mut self, name: &str, destination: Option<&str>, public: bool) -> Result<(TaskResult, Option<Vec<u8>>), String> {
         // Determine if we're streaming data (no destination means we want the data directly)
         let stream_data = destination.is_none();
+        info!("Client.get: name={}, destination={:?}, public={}, stream_data={}",
+              name, destination, public, stream_data);
 
         match self.client.get(name, destination, public, stream_data).await {
             Ok((task_future, progress_rx, data_stream_rx)) => {
                 // Handle progress updates
+                info!("Client.get: Got task_future, progress_rx, and data_stream_rx={:?}",
+                      data_stream_rx.is_some());
                 handle_get_progress(progress_rx);
+
+                // CRITICAL FIX: First await the task_future to actually send the request
+                // This is the key change - we need to start the task before collecting data
+                info!("Client.get: FIRST awaiting task_future to start the request");
+                let task_id = match task_future.await {
+                    Ok(result) => {
+                        info!("Client.get: Task completed with result: {:?}", result);
+                        result
+                    },
+                    Err(e) => {
+                        error!("Client.get: Task future error: {:?}", e);
+                        return Err(format!("{:?}", e));
+                    }
+                };
+                info!("Client.get: Request has been sent and task completed with ID: {:?}", task_id);
 
                 // If we're streaming data, collect it
                 let collected_data = if let Some(mut data_rx) = data_stream_rx {
+                    info!("Client.get: Setting up data streaming collection");
                     // Create a vector to collect all data chunks
                     let mut all_data = Vec::new();
 
@@ -155,39 +198,53 @@ impl Client {
                     let (tx, rx) = oneshot::channel();
 
                     spawn_local(async move {
+                        info!("Client.get: Started data collection task");
+                        let mut chunks_received = 0;
+                        let mut total_bytes = 0;
+
                         while let Some(data_result) = data_rx.recv().await {
+                            chunks_received += 1;
                             match data_result {
                                 Ok(chunk) => {
-                                    info!("Received data chunk: {} bytes", chunk.len());
+                                    total_bytes += chunk.len();
+                                    info!("Received data chunk #{}: {} bytes (total so far: {} bytes)",
+                                          chunks_received, chunk.len(), total_bytes);
                                     all_data.extend(chunk);
                                 }
                                 Err(e) => {
-                                    error!("Error receiving data chunk: {:?}", e);
+                                    error!("Error receiving data chunk #{}: {:?}", chunks_received, e);
                                     break;
                                 }
                             }
                         }
 
+                        info!("Client.get: Finished collecting data: {} chunks, {} total bytes",
+                              chunks_received, total_bytes);
+
                         // Send the collected data
-                        let _ = tx.send(all_data);
+                        if let Err(_) = tx.send(all_data) {
+                            error!("Failed to send collected data through channel");
+                        }
                     });
 
                     // Wait for all data to be collected
+                    info!("Client.get: Waiting for data collection to complete");
                     match rx.await {
-                        Ok(data) => Some(data),
+                        Ok(data) => {
+                            info!("Client.get: Successfully collected all data: {} bytes", data.len());
+                            Some(data)
+                        },
                         Err(_) => {
                             error!("Failed to collect data chunks");
                             None
                         }
                     }
                 } else {
+                    info!("Client.get: No data streaming requested");
                     None
                 };
 
-                // Wait for the task to complete
-                let task_result = task_future.await.map_err(|e| format!("{:?}", e))?;
-
-                Ok((task_result, collected_data))
+                Ok((task_id, collected_data))
             }
             Err(e) => {
                 error!("Failed to start get task: {:?}", e);
@@ -358,6 +415,8 @@ impl ClientSender {
             Some(dest) => format!("get_{}_{}", name, dest),
             None => format!("get_{}_stream", name),
         };
+        info!("ClientSender.get: name={}, destination={:?}, public={}, response_name={}",
+              name, destination, public, response_name);
 
         if self.responses.read().unwrap().contains_key(&response_name) {
             error!("Get request already pending for {}", response_name);
@@ -365,18 +424,39 @@ impl ClientSender {
         }
 
         let (tx, rx) = oneshot::channel();
-        self.responses.write().unwrap().insert(response_name, tx);
+        self.responses.write().unwrap().insert(response_name.clone(), tx);
+        info!("ClientSender.get: Created response channel for {}", response_name);
 
         // Send the request with the destination (which may be None)
-        let _ = self.tx.unbounded_send(ClientRequest::Get(name, destination.unwrap_or_default(), public));
+        info!("ClientSender.get: Sending request to client worker");
+        let dest = destination.unwrap_or_default();
+        if let Err(e) = self.tx.unbounded_send(ClientRequest::Get(name.clone(), dest, public)) {
+            error!("ClientSender.get: Failed to send request: {:?}", e);
+            return Err(format!("Failed to send request: {:?}", e));
+        }
+        info!("ClientSender.get: Request sent, waiting for response");
 
         rx.await.map(|result| {
+            info!("ClientSender.get: Received response for {}", response_name);
             match result {
-                ClientResponse::Get(Ok(result)) => Ok(result),
-                ClientResponse::Get(Err(e)) => Err(e),
-                _ => Err("Unexpected response".to_string()),
+                ClientResponse::Get(Ok(result)) => {
+                    let data_size = result.1.as_ref().map_or(0, |d| d.len());
+                    info!("ClientSender.get: Success response with data size: {}", data_size);
+                    Ok(result)
+                },
+                ClientResponse::Get(Err(e)) => {
+                    error!("ClientSender.get: Error response: {}", e);
+                    Err(e)
+                },
+                _ => {
+                    error!("ClientSender.get: Unexpected response type");
+                    Err("Unexpected response".to_string())
+                },
             }
-        }).map_err(|e| format!("{:?}", e))?
+        }).map_err(|e| {
+            error!("ClientSender.get: Channel error: {:?}", e);
+            format!("{:?}", e)
+        })?
     }
 
     pub async fn put(
@@ -465,17 +545,44 @@ impl ClientSender {
 
 fn handle_get_progress(mut progress_rx: ProgressReceiver) {
     spawn_local(async move {
+        info!("Started get progress handler");
+        let mut progress_count = 0;
+
         while let Some(progress) = progress_rx.recv().await {
+            progress_count += 1;
             match progress {
                 Ok(progress) => {
-                    log::info!("Progress: {:?}", progress);
+                    match &progress {
+                        mutant_protocol::TaskProgress::Get(event) => {
+                            match event {
+                                mutant_protocol::GetEvent::Starting { total_chunks } => {
+                                    info!("Get progress #{}: Starting with {} total chunks", progress_count, total_chunks);
+                                },
+                                mutant_protocol::GetEvent::PadFetched => {
+                                    info!("Get progress #{}: Pad fetched", progress_count);
+                                },
+                                mutant_protocol::GetEvent::PadData { chunk_index, data } => {
+                                    info!("Get progress #{}: Received data for chunk {} ({} bytes)",
+                                          progress_count, chunk_index, data.len());
+                                },
+                                mutant_protocol::GetEvent::Complete => {
+                                    info!("Get progress #{}: Operation complete", progress_count);
+                                },
+                            }
+                        },
+                        _ => {
+                            info!("Get progress #{}: Unexpected progress type: {:?}", progress_count, progress);
+                        }
+                    }
                 }
                 Err(e) => {
-                    error!("Progress error: {:?}", e);
+                    error!("Get progress #{}: Error: {:?}", progress_count, e);
                     break;
                 }
             }
         }
+
+        info!("Get progress handler finished after {} progress updates", progress_count);
     });
 }
 

@@ -109,46 +109,92 @@ impl MutantClient {
 
     /// Establishes a WebSocket connection to the Mutant Daemon.
     pub async fn connect(&mut self, addr: &str) -> Result<(), ClientError> {
+        info!("CLIENT: Attempting to connect to WebSocket at {}", addr);
+
         if self.sender.is_some() {
-            warn!("Already connected or connecting.");
+            warn!("CLIENT: Already connected or connecting.");
             return Ok(());
         }
 
-        let url = Url::parse(addr).map_err(|e| ClientError::UrlParseError(e))?;
+        // Parse the URL
+        let url = match Url::parse(addr) {
+            Ok(url) => {
+                info!("CLIENT: Successfully parsed URL: {}", url);
+                url
+            },
+            Err(e) => {
+                error!("CLIENT: Failed to parse URL '{}': {:?}", addr, e);
+                return Err(ClientError::UrlParseError(e));
+            }
+        };
 
+        info!("CLIENT: Setting connection state to Connecting");
         *self.state.lock().unwrap() = ConnectionState::Connecting;
 
         // Connect using nash-ws
-        let (sender, receiver) = nash_ws::WebSocket::new(url.as_str())
-            .await
-            .map_err(|e| ClientError::WebSocketError(format!("{:?}", e)))?;
+        info!("CLIENT: Attempting to create WebSocket connection to {}", url);
+        let connection_result = nash_ws::WebSocket::new(url.as_str()).await;
 
-        self.sender = Some(sender);
-        self.receiver = Some(receiver);
+        match connection_result {
+            Ok((sender, receiver)) => {
+                info!("CLIENT: Successfully established WebSocket connection");
+                self.sender = Some(sender);
+                self.receiver = Some(receiver);
 
-        *self.state.lock().unwrap() = ConnectionState::Connected;
+                info!("CLIENT: Setting connection state to Connected");
+                *self.state.lock().unwrap() = ConnectionState::Connected;
 
-        let mut client_clone = self.partial_take_receiver();
+                info!("CLIENT: Creating response handling task");
+                let mut client_clone = self.partial_take_receiver();
 
-        #[cfg(target_arch = "wasm32")]
-        spawn_local(async move {
-            while let Some(response) = client_clone.next_response().await {
-                if let Err(e) = response {
-                    error!("Error processing response: {:?}", e);
+                #[cfg(target_arch = "wasm32")]
+                {
+                    info!("CLIENT: Spawning WASM response handler");
+                    spawn_local(async move {
+                        info!("CLIENT: WASM response handler started");
+                        while let Some(response) = client_clone.next_response().await {
+                            match response {
+                                Ok(resp) => {
+                                    info!("CLIENT: Received response: {:?}", resp);
+                                },
+                                Err(e) => {
+                                    error!("CLIENT: Error processing response: {:?}", e);
+                                }
+                            }
+                        }
+                        info!("CLIENT: WASM response handler exited");
+                    });
                 }
-            }
-        });
 
-        #[cfg(not(target_arch = "wasm32"))]
-        tokio::spawn(async move {
-            while let Some(response) = client_clone.next_response().await {
-                if let Err(e) = response {
-                    error!("Error processing response: {:?}", e);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    info!("CLIENT: Spawning native response handler");
+                    tokio::spawn(async move {
+                        info!("CLIENT: Native response handler started");
+                        while let Some(response) = client_clone.next_response().await {
+                            match response {
+                                Ok(resp) => {
+                                    info!("CLIENT: Received response: {:?}", resp);
+                                },
+                                Err(e) => {
+                                    error!("CLIENT: Error processing response: {:?}", e);
+                                }
+                            }
+                        }
+                        info!("CLIENT: Native response handler exited");
+                    });
                 }
-            }
-        });
 
-        Ok(())
+                info!("CLIENT: Connection setup complete");
+                Ok(())
+            },
+            Err(e) => {
+                let error_msg = format!("{:?}", e);
+                error!("CLIENT: Failed to establish WebSocket connection: {}", error_msg);
+                *self.state.lock().unwrap() = ConnectionState::Disconnected;
+                Err(ClientError::WebSocketError(error_msg))
+            }
+        }
     }
 
     // --- Public API Methods ---
@@ -231,33 +277,56 @@ impl MutantClient {
         ),
         ClientError,
     > {
+        info!("CLIENT: get() called with user_key={}, destination_path={:?}, public={}, stream_data={}",
+              user_key, destination_path, public, stream_data);
+
+        // Check connection state
+        let connection_state = self.state.lock().unwrap().clone();
+        info!("CLIENT: Current connection state: {:?}", connection_state);
+
+        if connection_state != ConnectionState::Connected {
+            error!("CLIENT: Cannot send get request - not connected (state: {:?})", connection_state);
+            return Err(ClientError::NotConnected);
+        }
+
         // Create the request
         let key = PendingRequestKey::TaskCreation;
+        info!("CLIENT: Creating Get request");
         let req = Request::Get(mutant_protocol::GetRequest {
             user_key: user_key.to_string(),
             destination_path: destination_path.map(|s| s.to_string()),
             public,
             stream_data,
         });
+        info!("CLIENT: Created Get request: {:?}", req);
 
-        if self.pending_requests.lock().unwrap().contains_key(&key) {
+        // Check if there's already a pending request
+        let pending_key_exists = self.pending_requests.lock().unwrap().contains_key(&key);
+        if pending_key_exists {
+            error!("CLIENT: Another put/get request is already pending");
             return Err(ClientError::InternalError(
                 "Another put/get request is already pending".to_string(),
             ));
         }
 
+        info!("CLIENT: Creating channels for get request");
         let (completion_tx, completion_rx) = oneshot::channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
         // Create data stream channel if streaming is enabled
         let (data_stream_tx, data_stream_rx) = if stream_data {
+            info!("CLIENT: Creating data stream channel for streaming");
             let (tx, rx) = mpsc::unbounded_channel();
             (Some(tx), Some(rx))
         } else {
+            info!("CLIENT: No data stream channel needed (not streaming)");
             (None, None)
         };
 
+        info!("CLIENT: Creating task creation channel");
         let (task_creation_tx, task_creation_rx) = oneshot::channel();
+
+        info!("CLIENT: Inserting pending request");
         self.pending_requests.lock().unwrap().insert(
             key.clone(),
             PendingSender::TaskCreation(
@@ -266,30 +335,65 @@ impl MutantClient {
                 TaskType::Get,
             ),
         );
+        info!("CLIENT: Pending request inserted");
 
+        // IMPORTANT: This future is not executed until it's awaited!
         let start_task = async move {
+            info!("CLIENT: Starting get task execution - THIS MEANS THE FUTURE IS BEING AWAITED");
+            info!("CLIENT: About to send request: {:?}", req);
+
+            // Store a copy of the connection state for logging
+            let state_copy = self.state.lock().unwrap().clone();
+            info!("CLIENT: Connection state before sending: {:?}", state_copy);
+
+            // Check if sender is available
+            let sender_available = self.sender.is_some();
+            info!("CLIENT: Sender available: {}", sender_available);
+
             match self.send_request(req).await {
                 Ok(_) => {
-                    debug!("Get request sent, waiting for TaskCreated response...");
-                    let task_id = task_creation_rx.await.map_err(|_| {
-                        ClientError::InternalError("TaskCreated channel canceled".to_string())
-                    })??;
+                    info!("CLIENT: Get request sent successfully, waiting for TaskCreated response");
+                    let task_id_result = task_creation_rx.await;
 
-                    info!("Task created with ID: {}", task_id);
+                    match task_id_result {
+                        Ok(task_id_inner_result) => {
+                            match task_id_inner_result {
+                                Ok(task_id) => {
+                                    info!("CLIENT: Task created with ID: {}", task_id);
 
-                    completion_rx.await.map_err(|_| {
-                        error!("Completion channel canceled");
-                        ClientError::InternalError("Completion channel canceled".to_string())
-                    })?
-                }
+                                    info!("CLIENT: Waiting for task completion");
+                                    match completion_rx.await {
+                                        Ok(result) => {
+                                            info!("CLIENT: Task completed with result: {:?}", result);
+                                            result
+                                        },
+                                        Err(e) => {
+                                            error!("CLIENT: Completion channel canceled: {:?}", e);
+                                            Err(ClientError::InternalError("Completion channel canceled".to_string()))
+                                        }
+                                    }
+                                },
+                                Err(e) => {
+                                    error!("CLIENT: Failed to create task: {:?}", e);
+                                    Err(e)
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            error!("CLIENT: TaskCreated channel canceled: {:?}", e);
+                            Err(ClientError::InternalError("TaskCreated channel canceled".to_string()))
+                        }
+                    }
+                },
                 Err(e) => {
-                    error!("Failed to send Get request: {:?}", e);
+                    error!("CLIENT: Failed to send Get request: {:?}", e);
                     self.pending_requests.lock().unwrap().remove(&key);
                     Err(e)
                 }
             }
         };
 
+        info!("CLIENT: Returning get task future, progress_rx, and data_stream_rx");
         Ok((start_task, progress_rx, data_stream_rx))
     }
 

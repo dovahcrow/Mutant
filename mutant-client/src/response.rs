@@ -1,4 +1,4 @@
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 use mutant_protocol::{
     ErrorResponse, ExportResponse, ImportResponse, ListKeysResponse, Response,
     RmSuccessResponse, Task, TaskCreatedResponse, TaskListResponse, TaskProgress,
@@ -349,54 +349,70 @@ impl MutantClient {
     }
 
     pub async fn next_response(&mut self) -> Option<Result<Response, ClientError>> {
+        info!("CLIENT: Waiting for next WebSocket response");
+
         if let Some(receiver) = &mut self.receiver {
+            info!("CLIENT: WebSocket receiver is available");
+
             // Use a loop to handle non-text messages without recursion
             loop {
                 // Use the async next() method from nash-ws to wait for the next message
+                info!("CLIENT: Awaiting next WebSocket message");
                 match receiver.next().await {
                     Some(Ok(message)) => {
+                        info!("CLIENT: Received WebSocket message");
+
                         // Process the message
                         match message {
                             nash_ws::Message::Text(text) => {
+                                info!("CLIENT: Received text message: {}", text);
+
                                 match serde_json::from_str::<Response>(&text) {
                                     Ok(response) => {
+                                        info!("CLIENT: Successfully deserialized response: {:?}", response);
+
+                                        info!("CLIENT: Processing response");
                                         Self::process_response(
                                             response.clone(),
                                             &self.tasks,
                                             &self.task_channels,
                                             &self.pending_requests,
                                         );
+
+                                        info!("CLIENT: Response processed, returning");
                                         return Some(Ok(response));
                                     }
                                     Err(e) => {
-                                        error!("Failed to deserialize response: {}", e);
+                                        error!("CLIENT: Failed to deserialize response: {}", e);
+                                        error!("CLIENT: Raw response text: {}", text);
                                         return Some(Err(ClientError::DeserializationError(e)));
                                     }
                                 }
                             }
-                            nash_ws::Message::Binary(_) => {
-                                debug!("Received binary WebSocket message, expected text");
+                            nash_ws::Message::Binary(data) => {
+                                info!("CLIENT: Received binary WebSocket message of {} bytes, expected text", data.len());
                                 // Continue the loop to wait for the next message
                                 continue;
                             }
                             _ => {
-                                debug!("Received unexpected WebSocket message type");
+                                info!("CLIENT: Received unexpected WebSocket message type");
                                 // Continue the loop to wait for the next message
                                 continue;
                             }
                         }
                     }
                     Some(Err(e)) => {
-                        error!("WebSocket error: {:?}", e);
+                        error!("CLIENT: WebSocket error: {:?}", e);
                         return Some(Err(ClientError::WebSocketError(format!("{:?}", e))));
                     }
                     None => {
-                        debug!("WebSocket connection closed");
+                        info!("CLIENT: WebSocket connection closed");
                         return None;
                     }
                 }
             }
         } else {
+            error!("CLIENT: WebSocket receiver is None (not connected)");
             None
         }
     }

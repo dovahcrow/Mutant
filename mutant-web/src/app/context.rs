@@ -254,26 +254,32 @@ impl Context {
 
     // Get file content directly without saving to disk
     pub async fn get_file_content(&self, name: &str, is_public: bool) -> Result<String, String> {
-        info!("Getting file content for key {} via daemon", name);
+        info!("Getting file content for key {} via daemon (is_public={})", name, is_public);
 
         // Call the client with no destination to stream the data
+        info!("Calling client.get with streaming enabled");
         let result = self.client.get(name.to_string(), None, is_public).await;
 
         match result {
-            Ok((_, Some(data))) => {
+            Ok((task_result, Some(data))) => {
                 info!("Successfully retrieved file content for key {}, size: {} bytes", name, data.len());
+                info!("Task result: {:?}", task_result);
 
                 // Try to convert the data to a string
                 match String::from_utf8(data) {
-                    Ok(content) => Ok(content),
+                    Ok(content) => {
+                        info!("Successfully converted data to UTF-8 string, length: {}", content.len());
+                        Ok(content)
+                    },
                     Err(_) => {
                         // If it's not valid UTF-8, return a binary data message
+                        error!("Data is not valid UTF-8, cannot display as text");
                         Err("File contains binary data that cannot be displayed as text".to_string())
                     }
                 }
             },
-            Ok((_, None)) => {
-                error!("No data received for key {}", name);
+            Ok((task_result, None)) => {
+                error!("No data received for key {}, task result: {:?}", name, task_result);
                 Err("No data received".to_string())
             },
             Err(e) => {

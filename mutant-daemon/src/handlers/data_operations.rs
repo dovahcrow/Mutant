@@ -263,7 +263,11 @@ pub(crate) async fn handle_get(
     let destination_path = req.destination_path.clone(); // Keep path for logging and writing
     let stream_data = req.stream_data; // Whether to stream data back to client
 
+    log::info!("DAEMON: Received GET request: key={}, destination_path={:?}, public={}, stream_data={}, original_request={}",
+               user_key, destination_path, req.public, stream_data, original_request_str);
+
     // Try to register the key for this task
+    log::info!("DAEMON: Attempting to register key '{}' for task {}", user_key, task_id);
     try_register_key(
         &active_keys,
         &user_key,
@@ -273,6 +277,7 @@ pub(crate) async fn handle_get(
         original_request_str,
     ).await?;
 
+    log::info!("DAEMON: Creating GET task: id={}, key={}", task_id, user_key);
     let task = Task {
         id: task_id,
         task_type: TaskType::Get,
@@ -282,9 +287,13 @@ pub(crate) async fn handle_get(
         key: Some(user_key.clone()),
     };
 
-    update_tx
-        .send(Response::TaskCreated(TaskCreatedResponse { task_id }))
-        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+    log::info!("DAEMON: Sending TaskCreated response for task {}", task_id);
+    if let Err(e) = update_tx.send(Response::TaskCreated(TaskCreatedResponse { task_id })) {
+        let err_msg = format!("Update channel send error: {}", e);
+        log::error!("DAEMON: Failed to send TaskCreated response: {}", err_msg);
+        return Err(DaemonError::Internal(err_msg));
+    }
+    log::info!("DAEMON: TaskCreated response sent successfully for task {}", task_id);
 
     // Clone Arc handles *before* moving them into the async block
     let tasks_clone = tasks.clone();
@@ -327,9 +336,27 @@ pub(crate) async fn handle_get(
             let total_chunks = total_chunks_clone.clone();
 
             Box::pin(async move {
+                // Log the event type
+                match &event {
+                    GetEvent::Starting { total_chunks } => {
+                        log::info!("DAEMON CALLBACK: GET task {} - Starting event with {} total chunks", task_id, total_chunks);
+                    },
+                    GetEvent::PadFetched => {
+                        log::debug!("DAEMON CALLBACK: GET task {} - PadFetched event", task_id);
+                    },
+                    GetEvent::PadData { chunk_index, data } => {
+                        log::info!("DAEMON CALLBACK: GET task {} - PadData event for chunk {} with {} bytes",
+                                  task_id, chunk_index, data.len());
+                    },
+                    GetEvent::Complete => {
+                        log::info!("DAEMON CALLBACK: GET task {} - Complete event", task_id);
+                    },
+                }
+
                 // If this is a Starting event, store the total chunks
                 if let GetEvent::Starting { total_chunks: chunks } = &event {
                     total_chunks.store(*chunks, std::sync::atomic::Ordering::SeqCst);
+                    log::info!("DAEMON CALLBACK: GET task {} - Stored total chunks: {}", task_id, chunks);
                 }
 
                 // Handle streaming data if enabled
@@ -339,18 +366,27 @@ pub(crate) async fn handle_get(
                         let total = total_chunks.load(std::sync::atomic::Ordering::SeqCst);
                         let is_last = *chunk_index == total - 1;
 
-                        let _ = tx.send(Response::GetData(GetDataResponse {
+                        log::info!("DAEMON CALLBACK: GET task {} - Sending GetData response for chunk {}/{} (is_last={})",
+                                  task_id, chunk_index + 1, total, is_last);
+
+                        if let Err(e) = tx.send(Response::GetData(GetDataResponse {
                             task_id,
                             chunk_index: *chunk_index,
                             total_chunks: total,
                             data: data.clone(),
                             is_last,
-                        }));
+                        })) {
+                            log::error!("DAEMON CALLBACK: GET task {} - Failed to send GetData response: {}", task_id, e);
+                        } else {
+                            log::info!("DAEMON CALLBACK: GET task {} - Successfully sent GetData response for chunk {}",
+                                      task_id, chunk_index);
+                        }
                     }
                 }
 
                 // Always send the regular progress update
                 let progress = TaskProgress::Get(event);
+                log::info!("DAEMON CALLBACK: GET task {} - Preparing to send TaskUpdate", task_id);
 
                 // Update task progress
                 let mut tasks_guard = tasks.write().await;
@@ -359,44 +395,71 @@ pub(crate) async fn handle_get(
                     if entry.task.status == TaskStatus::InProgress {
                         entry.task.progress = Some(progress.clone());
                         // Send update via channel
-                        let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
+                        log::info!("DAEMON CALLBACK: GET task {} - Sending TaskUpdate response", task_id);
+                        if let Err(e) = tx.send(Response::TaskUpdate(TaskUpdateResponse {
                             task_id,
                             status: TaskStatus::InProgress,
                             progress: Some(progress),
-                        }));
+                        })) {
+                            log::error!("DAEMON CALLBACK: GET task {} - Failed to send TaskUpdate: {}", task_id, e);
+                        } else {
+                            log::info!("DAEMON CALLBACK: GET task {} - Successfully sent TaskUpdate", task_id);
+                        }
                     } else {
-                        log::warn!("Received GET progress update for task not InProgress (status: {:?}). Ignoring. task_id={}", entry.task.status, task_id);
+                        log::warn!("DAEMON CALLBACK: Received GET progress update for task not InProgress (status: {:?}). Ignoring. task_id={}", entry.task.status, task_id);
                         return Ok(false); // Indicate to stop sending updates if task is no longer InProgress
                     }
+                } else {
+                    log::warn!("DAEMON CALLBACK: GET task {} - Task not found in tasks map", task_id);
                 }
                 drop(tasks_guard);
                 Ok(true)
             })
         });
 
+        log::info!("DAEMON: GET task {} - Preparing to execute get operation for key '{}', public={}, stream_data={}",
+                 task_id, user_key, req.public, stream_data);
+
         // Check if the key exists first for private keys
         let get_result = if req.public {
+            log::info!("DAEMON: GET task {} - Executing public get operation", task_id);
             // TODO: Fix public key handling if necessary, ScratchpadAddress requires valid hex
             match ScratchpadAddress::from_hex(&user_key) {
-                Ok(address) => mutant.get_public(&address, Some(callback), stream_data).await,
+                Ok(address) => {
+                    log::info!("DAEMON: GET task {} - Valid public address format, calling get_public", task_id);
+                    let result = mutant.get_public(&address, Some(callback), stream_data).await;
+                    match &result {
+                        Ok(_) => log::info!("DAEMON: GET task {} - get_public operation succeeded", task_id),
+                        Err(e) => log::error!("DAEMON: GET task {} - get_public operation failed: {}", task_id, e),
+                    }
+                    result
+                },
                 Err(hex_err) => {
                     // Wrap the underlying lib error in DaemonError::LibError
-                    let lib_err = mutant_lib::error::Error::Internal(format!(
-                        "Invalid public key hex format for '{}': {}",
-                        user_key, hex_err
-                    ));
+                    let error_msg = format!("Invalid public key hex format for '{}': {}", user_key, hex_err);
+                    log::error!("DAEMON: GET task {} - {}", task_id, error_msg);
+                    let lib_err = mutant_lib::error::Error::Internal(error_msg);
                     Err(lib_err)
                 }
             }
         } else {
+            log::info!("DAEMON: GET task {} - Executing private get operation", task_id);
             // Check if the key exists first for better error messages
-            if !mutant.contains_key(&user_key).await {
-                Err(mutant_lib::error::Error::Internal(format!(
-                    "Key '{}' not found",
-                    user_key
-                )))
+            let key_exists = mutant.contains_key(&user_key).await;
+            log::info!("DAEMON: GET task {} - Key '{}' exists: {}", task_id, user_key, key_exists);
+
+            if !key_exists {
+                let error_msg = format!("Key '{}' not found", user_key);
+                log::error!("DAEMON: GET task {} - {}", task_id, error_msg);
+                Err(mutant_lib::error::Error::Internal(error_msg))
             } else {
-                mutant.get(&user_key, Some(callback), stream_data).await // Pass callback and stream_data
+                log::info!("DAEMON: GET task {} - Calling get with callback and stream_data={}", task_id, stream_data);
+                let result = mutant.get(&user_key, Some(callback), stream_data).await;
+                match &result {
+                    Ok(data) => log::info!("DAEMON: GET task {} - get operation succeeded, data size: {}", task_id, data.len()),
+                    Err(e) => log::error!("DAEMON: GET task {} - get operation failed: {}", task_id, e),
+                }
+                result
             }
         };
 
@@ -491,17 +554,24 @@ pub(crate) async fn handle_get(
             }
         };
         if let Some(response) = final_response {
-            if update_tx.send(response).is_err() {
-                log::debug!("Client disconnected before final GET result sent: task_id={}", task_id);
+            log::info!("DAEMON: GET task {} - Sending final TaskResult response", task_id);
+            if let Err(e) = update_tx.send(response) {
+                log::error!("DAEMON: GET task {} - Failed to send final result: {}", task_id, e);
+            } else {
+                log::info!("DAEMON: GET task {} - Successfully sent final result", task_id);
             }
+        } else {
+            log::warn!("DAEMON: GET task {} - No final response to send", task_id);
         }
 
         // Release the key when the operation completes
+        log::info!("DAEMON: GET task {} - Releasing key '{}'", task_id, user_key);
         release_key(&active_keys, &user_key).await;
-        log::debug!("Released key '{}' after GET operation", user_key);
+        log::info!("DAEMON: GET task {} - Released key '{}' after GET operation", task_id, user_key);
     });
 
     // Get the abort handle and create the TaskEntry
+    log::info!("DAEMON: GET request - Creating TaskEntry for task {}", task_id);
     let abort_handle = task_handle.abort_handle();
     let task_entry = TaskEntry {
         task, // The task struct created earlier
@@ -509,10 +579,13 @@ pub(crate) async fn handle_get(
     };
 
     // Insert the TaskEntry into the map *after* spawning
+    log::info!("DAEMON: GET request - Inserting TaskEntry into tasks map for task {}", task_id);
     {
         tasks.write().await.insert(task_id, task_entry);
     }
+    log::info!("DAEMON: GET request - Successfully inserted TaskEntry for task {}", task_id);
 
+    log::info!("DAEMON: GET request - Completed handling for key '{}', task {}", user_key, task_id);
     Ok(())
 }
 
