@@ -218,20 +218,38 @@ pub struct FileViewerTab {
     /// Whether the file content has been modified
     #[serde(skip)]
     pub file_modified: bool,
+    /// Processed file content for multimedia components
+    #[serde(skip)]
+    pub file_content: Option<multimedia::FileContent>,
 }
 
 impl FileViewerTab {
     /// Create a new file viewer tab
     pub fn new(file: KeyDetails) -> Self {
+        // Initial content while loading
+        let initial_content = "Loading file content...".to_string();
+
+        // Create the FileContent immediately with default values
+        // This will be updated when the actual content is loaded
+        let file_content = multimedia::FileContent {
+            file_type: multimedia::FileType::Text, // Default to text
+            raw_data: initial_content.as_bytes().to_vec(),
+            editable_content: Some(initial_content.clone()),
+            content_modified: false,
+            image_texture: None,
+            video_url: None,
+        };
+
         Self {
             file,
-            content: "Loading file content...".to_string(),
+            content: initial_content,
             is_loading: true,
             file_binary: None,
             file_type: None,
             image_texture: None,
             video_url: None,
             file_modified: false,
+            file_content: Some(file_content),
         }
     }
 
@@ -311,53 +329,57 @@ impl FileViewerTab {
             return;
         }
 
+        // We should never need to initialize file_content here
+        // This is a fallback for backward compatibility only
+        if self.file_content.is_none() {
+            log::warn!("FileContent not initialized for tab: {}", self.file.key);
+        }
+
         // Display content based on file type
         if let Some(file_type) = &self.file_type {
             match file_type {
                 multimedia::FileType::Text => {
-                    // Create a FileContent struct that directly references our content
-                    let mut file_content = multimedia::FileContent {
-                        file_type: multimedia::FileType::Text,
-                        raw_data: self.file_binary.clone().unwrap_or_else(|| self.content.as_bytes().to_vec()),
-                        editable_content: Some(self.content.clone()),
-                        content_modified: false,
-                        image_texture: None,
-                        video_url: None,
-                    };
+                    // Use the stored FileContent
+                    if let Some(file_content) = &mut self.file_content {
+                        // Text viewer with syntax highlighting
+                        multimedia::draw_text_viewer(ui, file_content);
 
-                    // Text viewer with syntax highlighting
-                    multimedia::draw_text_viewer(ui, &mut file_content);
+                        // Check if content was modified
+                        if file_content.content_modified {
+                            // Update our content directly from the editable_content
+                            if let Some(text) = &file_content.editable_content {
+                                self.content = text.clone();
+                                self.file_modified = true;
+                                file_content.content_modified = false;
 
-                    // Check if content was modified
-                    if file_content.content_modified {
-                        // Update our content directly from the editable_content
-                        if let Some(text) = &file_content.editable_content {
-                            self.content = text.clone();
-                            self.file_modified = true;
+                                // Update the raw_data to match the new content
+                                // file_content.raw_data = self.content.as_bytes().to_vec();
+                            }
                         }
+                    } else {
+                        ui.label("Error: File content not available");
                     }
                 },
                 multimedia::FileType::Code(lang) => {
-                    // Create a FileContent struct that directly references our content
-                    let mut file_content = multimedia::FileContent {
-                        file_type: multimedia::FileType::Code(lang.clone()),
-                        raw_data: self.file_binary.clone().unwrap_or_else(|| self.content.as_bytes().to_vec()),
-                        editable_content: Some(self.content.clone()),
-                        content_modified: false,
-                        image_texture: None,
-                        video_url: None,
-                    };
+                    // Use the stored FileContent
+                    if let Some(file_content) = &mut self.file_content {
+                        // Code viewer with syntax highlighting
+                        multimedia::draw_code_viewer(ui, file_content, lang);
 
-                    // Code viewer with syntax highlighting
-                    multimedia::draw_code_viewer(ui, &mut file_content, lang);
+                        // Check if content was modified
+                        if file_content.content_modified {
+                            // Update our content directly from the editable_content
+                            if let Some(text) = &file_content.editable_content {
+                                self.content = text.clone();
+                                self.file_modified = true;
+                                file_content.content_modified = false;
 
-                    // Check if content was modified
-                    if file_content.content_modified {
-                        // Update our content directly from the editable_content
-                        if let Some(text) = &file_content.editable_content {
-                            self.content = text.clone();
-                            self.file_modified = true;
+                                // Update the raw_data to match the new content
+                                // file_content.raw_data = self.content.as_bytes().to_vec();
+                            }
                         }
+                    } else {
+                        ui.label("Error: File content not available");
                     }
                 },
                 multimedia::FileType::Image => {
@@ -383,25 +405,23 @@ impl FileViewerTab {
             }
         } else {
             // Fallback to text display if file type is not determined
-            // Create a FileContent struct that directly references our content
-            let mut file_content = multimedia::FileContent {
-                file_type: multimedia::FileType::Text,
-                raw_data: self.file_binary.clone().unwrap_or_else(|| self.content.as_bytes().to_vec()),
-                editable_content: Some(self.content.clone()),
-                content_modified: false,
-                image_texture: None,
-                video_url: None,
-            };
+            if let Some(file_content) = &mut self.file_content {
+                multimedia::draw_text_viewer(ui, file_content);
 
-            multimedia::draw_text_viewer(ui, &mut file_content);
+                // Check if content was modified
+                if file_content.content_modified {
+                    // Update our content directly from the editable_content
+                    if let Some(text) = &file_content.editable_content {
+                        self.content = text.clone();
+                        self.file_modified = true;
+                        file_content.content_modified = false;
 
-            // Check if content was modified
-            if file_content.content_modified {
-                // Update our content directly from the editable_content
-                if let Some(text) = &file_content.editable_content {
-                    self.content = text.clone();
-                    self.file_modified = true;
+                        // Update the raw_data to match the new content
+                        // file_content.raw_data = self.content.as_bytes().to_vec();
+                    }
                 }
+            } else {
+                ui.label("No file content available");
             }
         }
     }
@@ -437,7 +457,7 @@ impl FileViewerTab {
                 &key,
                 data,
                 &filename,
-                mutant_protocol::StorageMode::Medium,
+                mutant_protocol::StorageMode::Heaviest,
                 is_public,
                 false, // no_verify
                 None,  // progress
@@ -478,6 +498,7 @@ impl FileViewerTab {
 }
 
 /// Tab viewer for the file viewer area
+#[derive(Clone, Serialize, Deserialize)]
 struct FileViewerTabViewer {}
 
 impl egui_dock::TabViewer for FileViewerTabViewer {
@@ -527,6 +548,7 @@ pub struct FsWindow {
     /// Dock state for the file viewer area
     #[serde(skip)]
     file_viewer_dock_state: Option<DockState<FileViewerTab>>,
+    file_viewer_tab_viewer: FileViewerTabViewer,
 }
 
 impl Default for FsWindow {
@@ -536,6 +558,7 @@ impl Default for FsWindow {
             root: TreeNode::default(),
             selected_path: None,
             file_viewer_dock_state: Some(DockState::new(vec![])),
+            file_viewer_tab_viewer: FileViewerTabViewer {},
         }
     }
 }
@@ -579,7 +602,7 @@ impl Window for FsWindow {
                 egui_dock::DockArea::new(dock_state)
                     .style(style)
                     .id(egui::Id::new("file_viewer_dock_area"))
-                    .show_inside(ui, &mut FileViewerTabViewer {});
+                    .show_inside(ui, &mut self.file_viewer_tab_viewer);
             }
 
             // If no tabs are open, show a message
@@ -754,7 +777,7 @@ impl FsWindow {
                 self.add_file_tab(file_details);
 
                 // Get the tab we just added
-                if let Some(tab) = self.find_tab_mut(&key) {
+                if let Some(_tab) = self.find_tab_mut(&key) {
                     // Spawn a task to fetch the content
                     let window_id = ui.id();
                     let ctx_clone = ui.ctx().clone();
@@ -784,18 +807,34 @@ impl FsWindow {
                                         match file_type {
                                             multimedia::FileType::Text => {
                                                 // Try to convert to text
-                                                if let Ok(text) = String::from_utf8(binary_data) {
+                                                if let Ok(text) = String::from_utf8(binary_data.clone()) {
                                                     tab.content = text;
+
+                                                    // Update the existing FileContent for text viewing
+                                                    if let Some(file_content) = &mut tab.file_content {
+                                                        file_content.file_type = multimedia::FileType::Text;
+                                                        file_content.raw_data = binary_data;
+                                                        file_content.editable_content = Some(tab.content.clone());
+                                                        file_content.content_modified = false;
+                                                    }
                                                 } else {
                                                     tab.content = "Error: File contains binary data that cannot be displayed as text".to_string();
                                                 }
                                             },
                                             multimedia::FileType::Code(lang) => {
                                                 // Try to convert to text for code display
-                                                if let Ok(text) = String::from_utf8(binary_data) {
+                                                if let Ok(text) = String::from_utf8(binary_data.clone()) {
                                                     tab.content = text;
                                                     // Store the language in the file type for syntax highlighting
-                                                    tab.file_type = Some(multimedia::FileType::Code(lang));
+                                                    tab.file_type = Some(multimedia::FileType::Code(lang.clone()));
+
+                                                    // Update the existing FileContent for code viewing
+                                                    if let Some(file_content) = &mut tab.file_content {
+                                                        file_content.file_type = multimedia::FileType::Code(lang);
+                                                        file_content.raw_data = binary_data;
+                                                        file_content.editable_content = Some(tab.content.clone());
+                                                        file_content.content_modified = false;
+                                                    }
                                                 } else {
                                                     tab.content = "Error: File contains binary data that cannot be displayed as code".to_string();
                                                 }
@@ -803,27 +842,62 @@ impl FsWindow {
                                             multimedia::FileType::Image => {
                                                 // Load image
                                                 if let Some(texture) = multimedia::load_image(&ctx_clone, &binary_data) {
-                                                    tab.image_texture = Some(texture);
+                                                    tab.image_texture = Some(texture.clone());
                                                     tab.content = "Image file loaded successfully".to_string();
+
+                                                    // Update the existing FileContent for image viewing
+                                                    if let Some(file_content) = &mut tab.file_content {
+                                                        file_content.file_type = multimedia::FileType::Image;
+                                                        file_content.raw_data = binary_data;
+                                                        file_content.image_texture = Some(texture);
+                                                    }
                                                 } else {
                                                     tab.content = "Error: Failed to load image data".to_string();
+
+                                                    // Update FileContent to show error as text
+                                                    if let Some(file_content) = &mut tab.file_content {
+                                                        file_content.file_type = multimedia::FileType::Text;
+                                                        file_content.editable_content = Some(tab.content.clone());
+                                                    }
                                                 }
                                             },
                                             multimedia::FileType::Video => {
                                                 // Create a data URL for the video
                                                 let mime_type = mime_guess::from_path(&key_clone).first_or_octet_stream().essence_str().to_string();
                                                 let data_url = base64::engine::general_purpose::STANDARD.encode(&binary_data);
-                                                tab.video_url = Some(format!("data:{};base64,{}", mime_type, data_url));
+                                                let video_url = format!("data:{};base64,{}", mime_type, data_url);
+                                                tab.video_url = Some(video_url.clone());
                                                 tab.content = "Video file loaded successfully".to_string();
+
+                                                // Update the existing FileContent for video viewing
+                                                if let Some(file_content) = &mut tab.file_content {
+                                                    file_content.file_type = multimedia::FileType::Video;
+                                                    file_content.raw_data = binary_data;
+                                                    file_content.video_url = Some(video_url);
+                                                }
                                             },
                                             multimedia::FileType::Other => {
                                                 // Try to convert to text anyway for viewing
-                                                if let Ok(text) = String::from_utf8(binary_data) {
+                                                if let Ok(text) = String::from_utf8(binary_data.clone()) {
                                                     tab.content = text;
                                                     // Change to text type for better viewing
                                                     tab.file_type = Some(multimedia::FileType::Text);
+
+                                                    // Update the existing FileContent for text viewing
+                                                    if let Some(file_content) = &mut tab.file_content {
+                                                        file_content.file_type = multimedia::FileType::Text;
+                                                        file_content.raw_data = binary_data;
+                                                        file_content.editable_content = Some(tab.content.clone());
+                                                    }
                                                 } else {
                                                     tab.content = "This file type is not supported for viewing".to_string();
+
+                                                    // Update FileContent to show error as text
+                                                    if let Some(file_content) = &mut tab.file_content {
+                                                        file_content.file_type = multimedia::FileType::Other;
+                                                        file_content.raw_data = binary_data;
+                                                        file_content.editable_content = Some(tab.content.clone());
+                                                    }
                                                 }
                                             }
                                         }
@@ -839,6 +913,12 @@ impl FsWindow {
                                     if let Some(tab) = window.find_tab_mut(&key_clone) {
                                         tab.content = format!("Error loading file content: {}", e);
                                         tab.is_loading = false;
+
+                                        // Update FileContent to show error as text
+                                        if let Some(file_content) = &mut tab.file_content {
+                                            file_content.file_type = multimedia::FileType::Text;
+                                            file_content.editable_content = Some(tab.content.clone());
+                                        }
                                     }
                                 }
                             }
