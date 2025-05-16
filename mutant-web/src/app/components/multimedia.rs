@@ -1,9 +1,11 @@
 use eframe::egui::{self, Color32, Image, RichText, Sense, TextureHandle, TextureOptions, Ui};
+use egui_extras::syntax_highlighting::{self, CodeTheme};
 use image;
 use mime_guess::from_path;
 use wasm_bindgen::JsCast;
 use web_sys;
 use base64::Engine;
+use std::sync::Arc;
 
 /// Enum representing different types of files
 #[derive(Debug, Clone, PartialEq)]
@@ -156,66 +158,168 @@ fn get_language_from_extension(file_path: &str) -> Option<String> {
     }
 }
 
-/// Draw a text viewer
-pub fn draw_text_viewer(ui: &mut Ui, content: &str) {
+// Get or create a code theme
+fn get_code_theme(ui: &egui::Ui) -> Arc<CodeTheme> {
+    // Use a dark theme by default
+    static CODE_THEME: std::sync::OnceLock<Arc<CodeTheme>> = std::sync::OnceLock::new();
+
+    CODE_THEME.get_or_init(|| {
+        let theme = CodeTheme::dark(0.5); // 0.5 is the default dark mode contrast
+        let theme_clone = theme.clone();
+        theme_clone.store_in_memory(ui.ctx());
+        Arc::new(theme)
+    }).clone()
+}
+
+/// Draw a text viewer with syntax highlighting
+pub fn draw_text_viewer(ui: &mut Ui, content: &str) -> Option<String> {
     // For very large content, we'll use a more efficient approach
-    if content.len() > 100_000 {
+    if content.len() > 500_000 {
+        let mut result = None;
+
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.label("File is very large. Showing preview:");
             ui.separator();
 
-            // Only show the first 50K characters to avoid performance issues
-            let preview = if content.len() > 50_000 {
-                &content[0..50_000]
+            // Only show the first 100K characters to avoid performance issues
+            let preview = if content.len() > 100_000 {
+                &content[0..100_000]
             } else {
                 content
             };
 
-            ui.label(preview);
+            // Use the code editor but with plain text syntax
+            if let Some(new_content) = draw_code_editor(ui, preview, "txt") {
+                // If the preview was edited, we need to update the full content
 
-            if content.len() > 50_000 {
+                // Replace the beginning of the content with the edited preview
+                if content.len() > 100_000 {
+                    let mut new_full_content = new_content;
+                    new_full_content.push_str(&content[100_000..]);
+                    result = Some(new_full_content);
+                } else {
+                    result = Some(new_content);
+                }
+            }
+
+            if content.len() > 100_000 {
                 ui.separator();
                 ui.label("(File truncated due to size)");
             }
         });
+
+        result
     } else {
-        // For smaller files, just use a monospace label for better performance
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.monospace(content);
+        // For smaller files, use the code editor with plain text syntax
+        draw_code_editor(ui, content, "txt")
+    }
+}
+
+/// Draw a code editor with syntax highlighting
+fn draw_code_editor(ui: &mut Ui, content: &str, language: &str) -> Option<String> {
+    let theme = get_code_theme(ui);
+
+    // Create a mutable copy of the content for the editor
+    let mut content_copy = content.to_string();
+    let original_content = content.to_string();
+
+    // Set a larger font size for the editor
+    ui.style_mut().text_styles.get_mut(&egui::TextStyle::Monospace).map(|font_id| {
+        font_id.size = 16.0; // Increase font size
+    });
+
+    let mut changed = false;
+
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        // Create a TextEdit with syntax highlighting
+        let mut job = syntax_highlighting::highlight(
+            ui.ctx(),
+            ui.style(),
+            &theme,
+            &content_copy,
+            language,
+        );
+
+        // Set the text size in the layout job
+        job.sections.iter_mut().for_each(|section| {
+            section.format.font_id.size = 16.0; // Increase font size
         });
+
+        // Create a layouter function
+        let mut layouter = |ui: &egui::Ui, _string: &str, wrap_width: f32| {
+            let mut layout_job = job.clone();
+            layout_job.wrap.max_width = wrap_width;
+            ui.fonts(|f| f.layout_job(layout_job))
+        };
+
+        // Add the TextEdit with the custom layouter
+        let response = ui.add(
+            egui::TextEdit::multiline(&mut content_copy)
+                .desired_width(f32::INFINITY)
+                .font(egui::TextStyle::Monospace)
+                .code_editor()
+                .layouter(&mut layouter)
+                .interactive(true) // Make it editable
+        );
+
+        // Check if the content has changed
+        if response.changed() {
+            changed = true;
+        }
+    });
+
+    // Return the new content if it changed
+    if changed && content_copy != original_content {
+        Some(content_copy)
+    } else {
+        None
     }
 }
 
 /// Draw a code viewer with syntax highlighting
-pub fn draw_code_viewer(ui: &mut Ui, content: &str, language: &str) {
-    // For large files, skip syntax highlighting to avoid performance issues
-    if content.len() > 50_000 {
-        ui.label(RichText::new("File is too large for syntax highlighting. Showing plain text:").color(Color32::YELLOW));
-        ui.separator();
-        draw_text_viewer(ui, content);
-        return;
-    }
-
-    // For markdown files specifically, use a simpler approach to avoid performance issues
-    if language == "markdown" || language == "md" {
-        ui.label(RichText::new("Markdown file:").color(Color32::GREEN));
+pub fn draw_code_viewer(ui: &mut Ui, content: &str, language: &str) -> Option<String> {
+    // For large files, use a simplified approach to avoid performance issues
+    if content.len() > 500_000 {
+        ui.label(RichText::new("File is too large for full syntax highlighting. Showing preview:").color(Color32::YELLOW));
         ui.separator();
 
-        // Just use a monospace label for markdown files
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.monospace(content);
-        });
-        return;
+        let mut result = None;
+
+        // Only show the first 100K characters
+        let preview = if content.len() > 100_000 {
+            &content[0..100_000]
+        } else {
+            content
+        };
+
+        // Use the code editor with limited content
+        if let Some(new_content) = draw_code_editor(ui, preview, language) {
+            // If the preview was edited, we need to update the full content
+
+            // Replace the beginning of the content with the edited preview
+            if content.len() > 100_000 {
+                let mut new_full_content = new_content;
+                new_full_content.push_str(&content[100_000..]);
+                result = Some(new_full_content);
+            } else {
+                result = Some(new_content);
+            }
+        }
+
+        if content.len() > 100_000 {
+            ui.separator();
+            ui.label("(File truncated due to size)");
+        }
+
+        return result;
     }
 
-    // For other code files, use a simplified approach without full syntax highlighting
+    // For normal-sized files, use the full code editor with syntax highlighting
     ui.label(RichText::new(format!("Code file ({})", language)).color(Color32::LIGHT_BLUE));
     ui.separator();
 
-    // Display the code with monospace font
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.monospace(content);
-    });
+    // Use the code editor with the appropriate language
+    draw_code_editor(ui, content, language)
 }
 
 /// Draw an image viewer

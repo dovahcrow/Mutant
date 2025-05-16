@@ -64,7 +64,7 @@ impl Default for PutWindow {
             file_data: Arc::new(RwLock::new(None)),
             key_name: Arc::new(RwLock::new(String::new())),
             public: Arc::new(RwLock::new(false)),
-            storage_mode: Arc::new(RwLock::new(StorageMode::Medium)),
+            storage_mode: Arc::new(RwLock::new(StorageMode::Heaviest)),
             no_verify: Arc::new(RwLock::new(false)),
             reservation_progress: Arc::new(RwLock::new(0.0)),
             upload_progress: Arc::new(RwLock::new(0.0)),

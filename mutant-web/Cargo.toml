@@ -46,9 +46,9 @@ humansize = "2.1.3"
 
 # Added for multimedia viewer
 image = { version = "0.24.9", default-features = false, features = ["png", "jpeg", "gif"] }
-syntect = { version = "5.2.0", default-features = false, features = ["default-fancy"] }
 mime_guess = "2.0.4"
 base64 = "0.21.7"
+egui_extras = { version = "0.31.0", features = ["syntect"] }
 
 [dependencies.web-sys]
 version = "0.3"

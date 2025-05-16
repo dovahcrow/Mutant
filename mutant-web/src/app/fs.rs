@@ -7,6 +7,7 @@ use mutant_protocol::KeyDetails;
 use serde::{Deserialize, Serialize};
 use base64::Engine;
 
+use super::components::multimedia;
 use super::Window;
 
 /// Helper function to format file sizes in a human-readable way
@@ -210,13 +211,16 @@ pub struct FsWindow {
     file_binary: Option<Vec<u8>>,
     /// Current file type
     #[serde(skip)]
-    file_type: Option<super::components::multimedia::FileType>,
+    file_type: Option<multimedia::FileType>,
     /// Image texture for image files
     #[serde(skip)]
     image_texture: Option<eframe::egui::TextureHandle>,
     /// Video URL for video files
     #[serde(skip)]
     video_url: Option<String>,
+    /// Whether the file content has been modified
+    #[serde(skip)]
+    file_modified: bool,
 }
 
 impl Default for FsWindow {
@@ -232,6 +236,7 @@ impl Default for FsWindow {
             file_type: None,
             image_texture: None,
             video_url: None,
+            file_modified: false,
         }
     }
 }
@@ -401,12 +406,12 @@ impl FsWindow {
                                 window.file_binary = Some(binary_data.clone());
 
                                 // Detect file type
-                                let file_type = super::components::multimedia::detect_file_type(&binary_data, &key);
+                                let file_type = multimedia::detect_file_type(&binary_data, &key);
                                 window.file_type = Some(file_type.clone());
 
                                 // Process based on file type
                                 match file_type {
-                                    super::components::multimedia::FileType::Text => {
+                                    multimedia::FileType::Text => {
                                         // Try to convert to text
                                         if let Ok(text) = String::from_utf8(binary_data) {
                                             window.file_content = text;
@@ -414,32 +419,41 @@ impl FsWindow {
                                             window.file_content = "Error: File contains binary data that cannot be displayed as text".to_string();
                                         }
                                     },
-                                    super::components::multimedia::FileType::Code(_) => {
+                                    multimedia::FileType::Code(lang) => {
                                         // Try to convert to text for code display
                                         if let Ok(text) = String::from_utf8(binary_data) {
                                             window.file_content = text;
+                                            // Store the language in the file type for syntax highlighting
+                                            window.file_type = Some(multimedia::FileType::Code(lang));
                                         } else {
                                             window.file_content = "Error: File contains binary data that cannot be displayed as code".to_string();
                                         }
                                     },
-                                    super::components::multimedia::FileType::Image => {
+                                    multimedia::FileType::Image => {
                                         // Load image
-                                        if let Some(texture) = super::components::multimedia::load_image(&ctx_clone, &binary_data) {
+                                        if let Some(texture) = multimedia::load_image(&ctx_clone, &binary_data) {
                                             window.image_texture = Some(texture);
                                             window.file_content = "Image file loaded successfully".to_string();
                                         } else {
                                             window.file_content = "Error: Failed to load image data".to_string();
                                         }
                                     },
-                                    super::components::multimedia::FileType::Video => {
+                                    multimedia::FileType::Video => {
                                         // Create a data URL for the video
                                         let mime_type = mime_guess::from_path(&key).first_or_octet_stream().essence_str().to_string();
                                         let data_url = base64::engine::general_purpose::STANDARD.encode(&binary_data);
                                         window.video_url = Some(format!("data:{};base64,{}", mime_type, data_url));
                                         window.file_content = "Video file loaded successfully".to_string();
                                     },
-                                    super::components::multimedia::FileType::Other => {
-                                        window.file_content = "This file type is not supported for viewing".to_string();
+                                    multimedia::FileType::Other => {
+                                        // Try to convert to text anyway for viewing
+                                        if let Ok(text) = String::from_utf8(binary_data) {
+                                            window.file_content = text;
+                                            // Change to text type for better viewing
+                                            window.file_type = Some(multimedia::FileType::Text);
+                                        } else {
+                                            window.file_content = "This file type is not supported for viewing".to_string();
+                                        }
                                     }
                                 }
 
@@ -460,20 +474,99 @@ impl FsWindow {
         });
     }
 
+    /// Save the modified file content
+    fn save_file(&mut self, ui: &mut egui::Ui) {
+        if let Some(file) = &self.selected_file.clone() {
+            let key = file.key.clone();
+            let is_public = file.is_public;
+            let content = self.file_content.clone();
+
+            // Start loading
+            self.is_loading = true;
+
+            // Reset the modified flag
+            self.file_modified = false;
+
+            // Spawn a task to save the file
+            let window_id = ui.id();
+            wasm_bindgen_futures::spawn_local(async move {
+                let ctx = crate::app::context::context();
+
+                // Convert the content to bytes
+                let data = content.into_bytes();
+
+                // Get the filename from the key
+                let filename = std::path::Path::new(&key)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| key.clone());
+
+                // Save the file using the context's put method with all required parameters
+                match ctx.put(
+                    &key,
+                    data,
+                    &filename,
+                    mutant_protocol::StorageMode::Medium,
+                    is_public,
+                    false, // no_verify
+                    None,  // progress
+                ).await {
+                    Ok(_) => {
+                        // Get a mutable reference to the window system
+                        let mut window_system = crate::app::window_system::window_system_mut();
+
+                        // Find our window and update it
+                        if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
+                            window.is_loading = false;
+
+                            // Refresh the key list
+                            let _ = ctx.list_keys().await;
+                            window.build_tree();
+                        }
+                    },
+                    Err(e) => {
+                        // Get a mutable reference to the window system
+                        let mut window_system = crate::app::window_system::window_system_mut();
+
+                        // Find our window and update it
+                        if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
+                            window.is_loading = false;
+                            window.file_modified = true; // Keep the modified flag since save failed
+
+                            // Show error message
+                            window.file_content = format!("Error saving file: {}", e);
+                        }
+                    }
+                }
+            });
+        }
+    }
+
     /// Draw the file viewer/editor panel
     fn draw_file_viewer(&mut self, ui: &mut egui::Ui) {
-        if let Some(file) = &self.selected_file {
+        if let Some(file) = &self.selected_file.clone() {
             // Show file details at the top
             ui.heading(&file.key);
 
+            // Store file details we need for display
+            let file_size = humanize_size(file.total_size);
+            let pad_count = file.pad_count;
+            let confirmed_pads = file.confirmed_pads;
+            let is_public = file.is_public;
+            let public_address = file.public_address.clone();
+
+            // Store current state
+            let file_type = self.file_type.clone();
+            let file_modified = self.file_modified;
+
             ui.horizontal(|ui| {
-                ui.label(format!("Size: {}", humanize_size(file.total_size)));
+                ui.label(format!("Size: {}", file_size));
                 ui.separator();
-                ui.label(format!("Pads: {}/{}", file.confirmed_pads, file.pad_count));
+                ui.label(format!("Pads: {}/{}", confirmed_pads, pad_count));
                 ui.separator();
-                if file.is_public {
+                if is_public {
                     ui.label(RichText::new("Public").color(Color32::from_rgb(0, 128, 0)));
-                    if let Some(addr) = &file.public_address {
+                    if let Some(addr) = &public_address {
                         ui.separator();
                         ui.label(format!("Address: {}", addr));
                     }
@@ -482,24 +575,35 @@ impl FsWindow {
                 }
 
                 // Show file type if available
-                if let Some(file_type) = &self.file_type {
+                if let Some(file_type) = &file_type {
                     ui.separator();
                     match file_type {
-                        super::components::multimedia::FileType::Text => {
+                        multimedia::FileType::Text => {
                             ui.label("Type: Text");
                         },
-                        super::components::multimedia::FileType::Code(lang) => {
+                        multimedia::FileType::Code(lang) => {
                             ui.label(format!("Type: Code ({})", lang));
                         },
-                        super::components::multimedia::FileType::Image => {
+                        multimedia::FileType::Image => {
                             ui.label("Type: Image");
                         },
-                        super::components::multimedia::FileType::Video => {
+                        multimedia::FileType::Video => {
                             ui.label("Type: Video");
                         },
-                        super::components::multimedia::FileType::Other => {
+                        multimedia::FileType::Other => {
                             ui.label("Type: Unknown");
                         },
+                    }
+                }
+
+                // Show modified indicator and save button if the file has been modified
+                if file_modified {
+                    ui.separator();
+                    ui.label(RichText::new("Modified").color(Color32::YELLOW));
+
+                    if ui.button("Save").clicked() {
+                        // Save the file
+                        self.save_file(ui);
                     }
                 }
             });
@@ -518,62 +622,50 @@ impl FsWindow {
             // Display content based on file type
             if let Some(file_type) = &self.file_type {
                 match file_type {
-                    super::components::multimedia::FileType::Text => {
-                        // Text viewer
-                        super::components::multimedia::draw_text_viewer(ui, &self.file_content);
+                    multimedia::FileType::Text => {
+                        // Text viewer with syntax highlighting
+                        if let Some(new_content) = multimedia::draw_text_viewer(ui, &self.file_content) {
+                            // Content was edited
+                            self.file_content = new_content;
+                            self.file_modified = true;
+                        }
                     },
-                    super::components::multimedia::FileType::Code(lang) => {
+                    multimedia::FileType::Code(lang) => {
                         // Code viewer with syntax highlighting
-                        super::components::multimedia::draw_code_viewer(ui, &self.file_content, lang);
+                        if let Some(new_content) = multimedia::draw_code_viewer(ui, &self.file_content, lang) {
+                            // Content was edited
+                            self.file_content = new_content;
+                            self.file_modified = true;
+                        }
                     },
-                    super::components::multimedia::FileType::Image => {
+                    multimedia::FileType::Image => {
                         // Image viewer
                         if let Some(texture) = &self.image_texture {
-                            super::components::multimedia::draw_image_viewer(ui, texture);
+                            multimedia::draw_image_viewer(ui, texture);
                         } else {
                             ui.label("Error: Image texture not loaded");
                         }
                     },
-                    super::components::multimedia::FileType::Video => {
+                    multimedia::FileType::Video => {
                         // Video player
                         if let Some(video_url) = &self.video_url {
-                            super::components::multimedia::draw_video_player(ui, video_url);
+                            multimedia::draw_video_player(ui, video_url);
                         } else {
                             ui.label("Error: Video URL not available");
                         }
                     },
-                    super::components::multimedia::FileType::Other => {
+                    multimedia::FileType::Other => {
                         // Unsupported file type
-                        super::components::multimedia::draw_unsupported_file(ui);
+                        multimedia::draw_unsupported_file(ui);
                     },
                 }
             } else {
                 // Fallback to text display if file type is not determined
-                // Use a more efficient approach for large files
-                if self.file_content.len() > 100_000 {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.label("File is very large. Showing preview:");
-                        ui.separator();
-
-                        // Only show the first 50K characters to avoid performance issues
-                        let preview = if self.file_content.len() > 50_000 {
-                            &self.file_content[0..50_000]
-                        } else {
-                            &self.file_content
-                        };
-
-                        ui.monospace(preview);
-
-                        if self.file_content.len() > 50_000 {
-                            ui.separator();
-                            ui.label("(File truncated due to size)");
-                        }
-                    });
-                } else {
-                    // For smaller files, use monospace text
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.monospace(&self.file_content);
-                    });
+                // Use our text viewer with syntax highlighting
+                if let Some(new_content) = multimedia::draw_text_viewer(ui, &self.file_content) {
+                    // Content was edited
+                    self.file_content = new_content;
+                    self.file_modified = true;
                 }
             }
         } else {
