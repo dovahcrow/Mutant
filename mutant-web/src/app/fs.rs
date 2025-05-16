@@ -245,10 +245,21 @@ impl FsWindow {
     }
 
     /// Build the tree from the current keys
+    /// If force_rebuild is true, the tree will be rebuilt even if it's not empty
     fn build_tree(&mut self) {
-        // Only rebuild if needed
-        if self.root.children.is_empty() {
-            let keys = self.keys.read().unwrap();
+        // Get the current key count to check if we need to rebuild
+        let keys = self.keys.read().unwrap();
+        let current_key_count = keys.len();
+
+        // Check if we need to rebuild the tree
+        // Rebuild if:
+        // 1. The tree is empty (first time or reset)
+        // 2. The number of keys has changed (new keys added or removed)
+        let needs_rebuild = self.root.children.is_empty() ||
+                           self.count_tree_files(&self.root) != current_key_count;
+
+        if needs_rebuild {
+            log::info!("Rebuilding file tree with {} keys", current_key_count);
 
             // Create a fresh root
             self.root = TreeNode::new_dir("root");
@@ -272,7 +283,26 @@ impl FsWindow {
                 // Insert into the tree
                 self.root.insert_key(&parts, key.clone(), "");
             }
+
+            log::info!("File tree rebuilt successfully");
         }
+    }
+
+    /// Count the number of file nodes in the tree (for comparison with key count)
+    fn count_tree_files(&self, node: &TreeNode) -> usize {
+        let mut count = 0;
+
+        // If this is a file node, count it
+        if !node.is_dir() {
+            count += 1;
+        }
+
+        // Count files in all children
+        for (_, child) in &node.children {
+            count += self.count_tree_files(child);
+        }
+
+        count
     }
 
     /// Draw the tree UI

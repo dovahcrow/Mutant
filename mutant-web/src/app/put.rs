@@ -219,6 +219,14 @@ impl PutWindow {
                         // Show notification
                         notifications::info("Upload complete!".to_string());
 
+                        // Refresh the keys list to update the file explorer
+                        log::info!("Refreshing keys list after upload completion");
+                        spawn_local(async {
+                            let ctx = context::context();
+                            let _ = ctx.list_keys().await;
+                            log::info!("Keys list refreshed successfully after upload completion");
+                        });
+
                         // If this is a public upload, get the key details to find the public address
                         let public = *self.public.read().unwrap();
                         if public {
@@ -407,6 +415,14 @@ impl PutWindow {
                                 op_name, op.total_pads, op.nb_reserved, op.nb_written, op.nb_confirmed);
                         }
                     }
+
+                    // Refresh the keys list to update the file explorer
+                    log::info!("Refreshing keys list after successful upload");
+                    spawn_local(async {
+                        let ctx = context::context();
+                        let _ = ctx.list_keys().await;
+                        log::info!("Keys list refreshed successfully");
+                    });
                 },
                 Err(e) => {
                     log::error!("Failed to complete upload: {}", e);
