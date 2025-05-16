@@ -2,6 +2,7 @@ use std::sync::{Arc, RwLock};
 use std::collections::BTreeMap;
 
 use eframe::egui::{self, Color32, RichText};
+use egui_dock::DockState;
 use humansize::{format_size, BINARY};
 use mutant_protocol::KeyDetails;
 use serde::{Deserialize, Serialize};
@@ -193,34 +194,295 @@ impl TreeNode {
     }
 }
 
+/// A tab in the file viewer area
+#[derive(Clone, Serialize, Deserialize)]
+pub struct FileViewerTab {
+    /// File details
+    pub file: KeyDetails,
+    /// Content of the file
+    pub content: String,
+    /// Whether we're currently loading file content
+    pub is_loading: bool,
+    /// File content as binary data for multimedia
+    #[serde(skip)]
+    pub file_binary: Option<Vec<u8>>,
+    /// Current file type
+    #[serde(skip)]
+    pub file_type: Option<multimedia::FileType>,
+    /// Image texture for image files
+    #[serde(skip)]
+    pub image_texture: Option<eframe::egui::TextureHandle>,
+    /// Video URL for video files
+    #[serde(skip)]
+    pub video_url: Option<String>,
+    /// Whether the file content has been modified
+    #[serde(skip)]
+    pub file_modified: bool,
+}
+
+impl FileViewerTab {
+    /// Create a new file viewer tab
+    pub fn new(file: KeyDetails) -> Self {
+        Self {
+            file,
+            content: "Loading file content...".to_string(),
+            is_loading: true,
+            file_binary: None,
+            file_type: None,
+            image_texture: None,
+            video_url: None,
+            file_modified: false,
+        }
+    }
+
+    /// Draw the file viewer tab
+    pub fn draw(&mut self, ui: &mut egui::Ui) {
+        // Show file details at the top
+        ui.heading(&self.file.key);
+
+        // Store file details we need for display
+        let file_size = humanize_size(self.file.total_size);
+        let pad_count = self.file.pad_count;
+        let confirmed_pads = self.file.confirmed_pads;
+        let is_public = self.file.is_public;
+        let public_address = self.file.public_address.clone();
+
+        // Store current state
+        let file_type = self.file_type.clone();
+        let file_modified = self.file_modified;
+
+        ui.horizontal(|ui| {
+            ui.label(format!("Size: {}", file_size));
+            ui.separator();
+            ui.label(format!("Pads: {}/{}", confirmed_pads, pad_count));
+            ui.separator();
+            if is_public {
+                ui.label(RichText::new("Public").color(Color32::from_rgb(0, 128, 0)));
+                if let Some(addr) = &public_address {
+                    ui.separator();
+                    ui.label(format!("Address: {}", addr));
+                }
+            } else {
+                ui.label("Private");
+            }
+
+            // Show file type if available
+            if let Some(file_type) = &file_type {
+                ui.separator();
+                match file_type {
+                    multimedia::FileType::Text => {
+                        ui.label("Type: Text");
+                    },
+                    multimedia::FileType::Code(lang) => {
+                        ui.label(format!("Type: Code ({})", lang));
+                    },
+                    multimedia::FileType::Image => {
+                        ui.label("Type: Image");
+                    },
+                    multimedia::FileType::Video => {
+                        ui.label("Type: Video");
+                    },
+                    multimedia::FileType::Other => {
+                        ui.label("Type: Unknown");
+                    },
+                }
+            }
+
+            // Show modified indicator and save button if the file has been modified
+            if file_modified {
+                ui.separator();
+                ui.label(RichText::new("Modified").color(Color32::YELLOW));
+
+                if ui.button("Save").clicked() {
+                    // Save the file
+                    self.save_file(ui);
+                }
+            }
+        });
+
+        ui.separator();
+
+        // Show loading indicator if we're loading content
+        if self.is_loading {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Loading file content...");
+            });
+            return;
+        }
+
+        // Display content based on file type
+        if let Some(file_type) = &self.file_type {
+            match file_type {
+                multimedia::FileType::Text => {
+                    // Text viewer with syntax highlighting
+                    if let Some(new_content) = multimedia::draw_text_viewer(ui, &self.content) {
+                        // Content was edited
+                        self.content = new_content;
+                        self.file_modified = true;
+                    }
+                },
+                multimedia::FileType::Code(lang) => {
+                    // Code viewer with syntax highlighting
+                    if let Some(new_content) = multimedia::draw_code_viewer(ui, &self.content, lang) {
+                        // Content was edited
+                        self.content = new_content;
+                        self.file_modified = true;
+                    }
+                },
+                multimedia::FileType::Image => {
+                    // Image viewer
+                    if let Some(texture) = &self.image_texture {
+                        multimedia::draw_image_viewer(ui, texture);
+                    } else {
+                        ui.label("Error: Image texture not loaded");
+                    }
+                },
+                multimedia::FileType::Video => {
+                    // Video player
+                    if let Some(video_url) = &self.video_url {
+                        multimedia::draw_video_player(ui, video_url);
+                    } else {
+                        ui.label("Error: Video URL not available");
+                    }
+                },
+                multimedia::FileType::Other => {
+                    // Unsupported file type
+                    multimedia::draw_unsupported_file(ui);
+                },
+            }
+        } else {
+            // Fallback to text display if file type is not determined
+            // Use our text viewer with syntax highlighting
+            if let Some(new_content) = multimedia::draw_text_viewer(ui, &self.content) {
+                // Content was edited
+                self.content = new_content;
+                self.file_modified = true;
+            }
+        }
+    }
+
+    /// Save the file content
+    fn save_file(&mut self, ui: &mut egui::Ui) {
+        let key = self.file.key.clone();
+        let is_public = self.file.is_public;
+        let content = self.content.clone();
+
+        // Start loading
+        self.is_loading = true;
+
+        // Reset the modified flag
+        self.file_modified = false;
+
+        // Spawn a task to save the file
+        let window_id = ui.id();
+        wasm_bindgen_futures::spawn_local(async move {
+            let ctx = crate::app::context::context();
+
+            // Convert the content to bytes
+            let data = content.into_bytes();
+
+            // Get the filename from the key
+            let filename = std::path::Path::new(&key)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| key.clone());
+
+            // Save the file using the context's put method with all required parameters
+            match ctx.put(
+                &key,
+                data,
+                &filename,
+                mutant_protocol::StorageMode::Medium,
+                is_public,
+                false, // no_verify
+                None,  // progress
+            ).await {
+                Ok(_) => {
+                    // Get a mutable reference to the window system
+                    let mut window_system = crate::app::window_system::window_system_mut();
+
+                    // Find our window and update it
+                    if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
+                        // Find the tab with this file and update it
+                        if let Some(tab) = window.find_tab_mut(&key) {
+                            tab.is_loading = false;
+                        }
+
+                        // Refresh the key list
+                        let _ = ctx.list_keys().await;
+                        window.build_tree();
+                    }
+                },
+                Err(e) => {
+                    // Get a mutable reference to the window system
+                    let mut window_system = crate::app::window_system::window_system_mut();
+
+                    // Find our window and update it
+                    if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
+                        // Find the tab with this file and update it
+                        if let Some(tab) = window.find_tab_mut(&key) {
+                            tab.is_loading = false;
+                            tab.file_modified = true; // Keep the modified flag since save failed
+                            tab.content = format!("Error saving file: {}", e);
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+/// Tab viewer for the file viewer area
+struct FileViewerTabViewer {}
+
+impl egui_dock::TabViewer for FileViewerTabViewer {
+    type Tab = FileViewerTab;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        // Get the file name from the path
+        let file_name = std::path::Path::new(&tab.file.key)
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_else(|| tab.file.key.clone());
+
+        // Add an icon based on the file type
+        let icon = match &tab.file_type {
+            Some(multimedia::FileType::Text) => "📄",
+            Some(multimedia::FileType::Code(_)) => "📝",
+            Some(multimedia::FileType::Image) => "🖼️",
+            Some(multimedia::FileType::Video) => "🎬",
+            Some(multimedia::FileType::Other) | None => "📄",
+        };
+
+        // Add a modified indicator if the file has been modified
+        let modified_indicator = if tab.file_modified { "* " } else { "" };
+
+        // Create a compact title that doesn't expand to fill all space
+        let title = format!("{}{}{}", modified_indicator, icon, file_name);
+        egui::RichText::new(title).into()
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        tab.draw(ui);
+    }
+
+    // Allow all tabs to be closable
+    fn closeable(&mut self, _tab: &mut Self::Tab) -> bool {
+        true
+    }
+}
+
 /// The filesystem tree window
 #[derive(Clone, Serialize, Deserialize)]
 pub struct FsWindow {
     keys: Arc<RwLock<Vec<KeyDetails>>>,
     root: TreeNode,
-    /// Currently selected file (if any)
-    selected_file: Option<KeyDetails>,
     /// Path of the selected file (for highlighting in the tree)
     selected_path: Option<String>,
-    /// Content of the selected file (placeholder for now)
-    file_content: String,
-    /// Whether we're currently loading file content
-    is_loading: bool,
-    /// File content as binary data for multimedia
+    /// Dock state for the file viewer area
     #[serde(skip)]
-    file_binary: Option<Vec<u8>>,
-    /// Current file type
-    #[serde(skip)]
-    file_type: Option<multimedia::FileType>,
-    /// Image texture for image files
-    #[serde(skip)]
-    image_texture: Option<eframe::egui::TextureHandle>,
-    /// Video URL for video files
-    #[serde(skip)]
-    video_url: Option<String>,
-    /// Whether the file content has been modified
-    #[serde(skip)]
-    file_modified: bool,
+    file_viewer_dock_state: Option<DockState<FileViewerTab>>,
 }
 
 impl Default for FsWindow {
@@ -228,15 +490,8 @@ impl Default for FsWindow {
         Self {
             keys: crate::app::context::context().get_key_cache(),
             root: TreeNode::default(),
-            selected_file: None,
             selected_path: None,
-            file_content: String::new(),
-            is_loading: false,
-            file_binary: None,
-            file_type: None,
-            image_texture: None,
-            video_url: None,
-            file_modified: false,
+            file_viewer_dock_state: Some(DockState::new(vec![])),
         }
     }
 }
@@ -259,7 +514,36 @@ impl Window for FsWindow {
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            self.draw_file_viewer(ui);
+            // Initialize the dock state if it doesn't exist
+            if self.file_viewer_dock_state.is_none() {
+                self.file_viewer_dock_state = Some(DockState::new(vec![]));
+            }
+
+            // Create a custom style for the dock area
+            let mut style = egui_dock::Style::from_egui(ui.ctx().style().as_ref());
+
+            // Configure the style to make docking more visible and user-friendly
+            style.tab_bar.fill_tab_bar = false; // Don't fill the entire tab bar
+            style.tab_bar.bg_fill = egui::Color32::from_rgb(40, 40, 40);
+            style.tab.tab_body.bg_fill = egui::Color32::from_rgb(40, 40, 40);
+            style.tab.active.bg_fill = egui::Color32::from_rgb(50, 50, 50);
+            style.tab.focused.bg_fill = egui::Color32::from_rgb(50, 50, 50);
+            style.tab_bar.hline_color = egui::Color32::from_rgb(70, 70, 70);
+
+            // Draw the dock area
+            if let Some(dock_state) = &mut self.file_viewer_dock_state {
+                egui_dock::DockArea::new(dock_state)
+                    .style(style)
+                    .id(egui::Id::new("file_viewer_dock_area"))
+                    .show_inside(ui, &mut FileViewerTabViewer {});
+            }
+
+            // If no tabs are open, show a message
+            if self.file_viewer_dock_state.as_ref().map_or(true, |ds| ds.iter_all_tabs().count() == 0) {
+                ui.centered_and_justified(|ui| {
+                    ui.heading("Select a file to view its content");
+                });
+            }
         });
     }
 }
@@ -267,6 +551,49 @@ impl Window for FsWindow {
 impl FsWindow {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    /// Find a tab by key
+    pub fn find_tab_mut(&mut self, key: &str) -> Option<&mut FileViewerTab> {
+        if let Some(dock_state) = &mut self.file_viewer_dock_state {
+            // Iterate through all tabs in the dock state
+            for (_, tab) in dock_state.iter_all_tabs_mut() {
+                if tab.file.key == key {
+                    return Some(tab);
+                }
+            }
+        }
+        None
+    }
+
+    /// Add a new tab for a file
+    fn add_file_tab(&mut self, file_details: KeyDetails) {
+        // Create a new tab
+        let tab = FileViewerTab::new(file_details.clone());
+
+        // Add the tab to the dock state
+        if let Some(dock_state) = &mut self.file_viewer_dock_state {
+            // Check if a tab for this file already exists
+            let tab_exists = dock_state.iter_all_tabs().any(|(_, t)| t.file.key == file_details.key);
+
+            if !tab_exists {
+                // Add the tab to the focused leaf or create a new surface if none exists
+                if dock_state.main_surface().is_empty() {
+                    // First tab - create a new surface
+                    dock_state.push_to_focused_leaf(tab);
+                } else {
+                    // Add to the focused leaf
+                    dock_state.main_surface_mut().push_to_focused_leaf(tab);
+                }
+            } else {
+                // Focus the existing tab - we need to find it in the tree
+                // For now, we'll just log that the tab exists
+                log::info!("Tab for file {} already exists", file_details.key);
+
+                // In the future, we could implement a way to focus the existing tab
+                // This would require tracking node indices and tab indices
+            }
+        }
     }
 
     /// Build the tree from the current keys
@@ -371,308 +698,112 @@ impl FsWindow {
 
             // Handle the clicked node outside the loop to avoid borrow issues
             if let Some(details) = clicked_details {
-                self.selected_file = Some(details.clone());
+                // Update the selected path for highlighting in the tree
                 self.selected_path = Some(details.key.clone());
 
-                // Fetch the file content
-                let key = details.key.clone();
-                let is_public = details.is_public;
+                // Create a new tab for this file
+                let file_details = details.clone();
+                let key = file_details.key.clone();
+                let is_public = file_details.is_public;
 
-                // Start loading
-                self.is_loading = true;
-                self.file_content = "Loading file content...".to_string();
+                // Add a new tab for this file
+                self.add_file_tab(file_details);
 
-                // Reset multimedia content
-                self.file_binary = None;
-                self.file_type = None;
-                self.image_texture = None;
-                self.video_url = None;
+                // Get the tab we just added
+                if let Some(tab) = self.find_tab_mut(&key) {
+                    // Spawn a task to fetch the content
+                    let window_id = ui.id();
+                    let ctx_clone = ui.ctx().clone();
+                    let key_clone = key.clone();
 
-                // Spawn a task to fetch the content
-                let window_id = ui.id();
-                let ctx_clone = ui.ctx().clone();
-                wasm_bindgen_futures::spawn_local(async move {
-                    let ctx = crate::app::context::context();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let ctx = crate::app::context::context();
 
-                    // First try to get binary data
-                    match ctx.get_file_binary(&key, is_public).await {
-                        Ok(binary_data) => {
-                            // Get a mutable reference to the window system
-                            let mut window_system = crate::app::window_system::window_system_mut();
+                        // First try to get binary data
+                        match ctx.get_file_binary(&key_clone, is_public).await {
+                            Ok(binary_data) => {
+                                // Get a mutable reference to the window system
+                                let mut window_system = crate::app::window_system::window_system_mut();
 
-                            // Find our window and update its content
-                            if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
-                                // Store binary data
-                                window.file_binary = Some(binary_data.clone());
+                                // Find our window and update its content
+                                if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
+                                    // Find the tab with this file and update it
+                                    if let Some(tab) = window.find_tab_mut(&key_clone) {
+                                        // Store binary data
+                                        tab.file_binary = Some(binary_data.clone());
 
-                                // Detect file type
-                                let file_type = multimedia::detect_file_type(&binary_data, &key);
-                                window.file_type = Some(file_type.clone());
+                                        // Detect file type
+                                        let file_type = multimedia::detect_file_type(&binary_data, &key_clone);
+                                        tab.file_type = Some(file_type.clone());
 
-                                // Process based on file type
-                                match file_type {
-                                    multimedia::FileType::Text => {
-                                        // Try to convert to text
-                                        if let Ok(text) = String::from_utf8(binary_data) {
-                                            window.file_content = text;
-                                        } else {
-                                            window.file_content = "Error: File contains binary data that cannot be displayed as text".to_string();
+                                        // Process based on file type
+                                        match file_type {
+                                            multimedia::FileType::Text => {
+                                                // Try to convert to text
+                                                if let Ok(text) = String::from_utf8(binary_data) {
+                                                    tab.content = text;
+                                                } else {
+                                                    tab.content = "Error: File contains binary data that cannot be displayed as text".to_string();
+                                                }
+                                            },
+                                            multimedia::FileType::Code(lang) => {
+                                                // Try to convert to text for code display
+                                                if let Ok(text) = String::from_utf8(binary_data) {
+                                                    tab.content = text;
+                                                    // Store the language in the file type for syntax highlighting
+                                                    tab.file_type = Some(multimedia::FileType::Code(lang));
+                                                } else {
+                                                    tab.content = "Error: File contains binary data that cannot be displayed as code".to_string();
+                                                }
+                                            },
+                                            multimedia::FileType::Image => {
+                                                // Load image
+                                                if let Some(texture) = multimedia::load_image(&ctx_clone, &binary_data) {
+                                                    tab.image_texture = Some(texture);
+                                                    tab.content = "Image file loaded successfully".to_string();
+                                                } else {
+                                                    tab.content = "Error: Failed to load image data".to_string();
+                                                }
+                                            },
+                                            multimedia::FileType::Video => {
+                                                // Create a data URL for the video
+                                                let mime_type = mime_guess::from_path(&key_clone).first_or_octet_stream().essence_str().to_string();
+                                                let data_url = base64::engine::general_purpose::STANDARD.encode(&binary_data);
+                                                tab.video_url = Some(format!("data:{};base64,{}", mime_type, data_url));
+                                                tab.content = "Video file loaded successfully".to_string();
+                                            },
+                                            multimedia::FileType::Other => {
+                                                // Try to convert to text anyway for viewing
+                                                if let Ok(text) = String::from_utf8(binary_data) {
+                                                    tab.content = text;
+                                                    // Change to text type for better viewing
+                                                    tab.file_type = Some(multimedia::FileType::Text);
+                                                } else {
+                                                    tab.content = "This file type is not supported for viewing".to_string();
+                                                }
+                                            }
                                         }
-                                    },
-                                    multimedia::FileType::Code(lang) => {
-                                        // Try to convert to text for code display
-                                        if let Ok(text) = String::from_utf8(binary_data) {
-                                            window.file_content = text;
-                                            // Store the language in the file type for syntax highlighting
-                                            window.file_type = Some(multimedia::FileType::Code(lang));
-                                        } else {
-                                            window.file_content = "Error: File contains binary data that cannot be displayed as code".to_string();
-                                        }
-                                    },
-                                    multimedia::FileType::Image => {
-                                        // Load image
-                                        if let Some(texture) = multimedia::load_image(&ctx_clone, &binary_data) {
-                                            window.image_texture = Some(texture);
-                                            window.file_content = "Image file loaded successfully".to_string();
-                                        } else {
-                                            window.file_content = "Error: Failed to load image data".to_string();
-                                        }
-                                    },
-                                    multimedia::FileType::Video => {
-                                        // Create a data URL for the video
-                                        let mime_type = mime_guess::from_path(&key).first_or_octet_stream().essence_str().to_string();
-                                        let data_url = base64::engine::general_purpose::STANDARD.encode(&binary_data);
-                                        window.video_url = Some(format!("data:{};base64,{}", mime_type, data_url));
-                                        window.file_content = "Video file loaded successfully".to_string();
-                                    },
-                                    multimedia::FileType::Other => {
-                                        // Try to convert to text anyway for viewing
-                                        if let Ok(text) = String::from_utf8(binary_data) {
-                                            window.file_content = text;
-                                            // Change to text type for better viewing
-                                            window.file_type = Some(multimedia::FileType::Text);
-                                        } else {
-                                            window.file_content = "This file type is not supported for viewing".to_string();
-                                        }
+
+                                        tab.is_loading = false;
                                     }
                                 }
-
-                                window.is_loading = false;
-                            }
-                        },
-                        Err(e) => {
-                            // Handle error
-                            let mut window_system = crate::app::window_system::window_system_mut();
-                            if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
-                                window.file_content = format!("Error loading file content: {}", e);
-                                window.is_loading = false;
+                            },
+                            Err(e) => {
+                                // Handle error
+                                let mut window_system = crate::app::window_system::window_system_mut();
+                                if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
+                                    if let Some(tab) = window.find_tab_mut(&key_clone) {
+                                        tab.content = format!("Error loading file content: {}", e);
+                                        tab.is_loading = false;
+                                    }
+                                }
                             }
                         }
-                    }
-                });
+                    });
+                }
             }
         });
     }
 
-    /// Save the modified file content
-    fn save_file(&mut self, ui: &mut egui::Ui) {
-        if let Some(file) = &self.selected_file.clone() {
-            let key = file.key.clone();
-            let is_public = file.is_public;
-            let content = self.file_content.clone();
 
-            // Start loading
-            self.is_loading = true;
-
-            // Reset the modified flag
-            self.file_modified = false;
-
-            // Spawn a task to save the file
-            let window_id = ui.id();
-            wasm_bindgen_futures::spawn_local(async move {
-                let ctx = crate::app::context::context();
-
-                // Convert the content to bytes
-                let data = content.into_bytes();
-
-                // Get the filename from the key
-                let filename = std::path::Path::new(&key)
-                    .file_name()
-                    .map(|f| f.to_string_lossy().to_string())
-                    .unwrap_or_else(|| key.clone());
-
-                // Save the file using the context's put method with all required parameters
-                match ctx.put(
-                    &key,
-                    data,
-                    &filename,
-                    mutant_protocol::StorageMode::Medium,
-                    is_public,
-                    false, // no_verify
-                    None,  // progress
-                ).await {
-                    Ok(_) => {
-                        // Get a mutable reference to the window system
-                        let mut window_system = crate::app::window_system::window_system_mut();
-
-                        // Find our window and update it
-                        if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
-                            window.is_loading = false;
-
-                            // Refresh the key list
-                            let _ = ctx.list_keys().await;
-                            window.build_tree();
-                        }
-                    },
-                    Err(e) => {
-                        // Get a mutable reference to the window system
-                        let mut window_system = crate::app::window_system::window_system_mut();
-
-                        // Find our window and update it
-                        if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
-                            window.is_loading = false;
-                            window.file_modified = true; // Keep the modified flag since save failed
-
-                            // Show error message
-                            window.file_content = format!("Error saving file: {}", e);
-                        }
-                    }
-                }
-            });
-        }
-    }
-
-    /// Draw the file viewer/editor panel
-    fn draw_file_viewer(&mut self, ui: &mut egui::Ui) {
-        if let Some(file) = &self.selected_file.clone() {
-            // Show file details at the top
-            ui.heading(&file.key);
-
-            // Store file details we need for display
-            let file_size = humanize_size(file.total_size);
-            let pad_count = file.pad_count;
-            let confirmed_pads = file.confirmed_pads;
-            let is_public = file.is_public;
-            let public_address = file.public_address.clone();
-
-            // Store current state
-            let file_type = self.file_type.clone();
-            let file_modified = self.file_modified;
-
-            ui.horizontal(|ui| {
-                ui.label(format!("Size: {}", file_size));
-                ui.separator();
-                ui.label(format!("Pads: {}/{}", confirmed_pads, pad_count));
-                ui.separator();
-                if is_public {
-                    ui.label(RichText::new("Public").color(Color32::from_rgb(0, 128, 0)));
-                    if let Some(addr) = &public_address {
-                        ui.separator();
-                        ui.label(format!("Address: {}", addr));
-                    }
-                } else {
-                    ui.label("Private");
-                }
-
-                // Show file type if available
-                if let Some(file_type) = &file_type {
-                    ui.separator();
-                    match file_type {
-                        multimedia::FileType::Text => {
-                            ui.label("Type: Text");
-                        },
-                        multimedia::FileType::Code(lang) => {
-                            ui.label(format!("Type: Code ({})", lang));
-                        },
-                        multimedia::FileType::Image => {
-                            ui.label("Type: Image");
-                        },
-                        multimedia::FileType::Video => {
-                            ui.label("Type: Video");
-                        },
-                        multimedia::FileType::Other => {
-                            ui.label("Type: Unknown");
-                        },
-                    }
-                }
-
-                // Show modified indicator and save button if the file has been modified
-                if file_modified {
-                    ui.separator();
-                    ui.label(RichText::new("Modified").color(Color32::YELLOW));
-
-                    if ui.button("Save").clicked() {
-                        // Save the file
-                        self.save_file(ui);
-                    }
-                }
-            });
-
-            ui.separator();
-
-            // Show loading indicator if we're loading content
-            if self.is_loading {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("Loading file content...");
-                });
-                return;
-            }
-
-            // Display content based on file type
-            if let Some(file_type) = &self.file_type {
-                match file_type {
-                    multimedia::FileType::Text => {
-                        // Text viewer with syntax highlighting
-                        if let Some(new_content) = multimedia::draw_text_viewer(ui, &self.file_content) {
-                            // Content was edited
-                            self.file_content = new_content;
-                            self.file_modified = true;
-                        }
-                    },
-                    multimedia::FileType::Code(lang) => {
-                        // Code viewer with syntax highlighting
-                        if let Some(new_content) = multimedia::draw_code_viewer(ui, &self.file_content, lang) {
-                            // Content was edited
-                            self.file_content = new_content;
-                            self.file_modified = true;
-                        }
-                    },
-                    multimedia::FileType::Image => {
-                        // Image viewer
-                        if let Some(texture) = &self.image_texture {
-                            multimedia::draw_image_viewer(ui, texture);
-                        } else {
-                            ui.label("Error: Image texture not loaded");
-                        }
-                    },
-                    multimedia::FileType::Video => {
-                        // Video player
-                        if let Some(video_url) = &self.video_url {
-                            multimedia::draw_video_player(ui, video_url);
-                        } else {
-                            ui.label("Error: Video URL not available");
-                        }
-                    },
-                    multimedia::FileType::Other => {
-                        // Unsupported file type
-                        multimedia::draw_unsupported_file(ui);
-                    },
-                }
-            } else {
-                // Fallback to text display if file type is not determined
-                // Use our text viewer with syntax highlighting
-                if let Some(new_content) = multimedia::draw_text_viewer(ui, &self.file_content) {
-                    // Content was edited
-                    self.file_content = new_content;
-                    self.file_modified = true;
-                }
-            }
-        } else {
-            // No file selected
-            ui.centered_and_justified(|ui| {
-                ui.heading("Select a file to view its content");
-            });
-        }
-    }
 }

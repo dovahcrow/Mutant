@@ -132,30 +132,30 @@ pub fn detect_file_type(data: &[u8], file_path: &str) -> FileType {
 fn get_language_from_extension(file_path: &str) -> Option<String> {
     let extension = file_path.split('.').last()?;
 
-    match extension.to_lowercase().as_str() {
-        "rs" => Some("rust".to_string()),
-        "js" => Some("javascript".to_string()),
-        "ts" => Some("typescript".to_string()),
-        "py" => Some("python".to_string()),
-        "java" => Some("java".to_string()),
-        "c" => Some("c".to_string()),
-        "cpp" | "cc" | "cxx" => Some("cpp".to_string()),
-        "h" | "hpp" => Some("cpp".to_string()),
-        "cs" => Some("csharp".to_string()),
-        "go" => Some("go".to_string()),
-        "rb" => Some("ruby".to_string()),
-        "php" => Some("php".to_string()),
-        "html" => Some("html".to_string()),
-        "css" => Some("css".to_string()),
-        "json" => Some("json".to_string()),
-        "xml" => Some("xml".to_string()),
-        "yaml" | "yml" => Some("yaml".to_string()),
-        "md" => Some("markdown".to_string()),
-        "sh" | "bash" => Some("bash".to_string()),
-        "sql" => Some("sql".to_string()),
-        "toml" => Some("toml".to_string()),
-        _ => None,
-    }
+    Some(extension.to_lowercase())
+    //     "rs" => Some("rust".to_string()),
+    //     "js" => Some("javascript".to_string()),
+    //     "ts" => Some("typescript".to_string()),
+    //     "py" => Some("python".to_string()),
+    //     "java" => Some("java".to_string()),
+    //     "c" => Some("c".to_string()),
+    //     "cpp" | "cc" | "cxx" => Some("cpp".to_string()),
+    //     "h" | "hpp" => Some("cpp".to_string()),
+    //     "cs" => Some("csharp".to_string()),
+    //     "go" => Some("go".to_string()),
+    //     "rb" => Some("ruby".to_string()),
+    //     "php" => Some("php".to_string()),
+    //     "html" => Some("html".to_string()),
+    //     "css" => Some("css".to_string()),
+    //     "json" => Some("json".to_string()),
+    //     "xml" => Some("xml".to_string()),
+    //     "yaml" | "yml" => Some("yaml".to_string()),
+    //     "md" => Some("markdown".to_string()),
+    //     "sh" | "bash" => Some("bash".to_string()),
+    //     "sql" => Some("sql".to_string()),
+    //     "toml" => Some("toml".to_string()),
+    //     _ => None,
+    // }
 }
 
 // Get or create a code theme
