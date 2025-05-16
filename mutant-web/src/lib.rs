@@ -171,7 +171,16 @@ impl Client {
                 // Handle progress updates
                 info!("Client.get: Got task_future, progress_rx, and data_stream_rx={:?}",
                       data_stream_rx.is_some());
-                handle_get_progress(progress_rx);
+
+                // Get the get_id for this operation
+                let get_id = if stream_data {
+                    format!("get_{}", name)
+                } else {
+                    format!("get_{}_{}", name, destination.as_deref().unwrap_or(""))
+                };
+
+                // Pass the get_id to the progress handler
+                handle_get_progress(progress_rx, get_id);
 
                 // CRITICAL FIX: First await the task_future to actually send the request
                 // This is the key change - we need to start the task before collecting data
@@ -543,10 +552,20 @@ impl ClientSender {
     }
 }
 
-fn handle_get_progress(mut progress_rx: ProgressReceiver) {
+fn handle_get_progress(mut progress_rx: ProgressReceiver, get_id: String) {
     spawn_local(async move {
-        info!("Started get progress handler");
+        info!("Started get progress handler for {}", get_id);
         let mut progress_count = 0;
+        let mut progress_obj: Option<Arc<RwLock<app::context::Progress>>> = None;
+        let mut fetched_pads = 0;
+        let mut total_pads = 0;
+
+        // Try to find the progress object for this operation
+        let ctx = app::context::context();
+        if let Some(progress) = ctx.get_get_progress(&get_id) {
+            progress_obj = Some(progress.clone());
+            info!("Get progress: Found progress object for {}", get_id);
+        }
 
         while let Some(progress) = progress_rx.recv().await {
             progress_count += 1;
@@ -557,9 +576,36 @@ fn handle_get_progress(mut progress_rx: ProgressReceiver) {
                             match event {
                                 mutant_protocol::GetEvent::Starting { total_chunks } => {
                                     info!("Get progress #{}: Starting with {} total chunks", progress_count, total_chunks);
+
+                                    // Initialize progress tracking
+                                    total_pads = *total_chunks;
+
+                                    // Initialize the operation in the progress object if we have one
+                                    if let Some(progress) = &progress_obj {
+                                        let mut progress_guard = progress.write().unwrap();
+                                        progress_guard.operation.insert("get".to_string(), app::context::ProgressOperation {
+                                            nb_to_reserve: *total_chunks,
+                                            nb_reserved: 0,
+                                            total_pads: *total_chunks,
+                                            nb_written: 0,
+                                            nb_confirmed: 0,
+                                        });
+                                        info!("Get progress: Initialized progress object for {}", get_id);
+                                    }
                                 },
                                 mutant_protocol::GetEvent::PadFetched => {
-                                    info!("Get progress #{}: Pad fetched", progress_count);
+                                    fetched_pads += 1;
+                                    info!("Get progress #{}: Pad fetched ({}/{})", progress_count, fetched_pads, total_pads);
+
+                                    // Update the progress object if we have one
+                                    if let Some(progress) = &progress_obj {
+                                        let mut progress_guard = progress.write().unwrap();
+                                        if let Some(op) = progress_guard.operation.get_mut("get") {
+                                            op.nb_reserved = fetched_pads;
+                                            op.nb_written = fetched_pads;
+                                            info!("Get progress: Updated progress object: {}/{}", fetched_pads, total_pads);
+                                        }
+                                    }
                                 },
                                 mutant_protocol::GetEvent::PadData { chunk_index, data } => {
                                     info!("Get progress #{}: Received data for chunk {} ({} bytes)",
@@ -567,6 +613,15 @@ fn handle_get_progress(mut progress_rx: ProgressReceiver) {
                                 },
                                 mutant_protocol::GetEvent::Complete => {
                                     info!("Get progress #{}: Operation complete", progress_count);
+
+                                    // Mark the operation as complete in the progress object
+                                    if let Some(progress) = &progress_obj {
+                                        let mut progress_guard = progress.write().unwrap();
+                                        if let Some(op) = progress_guard.operation.get_mut("get") {
+                                            op.nb_confirmed = op.total_pads;
+                                            info!("Get progress: Marked operation as complete");
+                                        }
+                                    }
                                 },
                             }
                         },

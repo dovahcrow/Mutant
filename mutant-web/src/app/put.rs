@@ -148,7 +148,7 @@ impl PutWindow {
             let ctx = context::context();
 
             // Get the progress for this put operation
-            if let Some(progress) = ctx.get_progress(&put_id) {
+            if let Some(progress) = ctx.get_put_progress(&put_id) {
                 // Read the progress
                 let progress_guard = progress.read().unwrap();
 
@@ -575,7 +575,7 @@ impl PutWindow {
             let (reservation_progress, upload_progress, confirmation_progress, total_chunks) = {
                 if let Some(put_id) = &*self.current_put_id.read().unwrap() {
                     let ctx = context::context();
-                    if let Some(progress) = ctx.get_progress(put_id) {
+                    if let Some(progress) = ctx.get_put_progress(put_id) {
                         let progress_guard = progress.read().unwrap();
                         if let Some(op) = progress_guard.operation.get("put") {
                             // Calculate progress percentages

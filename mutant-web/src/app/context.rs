@@ -26,6 +26,7 @@ pub struct Context {
     tasks_cache: Arc<RwLock<Vec<TaskListEntry>>>,
     stats_cache: Arc<RwLock<Option<StatsResponse>>>,
     put_progress: Arc<RwLock<HashMap<String, Arc<RwLock<Progress>>>>>,
+    get_progress: Arc<RwLock<HashMap<String, Arc<RwLock<Progress>>>>>,
 }
 
 // Create a global context instance
@@ -53,6 +54,7 @@ impl Context {
             tasks_cache: Arc::new(RwLock::new(Vec::new())),
             stats_cache: Arc::new(RwLock::new(None)),
             put_progress: Arc::new(RwLock::new(HashMap::new())),
+            get_progress: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -293,6 +295,10 @@ impl Context {
     pub async fn get_file_binary(&self, name: &str, is_public: bool) -> Result<Vec<u8>, String> {
         info!("Getting binary file content for key {} via daemon (is_public={})", name, is_public);
 
+        // Create a progress object for tracking this get operation
+        let (get_id, progress) = self.create_get_progress(name);
+        info!("Created progress tracking with ID: {}", get_id);
+
         // Call the client with no destination to stream the data
         info!("Calling client.get with streaming enabled");
         let result = self.client.get(name.to_string(), None, is_public).await;
@@ -301,6 +307,16 @@ impl Context {
             Ok((task_result, Some(data))) => {
                 info!("Successfully retrieved binary file content for key {}, size: {} bytes", name, data.len());
                 info!("Task result: {:?}", task_result);
+
+                // Mark the operation as complete in the progress object
+                {
+                    let mut progress_guard = progress.write().unwrap();
+                    if let Some(op) = progress_guard.operation.get_mut("get") {
+                        op.nb_confirmed = op.total_pads;
+                        info!("Marked get operation as complete in progress object");
+                    }
+                }
+
                 Ok(data)
             },
             Ok((task_result, None)) => {
@@ -388,11 +404,36 @@ impl Context {
         }
     }
 
-    // Get a progress object for a put operation
-    pub fn get_progress(&self, put_id: &str) -> Option<Arc<RwLock<Progress>>> {
-        let put_progress = self.put_progress.read().unwrap();
+    // Create a new progress object for tracking a get operation
+    pub fn create_get_progress(&self, key: &str) -> (String, Arc<RwLock<Progress>>) {
+        // Generate a unique ID for this get operation
+        let get_id = format!("get_{}", key);
 
+        // Create a new Progress object
+        let progress = Arc::new(RwLock::new(Progress {
+            operation: BTreeMap::new(),
+        }));
+
+        // Store the progress in our map
+        {
+            let mut get_progress = self.get_progress.write().unwrap();
+            get_progress.insert(get_id.clone(), progress.clone());
+        }
+
+        info!("Created get progress object with ID: {}", get_id);
+        (get_id, progress)
+    }
+
+    // Get a progress object for a put operation
+    pub fn get_put_progress(&self, put_id: &str) -> Option<Arc<RwLock<Progress>>> {
+        let put_progress = self.put_progress.read().unwrap();
         put_progress.get(put_id).cloned()
+    }
+
+    // Get a progress object for a get operation
+    pub fn get_get_progress(&self, get_id: &str) -> Option<Arc<RwLock<Progress>>> {
+        let get_progress = self.get_progress.read().unwrap();
+        get_progress.get(get_id).cloned()
     }
 
     // Get the client sender

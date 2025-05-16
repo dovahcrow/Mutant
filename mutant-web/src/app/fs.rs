@@ -326,6 +326,32 @@ impl FileViewerTab {
                 ui.spinner();
                 ui.label("Loading file content...");
             });
+
+            // Check if we have a progress object for this file
+            let ctx = crate::app::context::context();
+            let get_id = format!("get_{}", self.file.key);
+
+            if let Some(progress) = ctx.get_get_progress(&get_id) {
+                let progress_guard = progress.read().unwrap();
+
+                // Check if we have a get operation in progress
+                if let Some(op) = progress_guard.operation.get("get") {
+                    if op.total_pads > 0 {
+                        // Calculate progress percentage
+                        let progress_value = op.nb_reserved as f32 / op.total_pads as f32;
+
+                        // Show progress bar
+                        ui.add_space(4.0);
+                        ui.label(format!("Downloaded {} of {} pads", op.nb_reserved, op.total_pads));
+                        ui.add_space(4.0);
+                        let progress_bar = egui::ProgressBar::new(progress_value)
+                            .show_percentage()
+                            .animate(true);
+                        ui.add(progress_bar);
+                    }
+                }
+            }
+
             return;
         }
 
