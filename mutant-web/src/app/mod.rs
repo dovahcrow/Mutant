@@ -23,6 +23,7 @@ pub mod notifications;
 // mod research;
 // mod ship;
 // mod ships;
+mod stats;
 // mod trades;
 
 // mod client_manager;
@@ -55,7 +56,8 @@ pub enum WindowType {
     Main(main::MainWindow),
     // Tasks(tasks::TasksWindow),
     Put(put::PutWindow),
-    Fs(fs::FsWindow)
+    Fs(fs::FsWindow),
+    Stats(stats::StatsWindow),
     // Bases(bases::BasesWindow),
     // Base(base::BaseWindow),
     // Buildings(buildings::BuildingsWindow),
@@ -80,6 +82,7 @@ impl Window for WindowType {
             // Self::Tasks(window) => window.name(),
             Self::Put(window) => window.name(),
             Self::Fs(window) => window.name(),
+            Self::Stats(window) => window.name(),
             // Self::Bases(window) => window.name(),
             // Self::Base(window) => window.name(),
             // Self::Buildings(window) => window.name(),
@@ -104,6 +107,7 @@ impl Window for WindowType {
             // Self::Tasks(window) => window.draw(ui),
             Self::Put(window) => window.draw(ui),
             Self::Fs(window) => window.draw(ui),
+            Self::Stats(window) => window.draw(ui),
             // Self::Bases(window) => window.draw(ui),
             // Self::Base(window) => window.draw(ui),
             // Self::Buildings(window) => window.draw(ui),
@@ -144,6 +148,12 @@ impl From<put::PutWindow> for WindowType {
 impl From<fs::FsWindow> for WindowType {
     fn from(window: fs::FsWindow) -> Self {
         Self::Fs(window)
+    }
+}
+
+impl From<stats::StatsWindow> for WindowType {
+    fn from(window: stats::StatsWindow) -> Self {
+        Self::Stats(window)
     }
 }
 

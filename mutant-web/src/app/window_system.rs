@@ -5,7 +5,7 @@ use egui_dock::{DockArea, DockState, Style};
 use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 
-use super::{main::MainWindow, put::PutWindow, fs::FsWindow, Window, WindowType};
+use super::{main::MainWindow, put::PutWindow, fs::FsWindow, stats::StatsWindow, Window, WindowType};
 
 
 lazy_static! {
@@ -49,6 +49,7 @@ impl egui_dock::TabViewer for TabViewer {
             WindowType::Main(_) => "🛸 ",
             WindowType::Put(_) => "📤 ",
             WindowType::Fs(_) => "📁 ",
+            WindowType::Stats(_) => "📊 ",
         };
 
         // Create a compact title that doesn't expand to fill all space
@@ -118,6 +119,7 @@ impl WindowSystem {
     fn default_window_size(window_type: &WindowType) -> [f32; 2] {
         match window_type {
             WindowType::Fs(_) => [300.0, 600.0],
+            WindowType::Stats(_) => [500.0, 600.0],
             // WindowType::Overview(_) => [300.0, 600.0],
             // WindowType::Ships(_) => [300.0, 600.0],
             // WindowType::Bases(_) => [600.0, 400.0],
@@ -191,6 +193,10 @@ impl WindowSystem {
 
                     if menu_button(ui, "📁", "Files", is_window_open("MutAnt Files")).clicked() {
                         new_window(FsWindow::new());
+                    }
+
+                    if menu_button(ui, "📊", "Stats", is_window_open("MutAnt Stats")).clicked() {
+                        new_window(StatsWindow::new());
                     }
 
                     // if menu_button(ui, "🚀", "Ships", is_window_open("Ships")).clicked() {
