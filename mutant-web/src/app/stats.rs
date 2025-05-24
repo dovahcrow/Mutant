@@ -2,13 +2,15 @@ use eframe::egui::{self, Color32, RichText, Ui};
 use log;
 use mutant_protocol::StatsResponse;
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, RwLock};
 use wasm_bindgen_futures::spawn_local;
 
-use super::{client_manager, Window};
+use super::Window;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct StatsWindow {
-    stats: Option<StatsResponse>,
+    #[serde(skip)]
+    stats_cache: Arc<RwLock<Option<StatsResponse>>>,
     loading: bool,
     error_message: Option<String>,
     refresh_requested: bool,
@@ -17,7 +19,7 @@ pub struct StatsWindow {
 impl Default for StatsWindow {
     fn default() -> Self {
         Self {
-            stats: None,
+            stats_cache: crate::app::context::context().get_stats_cache(),
             loading: false,
             error_message: None,
             refresh_requested: true, // Request initial load
@@ -43,7 +45,7 @@ impl Window for StatsWindow {
             self.draw_error(ui, error);
         } else if self.loading {
             self.draw_loading(ui);
-        } else if let Some(stats) = &self.stats {
+        } else if let Some(stats) = self.stats_cache.read().unwrap().as_ref() {
             self.draw_stats(ui, stats);
         } else {
             self.draw_no_data(ui);
@@ -315,7 +317,7 @@ impl StatsWindow {
             }
 
             // Draw border
-            ui.painter().rect(rect, 4.0, Color32::TRANSPARENT, egui::Stroke::new(1.0, Color32::GRAY));
+            ui.painter().rect(rect, 4.0, Color32::TRANSPARENT, egui::Stroke::new(1.0, Color32::GRAY), egui::epaint::StrokeKind::default());
         }
     }
 
@@ -328,29 +330,22 @@ impl StatsWindow {
         self.error_message = None;
         self.refresh_requested = false;
 
-        // Spawn async task to fetch real stats
-        spawn_local(async move {
-            match client_manager::get_stats().await {
-                Ok(stats) => {
-                    // In a real implementation, we'd need a way to update the window state
-                    // For now, we'll log the success
-                    log::info!("Successfully fetched stats: {:?}", stats);
-                },
-                Err(e) => {
-                    log::error!("Failed to fetch stats: {:?}", e);
-                }
-            }
-        });
-
         // For demonstration, show mock data immediately
-        // In a real implementation, the async task above would update the state
-        self.stats = Some(StatsResponse {
+        // In a real implementation, this would trigger an async call to fetch stats
+        // and update the cache when the response arrives
+        let mock_stats = StatsResponse {
             total_keys: 42,
             total_pads: 1000,
             occupied_pads: 650,
             free_pads: 300,
             pending_verify_pads: 50,
-        });
+        };
+
+        // Update the cache with mock data
+        {
+            let mut cache = self.stats_cache.write().unwrap();
+            *cache = Some(mock_stats);
+        }
 
         self.loading = false;
     }
