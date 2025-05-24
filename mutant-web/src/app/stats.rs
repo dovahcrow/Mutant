@@ -1,9 +1,7 @@
 use eframe::egui::{self, Color32, RichText, Ui};
-use log;
 use mutant_protocol::StatsResponse;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
-use wasm_bindgen_futures::spawn_local;
 
 use super::Window;
 
@@ -316,8 +314,7 @@ impl StatsWindow {
                 ui.painter().rect_filled(free_rect, 4.0, Color32::from_rgb(200, 200, 200));
             }
 
-            // Draw border
-            ui.painter().rect(rect, 4.0, Color32::TRANSPARENT, egui::Stroke::new(1.0, Color32::GRAY), egui::epaint::StrokeKind::Solid);
+            // Note: Border drawing removed to avoid egui version compatibility issues
         }
     }
 
