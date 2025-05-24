@@ -315,7 +315,7 @@ impl StatsWindow {
             }
 
             // Draw border
-            ui.painter().rect_stroke(rect, 4.0, egui::Stroke::new(1.0, Color32::GRAY));
+            ui.painter().rect(rect, 4.0, Color32::TRANSPARENT, egui::Stroke::new(1.0, Color32::GRAY));
         }
     }
 
