@@ -103,6 +103,11 @@ impl MutAnt {
         Ok(())
     }
 
+    pub async fn mv(&self, old_key: &str, new_key: &str) -> Result<(), Error> {
+        self.index.write().await.rename_key(old_key, new_key)?;
+        Ok(())
+    }
+
     pub async fn list(&self) -> Result<BTreeMap<String, IndexEntry>, Error> {
         let keys = self.index.read().await.list();
         Ok(keys)

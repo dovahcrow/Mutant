@@ -45,6 +45,7 @@ pub async fn async_start() {
 pub enum ClientRequest {
     Get(String, String, bool), // We'll keep this signature but handle None internally
     Put(String, Vec<u8>, String, mutant_protocol::StorageMode, bool, bool),
+    Mv(String, String), // old_key, new_key
     ListKeys,
     ListTasks
 }
@@ -53,6 +54,7 @@ pub enum ClientRequest {
 pub enum ClientResponse {
     Get(Result<(TaskResult, Option<Vec<u8>>), String>),
     Put(Result<TaskResult, String>),
+    Mv(Result<(), String>),
     ListKeys(Result<Vec<mutant_protocol::KeyDetails>, String>),
     ListTasks(Result<Vec<mutant_protocol::TaskListEntry>, String>),
 }
@@ -130,6 +132,13 @@ impl Client {
                         let response_name = format!("put_{}_{}", key, filename);
                         if let Some(tx) = responses.write().unwrap().remove(&response_name) {
                             let _ = tx.send(ClientResponse::Put(result));
+                        }
+                    }
+                    ClientRequest::Mv(old_key, new_key) => {
+                        let result = this.mv(&old_key, &new_key).await;
+                        let response_name = format!("mv_{}_{}", old_key, new_key);
+                        if let Some(tx) = responses.write().unwrap().remove(&response_name) {
+                            let _ = tx.send(ClientResponse::Mv(result));
                         }
                     }
                     ClientRequest::ListKeys => {
@@ -391,6 +400,10 @@ impl Client {
     pub async fn list_tasks(&mut self) -> Result<Vec<mutant_protocol::TaskListEntry>, String> {
         self.client.list_tasks().await.map_err(|e| format!("{:?}", e))
     }
+
+    pub async fn mv(&mut self, old_key: &str, new_key: &str) -> Result<(), String> {
+        self.client.mv(old_key, new_key).await.map_err(|e| format!("{:?}", e))
+    }
 }
 
 pub struct ClientSender {
@@ -546,6 +559,28 @@ impl ClientSender {
             match result {
                 ClientResponse::ListTasks(Ok(result)) => Ok(result),
                 ClientResponse::ListTasks(Err(e)) => Err(e),
+                _ => Err("Unexpected response".to_string()),
+            }
+        }).map_err(|e| format!("{:?}", e))?
+    }
+
+    pub async fn mv(&self, old_key: String, new_key: String) -> Result<(), String> {
+        let response_name = format!("mv_{}_{}", old_key, new_key);
+
+        if self.responses.read().unwrap().contains_key(&response_name) {
+            error!("Mv request already pending for {}", response_name);
+            return Err("Mv request already pending".to_string());
+        }
+
+        let (tx, rx) = oneshot::channel();
+        self.responses.write().unwrap().insert(response_name.clone(), tx);
+
+        let _ = self.tx.unbounded_send(ClientRequest::Mv(old_key, new_key));
+
+        rx.await.map(|result| {
+            match result {
+                ClientResponse::Mv(Ok(result)) => Ok(result),
+                ClientResponse::Mv(Err(e)) => Err(e),
                 _ => Err("Unexpected response".to_string()),
             }
         }).map_err(|e| format!("{:?}", e))?

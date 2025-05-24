@@ -4,6 +4,7 @@ pub mod get;
 pub mod health_check;
 pub mod import;
 pub mod ls;
+pub mod mv;
 pub mod purge;
 pub mod put;
 pub mod rm;

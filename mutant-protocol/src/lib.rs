@@ -247,6 +247,7 @@ pub enum TaskType {
     Purge,
     HealthCheck,
     Rm,
+    Mv,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -377,6 +378,12 @@ pub struct RmRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MvRequest {
+    pub old_key: String,
+    pub new_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ListKeysRequest;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -395,6 +402,7 @@ pub enum Request {
     ListTasks(ListTasksRequest),
     StopTask(StopTaskRequest),
     Rm(RmRequest),
+    Mv(MvRequest),
     ListKeys(ListKeysRequest),
     Stats(StatsRequest),
     Sync(SyncRequest),
@@ -451,6 +459,12 @@ pub struct ErrorResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RmSuccessResponse {
     pub user_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MvSuccessResponse {
+    pub old_key: String,
+    pub new_key: String,
 }
 
 /// Detailed information about a single stored key.
@@ -593,6 +607,7 @@ pub enum Response {
     TaskStopped(TaskStoppedResponse),
     TaskList(TaskListResponse),
     RmSuccess(RmSuccessResponse),
+    MvSuccess(MvSuccessResponse),
     ListKeys(ListKeysResponse),
     Stats(StatsResponse),
     Import(ImportResponse),

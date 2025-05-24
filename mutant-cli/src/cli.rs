@@ -40,6 +40,11 @@ pub enum Commands {
     },
     #[command(about = "Remove a key-value pair")]
     Rm { key: String },
+    #[command(about = "Rename/move a key")]
+    Mv {
+        old_key: String,
+        new_key: String,
+    },
     #[command(about = "List stored keys")]
     Ls {
         #[arg(long, help = "Show fetch history")]
