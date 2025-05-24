@@ -164,6 +164,29 @@ impl MasterIndex {
         })
     }
 
+    pub fn rename_key(&mut self, old_key: &str, new_key: &str) -> Result<(), Error> {
+        // Check if old key exists
+        if !self.index.contains_key(old_key) {
+            return Err(IndexError::KeyNotFound(old_key.to_string()).into());
+        }
+
+        // Check if new key already exists
+        if self.index.contains_key(new_key) {
+            return Err(IndexError::KeyAlreadyExists(new_key.to_string()).into());
+        }
+
+        // Move the entry from old key to new key
+        if let Some(entry) = self.index.remove(old_key) {
+            self.index.insert(new_key.to_string(), entry);
+            self.save(self.network_choice)?;
+            info!("Renamed key '{}' to '{}'", old_key, new_key);
+            Ok(())
+        } else {
+            // This should not happen since we checked contains_key above
+            Err(IndexError::KeyNotFound(old_key.to_string()).into())
+        }
+    }
+
     pub fn list(&self) -> std::collections::BTreeMap<String, IndexEntry> {
         let mut keys = self.index.clone();
         // put all the secret keys in the entries to 0

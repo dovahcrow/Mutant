@@ -440,4 +440,21 @@ impl Context {
     pub fn get_client_sender(&self) -> Arc<ClientSender> {
         Arc::new(self.client.clone())
     }
+
+    pub async fn mv(&self, old_key: &str, new_key: &str) -> Result<(), String> {
+        info!("Renaming key '{}' to '{}' via daemon", old_key, new_key);
+
+        match self.client.mv(old_key.to_string(), new_key.to_string()).await {
+            Ok(_) => {
+                info!("Successfully renamed key '{}' to '{}'", old_key, new_key);
+                // Refresh the key list
+                let _ = self.list_keys().await;
+                Ok(())
+            },
+            Err(e) => {
+                error!("Failed to rename key '{}' to '{}': {}", old_key, new_key, e);
+                Err(e)
+            }
+        }
+    }
 }

@@ -9,7 +9,7 @@ use mutant_lib::MutAnt;
 use mutant_protocol::{
     ErrorResponse, GetCallback, GetDataResponse, GetEvent, GetRequest, GetResult,
     PutCallback, PutEvent, PutRequest, PutResult, PutSource, Response, RmRequest, RmSuccessResponse,
-    Task, TaskCreatedResponse, TaskProgress, TaskResult, TaskResultResponse, TaskResultType,
+    MvRequest, MvSuccessResponse, Task, TaskCreatedResponse, TaskProgress, TaskResult, TaskResultResponse, TaskResultType,
     TaskStatus, TaskType, TaskUpdateResponse
 };
 
@@ -648,6 +648,54 @@ pub(crate) async fn handle_rm(
         }
         Err(e) => {
             log::error!("RM task failed: user_key={}, error={}", user_key, e);
+            Response::Error(ErrorResponse {
+                error: e.to_string(),
+                original_request: Some(original_request_str.to_string()),
+            })
+        }
+    };
+
+    update_tx
+        .send(response)
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    Ok(())
+}
+
+pub(crate) async fn handle_mv(
+    req: MvRequest,
+    update_tx: UpdateSender,
+    mutant: Arc<MutAnt>,
+    _active_keys: ActiveKeysMap,
+    original_request_str: &str,
+) -> Result<(), DaemonError> {
+    // Check if we're in public-only mode
+    if is_public_only_mode() {
+        return update_tx
+            .send(Response::Error(ErrorResponse {
+                error: PUBLIC_ONLY_ERROR_MSG.to_string(),
+                original_request: Some(original_request_str.to_string()),
+            }))
+            .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)));
+    }
+
+    let old_key = req.old_key.clone();
+    let new_key = req.new_key.clone();
+
+    log::info!("DAEMON: Received MV request: old_key={}, new_key={}, original_request={}",
+               old_key, new_key, original_request_str);
+
+    // Perform the rename operation
+    let response = match mutant.mv(&old_key, &new_key).await {
+        Ok(_) => {
+            log::info!("MV operation successful: '{}' -> '{}'", old_key, new_key);
+            Response::MvSuccess(MvSuccessResponse {
+                old_key: old_key.clone(),
+                new_key: new_key.clone(),
+            })
+        }
+        Err(e) => {
+            log::error!("MV operation failed: old_key={}, new_key={}, error={}", old_key, new_key, e);
             Response::Error(ErrorResponse {
                 error: e.to_string(),
                 original_request: Some(original_request_str.to_string()),

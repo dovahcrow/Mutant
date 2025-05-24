@@ -1,6 +1,6 @@
 use log::{debug, error, info, trace, warn};
 use mutant_protocol::{
-    ErrorResponse, ExportResponse, ImportResponse, ListKeysResponse, Response,
+    ErrorResponse, ExportResponse, ImportResponse, ListKeysResponse, MvSuccessResponse, Response,
     RmSuccessResponse, Task, TaskCreatedResponse, TaskListResponse, TaskProgress,
     TaskResult, TaskResultResponse, TaskStatus, TaskStoppedResponse, TaskType,
     TaskUpdateResponse,
@@ -225,6 +225,11 @@ impl MutantClient {
                 {
                     error!("Error occurred during rm request: {}", error);
                     let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(PendingSender::Mv(sender)) =
+                    requests.remove(&PendingRequestKey::Mv)
+                {
+                    error!("Error occurred during mv request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
                 } else if let Some(PendingSender::ListKeys(sender)) =
                     requests.remove(&PendingRequestKey::ListKeys)
                 {
@@ -260,6 +265,19 @@ impl MutantClient {
                     }
                 } else {
                     warn!("Received RM success response but no Rm request was pending");
+                }
+            }
+            Response::MvSuccess(MvSuccessResponse { old_key: _, new_key: _ }) => {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::Mv);
+                if let Some(PendingSender::Mv(sender)) = pending_sender {
+                    if sender.send(Ok(())).is_err() {
+                        warn!("Failed to send MV success response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received MV success response but no Mv request was pending");
                 }
             }
             Response::ListKeys(ListKeysResponse { keys }) => {

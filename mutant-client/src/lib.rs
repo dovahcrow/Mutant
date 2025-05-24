@@ -11,7 +11,7 @@ use url::Url;
 use wasm_bindgen_futures::spawn_local;
 
 use mutant_protocol::{
-    ExportResult, HealthCheckResult, ImportResult, KeyDetails, PurgeResult, PutEvent, PutSource, Request,
+    ExportResult, HealthCheckResult, ImportResult, KeyDetails, MvRequest, PurgeResult, PutEvent, PutSource, Request,
     Response, StatsResponse, StorageMode, SyncResult, Task, TaskId, TaskListEntry, TaskProgress,
     TaskResult, TaskStatus, TaskStoppedResponse, TaskType,
 };
@@ -33,6 +33,7 @@ pub enum PendingRequestKey {
     ListTasks,
     QueryTask,
     Rm,
+    Mv,
     ListKeys,
     Stats,
     Sync,
@@ -53,6 +54,7 @@ pub enum PendingSender {
     ListTasks(oneshot::Sender<Result<Vec<TaskListEntry>, ClientError>>),
     QueryTask(oneshot::Sender<Result<Task, ClientError>>),
     Rm(oneshot::Sender<Result<(), ClientError>>),
+    Mv(oneshot::Sender<Result<(), ClientError>>),
     ListKeys(oneshot::Sender<Result<Vec<KeyDetails>, ClientError>>),
     Stats(oneshot::Sender<Result<StatsResponse, ClientError>>),
     Sync(oneshot::Sender<Result<SyncResult, ClientError>>),
@@ -458,6 +460,17 @@ impl MutantClient {
             Rm,
             RmRequest {
                 user_key: user_key.to_string(),
+            }
+        )
+    }
+
+    pub async fn mv(&mut self, old_key: &str, new_key: &str) -> Result<(), ClientError> {
+        direct_request!(
+            self,
+            Mv,
+            MvRequest {
+                old_key: old_key.to_string(),
+                new_key: new_key.to_string(),
             }
         )
     }

@@ -54,6 +54,9 @@ pub async fn run() -> Result<()> {
         Commands::Rm { key } => {
             commands::rm::handle_rm(key).await?;
         }
+        Commands::Mv { old_key, new_key } => {
+            commands::mv::handle_mv(old_key, new_key).await?;
+        }
         Commands::Ls { history } => {
             commands::ls::handle_ls(history).await?;
         }
