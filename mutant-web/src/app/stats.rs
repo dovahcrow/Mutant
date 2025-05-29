@@ -1,7 +1,9 @@
 use eframe::egui::{self, Color32, RichText, Ui};
+use log;
 use mutant_protocol::StatsResponse;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
+use wasm_bindgen_futures;
 
 use super::Window;
 
@@ -327,22 +329,25 @@ impl StatsWindow {
         self.error_message = None;
         self.refresh_requested = false;
 
-        // For demonstration, show mock data immediately
-        // In a real implementation, this would trigger an async call to fetch stats
-        // and update the cache when the response arrives
-        let mock_stats = StatsResponse {
-            total_keys: 42,
-            total_pads: 1000,
-            occupied_pads: 650,
-            free_pads: 300,
-            pending_verify_pads: 50,
-        };
+        // Get the context and trigger real stats fetching
+        let context = crate::app::context::context();
+        let stats_cache = self.stats_cache.clone();
 
-        // Update the cache with mock data
-        {
-            let mut cache = self.stats_cache.write().unwrap();
-            *cache = Some(mock_stats);
-        }
+        // Spawn async task to fetch real stats from daemon
+        wasm_bindgen_futures::spawn_local(async move {
+            match context.get_stats().await {
+                Some(stats) => {
+                    // Stats are already updated in cache by context.get_stats()
+                    log::info!("Successfully fetched real stats from daemon: {:?}", stats);
+                },
+                None => {
+                    log::error!("Failed to fetch stats from daemon");
+                    // Clear the cache on error
+                    let mut cache = stats_cache.write().unwrap();
+                    *cache = None;
+                }
+            }
+        });
 
         self.loading = false;
     }

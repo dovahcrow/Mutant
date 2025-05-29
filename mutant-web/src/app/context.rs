@@ -138,45 +138,37 @@ impl Context {
         }
     }
 
-    // // Get stats from cache only
-    // pub async fn get_stats(&self) -> Option<StatsResponse> {
-    //     info!("Fetching stats from daemon");
+    // Get stats from daemon and update cache
+    pub async fn get_stats(&self) -> Option<StatsResponse> {
+        info!("Fetching stats from daemon");
 
-    //     // Create a simple direct call to avoid complex operations
-    //     let result = self.client.get_stats().await;
+        // Create a simple direct call to avoid complex operations
+        let result = self.client.get_stats().await;
 
-    //     if let Ok(stats) = result {
-    //         info!("Successfully retrieved stats from daemon");
+        if let Ok(stats) = result {
+            info!("Successfully retrieved stats from daemon");
 
-    //         // Create a safe copy of the stats
-    //         let safe_stats = StatsResponse {
-    //             total_keys: stats.total_keys,
-    //             total_pads: stats.total_pads,
-    //             occupied_pads: stats.occupied_pads,
-    //             free_pads: stats.free_pads,
-    //             pending_verify_pads: stats.pending_verify_pads,
-    //         };
+            // Create a safe copy of the stats
+            let safe_stats = StatsResponse {
+                total_keys: stats.total_keys,
+                total_pads: stats.total_pads,
+                occupied_pads: stats.occupied_pads,
+                free_pads: stats.free_pads,
+                pending_verify_pads: stats.pending_verify_pads,
+            };
 
-    //         // Update cache and connection state
-    //         {
-    //             let mut cache = self.stats_cache.write().unwrap();
+            // Update cache and connection state
+            {
+                let mut cache = self.stats_cache.write().unwrap();
+                *cache = Some(safe_stats.clone());
+            }
 
-    //             *cache = Some(safe_stats.clone());
-    //         }
-
-    //         Some(safe_stats)
-    //     } else {
-    //         error!("Failed to get stats: {:?}", result.err());
-
-    //         Some(StatsResponse {
-    //             total_keys: 0,
-    //             total_pads: 0,
-    //             occupied_pads: 0,
-    //             free_pads: 0,
-    //             pending_verify_pads: 0,
-    //         })
-    //     }
-    // }
+            Some(safe_stats)
+        } else {
+            error!("Failed to get stats: {:?}", result.err());
+            None
+        }
+    }
 
     // // Get task details (not cached)
     // pub async fn get_task(&self, task_id: TaskId) -> Result<Task, String> {

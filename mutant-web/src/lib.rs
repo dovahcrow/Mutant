@@ -47,7 +47,8 @@ pub enum ClientRequest {
     Put(String, Vec<u8>, String, mutant_protocol::StorageMode, bool, bool),
     Mv(String, String), // old_key, new_key
     ListKeys,
-    ListTasks
+    ListTasks,
+    GetStats,
 }
 
 #[derive(Debug)]
@@ -57,6 +58,7 @@ pub enum ClientResponse {
     Mv(Result<(), String>),
     ListKeys(Result<Vec<mutant_protocol::KeyDetails>, String>),
     ListTasks(Result<Vec<mutant_protocol::TaskListEntry>, String>),
+    GetStats(Result<mutant_protocol::StatsResponse, String>),
 }
 
 pub struct Client {
@@ -153,6 +155,13 @@ impl Client {
                         let response_name = "list_tasks".to_string();
                         if let Some(tx) = responses.write().unwrap().remove(&response_name) {
                             let _ = tx.send(ClientResponse::ListTasks(result));
+                        }
+                    }
+                    ClientRequest::GetStats => {
+                        let result = this.get_stats().await;
+                        let response_name = "get_stats".to_string();
+                        if let Some(tx) = responses.write().unwrap().remove(&response_name) {
+                            let _ = tx.send(ClientResponse::GetStats(result));
                         }
                     }
                 }
@@ -404,6 +413,10 @@ impl Client {
     pub async fn mv(&mut self, old_key: &str, new_key: &str) -> Result<(), String> {
         self.client.mv(old_key, new_key).await.map_err(|e| format!("{:?}", e))
     }
+
+    pub async fn get_stats(&mut self) -> Result<mutant_protocol::StatsResponse, String> {
+        self.client.get_stats().await.map_err(|e| format!("{:?}", e))
+    }
 }
 
 pub struct ClientSender {
@@ -581,6 +594,28 @@ impl ClientSender {
             match result {
                 ClientResponse::Mv(Ok(result)) => Ok(result),
                 ClientResponse::Mv(Err(e)) => Err(e),
+                _ => Err("Unexpected response".to_string()),
+            }
+        }).map_err(|e| format!("{:?}", e))?
+    }
+
+    pub async fn get_stats(&self) -> Result<mutant_protocol::StatsResponse, String> {
+        let response_name = "get_stats".to_string();
+
+        if self.responses.read().unwrap().contains_key(&response_name) {
+            error!("GetStats request already pending");
+            return Err("GetStats request already pending".to_string());
+        }
+
+        let (tx, rx) = oneshot::channel();
+        self.responses.write().unwrap().insert(response_name, tx);
+
+        let _ = self.tx.unbounded_send(ClientRequest::GetStats);
+
+        rx.await.map(|result| {
+            match result {
+                ClientResponse::GetStats(Ok(result)) => Ok(result),
+                ClientResponse::GetStats(Err(e)) => Err(e),
                 _ => Err("Unexpected response".to_string()),
             }
         }).map_err(|e| format!("{:?}", e))?
