@@ -13,9 +13,7 @@ use wasm_bindgen::prelude::*;
 // mod cam_test;
 // mod init;
 // mod map;
-// pub mod utils;
-
-// use utils::{game, game_mut};
+pub mod utils;
 
 mod app;
 
@@ -185,7 +183,7 @@ impl Client {
               name, destination, public, stream_data);
 
         match self.client.get(name, destination, public, stream_data).await {
-            Ok((task_future, progress_rx, data_stream_rx)) => {
+            Ok((_task_id, task_future, progress_rx, data_stream_rx)) => {
                 // Handle progress updates
                 info!("Client.get: Got task_future, progress_rx, and data_stream_rx={:?}",
                       data_stream_rx.is_some());

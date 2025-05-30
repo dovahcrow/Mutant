@@ -231,10 +231,10 @@ impl StatsWindow {
             egui::vec2(card_width, 80.0),
             egui::Layout::top_down(egui::Align::Center),
             |ui| {
-                egui::Frame::none()
+                egui::Frame::new()
                     .fill(color.gamma_multiply(0.1))
                     .stroke(egui::Stroke::new(1.0, color))
-                    .rounding(8.0)
+                    .corner_radius(8.0)
                     .inner_margin(10.0)
                     .show(ui, |ui| {
                         ui.vertical_centered(|ui| {
@@ -254,10 +254,10 @@ impl StatsWindow {
             egui::vec2(card_width, 80.0),
             egui::Layout::top_down(egui::Align::Center),
             |ui| {
-                egui::Frame::none()
+                egui::Frame::new()
                     .fill(color.gamma_multiply(0.1))
                     .stroke(egui::Stroke::new(1.0, color))
-                    .rounding(8.0)
+                    .corner_radius(8.0)
                     .inner_margin(10.0)
                     .show(ui, |ui| {
                         ui.vertical_centered(|ui| {

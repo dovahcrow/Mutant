@@ -83,10 +83,10 @@ async fn handle_get_operation(
     }
 
     // Execute the command
-    match client.get(&name, &destination, false).await {
-        Ok((task, _)) => {
+    match client.get(&name, Some(&destination), false, false).await {
+        Ok((_task_id, task_future, _progress_rx, _data_stream_rx)) => {
             // Wait for the task to complete
-            match task.await {
+            match task_future.await {
                 Ok(result) => {
                     info!("Get task completed: {:?}", result);
                     // Only send if the receiver is still interested
@@ -406,7 +406,7 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                         ).await;
 
                             match result {
-                                Ok((task_future, mut progress_rx)) => {
+                                Ok((task_future, mut progress_rx, _)) => {
                                     // Create a channel to forward progress updates
                                     let (progress_tx, progress_rx_out) = mpsc::unbounded_channel();
 
@@ -461,9 +461,8 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                                     }
                                 }
                             }
-                        }
                     });
-                },
+                }
                 ClientCommand::Shutdown => {
                     break;
                 }

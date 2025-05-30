@@ -116,9 +116,9 @@ impl MainWindow {
         ui.horizontal(|ui| {
             if ui.button("Refresh").clicked() {
                 log::info!("Refresh clicked");
-                let keys = self.keys.clone();
+                let _keys = self.keys.clone();
                 let connected_ref = Arc::new(RwLock::new(false));
-                let connected_clone = connected_ref.clone();
+                let _connected_clone = connected_ref.clone();
 
                 wasm_bindgen_futures::spawn_local(async move {
                     let ctx = crate::app::context::context();

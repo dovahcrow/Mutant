@@ -258,7 +258,7 @@ impl Context {
     }
 
     // Get file content directly without saving to disk
-    pub async fn get_file_content(&self, name: &str, is_public: bool) -> Result<String, String> {
+    pub async fn get_file_content(&self, name: &str, _is_public: bool) -> Result<String, String> {
         warn!("get_file_content is deprecated for downloads. Use start_streamed_get instead. Key: {}", name);
         // info!("Getting file content for key {} via daemon (is_public={})", name, is_public);
 
@@ -297,7 +297,7 @@ impl Context {
     }
 
     // Get file binary data directly without saving to disk
-    pub async fn get_file_binary(&self, name: &str, is_public: bool) -> Result<Vec<u8>, String> {
+    pub async fn get_file_binary(&self, name: &str, _is_public: bool) -> Result<Vec<u8>, String> {
         warn!("get_file_binary is deprecated for downloads. Use start_streamed_get instead. Key: {}", name);
         // info!("Getting binary file content for key {} via daemon (is_public={})", name, is_public);
 

@@ -10,12 +10,11 @@ use base64::Engine;
 
 use super::components::multimedia;
 use super::Window;
-use crate::app::context::Context; // If not already fully pathed
 use crate::utils::download_utils::{self, JsFileHandleResult, JsSimpleResult};
 use js_sys::Uint8Array;
 use wasm_bindgen_futures::spawn_local;
-use futures::StreamExt; // For stream.next().await
-use log::{info, warn, error}; // Ensure log levels are imported
+use log::{info, error}; // Ensure log levels are imported
+use serde_wasm_bindgen;
 
 
 /// Helper function to format file sizes in a human-readable way
@@ -51,9 +50,7 @@ struct ActiveDownload {
     
     // Used to signal the data processing task to stop if picker fails or user cancels.
     // This is a simple way to communicate between the picker task and processing tasks.
-    #[serde(skip)] // tokio::sync::watch is not serializable
-    stop_signal_tx: Option<Arc<tokio::sync::watch::Sender<bool>>>, 
-    #[serde(skip)]
+    stop_signal_tx: Option<Arc<tokio::sync::watch::Sender<bool>>>,
     stop_signal_rx: Option<Arc<tokio::sync::watch::Receiver<bool>>>,
 }
 
@@ -831,12 +828,13 @@ impl FsWindow {
                                 let data_writer_id = writer_id.clone();
                                 let data_task_id = task_id;
                                 let data_egui_ctx = egui_ctx.clone();
-                                let mut data_stop_rx = stop_rx_for_picker_failure.clone(); // Use the same stop signal
+                                let data_stop_rx = stop_rx_for_picker_failure.clone(); // Use the same stop signal
                                 spawn_local(async move {
                                     let mut current_downloaded_bytes = 0;
+                                    let mut data_stop_rx_clone = (*data_stop_rx).clone();
                                     loop {
                                         tokio::select! {
-                                            changed_res = data_stop_rx.changed() => {
+                                            changed_res = data_stop_rx_clone.changed() => {
                                                 if changed_res.is_err() || *data_stop_rx.borrow() { // if channel closed or true received
                                                     info!("Data task for {} stopping due to signal.", data_task_id);
                                                     // If picker failed, file wasn't created, so abortFile might not be needed or could error.
@@ -912,11 +910,12 @@ impl FsWindow {
                                 let prog_active_downloads = Arc::clone(&active_downloads_clone);
                                 let prog_task_id = task_id;
                                 let prog_egui_ctx = egui_ctx.clone();
-                                let mut prog_stop_rx = stop_rx_for_picker_failure.clone();
+                                let prog_stop_rx = stop_rx_for_picker_failure.clone();
                                 spawn_local(async move {
+                                    let mut prog_stop_rx_clone = (*prog_stop_rx).clone();
                                      loop {
                                         tokio::select! {
-                                            changed_res = prog_stop_rx.changed() => {
+                                            changed_res = prog_stop_rx_clone.changed() => {
                                                  if changed_res.is_err() || *prog_stop_rx.borrow() {
                                                     info!("Progress task for {} stopping due to signal.", prog_task_id);
                                                     break;

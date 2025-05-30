@@ -26,7 +26,7 @@ pub mod notifications;
 mod stats;
 // mod trades;
 
-// mod client_manager;
+mod client_manager;
 pub mod context;
 mod main;
 mod put;
