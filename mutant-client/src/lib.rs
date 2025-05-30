@@ -273,6 +273,7 @@ impl MutantClient {
         stream_data: bool,
     ) -> Result<
         (
+            oneshot::Receiver<Result<TaskId, ClientError>>,
             impl Future<Output = Result<TaskResult, ClientError>> + '_,
             ProgressReceiver,
             Option<DataStreamReceiver>,
@@ -395,8 +396,8 @@ impl MutantClient {
             }
         };
 
-        info!("CLIENT: Returning get task future, progress_rx, and data_stream_rx");
-        Ok((start_task, progress_rx, data_stream_rx))
+        info!("CLIENT: Returning task_creation_rx, get task future, progress_rx, and data_stream_rx");
+        Ok((task_creation_rx, start_task, progress_rx, data_stream_rx))
     }
 
     pub async fn sync(

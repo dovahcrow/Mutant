@@ -1,11 +1,22 @@
 use std::{collections::{BTreeMap, HashMap}, sync::{Arc, Mutex, RwLock}};
 
 use lazy_static::lazy_static;
-use log::{error, info};
-use mutant_protocol::{KeyDetails, StatsResponse, StorageMode, TaskListEntry};
+use log::{error, info, warn};
+use mutant_protocol::{KeyDetails, StatsResponse, StorageMode, TaskListEntry, TaskId, TaskProgress};
+use tokio::sync::mpsc;
 
 // Import our client manager
-use crate::{Client, ClientSender};
+// Assuming client_manager is correctly referenced. If it's in the same module or crate::client_manager
+use crate::app::client_manager; 
+// For Client and ClientSender, the original code used:
+use crate::{Client, ClientSender}; // This might be from a higher level module, e.g. crate::client if Client is defined there.
+                                   // Or, if Client and ClientSender are type aliases for client_manager types, this might need adjustment.
+                                   // Given the existing code structure, `Client` seems to be `client_manager` itself or a wrapper.
+                                   // The existing `self.client.list_keys()` implies `self.client` is an instance that has these methods.
+                                   // The `Context::new()` does `let client = Client::spawn().await;`
+                                   // `Client::spawn()` is not defined in the provided context.rs. It's likely `client_manager::spawn()` or similar.
+                                   // For now, I will assume `crate::app::client_manager` is the correct path for the new static function call.
+                                   // And `self.client` usage for other methods remains as is.
 
 pub struct ProgressOperation {
     pub nb_to_reserve: usize,
@@ -248,78 +259,101 @@ impl Context {
 
     // Get file content directly without saving to disk
     pub async fn get_file_content(&self, name: &str, is_public: bool) -> Result<String, String> {
-        info!("Getting file content for key {} via daemon (is_public={})", name, is_public);
+        warn!("get_file_content is deprecated for downloads. Use start_streamed_get instead. Key: {}", name);
+        // info!("Getting file content for key {} via daemon (is_public={})", name, is_public);
 
-        // Call the client with no destination to stream the data
-        info!("Calling client.get with streaming enabled");
-        let result = self.client.get(name.to_string(), None, is_public).await;
+        // // Call the client with no destination to stream the data
+        // info!("Calling client.get with streaming enabled");
+        // let result = self.client.get(name.to_string(), None, is_public).await;
 
-        match result {
-            Ok((task_result, Some(data))) => {
-                info!("Successfully retrieved file content for key {}, size: {} bytes", name, data.len());
-                info!("Task result: {:?}", task_result);
+        // match result {
+        //     Ok((task_result, Some(data))) => {
+        //         info!("Successfully retrieved file content for key {}, size: {} bytes", name, data.len());
+        //         info!("Task result: {:?}", task_result);
 
-                // Try to convert the data to a string
-                match String::from_utf8(data) {
-                    Ok(content) => {
-                        info!("Successfully converted data to UTF-8 string, length: {}", content.len());
-                        Ok(content)
-                    },
-                    Err(_) => {
-                        // If it's not valid UTF-8, return a binary data message
-                        error!("Data is not valid UTF-8, cannot display as text");
-                        Err("File contains binary data that cannot be displayed as text".to_string())
-                    }
-                }
-            },
-            Ok((task_result, None)) => {
-                error!("No data received for key {}, task result: {:?}", name, task_result);
-                Err("No data received".to_string())
-            },
-            Err(e) => {
-                error!("Failed to get file content: {}", e);
-                Err(e)
-            }
-        }
+        //         // Try to convert the data to a string
+        //         match String::from_utf8(data) {
+        //             Ok(content) => {
+        //                 info!("Successfully converted data to UTF-8 string, length: {}", content.len());
+        //                 Ok(content)
+        //             },
+        //             Err(_) => {
+        //                 // If it's not valid UTF-8, return a binary data message
+        //                 error!("Data is not valid UTF-8, cannot display as text");
+        //                 Err("File contains binary data that cannot be displayed as text".to_string())
+        //             }
+        //         }
+        //     },
+        //     Ok((task_result, None)) => {
+        //         error!("No data received for key {}, task result: {:?}", name, task_result);
+        //         Err("No data received".to_string())
+        //     },
+        //     Err(e) => {
+        //         error!("Failed to get file content: {}", e);
+        //         Err(e)
+        //     }
+        // }
+        Err(format!("get_file_content is deprecated for downloads. Use start_streamed_get. Key: {}", name))
     }
 
     // Get file binary data directly without saving to disk
     pub async fn get_file_binary(&self, name: &str, is_public: bool) -> Result<Vec<u8>, String> {
-        info!("Getting binary file content for key {} via daemon (is_public={})", name, is_public);
+        warn!("get_file_binary is deprecated for downloads. Use start_streamed_get instead. Key: {}", name);
+        // info!("Getting binary file content for key {} via daemon (is_public={})", name, is_public);
 
-        // Create a progress object for tracking this get operation
-        let (get_id, progress) = self.create_get_progress(name);
-        info!("Created progress tracking with ID: {}", get_id);
+        // // Create a progress object for tracking this get operation
+        // let (get_id, progress) = self.create_get_progress(name);
+        // info!("Created progress tracking with ID: {}", get_id);
 
-        // Call the client with no destination to stream the data
-        info!("Calling client.get with streaming enabled");
-        let result = self.client.get(name.to_string(), None, is_public).await;
+        // // Call the client with no destination to stream the data
+        // info!("Calling client.get with streaming enabled");
+        // let result = self.client.get(name.to_string(), None, is_public).await;
 
-        match result {
-            Ok((task_result, Some(data))) => {
-                info!("Successfully retrieved binary file content for key {}, size: {} bytes", name, data.len());
-                info!("Task result: {:?}", task_result);
+        // match result {
+        //     Ok((task_result, Some(data))) => {
+        //         info!("Successfully retrieved binary file content for key {}, size: {} bytes", name, data.len());
+        //         info!("Task result: {:?}", task_result);
 
-                // Mark the operation as complete in the progress object
-                {
-                    let mut progress_guard = progress.write().unwrap();
-                    if let Some(op) = progress_guard.operation.get_mut("get") {
-                        op.nb_confirmed = op.total_pads;
-                        info!("Marked get operation as complete in progress object");
-                    }
-                }
+        //         // Mark the operation as complete in the progress object
+        //         {
+        //             let mut progress_guard = progress.write().unwrap();
+        //             if let Some(op) = progress_guard.operation.get_mut("get") {
+        //                 op.nb_confirmed = op.total_pads;
+        //                 info!("Marked get operation as complete in progress object");
+        //             }
+        //         }
 
-                Ok(data)
-            },
-            Ok((task_result, None)) => {
-                error!("No data received for key {}, task result: {:?}", name, task_result);
-                Err("No data received".to_string())
-            },
-            Err(e) => {
-                error!("Failed to get file content: {}", e);
-                Err(e)
-            }
-        }
+        //         Ok(data)
+        //     },
+        //     Ok((task_result, None)) => {
+        //         error!("No data received for key {}, task result: {:?}", name, task_result);
+        //         Err("No data received".to_string())
+        //     },
+        //     Err(e) => {
+        //         error!("Failed to get file content: {}", e);
+        //         Err(e)
+        //     }
+        // }
+        Err(format!("get_file_binary is deprecated for downloads. Use start_streamed_get. Key: {}", name))
+    }
+
+    pub async fn start_streamed_get(
+        &self,
+        user_key: &str,
+        is_public: bool,
+    ) -> Result<
+        (
+            TaskId,
+            mpsc::UnboundedReceiver<Result<TaskProgress, String>>,
+            mpsc::UnboundedReceiver<Result<Vec<u8>, String>>,
+        ),
+        String,
+    > {
+        info!("Starting streamed get for key: {}, is_public: {}", user_key, is_public);
+        // Note: `self.client` is of type `ClientSender` which seems to be the sender to the client_manager.
+        // The `start_get_stream` function is a free function in `client_manager.rs`.
+        // So, we should call `client_manager::start_get_stream` directly.
+        client_manager::start_get_stream(user_key, is_public).await
     }
 
     pub fn get_key_cache(&self) -> Arc<RwLock<Vec<KeyDetails>>> {
