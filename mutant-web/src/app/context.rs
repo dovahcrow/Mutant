@@ -550,4 +550,29 @@ impl Context {
             }
         }
     }
+
+    // Streaming put methods
+    pub async fn put_streaming_init(
+        &self,
+        key_name: &str,
+        total_size: u64,
+        filename: &str,
+        storage_mode: mutant_protocol::StorageMode,
+        public: bool,
+        no_verify: bool,
+    ) -> Result<TaskId, String> {
+        info!("Initializing streaming put for key '{}' ({} bytes)", key_name, total_size);
+        self.client.put_streaming_init(key_name, total_size, filename, storage_mode, public, no_verify).await
+    }
+
+    pub async fn put_streaming_chunk(
+        &self,
+        task_id: TaskId,
+        chunk_index: usize,
+        total_chunks: usize,
+        data: Vec<u8>,
+        is_last: bool,
+    ) -> Result<(), String> {
+        self.client.put_streaming_chunk(task_id, chunk_index, total_chunks, data, is_last).await
+    }
 }

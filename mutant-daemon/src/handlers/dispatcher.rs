@@ -7,7 +7,7 @@ use mutant_lib::MutAnt;
 use mutant_protocol::Request;
 
 use super::common::UpdateSender;
-use super::data_operations::{handle_get, handle_put, handle_rm, handle_mv};
+use super::data_operations::{handle_get, handle_put, handle_put_data, handle_rm, handle_mv};
 use super::import_export::{handle_export, handle_import};
 use super::metadata::{handle_list_keys, handle_stats};
 use super::system_operations::{handle_health_check, handle_purge, handle_sync};
@@ -23,6 +23,7 @@ pub(crate) async fn handle_request(
 ) -> Result<(), DaemonError> {
     match request {
         Request::Put(put_req) => handle_put(put_req, update_tx, mutant, tasks, active_keys, original_request_str).await?,
+        Request::PutData(put_data_req) => handle_put_data(put_data_req, update_tx, tasks, original_request_str).await?,
         Request::Get(get_req) => handle_get(get_req, update_tx, mutant, tasks, active_keys, original_request_str).await?,
         Request::QueryTask(query_req) => {
             handle_query_task(query_req, update_tx, tasks, original_request_str).await?

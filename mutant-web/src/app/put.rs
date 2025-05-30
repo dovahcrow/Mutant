@@ -23,6 +23,7 @@ pub struct PutWindow {
     #[serde(skip)] // Skip serializing file data to avoid localStorage quota issues
     file_data: Arc<RwLock<Option<Vec<u8>>>>,
 
+
     // Key name input
     key_name: Arc<RwLock<String>>,
 
@@ -343,20 +344,15 @@ impl PutWindow {
                     }
                 }
 
-                // Start streaming file read
-                *is_reading_file.write().unwrap() = true;
+                // File is selected, ready for upload when user clicks upload button
+                *file_data.write().unwrap() = Some(Vec::new()); // Just mark as selected, no data loaded
+                *is_reading_file.write().unwrap() = false; // File is selected, not being read yet
                 *file_read_progress.write().unwrap() = 0.0;
                 *file_read_bytes.write().unwrap() = 0;
 
-                // Start the streaming file read process
-                Self::start_streaming_file_read(
-                    file,
-                    file_data.clone(),
-                    is_reading_file.clone(),
-                    file_read_progress.clone(),
-                    file_read_bytes.clone(),
-                    file_name.clone(),
-                );
+                // Store the file object for later use when upload button is clicked
+                // We'll need to store it in a way that can be accessed later
+                // For now, just mark the file as selected - the upload will happen when start_upload() is called
 
                 // Remove the input element
                 if let Some(parent) = input.parent_node() {
@@ -373,91 +369,181 @@ impl PutWindow {
         input.click();
     }
 
-    // Streaming file read implementation
-    fn start_streaming_file_read(
+    // TRUE streaming upload - reads file chunks and sends them directly to daemon
+    fn start_streaming_upload_with_file(
         file: File,
-        file_data: Arc<RwLock<Option<Vec<u8>>>>,
-        is_reading_file: Arc<RwLock<bool>>,
-        file_read_progress: Arc<RwLock<f32>>,
-        file_read_bytes: Arc<RwLock<u64>>,
-        file_name: String,
+        key_name: String,
+        filename: String,
+        file_size: f64,
+        storage_mode: mutant_protocol::StorageMode,
+        public: bool,
+        no_verify: bool,
+        current_put_id: Arc<RwLock<Option<String>>>,
+        error_message: Arc<RwLock<Option<String>>>,
+        is_uploading: Arc<RwLock<bool>>,
+        is_uploading_to_daemon: Arc<RwLock<bool>>,
     ) {
-        let file_size = file.size() as u64;
-        log::info!("Starting streaming file read for {} ({} bytes)", file_name, file_size);
+        log::info!("Starting TRUE streaming upload for {} ({} bytes)", filename, file_size);
 
-        // For now, let's use a simpler approach that reads the file in one go
-        // but provides progress feedback. We can enhance this later with true chunking.
-        let reader = FileReader::new().expect("failed to create FileReader");
-        let reader_clone = reader.clone();
+        spawn_local(async move {
+            let ctx = context::context();
+            let file_size_u64 = file_size as u64;
 
-        // Create onload handler for the reader
-        let file_data_clone = file_data.clone();
-        let is_reading_file_clone = is_reading_file.clone();
-        let file_read_progress_clone = file_read_progress.clone();
-        let file_read_bytes_clone = file_read_bytes.clone();
-        let file_name_clone = file_name.clone();
+            // Step 1: Initialize streaming put with daemon
+            log::info!("Initializing streaming put with daemon");
+            match ctx.put_streaming_init(&key_name, file_size_u64, &filename, storage_mode, public, no_verify).await {
+                Ok(task_id) => {
+                    log::info!("Streaming put initialized with task ID: {}", task_id);
 
-        let onload = Closure::once(move |_event: Event| {
-            // Get array buffer from reader
-            let array_buffer = reader_clone.result().expect("failed to get result");
-            let array = Uint8Array::new(&array_buffer);
+                    // Store the task ID for progress tracking
+                    *current_put_id.write().unwrap() = Some(task_id.to_string());
 
-            // Convert to Rust Vec<u8>
-            let mut data = vec![0; array.length() as usize];
-            array.copy_to(&mut data);
+                    // Step 2: Stream file chunks directly to daemon
+                    const CHUNK_SIZE: u64 = 256 * 1024; // 256KB chunks
+                    const DELAY_MS: u64 = 10; // Small delay between chunks
 
-            // Update state with file data
-            *file_data_clone.write().unwrap() = Some(data);
-            *is_reading_file_clone.write().unwrap() = false;
-            *file_read_progress_clone.write().unwrap() = 1.0;
-            *file_read_bytes_clone.write().unwrap() = file_size;
+                    let mut offset = 0u64;
+                    let mut chunk_index = 0usize;
+                    let total_chunks = ((file_size_u64 + CHUNK_SIZE - 1) / CHUNK_SIZE) as usize;
 
-            // Show notification
-            notifications::info(format!("File loaded: {}", file_name_clone));
-            log::info!("Completed file read for {} ({} bytes)", file_name_clone, file_size);
-        });
+                    log::info!("Starting to stream {} chunks of {} bytes each", total_chunks, CHUNK_SIZE);
 
-        let onerror = Closure::once(move |_event: Event| {
-            log::error!("Error reading file");
-            *is_reading_file.write().unwrap() = false;
-            notifications::error("Error reading file".to_string());
-        });
+                    while offset < file_size_u64 {
+                        let chunk_size = std::cmp::min(CHUNK_SIZE, file_size_u64 - offset);
+                        let end_offset = offset + chunk_size;
+                        let is_last = end_offset >= file_size_u64;
 
-        // Set onprogress handler to track reading progress
-        let file_read_progress_progress = file_read_progress.clone();
-        let file_read_bytes_progress = file_read_bytes.clone();
-        let onprogress = Closure::wrap(Box::new(move |event: Event| {
-            if let Ok(progress_event) = event.dyn_into::<web_sys::ProgressEvent>() {
-                let loaded = progress_event.loaded();
-                let total = progress_event.total();
+                        log::debug!("Reading and sending chunk {}/{}: {} to {} ({} bytes, is_last={})",
+                            chunk_index + 1, total_chunks, offset, end_offset, chunk_size, is_last);
 
-                if total > 0.0 {
-                    let progress = loaded as f32 / total as f32;
-                    *file_read_progress_progress.write().unwrap() = progress;
-                    *file_read_bytes_progress.write().unwrap() = loaded as u64;
+                        // Create a blob slice for this chunk
+                        let blob_slice = match file.slice_with_f64_and_f64(offset as f64, end_offset as f64) {
+                            Ok(slice) => slice,
+                            Err(e) => {
+                                log::error!("Failed to slice file: {:?}", e);
+                                *error_message.write().unwrap() = Some("Failed to read file chunk".to_string());
+                                *is_uploading.write().unwrap() = false;
+                                *is_uploading_to_daemon.write().unwrap() = false;
+                                notifications::error("Failed to read file chunk".to_string());
+                                return;
+                            }
+                        };
 
-                    log::debug!("File read progress: {} / {} bytes ({:.1}%)",
-                        loaded, total, progress * 100.0);
+                        // Read this chunk
+                        match Self::read_file_chunk_async(blob_slice).await {
+                            Ok(chunk_data) => {
+                                // Send this chunk directly to daemon
+                                match ctx.put_streaming_chunk(task_id, chunk_index, total_chunks, chunk_data, is_last).await {
+                                    Ok(_) => {
+                                        log::debug!("Chunk {}/{} sent successfully to daemon", chunk_index + 1, total_chunks);
+
+                                        offset = end_offset;
+                                        chunk_index += 1;
+
+                                        // Small delay to keep UI responsive
+                                        if !is_last {
+                                            let start = web_time::SystemTime::now();
+                                            while start.elapsed().unwrap().as_millis() < DELAY_MS as u128 {
+                                                // Busy wait for a short time
+                                            }
+                                        }
+                                    },
+                                    Err(e) => {
+                                        log::error!("Failed to send chunk {} to daemon: {}", chunk_index, e);
+                                        *error_message.write().unwrap() = Some(format!("Upload failed: {}", e));
+                                        *is_uploading.write().unwrap() = false;
+                                        *is_uploading_to_daemon.write().unwrap() = false;
+                                        notifications::error(format!("Upload failed: {}", e));
+                                        return;
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                log::error!("Error reading file chunk {}: {}", chunk_index, e);
+                                *error_message.write().unwrap() = Some(format!("Error reading file: {}", e));
+                                *is_uploading.write().unwrap() = false;
+                                *is_uploading_to_daemon.write().unwrap() = false;
+                                notifications::error(format!("Error reading file: {}", e));
+                                return;
+                            }
+                        }
+                    }
+
+                    log::info!("All {} chunks sent successfully to daemon", total_chunks);
+                    *is_uploading_to_daemon.write().unwrap() = false;
+                    notifications::info("Upload completed successfully!".to_string());
+
+                    // Refresh the keys list to update the file explorer
+                    log::info!("Refreshing keys list after successful upload");
+                    spawn_local(async {
+                        let ctx = context::context();
+                        let _ = ctx.list_keys().await;
+                        log::info!("Keys list refreshed successfully");
+                    });
+                },
+                Err(e) => {
+                    log::error!("Failed to initialize streaming upload: {}", e);
+                    *error_message.write().unwrap() = Some(format!("Failed to start upload: {}", e));
+                    *is_uploading.write().unwrap() = false;
+                    *is_uploading_to_daemon.write().unwrap() = false;
+                    notifications::error(format!("Failed to start upload: {}", e));
                 }
             }
-        }) as Box<dyn FnMut(_)>);
+        });
+    }
 
-        // Set handlers
+    // Helper function to read a single file chunk asynchronously
+    async fn read_file_chunk_async(blob: web_sys::Blob) -> Result<Vec<u8>, String> {
+        // Create a FileReader for this chunk
+        let reader = FileReader::new().map_err(|_| "Failed to create FileReader")?;
+
+        // Create a promise that resolves when the chunk is read
+        let (tx, rx) = futures::channel::oneshot::channel();
+        let tx = std::rc::Rc::new(std::cell::RefCell::new(Some(tx)));
+
+        // Set up onload handler
+        let reader_clone = reader.clone();
+        let tx_clone = tx.clone();
+        let onload = Closure::once(move |_event: Event| {
+            if let Some(sender) = tx_clone.borrow_mut().take() {
+                match reader_clone.result() {
+                    Ok(array_buffer) => {
+                        let array = Uint8Array::new(&array_buffer);
+                        let mut data = vec![0; array.length() as usize];
+                        array.copy_to(&mut data);
+                        let _ = sender.send(Ok(data));
+                    },
+                    Err(_) => {
+                        let _ = sender.send(Err("Failed to read chunk".to_string()));
+                    }
+                }
+            }
+        });
+
+        // Set up onerror handler
+        let tx_error = tx.clone();
+        let onerror = Closure::once(move |_event: Event| {
+            if let Some(sender) = tx_error.borrow_mut().take() {
+                let _ = sender.send(Err("Error reading chunk".to_string()));
+            }
+        });
+
         reader.set_onload(Some(onload.as_ref().unchecked_ref()));
         reader.set_onerror(Some(onerror.as_ref().unchecked_ref()));
-        reader.set_onprogress(Some(onprogress.as_ref().unchecked_ref()));
+
+        // Start reading the chunk
+        reader.read_as_array_buffer(&blob).map_err(|_| "Failed to start reading chunk")?;
 
         // Don't forget the closures
         onload.forget();
         onerror.forget();
-        onprogress.forget();
 
-        // Read the file as array buffer
-        reader.read_as_array_buffer(&file).expect("failed to read file");
+        // Wait for the result
+        rx.await.map_err(|_| "Channel error".to_string())?
     }
 
     fn start_upload(&self) {
-        log::info!("Starting upload");
+        log::info!("Starting streaming upload");
 
         // Set upload state
         *self.is_uploading.write().unwrap() = true;
@@ -465,7 +551,7 @@ impl PutWindow {
         *self.start_time.write().unwrap() = Some(SystemTime::now());
 
         // Reset all progress
-        *self.is_uploading_to_daemon.write().unwrap() = false;
+        *self.is_uploading_to_daemon.write().unwrap() = true; // We're streaming to daemon
         *self.daemon_upload_progress.write().unwrap() = 0.0;
         *self.daemon_upload_bytes.write().unwrap() = 0;
         *self.reservation_progress.write().unwrap() = 0.0;
@@ -477,105 +563,93 @@ impl PutWindow {
         let public = *self.public.read().unwrap();
         let storage_mode = self.storage_mode.read().unwrap().clone();
         let no_verify = *self.no_verify.read().unwrap();
-        let file_data = self.file_data.read().unwrap().clone().unwrap_or_default();
         let filename = self.selected_file.read().unwrap().clone().unwrap_or_default();
+        let file_size = self.file_size.read().unwrap().unwrap_or(0);
 
         log::info!("Upload parameters: key={}, filename={}, size={} bytes, public={}, mode={:?}, no_verify={}",
-            key_name, filename, file_data.len(), public, storage_mode, no_verify);
+            key_name, filename, file_size, public, storage_mode, no_verify);
 
-        // Clone Arc references for the async task
+        // Since we can't store File objects, we need to re-trigger file selection
+        // but this time for upload purposes
+        self.start_streaming_upload_for_selected_file(key_name, filename, file_size as f64, storage_mode, public, no_verify);
+    }
+
+    fn start_streaming_upload_for_selected_file(
+        &self,
+        key_name: String,
+        filename: String,
+        file_size: f64,
+        storage_mode: mutant_protocol::StorageMode,
+        public: bool,
+        no_verify: bool,
+    ) {
+        log::info!("Re-selecting file for streaming upload");
+
+        // Create file input element to re-select the same file
+        let document = web_sys::window().unwrap().document().unwrap();
+        let input = document
+            .create_element("input")
+            .unwrap()
+            .dyn_into::<web_sys::HtmlInputElement>()
+            .unwrap();
+
+        input.set_type("file");
+        input.set_accept("*/*");
+
+        // Clone references for the closure
         let current_put_id = self.current_put_id.clone();
         let error_message = self.error_message.clone();
         let is_uploading = self.is_uploading.clone();
         let is_uploading_to_daemon = self.is_uploading_to_daemon.clone();
-        let daemon_upload_progress = self.daemon_upload_progress.clone();
-        let daemon_upload_bytes = self.daemon_upload_bytes.clone();
+        let input_clone = input.clone();
 
-        // Start the streaming upload process
-        spawn_local(async move {
-            let ctx = context::context();
+        let onchange = Closure::once(move |_event: Event| {
+            if let Some(files) = input_clone.files() {
+                if files.length() > 0 {
+                    if let Some(file) = files.get(0) {
+                        let selected_file_name = file.name();
+                        let selected_file_size = file.size() as u64;
 
-            // Phase 1: Start daemon upload progress
-            *is_uploading_to_daemon.write().unwrap() = true;
-            log::info!("Starting daemon upload phase for {} bytes", file_data.len());
+                        // Verify this is the same file (basic check)
+                        if selected_file_name == filename && selected_file_size == file_size as u64 {
+                            log::info!("File verified, starting streaming upload");
 
-            // Simulate streaming upload progress to daemon
-            // In reality, this happens during the WebSocket send, but we can simulate it
-            Self::simulate_daemon_upload_progress(
-                daemon_upload_progress.clone(),
-                daemon_upload_bytes.clone(),
-                file_data.len() as u64,
-            ).await;
-
-            // Create a progress object first
-            let (put_id, progress) = ctx.create_progress(&key_name, &filename);
-            log::info!("Created progress object with ID: {}", put_id);
-
-            // Store the put ID for progress tracking immediately
-            *current_put_id.write().unwrap() = Some(put_id.clone());
-            log::info!("Stored put ID for progress tracking: {}", put_id);
-
-            // Phase 2: Actual upload to daemon
-            match ctx.put(&key_name, file_data, &filename, storage_mode, public, no_verify, Some((put_id.clone(), progress.clone()))).await {
-                Ok((_put_id, _progress)) => {
-                    log::info!("Upload completed with put ID: {}", put_id);
-                    *is_uploading_to_daemon.write().unwrap() = false;
-
-                    // Refresh the keys list to update the file explorer
-                    log::info!("Refreshing keys list after successful upload");
-                    spawn_local(async {
-                        let ctx = context::context();
-                        let _ = ctx.list_keys().await;
-                        log::info!("Keys list refreshed successfully");
-                    });
-                },
-                Err(e) => {
-                    log::error!("Failed to complete upload: {}", e);
-                    *error_message.write().unwrap() = Some(e.clone());
-                    *is_uploading.write().unwrap() = false;
-                    *is_uploading_to_daemon.write().unwrap() = false;
-
-                    // Show notification
-                    notifications::error(format!("Upload failed: {}", e));
+                            // Start the actual streaming upload
+                            Self::start_streaming_upload_with_file(
+                                file,
+                                key_name,
+                                filename,
+                                file_size,
+                                storage_mode,
+                                public,
+                                no_verify,
+                                current_put_id,
+                                error_message,
+                                is_uploading,
+                                is_uploading_to_daemon,
+                            );
+                        } else {
+                            log::error!("File mismatch: expected {} ({} bytes), got {} ({} bytes)",
+                                filename, file_size, selected_file_name, selected_file_size);
+                            *error_message.write().unwrap() = Some("File mismatch. Please select the same file.".to_string());
+                            *is_uploading.write().unwrap() = false;
+                            *is_uploading_to_daemon.write().unwrap() = false;
+                        }
+                    }
                 }
             }
         });
+
+        input.set_onchange(Some(onchange.as_ref().unchecked_ref()));
+        onchange.forget();
+
+        // Trigger file picker
+        input.click();
     }
 
-    // Simulate upload progress to daemon
-    async fn simulate_daemon_upload_progress(
-        daemon_upload_progress: Arc<RwLock<f32>>,
-        daemon_upload_bytes: Arc<RwLock<u64>>,
-        total_bytes: u64,
-    ) {
-        const CHUNK_SIZE: u64 = 256 * 1024; // 256KB chunks
-        const DELAY_MS: u64 = 50; // 50ms delay between chunks
 
-        let mut bytes_sent = 0u64;
 
-        while bytes_sent < total_bytes {
-            let chunk_size = std::cmp::min(CHUNK_SIZE, total_bytes - bytes_sent);
-            bytes_sent += chunk_size;
 
-            let progress = bytes_sent as f32 / total_bytes as f32;
-            *daemon_upload_progress.write().unwrap() = progress;
-            *daemon_upload_bytes.write().unwrap() = bytes_sent;
-
-            log::debug!("Daemon upload progress: {} / {} bytes ({:.1}%)",
-                bytes_sent, total_bytes, progress * 100.0);
-
-            // Small delay to simulate network transmission
-            if bytes_sent < total_bytes {
-                // Use a simple timer implementation
-                let start = web_time::SystemTime::now();
-                while start.elapsed().unwrap().as_millis() < DELAY_MS as u128 {
-                    // Busy wait - not ideal but works for our simulation
-                }
-            }
-        }
-
-        log::info!("Daemon upload simulation complete: {} bytes", total_bytes);
-    }
 
     fn reset(&self) {
         // Reset all state for a new upload

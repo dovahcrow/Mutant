@@ -338,6 +338,8 @@ pub enum PutSource {
     FilePath(String),
     /// Direct byte data to upload
     Bytes(Vec<u8>),
+    /// Streaming data - data will be sent in chunks via PutData requests
+    Stream { total_size: u64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -349,6 +351,21 @@ pub struct PutRequest {
     pub mode: StorageMode,
     pub public: bool,
     pub no_verify: bool,
+}
+
+/// Request containing a chunk of data for a streaming put operation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PutDataRequest {
+    /// The task ID associated with this data chunk.
+    pub task_id: TaskId,
+    /// The index of this chunk in the overall file.
+    pub chunk_index: usize,
+    /// The total number of chunks in the file.
+    pub total_chunks: usize,
+    /// The actual data for this chunk.
+    pub data: Vec<u8>,
+    /// Whether this is the last chunk of the file.
+    pub is_last: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -397,6 +414,7 @@ pub struct PurgeRequest {
 #[serde(tag = "type")]
 pub enum Request {
     Put(PutRequest),
+    PutData(PutDataRequest),
     Get(GetRequest),
     QueryTask(QueryTaskRequest),
     ListTasks(ListTasksRequest),

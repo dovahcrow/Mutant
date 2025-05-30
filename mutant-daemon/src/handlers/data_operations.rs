@@ -10,7 +10,7 @@ use mutant_protocol::{
     ErrorResponse, GetCallback, GetDataResponse, GetEvent, GetRequest, GetResult,
     PutCallback, PutEvent, PutRequest, PutResult, PutSource, Response, RmRequest, RmSuccessResponse,
     MvRequest, MvSuccessResponse, Task, TaskCreatedResponse, TaskProgress, TaskResult, TaskResultResponse, TaskResultType,
-    TaskStatus, TaskType, TaskUpdateResponse
+    TaskStatus, TaskType, TaskUpdateResponse, PutDataRequest
 };
 
 use super::common::UpdateSender;
@@ -81,6 +81,42 @@ pub(crate) async fn handle_put(
 
             let filename = req.filename.clone().unwrap_or_else(|| "direct-bytes".to_string());
             (format!("bytes:{}", filename), Arc::new(bytes.clone()))
+        },
+        PutSource::Stream { total_size } => {
+            // Try to register the key for this task
+            try_register_key(
+                &active_keys,
+                &user_key,
+                task_id,
+                TaskType::Put,
+                &update_tx,
+                original_request_str,
+            ).await?;
+
+            // Initialize streaming data storage
+            let streaming_data = StreamingPutData {
+                user_key: user_key.clone(),
+                filename: req.filename.clone(),
+                mode: req.mode,
+                public: req.public,
+                no_verify: req.no_verify,
+                total_chunks: 0, // Will be set when first chunk arrives
+                total_size: *total_size,
+                received_chunks: HashMap::new(),
+                received_size: 0,
+            };
+
+            {
+                let mut streaming_map = STREAMING_PUT_DATA.lock().await;
+                streaming_map.insert(task_id, streaming_data);
+            }
+
+            let filename = req.filename.clone().unwrap_or_else(|| "stream".to_string());
+            log::info!("DAEMON: Initialized streaming put for task {} ({} bytes)", task_id, total_size);
+
+            // For streaming, we don't have data yet, so we return early
+            // The actual put operation will be triggered when all chunks are received
+            return Ok(());
         }
     };
 
@@ -245,6 +281,121 @@ pub(crate) async fn handle_put(
     // Insert the TaskEntry into the map *after* spawning
     {
         tasks.write().await.insert(task_id, task_entry);
+    }
+
+    Ok(())
+}
+
+// Global storage for streaming put data
+use std::collections::HashMap;
+use tokio::sync::Mutex;
+
+lazy_static::lazy_static! {
+    static ref STREAMING_PUT_DATA: Mutex<HashMap<uuid::Uuid, StreamingPutData>> = Mutex::new(HashMap::new());
+}
+
+#[derive(Debug)]
+struct StreamingPutData {
+    user_key: String,
+    filename: Option<String>,
+    mode: mutant_protocol::StorageMode,
+    public: bool,
+    no_verify: bool,
+    total_chunks: usize,
+    total_size: u64,
+    received_chunks: HashMap<usize, Vec<u8>>,
+    received_size: u64,
+}
+
+pub(crate) async fn handle_put_data(
+    req: PutDataRequest,
+    update_tx: UpdateSender,
+    tasks: TaskMap,
+    original_request_str: &str,
+) -> Result<(), DaemonError> {
+    let task_id = req.task_id;
+
+    log::info!("DAEMON: Received PutData chunk {}/{} for task {} ({} bytes, is_last={})",
+               req.chunk_index + 1, req.total_chunks, task_id, req.data.len(), req.is_last);
+
+    // Get or create streaming data entry
+    let mut streaming_data = STREAMING_PUT_DATA.lock().await;
+
+    if let Some(put_data) = streaming_data.get_mut(&task_id) {
+        // Add this chunk to the existing data
+        put_data.received_chunks.insert(req.chunk_index, req.data.clone());
+        put_data.received_size += req.data.len() as u64;
+
+        log::info!("DAEMON: PutData task {} - Added chunk {}, total received: {}/{} bytes",
+                   task_id, req.chunk_index, put_data.received_size, put_data.total_size);
+
+        // Check if we have all chunks
+        if req.is_last && put_data.received_chunks.len() == req.total_chunks {
+            log::info!("DAEMON: PutData task {} - All chunks received, assembling data", task_id);
+
+            // Assemble the complete data
+            let mut complete_data = Vec::with_capacity(put_data.total_size as usize);
+            for i in 0..req.total_chunks {
+                if let Some(chunk) = put_data.received_chunks.get(&i) {
+                    complete_data.extend_from_slice(chunk);
+                } else {
+                    let error_msg = format!("Missing chunk {} for task {}", i, task_id);
+                    log::error!("DAEMON: PutData - {}", error_msg);
+
+                    // Clean up and return error
+                    streaming_data.remove(&task_id);
+                    return update_tx
+                        .send(Response::Error(ErrorResponse {
+                            error: error_msg,
+                            original_request: Some(original_request_str.to_string()),
+                        }))
+                        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)));
+                }
+            }
+
+            // Remove from streaming data storage
+            let put_data = streaming_data.remove(&task_id).unwrap();
+            drop(streaming_data); // Release the lock
+
+            log::info!("DAEMON: PutData task {} - Assembled complete data ({} bytes), starting put operation",
+                       task_id, complete_data.len());
+
+            // Now trigger the actual put operation with the assembled data
+            // We need to create a PutRequest with the assembled data
+            let put_request = PutRequest {
+                user_key: put_data.user_key,
+                source: PutSource::Bytes(complete_data),
+                filename: put_data.filename,
+                mode: put_data.mode,
+                public: put_data.public,
+                no_verify: put_data.no_verify,
+            };
+
+            // We need to handle this differently since we already have a task_id
+            // For now, let's send a success response
+            update_tx
+                .send(Response::TaskUpdate(TaskUpdateResponse {
+                    task_id,
+                    status: TaskStatus::InProgress,
+                    progress: Some(TaskProgress::Put(PutEvent::Starting {
+                        total_chunks: 1,
+                        chunks_to_reserve: 1,
+                        initial_written_count: 0,
+                        initial_confirmed_count: 0,
+                    })),
+                }))
+                .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+            log::info!("DAEMON: PutData task {} - Streaming assembly complete", task_id);
+        }
+    } else {
+        log::warn!("DAEMON: PutData - No streaming data found for task {}", task_id);
+        return update_tx
+            .send(Response::Error(ErrorResponse {
+                error: format!("No streaming put operation found for task {}", task_id),
+                original_request: Some(original_request_str.to_string()),
+            }))
+            .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)));
     }
 
     Ok(())

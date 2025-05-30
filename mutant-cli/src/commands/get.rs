@@ -33,7 +33,7 @@ pub async fn handle_get(
         // without waiting for it to complete
         let mut client = connect_to_daemon().await?;
         let dest = destination_path.as_ref().unwrap();
-        let (_start_task, _progress_rx, _) =
+        let (_task_id, _start_task, _progress_rx, _) =
             client.get(&key, Some(dest), public, false).await?;
 
         // Don't await the start_task, just let it run in the background
@@ -48,7 +48,7 @@ pub async fn handle_get(
     let start_time = Instant::now();
 
     // Call get with the appropriate parameters based on streaming mode
-    let (start_task, progress_rx, data_stream_rx) = if stream_data {
+    let (_task_id, start_task, progress_rx, data_stream_rx) = if stream_data {
         // Streaming mode - no destination path
         client.get(&key, None, public, true).await?
     } else {

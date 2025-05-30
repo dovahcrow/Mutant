@@ -50,6 +50,7 @@ image = { version = "0.24.9", default-features = false, features = ["png", "jpeg
 mime_guess = "2.0.4"
 base64 = "0.21.7"
 egui_extras = { version = "0.31.0", features = ["syntect"] }
+uuid = { version = "1.17.0", features = ["v4"] }
 
 [dependencies.web-sys]
 version = "0.3"
