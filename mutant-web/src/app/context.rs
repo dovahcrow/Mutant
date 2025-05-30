@@ -5,6 +5,7 @@ use log::{error, info, warn};
 use mutant_protocol::{KeyDetails, StatsResponse, StorageMode, TaskListEntry, TaskId, TaskProgress};
 use tokio::sync::mpsc;
 
+
 // Import our client manager
 // Assuming client_manager is correctly referenced. If it's in the same module or crate::client_manager
 use crate::app::client_manager; 
@@ -562,7 +563,27 @@ impl Context {
         no_verify: bool,
     ) -> Result<TaskId, String> {
         info!("Initializing streaming put for key '{}' ({} bytes)", key_name, total_size);
-        self.client.put_streaming_init(key_name, total_size, filename, storage_mode, public, no_verify).await
+
+        // Initialize the streaming put
+        let task_id = self.client.put_streaming_init(key_name, total_size, filename, storage_mode, public, no_verify).await?;
+
+        // Create a progress object for this streaming put operation
+        let progress = Arc::new(RwLock::new(Progress {
+            operation: BTreeMap::new(),
+        }));
+
+        // Store the progress in our map using the task ID as the key
+        {
+            let mut put_progress = self.put_progress.write().unwrap();
+            put_progress.insert(task_id.to_string(), progress.clone());
+        }
+
+        info!("Created streaming put progress object for task ID: {}", task_id);
+
+        // Start listening for progress updates for this task
+        self.start_streaming_put_progress_listener(task_id, progress).await;
+
+        Ok(task_id)
     }
 
     pub async fn put_streaming_chunk(
@@ -574,5 +595,13 @@ impl Context {
         is_last: bool,
     ) -> Result<(), String> {
         self.client.put_streaming_chunk(task_id, chunk_index, total_chunks, data, is_last).await
+    }
+
+    // Start listening for progress updates for a streaming put operation
+    async fn start_streaming_put_progress_listener(&self, task_id: TaskId, _progress: Arc<RwLock<Progress>>) {
+        info!("Streaming put progress tracking initialized for task: {} (progress updates handled via WebSocket)", task_id);
+        // Progress updates are received automatically through WebSocket TaskUpdate responses
+        // and processed by the existing client response handling mechanism.
+        // No manual polling needed - the daemon sends TaskUpdate responses automatically.
     }
 }

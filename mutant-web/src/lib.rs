@@ -182,35 +182,29 @@ impl Client {
                         }
                     }
                     ClientRequest::PutStreamingInit { key_name, total_size, filename, storage_mode, public, no_verify, response_name } => {
-                        // Send actual PutRequest with Stream source to daemon
-                        let put_request = mutant_protocol::PutRequest {
-                            user_key: key_name,
-                            source: mutant_protocol::PutSource::Stream { total_size },
-                            filename: Some(filename),
-                            mode: storage_mode,
+                        // Use the proper streaming put method from mutant-client
+                        let result = this.client.put_streaming_init(
+                            &key_name,
+                            total_size,
+                            Some(filename),
+                            storage_mode,
                             public,
-                            no_verify,
-                        };
-
-                        let request = mutant_protocol::Request::Put(put_request);
-                        let result = this.send_request_and_wait_for_task_created(request).await;
+                            no_verify
+                        ).await.map_err(|e| format!("{:?}", e));
 
                         if let Some(tx) = responses.write().unwrap().remove(&response_name) {
                             let _ = tx.send(ClientResponse::PutStreamingInit(result));
                         }
                     }
                     ClientRequest::PutStreamingChunk { task_id, chunk_index, total_chunks, data, is_last, response_name } => {
-                        // Send actual PutDataRequest to daemon
-                        let put_data_request = mutant_protocol::PutDataRequest {
+                        // Use the proper streaming chunk method from mutant-client
+                        let result = this.client.put_streaming_chunk(
                             task_id,
                             chunk_index,
                             total_chunks,
                             data,
-                            is_last,
-                        };
-
-                        let request = mutant_protocol::Request::PutData(put_data_request);
-                        let result = this.send_request_simple(request).await;
+                            is_last
+                        ).await.map_err(|e| format!("{:?}", e));
 
                         if let Some(tx) = responses.write().unwrap().remove(&response_name) {
                             let _ = tx.send(ClientResponse::PutStreamingChunk(result));
@@ -470,44 +464,7 @@ impl Client {
         self.client.get_stats().await.map_err(|e| format!("{:?}", e))
     }
 
-    // Helper method to send a raw request and wait for TaskCreated response
-    pub async fn send_request_and_wait_for_task_created(&mut self, request: mutant_protocol::Request) -> Result<mutant_protocol::TaskId, String> {
-        // Send the request directly to the daemon and wait for TaskCreated response
-        match self.client.send_request(request).await {
-            Ok(_) => {
-                // The request was sent, but we need to wait for the TaskCreated response
-                // This is a simplified implementation - in a real scenario we'd need to handle
-                // the response properly through the client's response handling mechanism
-
-                // For now, we'll use a timeout and check for task creation
-                // This is not ideal but works for the streaming implementation
-                use std::time::Duration;
-
-                // Wait a bit for the task to be created
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let start = web_time::SystemTime::now();
-                    while start.elapsed().unwrap() < Duration::from_millis(1000) {
-                        // Busy wait - not ideal but works for our use case
-                    }
-                }
-
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-
-                // Generate a dummy task ID for now
-                // In a real implementation, this would come from the TaskCreated response
-                use uuid::Uuid;
-                Ok(Uuid::new_v4())
-            },
-            Err(e) => {
-                error!("Failed to send request: {:?}", e);
-                Err(format!("Failed to send request: {:?}", e))
-            }
-        }
-    }
+    // This method is no longer needed - we use the proper mutant-client streaming methods
 
     // Helper method to send a simple request (like PutData) that doesn't expect a response
     pub async fn send_request_simple(&mut self, request: mutant_protocol::Request) -> Result<(), String> {
@@ -723,7 +680,7 @@ impl ClientSender {
         }).map_err(|e| format!("{:?}", e))?
     }
 
-    // Streaming put methods
+    // Streaming put methods - now using proper mutant-client methods
     pub async fn put_streaming_init(
         &self,
         key_name: &str,

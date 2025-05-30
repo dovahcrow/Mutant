@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use wasm_bindgen::{JsCast, closure::Closure};
 use wasm_bindgen_futures::spawn_local;
-use web_sys::{File, FileReader, HtmlInputElement, HtmlElement, Event};
+use web_sys::{File, FileReader, HtmlInputElement, Event};
 use web_time::{Duration, SystemTime};
 
 use super::Window;
@@ -281,93 +281,7 @@ impl PutWindow {
         }
     }
 
-    fn select_file(&self) {
-        log::info!("File selection requested");
 
-        // Get references to our state
-        let selected_file = self.selected_file.clone();
-        let file_size = self.file_size.clone();
-        let file_data = self.file_data.clone();
-        let key_name = self.key_name.clone();
-
-        // Get references to streaming progress state
-        let is_reading_file = self.is_reading_file.clone();
-        let file_read_progress = self.file_read_progress.clone();
-        let file_read_bytes = self.file_read_bytes.clone();
-
-        // Create a file input element
-        let window = web_sys::window().expect("no global window exists");
-        let document = window.document().expect("no document exists");
-
-        let input: HtmlInputElement = document
-            .create_element("input")
-            .expect("failed to create input element")
-            .dyn_into::<HtmlInputElement>()
-            .expect("failed to cast to HtmlInputElement");
-
-        // Set input attributes
-        input.set_type("file");
-
-        // Cast to HtmlElement to access style
-        let input_html: &HtmlElement = input.dyn_ref::<HtmlElement>()
-            .expect("input should be an HtmlElement");
-        input_html.style().set_property("display", "none").expect("failed to set style");
-
-        // Append to document body
-        let body = document.body().expect("document should have a body");
-        body.append_child(&input).expect("failed to append input to body");
-
-        // Create onchange handler
-        let onchange = Closure::once(move |event: Event| {
-            let input: HtmlInputElement = event
-                .target()
-                .expect("event should have a target")
-                .dyn_into::<HtmlInputElement>()
-                .expect("target should be an HtmlInputElement");
-
-            // Get the selected file
-            let file_list = input.files().expect("input should have files");
-            if let Some(file) = file_list.get(0) {
-                let file_name = file.name();
-                let file_size_js = file.size();
-
-                // Update state with file name and size
-                *selected_file.write().unwrap() = Some(file_name.clone());
-                *file_size.write().unwrap() = Some(file_size_js as u64);
-
-                // Auto-fill key name if it's empty
-                {
-                    let mut key_name_guard = key_name.write().unwrap();
-                    if key_name_guard.is_empty() {
-                        *key_name_guard = file_name.clone();
-                        log::info!("Auto-filled key name with file name: {}", file_name);
-                    }
-                }
-
-                // File is selected, ready for upload when user clicks upload button
-                *file_data.write().unwrap() = Some(Vec::new()); // Just mark as selected, no data loaded
-                *is_reading_file.write().unwrap() = false; // File is selected, not being read yet
-                *file_read_progress.write().unwrap() = 0.0;
-                *file_read_bytes.write().unwrap() = 0;
-
-                // Store the file object for later use when upload button is clicked
-                // We'll need to store it in a way that can be accessed later
-                // For now, just mark the file as selected - the upload will happen when start_upload() is called
-
-                // Remove the input element
-                if let Some(parent) = input.parent_node() {
-                    parent.remove_child(&input).expect("failed to remove input");
-                }
-            }
-        });
-
-        // Set onchange handler
-        input.set_onchange(Some(onchange.as_ref().unchecked_ref()));
-        onchange.forget(); // Prevent closure from being dropped
-
-        // Click the input to open file dialog
-        input.click();
-    }
 
     // TRUE streaming upload - reads file chunks and sends them directly to daemon
     fn start_streaming_upload_with_file(
@@ -543,7 +457,18 @@ impl PutWindow {
     }
 
     fn start_upload(&self) {
-        log::info!("Starting streaming upload");
+        log::info!("Starting file selection and upload");
+
+        // Get upload parameters
+        let key_name = self.key_name.read().unwrap().clone();
+        let public = *self.public.read().unwrap();
+        let storage_mode = self.storage_mode.read().unwrap().clone();
+        let no_verify = *self.no_verify.read().unwrap();
+
+        if key_name.is_empty() {
+            notifications::error("Please enter a key name".to_string());
+            return;
+        }
 
         // Set upload state
         *self.is_uploading.write().unwrap() = true;
@@ -558,34 +483,23 @@ impl PutWindow {
         *self.upload_progress.write().unwrap() = 0.0;
         *self.confirmation_progress.write().unwrap() = 0.0;
 
-        // Get upload parameters
-        let key_name = self.key_name.read().unwrap().clone();
-        let public = *self.public.read().unwrap();
-        let storage_mode = self.storage_mode.read().unwrap().clone();
-        let no_verify = *self.no_verify.read().unwrap();
-        let filename = self.selected_file.read().unwrap().clone().unwrap_or_default();
-        let file_size = self.file_size.read().unwrap().unwrap_or(0);
+        log::info!("Upload parameters: key={}, public={}, mode={:?}, no_verify={}",
+            key_name, public, storage_mode, no_verify);
 
-        log::info!("Upload parameters: key={}, filename={}, size={} bytes, public={}, mode={:?}, no_verify={}",
-            key_name, filename, file_size, public, storage_mode, no_verify);
-
-        // Since we can't store File objects, we need to re-trigger file selection
-        // but this time for upload purposes
-        self.start_streaming_upload_for_selected_file(key_name, filename, file_size as f64, storage_mode, public, no_verify);
+        // Directly trigger file selection for upload
+        self.select_file_and_upload(key_name, storage_mode, public, no_verify);
     }
 
-    fn start_streaming_upload_for_selected_file(
+    fn select_file_and_upload(
         &self,
         key_name: String,
-        filename: String,
-        file_size: f64,
         storage_mode: mutant_protocol::StorageMode,
         public: bool,
         no_verify: bool,
     ) {
-        log::info!("Re-selecting file for streaming upload");
+        log::info!("Opening file picker for direct upload");
 
-        // Create file input element to re-select the same file
+        // Create file input element
         let document = web_sys::window().unwrap().document().unwrap();
         let input = document
             .create_element("input")
@@ -601,41 +515,45 @@ impl PutWindow {
         let error_message = self.error_message.clone();
         let is_uploading = self.is_uploading.clone();
         let is_uploading_to_daemon = self.is_uploading_to_daemon.clone();
+        let selected_file = self.selected_file.clone();
+        let file_size = self.file_size.clone();
+        let file_data = self.file_data.clone();
         let input_clone = input.clone();
 
         let onchange = Closure::once(move |_event: Event| {
             if let Some(files) = input_clone.files() {
                 if files.length() > 0 {
                     if let Some(file) = files.get(0) {
-                        let selected_file_name = file.name();
-                        let selected_file_size = file.size() as u64;
+                        let file_name = file.name();
+                        let file_size_js = file.size();
 
-                        // Verify this is the same file (basic check)
-                        if selected_file_name == filename && selected_file_size == file_size as u64 {
-                            log::info!("File verified, starting streaming upload");
+                        log::info!("File selected for upload: {} ({} bytes)", file_name, file_size_js);
 
-                            // Start the actual streaming upload
-                            Self::start_streaming_upload_with_file(
-                                file,
-                                key_name,
-                                filename,
-                                file_size,
-                                storage_mode,
-                                public,
-                                no_verify,
-                                current_put_id,
-                                error_message,
-                                is_uploading,
-                                is_uploading_to_daemon,
-                            );
-                        } else {
-                            log::error!("File mismatch: expected {} ({} bytes), got {} ({} bytes)",
-                                filename, file_size, selected_file_name, selected_file_size);
-                            *error_message.write().unwrap() = Some("File mismatch. Please select the same file.".to_string());
-                            *is_uploading.write().unwrap() = false;
-                            *is_uploading_to_daemon.write().unwrap() = false;
-                        }
+                        // Update state with selected file info
+                        *selected_file.write().unwrap() = Some(file_name.clone());
+                        *file_size.write().unwrap() = Some(file_size_js as u64);
+                        *file_data.write().unwrap() = Some(Vec::new()); // Mark as selected
+
+                        // Start the actual streaming upload immediately
+                        Self::start_streaming_upload_with_file(
+                            file,
+                            key_name,
+                            file_name,
+                            file_size_js,
+                            storage_mode,
+                            public,
+                            no_verify,
+                            current_put_id,
+                            error_message,
+                            is_uploading,
+                            is_uploading_to_daemon,
+                        );
                     }
+                } else {
+                    // User cancelled file selection
+                    log::info!("File selection cancelled");
+                    *is_uploading.write().unwrap() = false;
+                    *is_uploading_to_daemon.write().unwrap() = false;
                 }
             }
         });
@@ -703,21 +621,17 @@ impl PutWindow {
 
             ui.add_space(5.0);
 
-            // File selection button
-            if ui.button("Select File").clicked() {
-                self.select_file();
-            }
-
-            // Show selected file info
+            // Show selected file info if any (from previous upload)
             if let Some(filename) = &*self.selected_file.read().unwrap() {
                 ui.horizontal(|ui| {
-                    ui.label("Selected File:");
+                    ui.label("Last Selected File:");
                     ui.label(filename);
                 });
 
                 if let Some(size) = *self.file_size.read().unwrap() {
                     ui.label(format!("Size: {} bytes", size));
                 }
+                ui.add_space(5.0);
             }
 
             ui.add_space(10.0);
@@ -756,17 +670,15 @@ impl PutWindow {
 
             ui.add_space(10.0);
 
-            // Upload button
-            let can_upload = self.selected_file.read().unwrap().is_some() &&
-                            !self.key_name.read().unwrap().is_empty() &&
-                            self.file_data.read().unwrap().is_some();
+            // Upload button - now triggers file selection and upload
+            let can_upload = !self.key_name.read().unwrap().is_empty();
 
-            if ui.add_enabled(can_upload, egui::Button::new("Upload")).clicked() {
+            if ui.add_enabled(can_upload, egui::Button::new("Select File and Upload")).clicked() {
                 self.start_upload();
             }
 
             if !can_upload {
-                ui.label(RichText::new("Please select a file and enter a key name").color(Color32::LIGHT_RED));
+                ui.label(RichText::new("Please enter a key name").color(Color32::LIGHT_RED));
             }
 
             // Show error message if any

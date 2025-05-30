@@ -23,7 +23,7 @@ pub(crate) async fn handle_request(
 ) -> Result<(), DaemonError> {
     match request {
         Request::Put(put_req) => handle_put(put_req, update_tx, mutant, tasks, active_keys, original_request_str).await?,
-        Request::PutData(put_data_req) => handle_put_data(put_data_req, update_tx, tasks, original_request_str).await?,
+        Request::PutData(put_data_req) => handle_put_data(put_data_req, update_tx, tasks, mutant, active_keys, original_request_str).await?,
         Request::Get(get_req) => handle_get(get_req, update_tx, mutant, tasks, active_keys, original_request_str).await?,
         Request::QueryTask(query_req) => {
             handle_query_task(query_req, update_tx, tasks, original_request_str).await?

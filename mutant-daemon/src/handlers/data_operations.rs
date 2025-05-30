@@ -36,6 +36,11 @@ pub(crate) async fn handle_put(
     let task_id = Uuid::new_v4();
     let user_key = req.user_key.clone();
 
+    // Clone values we might need later to avoid borrow checker issues
+    let req_mode = req.mode.clone();
+    let req_public = req.public;
+    let req_no_verify = req.no_verify;
+
     // Get source info for logging
     let (source_info, data_arc) = match &req.source {
         PutSource::FilePath(path) => {
@@ -66,7 +71,7 @@ pub(crate) async fn handle_put(
                 ))
             })?;
 
-            (format!("file:{}", source_path), Arc::new(data_bytes_vec))
+            (format!("file:{}", source_path), Some(Arc::new(data_bytes_vec)))
         },
         PutSource::Bytes(bytes) => {
             // Try to register the key for this task
@@ -80,7 +85,7 @@ pub(crate) async fn handle_put(
             ).await?;
 
             let filename = req.filename.clone().unwrap_or_else(|| "direct-bytes".to_string());
-            (format!("bytes:{}", filename), Arc::new(bytes.clone()))
+            (format!("bytes:{}", filename), Some(Arc::new(bytes.clone())))
         },
         PutSource::Stream { total_size } => {
             // Try to register the key for this task
@@ -93,13 +98,15 @@ pub(crate) async fn handle_put(
                 original_request_str,
             ).await?;
 
+            let req_filename = req.filename.clone();
+
             // Initialize streaming data storage
             let streaming_data = StreamingPutData {
                 user_key: user_key.clone(),
-                filename: req.filename.clone(),
-                mode: req.mode,
-                public: req.public,
-                no_verify: req.no_verify,
+                filename: req_filename.clone(),
+                mode: req_mode.clone(),
+                public: req_public,
+                no_verify: req_no_verify,
                 total_chunks: 0, // Will be set when first chunk arrives
                 total_size: *total_size,
                 received_chunks: HashMap::new(),
@@ -111,12 +118,12 @@ pub(crate) async fn handle_put(
                 streaming_map.insert(task_id, streaming_data);
             }
 
-            let filename = req.filename.clone().unwrap_or_else(|| "stream".to_string());
+            let filename = req_filename.unwrap_or_else(|| "stream".to_string());
             log::info!("DAEMON: Initialized streaming put for task {} ({} bytes)", task_id, total_size);
 
-            // For streaming, we don't have data yet, so we return early
+            // For streaming, we create the task entry but don't spawn the operation yet
             // The actual put operation will be triggered when all chunks are received
-            return Ok(());
+            (format!("stream: {}", filename), None)
         }
     };
 
@@ -134,15 +141,17 @@ pub(crate) async fn handle_put(
         .send(Response::TaskCreated(TaskCreatedResponse { task_id }))
         .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
 
-    // Clone Arc handles *before* moving them into the async block
-    let tasks_clone = tasks.clone();
-    let mutant_clone = mutant.clone();
-    let update_tx_clone_for_spawn = update_tx.clone();
-    let data_arc_clone = data_arc.clone(); // Clone the Arc for the task
-    let active_keys_clone = active_keys.clone();
-    let user_key_clone = user_key.clone();
+    // Only spawn the actual put operation for non-streaming sources
+    let task_handle = if let Some(data_arc) = data_arc {
+        // Clone Arc handles *before* moving them into the async block
+        let tasks_clone = tasks.clone();
+        let mutant_clone = mutant.clone();
+        let update_tx_clone_for_spawn = update_tx.clone();
+        let data_arc_clone = data_arc.clone(); // Clone the Arc for the task
+        let active_keys_clone = active_keys.clone();
+        let user_key_clone = user_key.clone();
 
-    let task_handle = tokio::spawn(async move {
+        Some(tokio::spawn(async move {
         // Use the cloned handles inside the spawned task
         let tasks = tasks_clone;
         let mutant = mutant_clone;
@@ -198,9 +207,9 @@ pub(crate) async fn handle_put(
             .put(
                 &user_key,
                 data_to_put, // Pass the Arc<Vec<u8>>
-                req.mode,
-                req.public,
-                req.no_verify,
+                req_mode,
+                req_public,
+                req_no_verify,
                 Some(callback), // Pass callback here
             )
             .await;
@@ -214,7 +223,7 @@ pub(crate) async fn handle_put(
                     match result {
                         Ok(_addr) => {
                             // For public keys, get the index pad address from the master index
-                            let public_address = if req.public {
+                            let public_address = if req_public {
                                 // Get the index pad address from the master index
                                 match mutant.get_public_index_address(&user_key).await {
                                     Ok(addr) => Some(addr),
@@ -269,13 +278,17 @@ pub(crate) async fn handle_put(
         // Release the key when the operation completes
         release_key(&active_keys, &user_key).await;
         log::debug!("Released key '{}' after PUT operation", user_key);
-    });
+    }))
+    } else {
+        // For streaming operations, no task handle yet
+        None
+    };
 
     // Get the abort handle and create the TaskEntry
-    let abort_handle = task_handle.abort_handle();
+    let abort_handle = task_handle.as_ref().map(|h| h.abort_handle());
     let task_entry = TaskEntry {
         task, // The task struct created earlier
-        abort_handle: Some(abort_handle),
+        abort_handle,
     };
 
     // Insert the TaskEntry into the map *after* spawning
@@ -311,6 +324,8 @@ pub(crate) async fn handle_put_data(
     req: PutDataRequest,
     update_tx: UpdateSender,
     tasks: TaskMap,
+    mutant: Arc<MutAnt>,
+    active_keys: ActiveKeysMap,
     original_request_str: &str,
 ) -> Result<(), DaemonError> {
     let task_id = req.task_id;
@@ -361,32 +376,141 @@ pub(crate) async fn handle_put_data(
                        task_id, complete_data.len());
 
             // Now trigger the actual put operation with the assembled data
-            // We need to create a PutRequest with the assembled data
-            let put_request = PutRequest {
-                user_key: put_data.user_key,
-                source: PutSource::Bytes(complete_data),
-                filename: put_data.filename,
-                mode: put_data.mode,
-                public: put_data.public,
-                no_verify: put_data.no_verify,
-            };
+            let user_key = put_data.user_key.clone();
+            let mode = put_data.mode.clone();
+            let public = put_data.public;
+            let no_verify = put_data.no_verify;
 
-            // We need to handle this differently since we already have a task_id
-            // For now, let's send a success response
-            update_tx
-                .send(Response::TaskUpdate(TaskUpdateResponse {
-                    task_id,
-                    status: TaskStatus::InProgress,
-                    progress: Some(TaskProgress::Put(PutEvent::Starting {
-                        total_chunks: 1,
-                        chunks_to_reserve: 1,
-                        initial_written_count: 0,
-                        initial_confirmed_count: 0,
-                    })),
-                }))
-                .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+            // Update task status to InProgress
+            {
+                let mut tasks_guard = tasks.write().await;
+                if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                    entry.task.status = TaskStatus::InProgress;
+                }
+            }
 
-            log::info!("DAEMON: PutData task {} - Streaming assembly complete", task_id);
+            // Create callback for progress updates
+            let update_tx_clone = update_tx.clone();
+            let task_id_clone = task_id;
+            let tasks_clone = tasks.clone();
+            let callback: PutCallback = Arc::new(move |event: PutEvent| {
+                let tx = update_tx_clone.clone();
+                let task_id = task_id_clone;
+                let tasks = tasks_clone.clone();
+                Box::pin(async move {
+                    let progress = TaskProgress::Put(event);
+                    // Update task progress in map
+                    let mut tasks_guard = tasks.write().await;
+                    if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                        // Only update if the task is still considered InProgress
+                        if entry.task.status == TaskStatus::InProgress {
+                            entry.task.progress = Some(progress.clone());
+                            // Send update via channel
+                            let _ = tx.send(Response::TaskUpdate(TaskUpdateResponse {
+                                task_id,
+                                status: TaskStatus::InProgress,
+                                progress: Some(progress),
+                            }));
+                        } else {
+                            log::warn!("Received PUT progress update for task not InProgress (status: {:?}). Ignoring. task_id={}", entry.task.status, task_id);
+                            return Ok(false); // Indicate to stop sending updates if task is no longer InProgress
+                        }
+                    }
+                    drop(tasks_guard);
+                    Ok(true)
+                })
+            });
+
+            // Spawn the actual PUT operation
+            let mutant_clone = mutant.clone();
+            let update_tx_clone = update_tx.clone();
+            let tasks_clone = tasks.clone();
+            let active_keys_clone = active_keys.clone();
+            let user_key_clone = user_key.clone();
+            let complete_data_arc = Arc::new(complete_data);
+
+            tokio::spawn(async move {
+                log::info!("DAEMON: Starting PUT operation for streaming task {}", task_id);
+
+                // Call put with the callback
+                let result = mutant_clone
+                    .put(
+                        &user_key,
+                        complete_data_arc,
+                        mode,
+                        public,
+                        no_verify,
+                        Some(callback),
+                    )
+                    .await;
+
+                let final_response = {
+                    let mut tasks_guard = tasks_clone.write().await;
+                    // Check if task entry still exists and hasn't been stopped
+                    if let Some(entry) = tasks_guard.get_mut(&task_id) {
+                        // Only update if the task hasn't been stopped externally
+                        if entry.task.status != TaskStatus::Stopped {
+                            match result {
+                                Ok(_addr) => {
+                                    // For public keys, get the index pad address from the master index
+                                    let public_address = if public {
+                                        // Get the index pad address from the master index
+                                        match mutant_clone.get_public_index_address(&user_key).await {
+                                            Ok(addr) => Some(addr),
+                                            Err(e) => {
+                                                log::warn!("Failed to get public index address for key {}: {}", user_key, e);
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    };
+
+                                    entry.task.status = TaskStatus::Completed;
+                                    entry.task.result = TaskResult::Result(TaskResultType::Put(PutResult {
+                                        public_address,
+                                    }));
+                                    entry.abort_handle = None; // Task finished, remove handle
+                                    log::info!("PUT streaming task completed successfully: task_id={}, user_key={}", task_id, user_key);
+                                    Some(Response::TaskResult(TaskResultResponse {
+                                        task_id,
+                                        status: TaskStatus::Completed,
+                                        result: entry.task.result.clone(),
+                                    }))
+                                }
+                                Err(e) => {
+                                    entry.task.status = TaskStatus::Failed;
+                                    entry.task.result = TaskResult::Error(e.to_string());
+                                    entry.abort_handle = None; // Task finished, remove handle
+                                    log::error!("PUT streaming task failed: task_id={}, user_key={}, error={}", task_id, user_key, e);
+                                    Some(Response::TaskResult(TaskResultResponse {
+                                        task_id,
+                                        status: TaskStatus::Failed,
+                                        result: entry.task.result.clone(),
+                                    }))
+                                }
+                            }
+                        } else {
+                            log::info!("PUT streaming task was stopped before completion: task_id={}", task_id);
+                            entry.abort_handle = None; // Ensure handle is cleared if stopped
+                            None // No final result to send if stopped
+                        }
+                    } else {
+                        log::warn!("Task entry removed before PUT streaming completion? task_id={}", task_id);
+                        None
+                    }
+                };
+
+                if let Some(response) = final_response {
+                    let _ = update_tx_clone.send(response);
+                }
+
+                // Release the key when the operation completes
+                release_key(&active_keys_clone, &user_key_clone).await;
+                log::debug!("Released key '{}' after PUT streaming operation", user_key_clone);
+            });
+
+            log::info!("DAEMON: PutData task {} - Streaming assembly complete, PUT operation spawned", task_id);
         }
     } else {
         log::warn!("DAEMON: PutData - No streaming data found for task {}", task_id);

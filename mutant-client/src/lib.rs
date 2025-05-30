@@ -13,7 +13,7 @@ use wasm_bindgen_futures::spawn_local;
 use mutant_protocol::{
     ExportResult, HealthCheckResult, ImportResult, KeyDetails, MvRequest, PurgeResult, PutEvent, PutSource, Request,
     Response, StatsResponse, StorageMode, SyncResult, Task, TaskId, TaskListEntry, TaskProgress,
-    TaskResult, TaskStatus, TaskStoppedResponse, TaskType,
+    TaskResult, TaskStatus, TaskStoppedResponse, TaskType, PutRequest, PutDataRequest,
 };
 
 pub mod error;
@@ -263,6 +263,108 @@ impl MutantClient {
                 no_verify,
             }
         )
+    }
+
+    /// Initialize a streaming put operation and return the task ID
+    /// This follows the same pattern as the streaming GET implementation
+    pub async fn put_streaming_init(
+        &mut self,
+        user_key: &str,
+        total_size: u64,
+        filename: Option<String>,
+        mode: StorageMode,
+        public: bool,
+        no_verify: bool,
+    ) -> Result<TaskId, ClientError> {
+        info!("CLIENT: put_streaming_init() called with user_key={}, total_size={}, filename={:?}",
+              user_key, total_size, filename);
+
+        // Check connection state
+        let connection_state = self.state.lock().unwrap().clone();
+        if connection_state != ConnectionState::Connected {
+            error!("CLIENT: Cannot send put streaming init request - not connected (state: {:?})", connection_state);
+            return Err(ClientError::NotConnected);
+        }
+
+        // Create the request
+        let key = PendingRequestKey::TaskCreation;
+        let req = Request::Put(PutRequest {
+            user_key: user_key.to_string(),
+            source: PutSource::Stream { total_size },
+            filename,
+            mode,
+            public,
+            no_verify,
+        });
+
+        // Check if there's already a pending request
+        if self.pending_requests.lock().unwrap().contains_key(&key) {
+            error!("CLIENT: Another put/get request is already pending");
+            return Err(ClientError::InternalError(
+                "Another put/get request is already pending".to_string(),
+            ));
+        }
+
+        // Create channels for task creation
+        let (task_creation_tx, task_creation_rx) = oneshot::channel();
+
+        // For streaming init, we only need the task creation channel
+        // The actual put operation will be handled when all chunks are received
+        self.pending_requests.lock().unwrap().insert(
+            key.clone(),
+            PendingSender::TaskCreation(
+                task_creation_tx,
+                // Dummy channels since we only care about task creation for streaming init
+                (oneshot::channel().0, mpsc::unbounded_channel().0, None),
+                TaskType::Put,
+            ),
+        );
+
+        // Send the request
+        if let Err(e) = self.send_request(req).await {
+            error!("CLIENT: Failed to send Put streaming init request: {:?}", e);
+            self.pending_requests.lock().unwrap().remove(&key);
+            return Err(e);
+        }
+        info!("CLIENT: Put streaming init request sent successfully, waiting for TaskCreated response");
+
+        // Wait for the TaskCreated response with the real task ID
+        let task_id = match task_creation_rx.await {
+            Ok(Ok(id)) => {
+                info!("CLIENT: Streaming put task created with ID: {}", id);
+                id
+            }
+            Ok(Err(e)) => {
+                error!("CLIENT: Failed to create streaming put task: {:?}", e);
+                return Err(e);
+            }
+            Err(e) => {
+                error!("CLIENT: TaskCreated channel canceled for streaming put: {:?}", e);
+                return Err(ClientError::InternalError(format!("TaskCreated channel canceled: {:?}", e)));
+            }
+        };
+
+        Ok(task_id)
+    }
+
+    /// Send a data chunk for a streaming put operation
+    pub async fn put_streaming_chunk(
+        &mut self,
+        task_id: TaskId,
+        chunk_index: usize,
+        total_chunks: usize,
+        data: Vec<u8>,
+        is_last: bool,
+    ) -> Result<(), ClientError> {
+        let req = Request::PutData(PutDataRequest {
+            task_id,
+            chunk_index,
+            total_chunks,
+            data,
+            is_last,
+        });
+
+        self.send_request(req).await
     }
 
 
