@@ -270,6 +270,15 @@ pub struct FileViewerTab {
     /// Processed file content for multimedia components
     #[serde(skip)]
     pub file_content: Option<multimedia::FileContent>,
+    /// Progress tracking for file loading
+    #[serde(skip)]
+    pub loading_progress: f32, // 0.0 to 1.0
+    /// Total bytes expected for the file
+    #[serde(skip)]
+    pub total_bytes: Option<usize>,
+    /// Bytes downloaded so far
+    #[serde(skip)]
+    pub downloaded_bytes: usize,
 }
 
 impl FileViewerTab {
@@ -299,6 +308,9 @@ impl FileViewerTab {
             video_url: None,
             file_modified: false,
             file_content: Some(file_content),
+            loading_progress: 0.0,
+            total_bytes: None,
+            downloaded_bytes: 0,
         }
     }
 
@@ -371,35 +383,62 @@ impl FileViewerTab {
 
         // Show loading indicator if we're loading content
         if self.is_loading {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Loading file content...");
-            });
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Loading file content...");
+                });
 
-            // Check if we have a progress object for this file
-            let ctx = crate::app::context::context();
-            let get_id = format!("get_{}", self.file.key);
+                // Show progress bar if we have progress information
+                if self.loading_progress > 0.0 || self.total_bytes.is_some() {
+                    ui.add_space(4.0);
 
-            if let Some(progress) = ctx.get_get_progress(&get_id) {
-                let progress_guard = progress.read().unwrap();
+                    // Show bytes downloaded if we have that info
+                    if let Some(total) = self.total_bytes {
+                        ui.label(format!(
+                            "Downloaded {} of {} ({}%)",
+                            humanize_size(self.downloaded_bytes),
+                            humanize_size(total),
+                            (self.loading_progress * 100.0) as u32
+                        ));
+                    } else if self.downloaded_bytes > 0 {
+                        ui.label(format!("Downloaded {}", humanize_size(self.downloaded_bytes)));
+                    }
 
-                // Check if we have a get operation in progress
-                if let Some(op) = progress_guard.operation.get("get") {
-                    if op.total_pads > 0 {
-                        // Calculate progress percentage
-                        let progress_value = op.nb_reserved as f32 / op.total_pads as f32;
+                    ui.add_space(2.0);
+                    let progress_bar = egui::ProgressBar::new(self.loading_progress)
+                        .show_percentage()
+                        .animate(true);
+                    ui.add(progress_bar);
+                }
 
-                        // Show progress bar
-                        ui.add_space(4.0);
-                        ui.label(format!("Downloaded {} of {} pads", op.nb_reserved, op.total_pads));
-                        ui.add_space(4.0);
-                        let progress_bar = egui::ProgressBar::new(progress_value)
-                            .show_percentage()
-                            .animate(true);
-                        ui.add(progress_bar);
+                // Fallback: Check if we have a progress object for this file (legacy support)
+                if self.loading_progress == 0.0 && self.total_bytes.is_none() {
+                    let ctx = crate::app::context::context();
+                    let get_id = format!("get_{}", self.file.key);
+
+                    if let Some(progress) = ctx.get_get_progress(&get_id) {
+                        let progress_guard = progress.read().unwrap();
+
+                        // Check if we have a get operation in progress
+                        if let Some(op) = progress_guard.operation.get("get") {
+                            if op.total_pads > 0 {
+                                // Calculate progress percentage
+                                let progress_value = op.nb_reserved as f32 / op.total_pads as f32;
+
+                                // Show progress bar
+                                ui.add_space(4.0);
+                                ui.label(format!("Downloaded {} of {} pads", op.nb_reserved, op.total_pads));
+                                ui.add_space(4.0);
+                                let progress_bar = egui::ProgressBar::new(progress_value)
+                                    .show_percentage()
+                                    .animate(true);
+                                ui.add(progress_bar);
+                            }
+                        }
                     }
                 }
-            }
+            });
 
             return;
         }
@@ -981,7 +1020,20 @@ impl FsWindow {
     }
 
 
-    /// Find a tab by key
+    /// Find a tab by key (read-only)
+    pub fn find_tab(&self, key: &str) -> Option<&FileViewerTab> {
+        if let Some(dock_state) = &self.file_viewer_dock_state {
+            // Iterate through all tabs in the dock state
+            for (_, tab) in dock_state.iter_all_tabs() {
+                if tab.file.key == key {
+                    return Some(tab);
+                }
+            }
+        }
+        None
+    }
+
+    /// Find a tab by key (mutable)
     pub fn find_tab_mut(&mut self, key: &str) -> Option<&mut FileViewerTab> {
         if let Some(dock_state) = &mut self.file_viewer_dock_state {
             // Iterate through all tabs in the dock state
@@ -1153,9 +1205,53 @@ impl FsWindow {
                     wasm_bindgen_futures::spawn_local(async move {
                         let app_ctx = crate::app::context::context();
 
-                        // Use the new streaming-based method for viewing files
-                        match app_ctx.get_file_for_viewing(&key_for_tab, is_public_for_tab).await {
+                        // Set up progress tracking
+                        let key_for_progress = key_for_tab.clone();
+                        let window_id_for_progress = window_id;
+
+                        // Get the total file size from KeyDetails for accurate progress calculation
+                        let total_file_size = {
+                            let window_system = crate::app::window_system::window_system();
+                            if let Some(window) = window_system.get_window::<FsWindow>(window_id_for_progress) {
+                                if let Some(tab) = window.find_tab(&key_for_progress) {
+                                    Some(tab.file.total_size)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        };
+
+                        // Use the new streaming-based method for viewing files with progress tracking
+                        match app_ctx.get_file_for_viewing_with_progress(
+                            &key_for_tab,
+                            is_public_for_tab,
+                            move |downloaded_bytes, _total_bytes| {
+                                // Update progress in the UI using the known total file size
+                                let mut window_system = crate::app::window_system::window_system_mut();
+                                if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id_for_progress) {
+                                    if let Some(tab) = window.find_tab_mut(&key_for_progress) {
+                                        tab.downloaded_bytes = downloaded_bytes;
+                                        tab.total_bytes = total_file_size;
+
+                                        // Calculate progress using the known total file size
+                                        if let Some(total) = total_file_size {
+                                            if total > 0 {
+                                                tab.loading_progress = (downloaded_bytes as f32 / total as f32).min(1.0);
+                                            } else {
+                                                tab.loading_progress = 0.0;
+                                            }
+                                        } else if downloaded_bytes > 0 {
+                                            // Fallback: show some progress even without total
+                                            tab.loading_progress = 0.1; // Minimal progress to show we're receiving data
+                                        }
+                                    }
+                                }
+                            }
+                        ).await {
                             Ok(binary_data) => {
+                                let data_len = binary_data.len(); // Get length before moving data
                                 let mut window_system = crate::app::window_system::window_system_mut();
                                 if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
                                     if let Some(tab) = window.find_tab_mut(&key_for_tab) {
@@ -1231,6 +1327,10 @@ impl FsWindow {
                                             }
                                         }
                                         tab.is_loading = false;
+                                        // Reset progress tracking
+                                        tab.loading_progress = 1.0;
+                                        tab.total_bytes = Some(data_len);
+                                        tab.downloaded_bytes = data_len;
                                     }
                                 }
                             },
@@ -1240,6 +1340,10 @@ impl FsWindow {
                                     if let Some(tab) = window.find_tab_mut(&key_for_tab) {
                                         tab.content = format!("Error loading file for viewing: {}", e);
                                         tab.is_loading = false;
+                                        // Reset progress tracking on error
+                                        tab.loading_progress = 0.0;
+                                        tab.total_bytes = None;
+                                        tab.downloaded_bytes = 0;
                                         if let Some(file_content) = &mut tab.file_content {
                                             file_content.file_type = multimedia::FileType::Text;
                                             file_content.editable_content = Some(tab.content.clone());

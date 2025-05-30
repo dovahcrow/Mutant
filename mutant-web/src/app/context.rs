@@ -384,6 +384,45 @@ impl Context {
         Ok(collected_data)
     }
 
+    // Get file content for viewing with progress callback
+    pub async fn get_file_for_viewing_with_progress<F>(
+        &self,
+        user_key: &str,
+        is_public: bool,
+        mut progress_callback: F
+    ) -> Result<Vec<u8>, String>
+    where
+        F: FnMut(usize, Option<usize>) + Send + 'static,
+    {
+        info!("Getting file for viewing with progress: {}, is_public: {}", user_key, is_public);
+
+        // Start the streaming get
+        let (task_id, mut _progress_receiver, mut data_receiver) = self.start_streamed_get(user_key, is_public).await?;
+        info!("Started streaming get for viewing, task_id: {}", task_id);
+
+        let mut collected_data = Vec::new();
+
+        // Collect all data chunks
+        while let Some(data_result) = data_receiver.recv().await {
+            match data_result {
+                Ok(chunk) => {
+                    collected_data.extend_from_slice(&chunk);
+                    info!("Collected chunk of {} bytes for viewing, total so far: {}", chunk.len(), collected_data.len());
+
+                    // Call progress callback
+                    progress_callback(collected_data.len(), None);
+                }
+                Err(e) => {
+                    error!("Error receiving data chunk for viewing: {}", e);
+                    return Err(format!("Error receiving data chunk: {}", e));
+                }
+            }
+        }
+
+        info!("Completed collecting file data for viewing, total size: {} bytes", collected_data.len());
+        Ok(collected_data)
+    }
+
     pub fn get_key_cache(&self) -> Arc<RwLock<Vec<KeyDetails>>> {
         self.keys_cache.clone()
     }

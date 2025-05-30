@@ -1,4 +1,4 @@
-use std::sync::{Arc, MappedRwLockWriteGuard, RwLock, RwLockWriteGuard};
+use std::sync::{Arc, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use eframe::egui::{self, CornerRadius, Id, RichText, SidePanel};
 use egui_dock::{DockArea, DockState, Style};
@@ -15,6 +15,10 @@ lazy_static! {
 
 pub fn window_system_mut() -> RwLockWriteGuard<'static, WindowSystem> {
     WINDOW_SYSTEM.write().unwrap()
+}
+
+pub fn window_system() -> RwLockReadGuard<'static, WindowSystem> {
+    WINDOW_SYSTEM.read().unwrap()
 }
 
 lazy_static::lazy_static! {
@@ -144,6 +148,25 @@ impl WindowSystem {
                 if std::any::TypeId::of::<T>() == std::any::TypeId::of::<FsWindow>() {
                     // This is unsafe, but we've verified the type
                     return Some(unsafe { &mut *(fs_window as *mut FsWindow as *mut T) });
+                }
+            }
+            // Add other window types as needed
+        }
+        None
+    }
+
+    // Get a read-only reference to a specific window type by ID
+    pub fn get_window<T: 'static>(&self, _window_id: egui::Id) -> Option<&T> {
+        // For now, we'll just return the first window of the requested type
+
+        // Iterate through all tabs in the tree
+        for (_, window_type) in self.tree.iter_all_tabs() {
+            // Try to downcast to the requested type based on the window type
+            if let WindowType::Fs(fs_window) = window_type {
+                // Check if this is the type we're looking for
+                if std::any::TypeId::of::<T>() == std::any::TypeId::of::<FsWindow>() {
+                    // This is unsafe, but we've verified the type
+                    return Some(unsafe { &*(fs_window as *const FsWindow as *const T) });
                 }
             }
             // Add other window types as needed
