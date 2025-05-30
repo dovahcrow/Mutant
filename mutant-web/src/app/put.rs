@@ -296,6 +296,8 @@ impl PutWindow {
         error_message: Arc<RwLock<Option<String>>>,
         is_uploading: Arc<RwLock<bool>>,
         is_uploading_to_daemon: Arc<RwLock<bool>>,
+        daemon_upload_progress: Arc<RwLock<f32>>,
+        daemon_upload_bytes: Arc<RwLock<u64>>,
     ) {
         log::info!("Starting TRUE streaming upload for {} ({} bytes)", filename, file_size);
 
@@ -354,6 +356,14 @@ impl PutWindow {
                                         offset = end_offset;
                                         chunk_index += 1;
 
+                                        // Update daemon upload progress
+                                        let progress = offset as f32 / file_size_u64 as f32;
+                                        *daemon_upload_progress.write().unwrap() = progress;
+                                        *daemon_upload_bytes.write().unwrap() = offset;
+
+                                        log::debug!("Daemon upload progress: {:.1}% ({}/{} bytes)",
+                                            progress * 100.0, offset, file_size_u64);
+
                                         // Small delay to keep UI responsive
                                         if !is_last {
                                             let start = web_time::SystemTime::now();
@@ -385,7 +395,12 @@ impl PutWindow {
 
                     log::info!("All {} chunks sent successfully to daemon", total_chunks);
                     *is_uploading_to_daemon.write().unwrap() = false;
-                    notifications::info("Upload completed successfully!".to_string());
+
+                    // Final progress update - 100% complete
+                    *daemon_upload_progress.write().unwrap() = 1.0;
+                    *daemon_upload_bytes.write().unwrap() = file_size_u64;
+
+                    notifications::info("File upload to daemon completed!".to_string());
 
                     // Refresh the keys list to update the file explorer
                     log::info!("Refreshing keys list after successful upload");
@@ -515,6 +530,8 @@ impl PutWindow {
         let error_message = self.error_message.clone();
         let is_uploading = self.is_uploading.clone();
         let is_uploading_to_daemon = self.is_uploading_to_daemon.clone();
+        let daemon_upload_progress = self.daemon_upload_progress.clone();
+        let daemon_upload_bytes = self.daemon_upload_bytes.clone();
         let selected_file = self.selected_file.clone();
         let file_size = self.file_size.clone();
         let file_data = self.file_data.clone();
@@ -547,6 +564,8 @@ impl PutWindow {
                             error_message,
                             is_uploading,
                             is_uploading_to_daemon,
+                            daemon_upload_progress,
+                            daemon_upload_bytes,
                         );
                     }
                 } else {

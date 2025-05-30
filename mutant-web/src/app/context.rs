@@ -572,13 +572,21 @@ impl Context {
             operation: BTreeMap::new(),
         }));
 
-        // Store the progress in our map using the task ID as the key
+        // Store the progress in our context map using the task ID as the key
         {
             let mut put_progress = self.put_progress.write().unwrap();
             put_progress.insert(task_id.to_string(), progress.clone());
         }
 
-        info!("Created streaming put progress object for task ID: {}", task_id);
+        // CRITICAL: Also store the progress in the ClientSender's put_progress map
+        // This is what the existing response handler uses to update progress
+        let client_sender = self.get_client_sender();
+        {
+            let mut client_put_progress = client_sender.put_progress.write().unwrap();
+            client_put_progress.insert(task_id.to_string(), progress.clone());
+        }
+
+        info!("Created streaming put progress object for task ID: {} (stored in both context and client sender)", task_id);
 
         // Start listening for progress updates for this task
         self.start_streaming_put_progress_listener(task_id, progress).await;
@@ -599,9 +607,10 @@ impl Context {
 
     // Start listening for progress updates for a streaming put operation
     async fn start_streaming_put_progress_listener(&self, task_id: TaskId, _progress: Arc<RwLock<Progress>>) {
-        info!("Streaming put progress tracking initialized for task: {} (progress updates handled via WebSocket)", task_id);
-        // Progress updates are received automatically through WebSocket TaskUpdate responses
-        // and processed by the existing client response handling mechanism.
-        // No manual polling needed - the daemon sends TaskUpdate responses automatically.
+        info!("Streaming put progress tracking initialized for task: {} (progress updates handled via existing client response mechanism)", task_id);
+        // Progress updates are received automatically through the existing MutantClient response handler
+        // and processed by the put operation's progress receiver channel.
+        // The progress object will be updated through the existing progress handling mechanism
+        // in the Client::put_bytes method and handle_put_progress function.
     }
 }
