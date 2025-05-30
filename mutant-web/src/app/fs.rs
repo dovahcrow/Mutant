@@ -1153,11 +1153,8 @@ impl FsWindow {
                     wasm_bindgen_futures::spawn_local(async move {
                         let app_ctx = crate::app::context::context();
 
-                        // Using get_file_binary which is now deprecated for downloads, but used here for viewing.
-                        // This part might need to be updated if get_file_binary changes its behavior significantly
-                        // or if viewing also needs to use the streaming mechanism.
-                        // For now, assuming get_file_binary still works for fetching full content for viewing.
-                        match app_ctx.get_file_binary(&key_for_tab, is_public_for_tab).await {
+                        // Use the new streaming-based method for viewing files
+                        match app_ctx.get_file_for_viewing(&key_for_tab, is_public_for_tab).await {
                             Ok(binary_data) => {
                                 let mut window_system = crate::app::window_system::window_system_mut();
                                 if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {

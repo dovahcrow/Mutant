@@ -362,29 +362,51 @@ pub(crate) async fn handle_get(
                 // Handle streaming data if enabled
                 if stream_data {
                     if let GetEvent::PadData { chunk_index, data } = &event {
-                        // Send the data chunk directly to the client
+                        // Break large pads into smaller chunks for better UI responsiveness
+                        const MAX_CHUNK_SIZE: usize = 256 * 1024; // 256KB chunks for streaming
                         let total = total_chunks.load(std::sync::atomic::Ordering::SeqCst);
-                        let is_last = *chunk_index == total - 1;
+                        let is_last_pad = *chunk_index == total - 1;
 
-                        log::info!("DAEMON CALLBACK: GET task {} - Sending GetData response for chunk {}/{} (is_last={})",
-                                  task_id, chunk_index + 1, total, is_last);
+                        log::info!("DAEMON CALLBACK: GET task {} - Processing PadData for chunk {}/{}, data size: {} bytes",
+                                  task_id, chunk_index + 1, total, data.len());
 
-                        if let Err(e) = tx.send(Response::GetData(GetDataResponse {
-                            task_id,
-                            chunk_index: *chunk_index,
-                            total_chunks: total,
-                            data: data.clone(),
-                            is_last,
-                        })) {
-                            log::error!("DAEMON CALLBACK: GET task {} - Failed to send GetData response: {}", task_id, e);
-                        } else {
-                            log::info!("DAEMON CALLBACK: GET task {} - Successfully sent GetData response for chunk {}",
-                                      task_id, chunk_index);
+                        // Split the data into smaller chunks if it's large
+                        let mut offset = 0;
+                        let mut sub_chunk_index = 0;
+
+                        while offset < data.len() {
+                            let end = std::cmp::min(offset + MAX_CHUNK_SIZE, data.len());
+                            let sub_chunk = &data[offset..end];
+                            let is_last_sub_chunk = end == data.len();
+                            let is_final_chunk = is_last_pad && is_last_sub_chunk;
+
+                            log::info!("DAEMON CALLBACK: GET task {} - Sending GetData sub-chunk {}.{} ({} bytes, is_final={})",
+                                      task_id, chunk_index, sub_chunk_index, sub_chunk.len(), is_final_chunk);
+
+                            if let Err(e) = tx.send(Response::GetData(GetDataResponse {
+                                task_id,
+                                chunk_index: *chunk_index * 1000 + sub_chunk_index, // Unique sub-chunk index
+                                total_chunks: total,
+                                data: sub_chunk.to_vec(),
+                                is_last: is_final_chunk,
+                            })) {
+                                log::error!("DAEMON CALLBACK: GET task {} - Failed to send GetData sub-chunk: {}", task_id, e);
+                            } else {
+                                log::info!("DAEMON CALLBACK: GET task {} - Successfully sent GetData sub-chunk {}.{}",
+                                          task_id, chunk_index, sub_chunk_index);
+                            }
+
+                            offset = end;
+                            sub_chunk_index += 1;
                         }
+
+                        // For streaming mode, don't send TaskUpdate for PadData events
+                        // Only send GetData responses to avoid UI freezing
+                        return Ok(true);
                     }
                 }
 
-                // Always send the regular progress update
+                // Send regular progress update for non-PadData events or when not streaming
                 let progress = TaskProgress::Get(event);
                 log::info!("DAEMON CALLBACK: GET task {} - Preparing to send TaskUpdate", task_id);
 

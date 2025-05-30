@@ -356,6 +356,34 @@ impl Context {
         client_manager::start_get_stream(user_key, is_public).await
     }
 
+    // Get file content for viewing by collecting all streamed data
+    pub async fn get_file_for_viewing(&self, user_key: &str, is_public: bool) -> Result<Vec<u8>, String> {
+        info!("Getting file for viewing: {}, is_public: {}", user_key, is_public);
+
+        // Start the streaming get
+        let (task_id, mut _progress_receiver, mut data_receiver) = self.start_streamed_get(user_key, is_public).await?;
+        info!("Started streaming get for viewing, task_id: {}", task_id);
+
+        let mut collected_data = Vec::new();
+
+        // Collect all data chunks
+        while let Some(data_result) = data_receiver.recv().await {
+            match data_result {
+                Ok(chunk) => {
+                    collected_data.extend_from_slice(&chunk);
+                    info!("Collected chunk of {} bytes for viewing, total so far: {}", chunk.len(), collected_data.len());
+                }
+                Err(e) => {
+                    error!("Error receiving data chunk for viewing: {}", e);
+                    return Err(format!("Error receiving data chunk: {}", e));
+                }
+            }
+        }
+
+        info!("Completed collecting file data for viewing, total size: {} bytes", collected_data.len());
+        Ok(collected_data)
+    }
+
     pub fn get_key_cache(&self) -> Arc<RwLock<Vec<KeyDetails>>> {
         self.keys_cache.clone()
     }
