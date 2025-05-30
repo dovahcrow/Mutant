@@ -273,8 +273,8 @@ impl MutantClient {
         stream_data: bool,
     ) -> Result<
         (
-            oneshot::Receiver<Result<TaskId, ClientError>>,
-            impl Future<Output = Result<TaskResult, ClientError>> + '_,
+            TaskId, // Direct TaskId
+            impl Future<Output = Result<TaskResult, ClientError>> + '_, // Future for overall task completion
             ProgressReceiver,
             Option<DataStreamReceiver>,
         ),
@@ -340,64 +340,52 @@ impl MutantClient {
         );
         info!("CLIENT: Pending request inserted");
 
-        // IMPORTANT: This future is not executed until it's awaited!
-        let start_task = async move {
-            info!("CLIENT: Starting get task execution - THIS MEANS THE FUTURE IS BEING AWAITED");
-            info!("CLIENT: About to send request: {:?}", req);
+        // Send the request
+        if let Err(e) = self.send_request(req).await {
+            error!("CLIENT: Failed to send Get request: {:?}", e);
+            // Remove the pending request if sending failed
+            self.pending_requests.lock().unwrap().remove(&key);
+            return Err(e);
+        }
+        info!("CLIENT: Get request sent successfully, waiting for TaskCreated response via task_creation_rx");
 
-            // Store a copy of the connection state for logging
-            let state_copy = self.state.lock().unwrap().clone();
-            info!("CLIENT: Connection state before sending: {:?}", state_copy);
+        // Await the TaskId from the response handler
+        let task_id = match task_creation_rx.await {
+            Ok(Ok(id)) => {
+                info!("CLIENT: Task created with ID: {}", id);
+                id
+            }
+            Ok(Err(e)) => {
+                error!("CLIENT: Failed to create task (error from oneshot): {:?}", e);
+                // No need to remove from pending_requests here, as TaskCreationFailed in response_handler should do it.
+                return Err(e);
+            }
+            Err(e) => { // oneshot::Canceled
+                error!("CLIENT: TaskCreated channel canceled while awaiting TaskId: {:?}", e);
+                // No need to remove from pending_requests here, as TaskCreationFailed in response_handler should do it,
+                // or if the response handler never runs, the pending request might linger.
+                // However, if send_request succeeded, the response_handler *should* eventually process it or timeout.
+                return Err(ClientError::InternalError(format!("TaskCreated channel canceled: {:?}", e)));
+            }
+        };
 
-            // Check if sender is available
-            let sender_available = self.sender.is_some();
-            info!("CLIENT: Sender available: {}", sender_available);
-
-            match self.send_request(req).await {
-                Ok(_) => {
-                    info!("CLIENT: Get request sent successfully, waiting for TaskCreated response");
-                    let task_id_result = task_creation_rx.await;
-
-                    match task_id_result {
-                        Ok(task_id_inner_result) => {
-                            match task_id_inner_result {
-                                Ok(task_id) => {
-                                    info!("CLIENT: Task created with ID: {}", task_id);
-
-                                    info!("CLIENT: Waiting for task completion");
-                                    match completion_rx.await {
-                                        Ok(result) => {
-                                            info!("CLIENT: Task completed with result: {:?}", result);
-                                            result
-                                        },
-                                        Err(e) => {
-                                            error!("CLIENT: Completion channel canceled: {:?}", e);
-                                            Err(ClientError::InternalError("Completion channel canceled".to_string()))
-                                        }
-                                    }
-                                },
-                                Err(e) => {
-                                    error!("CLIENT: Failed to create task: {:?}", e);
-                                    Err(e)
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            error!("CLIENT: TaskCreated channel canceled: {:?}", e);
-                            Err(ClientError::InternalError("TaskCreated channel canceled".to_string()))
-                        }
-                    }
+        // Define the overall completion future
+        let overall_completion_future = async move {
+            info!("CLIENT: overall_completion_future waiting for task {} completion", task_id);
+            match completion_rx.await {
+                Ok(result) => {
+                    info!("CLIENT: Task {} completed with result: {:?}", task_id, result);
+                    result
                 },
-                Err(e) => {
-                    error!("CLIENT: Failed to send Get request: {:?}", e);
-                    self.pending_requests.lock().unwrap().remove(&key);
-                    Err(e)
+                Err(e) => { // oneshot::Canceled
+                    error!("CLIENT: Completion channel canceled for task {}: {:?}", task_id, e);
+                    Err(ClientError::InternalError(format!("Completion channel canceled for task {}: {:?}", task_id, e)))
                 }
             }
         };
 
-        info!("CLIENT: Returning task_creation_rx, get task future, progress_rx, and data_stream_rx");
-        Ok((task_creation_rx, start_task, progress_rx, data_stream_rx))
+        info!("CLIENT: Returning TaskId, overall_completion_future, progress_rx, and data_stream_rx for task {}", task_id);
+        Ok((task_id, overall_completion_future, progress_rx, data_stream_rx))
     }
 
     pub async fn sync(

@@ -477,79 +477,58 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                         continue;
                     }
                     
-                    // This part assumes that `mutant_client::MutantClient::get` has been updated to return:
-                    // `Result<(oneshot::Receiver<Result<TaskId, mutant_client::error::ClientError>>, impl Future<Output = Result<mutant_protocol::TaskResult, mutant_client::error::ClientError>>, ProgressReceiver, Option<DataStreamReceiver>), mutant_client::error::ClientError>`
-                    // as per the interpretation of "await the task_creation_rx".
-                    // The ProgressReceiver and DataStreamReceiver types below are assumed to be the ones from mutant_client.
+                    // `MutantClient::get` now returns `Result<(TaskId, impl Future<...>, ProgressReceiver, Option<DataStreamReceiver>), ClientError>`
                     match client.get(&name, None, is_public, true).await {
-                        Ok((task_id_one_shot_rx, _task_completion_future, client_progress_rx, client_data_stream_rx_option)) => {
-                            // We drop _task_completion_future as it's not awaited in client_manager.
-                            // Context will handle task completion observability through progress and data streams.
-                            match task_id_one_shot_rx.await { // This await is for the oneshot::Receiver for TaskId
-                                Ok(Ok(task_id)) => { // Successfully obtained TaskId
-                                    match client_data_stream_rx_option {
-                                        Some(client_data_stream_rx) => {
-                                            if !sender.is_canceled() {
-                                                // Forward progress_rx and data_stream_rx, mapping errors to String.
-                                                let (prog_tx_fwd, prog_rx_fwd) = mpsc::unbounded_channel();
-                                                let mut original_progress_rx = client_progress_rx; 
-                                                spawn_local(async move {
-                                                    while let Some(res) = original_progress_rx.recv().await {
-                                                        if prog_tx_fwd.send(res.map_err(|e| e.to_string())).is_err() {
-                                                            break; 
-                                                        }
-                                                    }
-                                                });
+                        Ok((task_id, _overall_completion_future, client_progress_rx, client_data_stream_rx_option)) => {
+                            // We have the task_id directly.
+                            // We drop _overall_completion_future as it's not awaited in client_manager.
+                            info!("StartGetStream: Successfully initiated. TaskId: {} for key {}", task_id, name);
 
-                                                let (data_tx_fwd, data_rx_fwd) = mpsc::unbounded_channel();
-                                                let mut original_data_stream_rx = client_data_stream_rx; 
-                                                spawn_local(async move {
-                                                    while let Some(res) = original_data_stream_rx.recv().await {
-                                                        if data_tx_fwd.send(res.map_err(|e| e.to_string())).is_err() {
-                                                            break; 
-                                                        }
-                                                    }
-                                                });
-
-                                                if sender.send(Ok((task_id, prog_rx_fwd, data_rx_fwd))).is_err() {
-                                                    error!("StartGetStream: response channel closed by caller before sending success for key {}.", name);
-                                                }
-                                            } else {
-                                                info!("StartGetStream: sender cancelled for key {}", name);
-                                            }
-                                        }
-                                        None => {
-                                            error!("StartGetStream: Data stream receiver missing when stream_data=true for key {}", name);
-                                            if !sender.is_canceled() {
-                                                if sender.send(Err("Data stream receiver not available when stream_data=true".to_string())).is_err() {
-                                                    error!("StartGetStream: response channel closed by caller before sending error (None data_stream_rx) for key {}.", name);
+                            match client_data_stream_rx_option {
+                                Some(client_data_stream_rx) => {
+                                    if !sender.is_canceled() {
+                                        // Forward progress_rx and data_stream_rx, mapping errors to String.
+                                        let (prog_tx_fwd, prog_rx_fwd) = mpsc::unbounded_channel();
+                                        let mut original_progress_rx = client_progress_rx; 
+                                        spawn_local(async move {
+                                            while let Some(res) = original_progress_rx.recv().await {
+                                                if prog_tx_fwd.send(res.map_err(|e| e.to_string())).is_err() {
+                                                    break; 
                                                 }
                                             }
+                                        });
+
+                                        let (data_tx_fwd, data_rx_fwd) = mpsc::unbounded_channel();
+                                        let mut original_data_stream_rx = client_data_stream_rx; 
+                                        spawn_local(async move {
+                                            while let Some(res) = original_data_stream_rx.recv().await {
+                                                if data_tx_fwd.send(res.map_err(|e| e.to_string())).is_err() {
+                                                    break; 
+                                                }
+                                            }
+                                        });
+
+                                        if sender.send(Ok((task_id, prog_rx_fwd, data_rx_fwd))).is_err() {
+                                            error!("StartGetStream: response channel closed by caller before sending success for key {}.", name);
                                         }
+                                    } else {
+                                        info!("StartGetStream: sender cancelled for key {} before sending success", name);
                                     }
                                 }
-                                Ok(Err(e)) => { // Error from mutant_client while trying to get TaskId
-                                    error!("StartGetStream: Failed to get TaskId for key {}: {:?}", name, e);
+                                None => {
+                                    error!("StartGetStream: Data stream receiver missing when stream_data=true for key {}", name);
                                     if !sender.is_canceled() {
-                                        if sender.send(Err(format!("Failed to get TaskId: {:?}", e))).is_err() {
-                                            error!("StartGetStream: response channel closed by caller before sending error (TaskId creation failed) for key {}.", name);
-                                        }
-                                    }
-                                }
-                                Err(e) => { // oneshot::Receiver for TaskId was canceled/dropped
-                                    error!("StartGetStream: TaskId receiver channel canceled for key {}: {:?}", name, e);
-                                    if !sender.is_canceled() {
-                                        if sender.send(Err(format!("TaskId channel canceled: {:?}", e))).is_err() {
-                                            error!("StartGetStream: response channel closed by caller before sending error (TaskId channel canceled) for key {}.", name);
+                                        if sender.send(Err("Data stream receiver not available when stream_data=true".to_string())).is_err() {
+                                            error!("StartGetStream: response channel closed by caller before sending error (None data_stream_rx) for key {}.", name);
                                         }
                                     }
                                 }
                             }
                         }
-                        Err(e) => { // Error from client.get() itself, before even getting the channels/futures
+                        Err(e) => { // Error from client.get() itself
                             error!("StartGetStream: client.get() failed for key {}: {:?}", name, e);
                             if !sender.is_canceled() {
-                                if sender.send(Err(format!("client.get() failed: {:?}", e))).is_err() {
+                                if sender.send(Err(format!("client.get() failed: {:?}", e.to_string()))).is_err() {
                                      error!("StartGetStream: response channel closed by caller before sending error (client.get failed) for key {}.", name);
                                 }
                             }
