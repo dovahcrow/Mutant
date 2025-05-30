@@ -524,6 +524,8 @@ impl Context {
         put_progress.get(put_id).cloned()
     }
 
+
+
     // Get a progress object for a get operation
     pub fn get_get_progress(&self, get_id: &str) -> Option<Arc<RwLock<Progress>>> {
         let get_progress = self.get_progress.read().unwrap();
@@ -564,8 +566,8 @@ impl Context {
     ) -> Result<TaskId, String> {
         info!("Initializing streaming put for key '{}' ({} bytes)", key_name, total_size);
 
-        // Initialize the streaming put
-        let task_id = self.client.put_streaming_init(key_name, total_size, filename, storage_mode, public, no_verify).await?;
+        // Initialize the streaming put and get both task ID and progress receiver
+        let (task_id, progress_rx) = self.client.put_streaming_init(key_name, total_size, filename, storage_mode, public, no_verify).await?;
 
         // Create a progress object for this streaming put operation
         let progress = Arc::new(RwLock::new(Progress {
@@ -588,8 +590,8 @@ impl Context {
 
         info!("Created streaming put progress object for task ID: {} (stored in both context and client sender)", task_id);
 
-        // Start listening for progress updates for this task
-        self.start_streaming_put_progress_listener(task_id, progress).await;
+        // Start listening for progress updates for this task using the progress receiver
+        self.start_streaming_put_progress_listener(task_id, progress, progress_rx).await;
 
         Ok(task_id)
     }
@@ -606,11 +608,96 @@ impl Context {
     }
 
     // Start listening for progress updates for a streaming put operation
-    async fn start_streaming_put_progress_listener(&self, task_id: TaskId, _progress: Arc<RwLock<Progress>>) {
-        info!("Streaming put progress tracking initialized for task: {} (progress updates handled via existing client response mechanism)", task_id);
-        // Progress updates are received automatically through the existing MutantClient response handler
-        // and processed by the put operation's progress receiver channel.
-        // The progress object will be updated through the existing progress handling mechanism
-        // in the Client::put_bytes method and handle_put_progress function.
+    async fn start_streaming_put_progress_listener(&self, task_id: TaskId, progress: Arc<RwLock<Progress>>, progress_rx: mutant_client::ProgressReceiver) {
+        info!("Starting streaming put progress listener for task: {}", task_id);
+
+        // Spawn a task to handle progress updates
+        wasm_bindgen_futures::spawn_local(async move {
+            let mut progress_rx = progress_rx;
+            let mut progress_count = 0;
+
+            info!("Streaming put progress listener started for task: {}", task_id);
+
+            while let Some(progress_result) = progress_rx.recv().await {
+                progress_count += 1;
+                match progress_result {
+                    Ok(task_progress) => {
+                        info!("Streaming put progress #{} for task {}: {:?}", progress_count, task_id, task_progress);
+
+                        match task_progress {
+                            mutant_protocol::TaskProgress::Put(put_event) => {
+                                match put_event {
+                                    mutant_protocol::PutEvent::Starting { total_chunks, initial_written_count, initial_confirmed_count, chunks_to_reserve } => {
+                                        info!("Put Starting for task {}: {} total chunks, {} to reserve, {} initial written, {} initial confirmed",
+                                            task_id, total_chunks, chunks_to_reserve, initial_written_count, initial_confirmed_count);
+
+                                        // Initialize the operation in the progress object
+                                        let mut progress_guard = progress.write().unwrap();
+                                        progress_guard.operation.insert("put".to_string(), ProgressOperation {
+                                            nb_to_reserve: chunks_to_reserve,
+                                            nb_reserved: 0,
+                                            total_pads: total_chunks,
+                                            nb_written: initial_written_count,
+                                            nb_confirmed: initial_confirmed_count,
+                                        });
+                                        info!("Initialized progress object for streaming put task {}", task_id);
+                                    },
+                                    mutant_protocol::PutEvent::PadReserved => {
+                                        info!("Put PadReserved for task {}", task_id);
+
+                                        // Update reserved count
+                                        let mut progress_guard = progress.write().unwrap();
+                                        if let Some(op) = progress_guard.operation.get_mut("put") {
+                                            op.nb_reserved += 1;
+                                            info!("Updated reserved count: {}/{}", op.nb_reserved, op.total_pads);
+                                        }
+                                    },
+                                    mutant_protocol::PutEvent::PadsWritten => {
+                                        info!("Put PadsWritten for task {}", task_id);
+
+                                        // Update written count
+                                        let mut progress_guard = progress.write().unwrap();
+                                        if let Some(op) = progress_guard.operation.get_mut("put") {
+                                            op.nb_written += 1;
+                                            info!("Updated written count: {}/{}", op.nb_written, op.total_pads);
+                                        }
+                                    },
+                                    mutant_protocol::PutEvent::PadsConfirmed => {
+                                        info!("Put PadsConfirmed for task {}", task_id);
+
+                                        // Update confirmed count
+                                        let mut progress_guard = progress.write().unwrap();
+                                        if let Some(op) = progress_guard.operation.get_mut("put") {
+                                            op.nb_confirmed += 1;
+                                            info!("Updated confirmed count: {}/{}", op.nb_confirmed, op.total_pads);
+                                        }
+                                    },
+                                    mutant_protocol::PutEvent::Complete => {
+                                        info!("Put Complete for task {}", task_id);
+
+                                        // Mark operation as complete
+                                        let mut progress_guard = progress.write().unwrap();
+                                        if let Some(op) = progress_guard.operation.get_mut("put") {
+                                            op.nb_confirmed = op.total_pads;
+                                            info!("Marked streaming put operation as complete for task {}", task_id);
+                                        }
+                                        break; // Exit the loop when complete
+                                    },
+                                }
+                            },
+                            _ => {
+                                info!("Streaming put progress #{} for task {}: Unexpected progress type: {:?}", progress_count, task_id, task_progress);
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        log::error!("Streaming put progress #{} for task {}: Error: {:?}", progress_count, task_id, e);
+                        break;
+                    }
+                }
+            }
+
+            info!("Streaming put progress listener finished for task {} after {} updates", task_id, progress_count);
+        });
     }
 }

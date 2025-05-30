@@ -265,7 +265,7 @@ impl MutantClient {
         )
     }
 
-    /// Initialize a streaming put operation and return the task ID
+    /// Initialize a streaming put operation and return the task ID and progress receiver
     /// This follows the same pattern as the streaming GET implementation
     pub async fn put_streaming_init(
         &mut self,
@@ -275,7 +275,7 @@ impl MutantClient {
         mode: StorageMode,
         public: bool,
         no_verify: bool,
-    ) -> Result<TaskId, ClientError> {
+    ) -> Result<(TaskId, ProgressReceiver), ClientError> {
         info!("CLIENT: put_streaming_init() called with user_key={}, total_size={}, filename={:?}",
               user_key, total_size, filename);
 
@@ -308,14 +308,19 @@ impl MutantClient {
         // Create channels for task creation
         let (task_creation_tx, task_creation_rx) = oneshot::channel();
 
-        // For streaming init, we only need the task creation channel
-        // The actual put operation will be handled when all chunks are received
+        // CRITICAL FIX: Create real task channels for streaming put operations
+        // This allows the existing progress handling system to work properly
+        let (completion_tx, _completion_rx) = oneshot::channel();
+        let (progress_tx, progress_rx) = mpsc::unbounded_channel();
+
+        info!("CLIENT: Creating task channels for streaming put operation");
+
         self.pending_requests.lock().unwrap().insert(
             key.clone(),
             PendingSender::TaskCreation(
                 task_creation_tx,
-                // Dummy channels since we only care about task creation for streaming init
-                (oneshot::channel().0, mpsc::unbounded_channel().0, None),
+                // Real channels for progress updates
+                (completion_tx, progress_tx, None),
                 TaskType::Put,
             ),
         );
@@ -344,7 +349,8 @@ impl MutantClient {
             }
         };
 
-        Ok(task_id)
+        info!("CLIENT: Returning TaskId {} and progress receiver for streaming put", task_id);
+        Ok((task_id, progress_rx))
     }
 
     /// Send a data chunk for a streaming put operation

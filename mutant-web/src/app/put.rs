@@ -164,7 +164,7 @@ impl PutWindow {
         // Get the current put ID
         let put_id_opt = self.current_put_id.read().unwrap().clone();
 
-        log::debug!("Checking progress for put ID: {:?}", put_id_opt);
+        log::info!("UI: Checking progress for put ID: {:?}", put_id_opt);
 
         if let Some(put_id) = put_id_opt {
             // Get the context
@@ -312,7 +312,9 @@ impl PutWindow {
                     log::info!("Streaming put initialized with task ID: {}", task_id);
 
                     // Store the task ID for progress tracking
-                    *current_put_id.write().unwrap() = Some(task_id.to_string());
+                    let task_id_string = task_id.to_string();
+                    log::info!("UI: Storing task ID for progress tracking: '{}'", task_id_string);
+                    *current_put_id.write().unwrap() = Some(task_id_string);
 
                     // Step 2: Stream file chunks directly to daemon
                     const CHUNK_SIZE: u64 = 256 * 1024; // 256KB chunks

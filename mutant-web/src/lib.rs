@@ -74,7 +74,7 @@ pub enum ClientResponse {
     ListKeys(Result<Vec<mutant_protocol::KeyDetails>, String>),
     ListTasks(Result<Vec<mutant_protocol::TaskListEntry>, String>),
     GetStats(Result<mutant_protocol::StatsResponse, String>),
-    PutStreamingInit(Result<mutant_protocol::TaskId, String>),
+    PutStreamingInit(Result<(mutant_protocol::TaskId, mutant_client::ProgressReceiver), String>),
     PutStreamingChunk(Result<(), String>),
 }
 
@@ -101,6 +101,10 @@ impl Client {
             info!("Connecting to daemon");
             this.connect(DEFAULT_WS_URL).await.unwrap();
             info!("Client connected");
+
+            // Note: Progress updates for streaming put operations are now handled
+            // by the existing mutant-client progress system since we create proper
+            // task channels in put_streaming_init
 
             while let Some(request) = this.request_rx.next().await {
                 match request {
@@ -223,6 +227,8 @@ impl Client {
             .await
             .map_err(|e| format!("{:?}", e))
     }
+
+
 
     pub async fn get(&mut self, name: &str, destination: Option<&str>, public: bool) -> Result<(TaskResult, Option<Vec<u8>>), String> {
         // Determine if we're streaming data (no destination means we want the data directly)
@@ -689,7 +695,7 @@ impl ClientSender {
         storage_mode: mutant_protocol::StorageMode,
         public: bool,
         no_verify: bool,
-    ) -> Result<mutant_protocol::TaskId, String> {
+    ) -> Result<(mutant_protocol::TaskId, mutant_client::ProgressReceiver), String> {
         let response_name = format!("put_streaming_init_{}", key_name);
 
         if self.responses.read().unwrap().contains_key(&response_name) {
@@ -715,7 +721,7 @@ impl ClientSender {
 
         rx.await.map_err(|e| format!("{:?}", e)).and_then(|response| {
             match response {
-                ClientResponse::PutStreamingInit(Ok(task_id)) => Ok(task_id),
+                ClientResponse::PutStreamingInit(Ok((task_id, progress_rx))) => Ok((task_id, progress_rx)),
                 ClientResponse::PutStreamingInit(Err(e)) => Err(e),
                 _ => Err("Unexpected response".to_string()),
             }
