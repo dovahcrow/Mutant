@@ -822,43 +822,46 @@ pub fn run() {
     // Use wasm_logger instead of eframe::WebLogger
     // wasm_logger is already initialized in the start function
 
-    let web_options = eframe::WebOptions::default();
+    #[cfg(target_arch = "wasm32")]
+    {
+        let web_options = eframe::WebOptions::default();
 
-    wasm_bindgen_futures::spawn_local(async {
-        let document = web_sys::window()
-            .expect("No window")
-            .document()
-            .expect("No document");
+        wasm_bindgen_futures::spawn_local(async {
+            let document = web_sys::window()
+                .expect("No window")
+                .document()
+                .expect("No document");
 
-        let canvas = document
-            .get_element_by_id("canvas")
-            .expect("Failed to find the_canvas_id")
-            .dyn_into::<web_sys::HtmlCanvasElement>()
-            .expect("the_canvas_id was not a HtmlCanvasElement");
+            let canvas = document
+                .get_element_by_id("canvas")
+                .expect("Failed to find the_canvas_id")
+                .dyn_into::<web_sys::HtmlCanvasElement>()
+                .expect("the_canvas_id was not a HtmlCanvasElement");
 
-        app::init().await;
+            app::init().await;
 
-        let start_result = eframe::WebRunner::new()
-            .start(
-                canvas,
-                web_options,
-                Box::new(|cc| Ok(Box::new(MyApp::default()))),
-            )
-            .await;
+            let start_result = eframe::WebRunner::new()
+                .start(
+                    canvas,
+                    web_options,
+                    Box::new(|cc| Ok(Box::new(MyApp::default()))),
+                )
+                .await;
 
-        // Remove the loading text and spinner:
-        if let Some(loading_text) = document.get_element_by_id("loading_text") {
-            match start_result {
-                Ok(_) => {
-                    loading_text.remove();
-                }
-                Err(e) => {
-                    loading_text.set_inner_html(
-                        "<p> The app has crashed. See the developer console for details. </p>",
-                    );
-                    panic!("Failed to start eframe: {e:?}");
+            // Remove the loading text and spinner:
+            if let Some(loading_text) = document.get_element_by_id("loading_text") {
+                match start_result {
+                    Ok(_) => {
+                        loading_text.remove();
+                    }
+                    Err(e) => {
+                        loading_text.set_inner_html(
+                            "<p> The app has crashed. See the developer console for details. </p>",
+                        );
+                        panic!("Failed to start eframe: {e:?}");
+                    }
                 }
             }
-        }
-    });
+        });
+    }
 }

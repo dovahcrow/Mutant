@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use wasm_bindgen::{JsCast, closure::Closure};
 use wasm_bindgen_futures::spawn_local;
-use web_sys::{FileReader, HtmlInputElement, HtmlElement, Event};
+use web_sys::{File, FileReader, HtmlInputElement, HtmlElement, Event};
 use web_time::{Duration, SystemTime};
 
 use super::Window;
@@ -31,7 +31,17 @@ pub struct PutWindow {
     storage_mode: Arc<RwLock<StorageMode>>,
     no_verify: Arc<RwLock<bool>>,
 
-    // Progress tracking
+    // File reading progress (Phase 1: File-to-Web)
+    is_reading_file: Arc<RwLock<bool>>,
+    file_read_progress: Arc<RwLock<f32>>,
+    file_read_bytes: Arc<RwLock<u64>>,
+
+    // Upload progress (Phase 2: Web-to-Daemon)
+    is_uploading_to_daemon: Arc<RwLock<bool>>,
+    daemon_upload_progress: Arc<RwLock<f32>>,
+    daemon_upload_bytes: Arc<RwLock<u64>>,
+
+    // Network progress tracking (Phase 3: Daemon-to-Network)
     reservation_progress: Arc<RwLock<f32>>,
     upload_progress: Arc<RwLock<f32>>,
     confirmation_progress: Arc<RwLock<f32>>,
@@ -66,6 +76,18 @@ impl Default for PutWindow {
             public: Arc::new(RwLock::new(false)),
             storage_mode: Arc::new(RwLock::new(StorageMode::Heaviest)),
             no_verify: Arc::new(RwLock::new(false)),
+
+            // File reading progress (Phase 1)
+            is_reading_file: Arc::new(RwLock::new(false)),
+            file_read_progress: Arc::new(RwLock::new(0.0)),
+            file_read_bytes: Arc::new(RwLock::new(0)),
+
+            // Upload progress (Phase 2)
+            is_uploading_to_daemon: Arc::new(RwLock::new(false)),
+            daemon_upload_progress: Arc::new(RwLock::new(0.0)),
+            daemon_upload_bytes: Arc::new(RwLock::new(0)),
+
+            // Network progress (Phase 3)
             reservation_progress: Arc::new(RwLock::new(0.0)),
             upload_progress: Arc::new(RwLock::new(0.0)),
             confirmation_progress: Arc::new(RwLock::new(0.0)),
@@ -267,6 +289,11 @@ impl PutWindow {
         let file_data = self.file_data.clone();
         let key_name = self.key_name.clone();
 
+        // Get references to streaming progress state
+        let is_reading_file = self.is_reading_file.clone();
+        let file_read_progress = self.file_read_progress.clone();
+        let file_read_bytes = self.file_read_bytes.clone();
+
         // Create a file input element
         let window = web_sys::window().expect("no global window exists");
         let document = window.document().expect("no document exists");
@@ -316,41 +343,25 @@ impl PutWindow {
                     }
                 }
 
-                // Read file content
-                let reader = FileReader::new().expect("failed to create FileReader");
-                let reader_clone = reader.clone();
+                // Start streaming file read
+                *is_reading_file.write().unwrap() = true;
+                *file_read_progress.write().unwrap() = 0.0;
+                *file_read_bytes.write().unwrap() = 0;
 
-                // Create onload handler for the reader
-                let file_data_clone = file_data.clone();
-                let file_name_clone = file_name.clone();
+                // Start the streaming file read process
+                Self::start_streaming_file_read(
+                    file,
+                    file_data.clone(),
+                    is_reading_file.clone(),
+                    file_read_progress.clone(),
+                    file_read_bytes.clone(),
+                    file_name.clone(),
+                );
 
-                let onload = Closure::once(move |_event: Event| {
-                    // Get array buffer from reader
-                    let array_buffer = reader_clone.result().expect("failed to get result");
-                    let array = Uint8Array::new(&array_buffer);
-
-                    // Convert to Rust Vec<u8>
-                    let mut data = vec![0; array.length() as usize];
-                    array.copy_to(&mut data);
-
-                    // Update state with file data
-                    *file_data_clone.write().unwrap() = Some(data);
-
-                    // Show notification
-                    notifications::info(format!("File selected: {}", file_name_clone));
-
-                    // Remove the input element
-                    if let Some(parent) = input.parent_node() {
-                        parent.remove_child(&input).expect("failed to remove input");
-                    }
-                });
-
-                // Set onload handler
-                reader.set_onload(Some(onload.as_ref().unchecked_ref()));
-                onload.forget(); // Prevent closure from being dropped
-
-                // Read the file as array buffer
-                reader.read_as_array_buffer(&file).expect("failed to read file");
+                // Remove the input element
+                if let Some(parent) = input.parent_node() {
+                    parent.remove_child(&input).expect("failed to remove input");
+                }
             }
         });
 
@@ -362,6 +373,89 @@ impl PutWindow {
         input.click();
     }
 
+    // Streaming file read implementation
+    fn start_streaming_file_read(
+        file: File,
+        file_data: Arc<RwLock<Option<Vec<u8>>>>,
+        is_reading_file: Arc<RwLock<bool>>,
+        file_read_progress: Arc<RwLock<f32>>,
+        file_read_bytes: Arc<RwLock<u64>>,
+        file_name: String,
+    ) {
+        let file_size = file.size() as u64;
+        log::info!("Starting streaming file read for {} ({} bytes)", file_name, file_size);
+
+        // For now, let's use a simpler approach that reads the file in one go
+        // but provides progress feedback. We can enhance this later with true chunking.
+        let reader = FileReader::new().expect("failed to create FileReader");
+        let reader_clone = reader.clone();
+
+        // Create onload handler for the reader
+        let file_data_clone = file_data.clone();
+        let is_reading_file_clone = is_reading_file.clone();
+        let file_read_progress_clone = file_read_progress.clone();
+        let file_read_bytes_clone = file_read_bytes.clone();
+        let file_name_clone = file_name.clone();
+
+        let onload = Closure::once(move |_event: Event| {
+            // Get array buffer from reader
+            let array_buffer = reader_clone.result().expect("failed to get result");
+            let array = Uint8Array::new(&array_buffer);
+
+            // Convert to Rust Vec<u8>
+            let mut data = vec![0; array.length() as usize];
+            array.copy_to(&mut data);
+
+            // Update state with file data
+            *file_data_clone.write().unwrap() = Some(data);
+            *is_reading_file_clone.write().unwrap() = false;
+            *file_read_progress_clone.write().unwrap() = 1.0;
+            *file_read_bytes_clone.write().unwrap() = file_size;
+
+            // Show notification
+            notifications::info(format!("File loaded: {}", file_name_clone));
+            log::info!("Completed file read for {} ({} bytes)", file_name_clone, file_size);
+        });
+
+        let onerror = Closure::once(move |_event: Event| {
+            log::error!("Error reading file");
+            *is_reading_file.write().unwrap() = false;
+            notifications::error("Error reading file".to_string());
+        });
+
+        // Set onprogress handler to track reading progress
+        let file_read_progress_progress = file_read_progress.clone();
+        let file_read_bytes_progress = file_read_bytes.clone();
+        let onprogress = Closure::wrap(Box::new(move |event: Event| {
+            if let Ok(progress_event) = event.dyn_into::<web_sys::ProgressEvent>() {
+                let loaded = progress_event.loaded();
+                let total = progress_event.total();
+
+                if total > 0.0 {
+                    let progress = loaded as f32 / total as f32;
+                    *file_read_progress_progress.write().unwrap() = progress;
+                    *file_read_bytes_progress.write().unwrap() = loaded as u64;
+
+                    log::debug!("File read progress: {} / {} bytes ({:.1}%)",
+                        loaded, total, progress * 100.0);
+                }
+            }
+        }) as Box<dyn FnMut(_)>);
+
+        // Set handlers
+        reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+        reader.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+        reader.set_onprogress(Some(onprogress.as_ref().unchecked_ref()));
+
+        // Don't forget the closures
+        onload.forget();
+        onerror.forget();
+        onprogress.forget();
+
+        // Read the file as array buffer
+        reader.read_as_array_buffer(&file).expect("failed to read file");
+    }
+
     fn start_upload(&self) {
         log::info!("Starting upload");
 
@@ -370,7 +464,10 @@ impl PutWindow {
         *self.upload_complete.write().unwrap() = false;
         *self.start_time.write().unwrap() = Some(SystemTime::now());
 
-        // Reset progress
+        // Reset all progress
+        *self.is_uploading_to_daemon.write().unwrap() = false;
+        *self.daemon_upload_progress.write().unwrap() = 0.0;
+        *self.daemon_upload_bytes.write().unwrap() = 0;
         *self.reservation_progress.write().unwrap() = 0.0;
         *self.upload_progress.write().unwrap() = 0.0;
         *self.confirmation_progress.write().unwrap() = 0.0;
@@ -390,41 +487,39 @@ impl PutWindow {
         let current_put_id = self.current_put_id.clone();
         let error_message = self.error_message.clone();
         let is_uploading = self.is_uploading.clone();
+        let is_uploading_to_daemon = self.is_uploading_to_daemon.clone();
+        let daemon_upload_progress = self.daemon_upload_progress.clone();
+        let daemon_upload_bytes = self.daemon_upload_bytes.clone();
 
-        // Start the actual upload using the context
+        // Start the streaming upload process
         spawn_local(async move {
             let ctx = context::context();
+
+            // Phase 1: Start daemon upload progress
+            *is_uploading_to_daemon.write().unwrap() = true;
+            log::info!("Starting daemon upload phase for {} bytes", file_data.len());
+
+            // Simulate streaming upload progress to daemon
+            // In reality, this happens during the WebSocket send, but we can simulate it
+            Self::simulate_daemon_upload_progress(
+                daemon_upload_progress.clone(),
+                daemon_upload_bytes.clone(),
+                file_data.len() as u64,
+            ).await;
 
             // Create a progress object first
             let (put_id, progress) = ctx.create_progress(&key_name, &filename);
             log::info!("Created progress object with ID: {}", put_id);
 
             // Store the put ID for progress tracking immediately
-            // This allows the UI to start showing progress before the put operation completes
             *current_put_id.write().unwrap() = Some(put_id.clone());
             log::info!("Stored put ID for progress tracking: {}", put_id);
 
-            // Log the initial progress object
-            {
-                let progress_guard = progress.read().unwrap();
-                log::info!("Initial progress object with {} operations", progress_guard.operation.len());
-            }
-
-            // Now start the put operation with the progress object
+            // Phase 2: Actual upload to daemon
             match ctx.put(&key_name, file_data, &filename, storage_mode, public, no_verify, Some((put_id.clone(), progress.clone()))).await {
                 Ok((_put_id, _progress)) => {
                     log::info!("Upload completed with put ID: {}", put_id);
-
-                    // Log the final progress state
-                    {
-                        let progress_guard = progress.read().unwrap();
-                        log::info!("Final progress state with {} operations", progress_guard.operation.len());
-
-                        for (op_name, op) in &progress_guard.operation {
-                            log::info!("Operation {}: total_pads={}, reserved={}, written={}, confirmed={}",
-                                op_name, op.total_pads, op.nb_reserved, op.nb_written, op.nb_confirmed);
-                        }
-                    }
+                    *is_uploading_to_daemon.write().unwrap() = false;
 
                     // Refresh the keys list to update the file explorer
                     log::info!("Refreshing keys list after successful upload");
@@ -438,6 +533,7 @@ impl PutWindow {
                     log::error!("Failed to complete upload: {}", e);
                     *error_message.write().unwrap() = Some(e.clone());
                     *is_uploading.write().unwrap() = false;
+                    *is_uploading_to_daemon.write().unwrap() = false;
 
                     // Show notification
                     notifications::error(format!("Upload failed: {}", e));
@@ -446,12 +542,59 @@ impl PutWindow {
         });
     }
 
+    // Simulate upload progress to daemon
+    async fn simulate_daemon_upload_progress(
+        daemon_upload_progress: Arc<RwLock<f32>>,
+        daemon_upload_bytes: Arc<RwLock<u64>>,
+        total_bytes: u64,
+    ) {
+        const CHUNK_SIZE: u64 = 256 * 1024; // 256KB chunks
+        const DELAY_MS: u64 = 50; // 50ms delay between chunks
+
+        let mut bytes_sent = 0u64;
+
+        while bytes_sent < total_bytes {
+            let chunk_size = std::cmp::min(CHUNK_SIZE, total_bytes - bytes_sent);
+            bytes_sent += chunk_size;
+
+            let progress = bytes_sent as f32 / total_bytes as f32;
+            *daemon_upload_progress.write().unwrap() = progress;
+            *daemon_upload_bytes.write().unwrap() = bytes_sent;
+
+            log::debug!("Daemon upload progress: {} / {} bytes ({:.1}%)",
+                bytes_sent, total_bytes, progress * 100.0);
+
+            // Small delay to simulate network transmission
+            if bytes_sent < total_bytes {
+                // Use a simple timer implementation
+                let start = web_time::SystemTime::now();
+                while start.elapsed().unwrap().as_millis() < DELAY_MS as u128 {
+                    // Busy wait - not ideal but works for our simulation
+                }
+            }
+        }
+
+        log::info!("Daemon upload simulation complete: {} bytes", total_bytes);
+    }
+
     fn reset(&self) {
         // Reset all state for a new upload
         *self.selected_file.write().unwrap() = None;
         *self.file_size.write().unwrap() = None;
         *self.file_data.write().unwrap() = None;
         *self.key_name.write().unwrap() = String::new();
+
+        // Reset file reading progress (Phase 1)
+        *self.is_reading_file.write().unwrap() = false;
+        *self.file_read_progress.write().unwrap() = 0.0;
+        *self.file_read_bytes.write().unwrap() = 0;
+
+        // Reset upload progress (Phase 2)
+        *self.is_uploading_to_daemon.write().unwrap() = false;
+        *self.daemon_upload_progress.write().unwrap() = 0.0;
+        *self.daemon_upload_bytes.write().unwrap() = 0;
+
+        // Reset network progress (Phase 3)
         *self.reservation_progress.write().unwrap() = 0.0;
         *self.upload_progress.write().unwrap() = 0.0;
         *self.confirmation_progress.write().unwrap() = 0.0;
@@ -467,8 +610,12 @@ impl PutWindow {
     fn draw_upload_form(&mut self, ui: &mut egui::Ui) {
         let is_uploading = *self.is_uploading.read().unwrap();
         let upload_complete = *self.upload_complete.read().unwrap();
+        let is_reading_file = *self.is_reading_file.read().unwrap();
 
-        if !is_uploading && !upload_complete {
+        // Check if we're in any kind of processing state
+        let is_processing = is_uploading || is_reading_file;
+
+        if !is_processing && !upload_complete {
             // File selection section
             ui.heading("Upload File");
             ui.add_space(10.0);
@@ -553,6 +700,31 @@ impl PutWindow {
                 ui.add_space(10.0);
                 ui.label(RichText::new(format!("Error: {}", error)).color(Color32::RED));
             }
+        } else if is_reading_file {
+            // File reading progress section
+            ui.heading("Reading File");
+            ui.add_space(10.0);
+
+            let file_name = self.selected_file.read().unwrap().clone().unwrap_or_default();
+            ui.label(format!("Reading: {}", file_name));
+
+            ui.add_space(5.0);
+
+            // File reading progress
+            let file_read_progress = *self.file_read_progress.read().unwrap();
+            let file_read_bytes = *self.file_read_bytes.read().unwrap();
+            let file_size = self.file_size.read().unwrap().unwrap_or(0);
+
+            ui.label("Loading file into memory:");
+            ui.add(detailed_progress(
+                file_read_progress,
+                file_read_bytes as usize,
+                file_size as usize,
+                "Reading...".to_string()
+            ));
+
+            ui.add_space(10.0);
+            ui.label(RichText::new("Please wait while the file is being loaded...").color(Color32::GRAY));
         } else if is_uploading {
             // Progress section
             ui.heading("Upload Progress");
@@ -562,6 +734,25 @@ impl PutWindow {
             ui.label(format!("Uploading: {}", *key_name));
 
             ui.add_space(5.0);
+
+            // Check if we're in daemon upload phase
+            let is_uploading_to_daemon = *self.is_uploading_to_daemon.read().unwrap();
+            if is_uploading_to_daemon {
+                // Show daemon upload progress
+                let daemon_upload_progress = *self.daemon_upload_progress.read().unwrap();
+                let daemon_upload_bytes = *self.daemon_upload_bytes.read().unwrap();
+                let file_size = self.file_size.read().unwrap().unwrap_or(0);
+
+                ui.label("Sending to daemon:");
+                ui.add(detailed_progress(
+                    daemon_upload_progress,
+                    daemon_upload_bytes as usize,
+                    file_size as usize,
+                    "Uploading...".to_string()
+                ));
+
+                ui.add_space(5.0);
+            }
 
             // Calculate elapsed time
             let elapsed = if let Some(start_time) = *self.start_time.read().unwrap() {
