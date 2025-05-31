@@ -540,100 +540,155 @@ impl FileViewerTab {
             .inner_margin(egui::Margin::same(8));
 
         header_frame.show(ui, |ui| {
-            // File name as title with professional styling
-            ui.label(
-                egui::RichText::new(&self.file.key)
-                    .size(16.0)
-                    .strong()
-                    .color(super::theme::MutantColors::TEXT_PRIMARY)
-            );
-
-            ui.add_space(4.0);
-
-            // Store file details we need for display
-            let file_size = humanize_size(self.file.total_size);
-            let pad_count = self.file.pad_count;
-            let confirmed_pads = self.file.confirmed_pads;
-            let is_public = self.file.is_public;
-            let public_address = self.file.public_address.clone();
-
-            // Store current state
-            let file_type = self.file_type.clone();
-            let file_modified = self.file_modified;
-
-            // Metadata row with consistent styling
+            // Top row: File icon, name, and status indicators
             ui.horizontal(|ui| {
-                // Size info
+                // Get file icon and color using the same logic as filesystem tree
+                let file_name = std::path::Path::new(&self.file.key)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| self.file.key.clone());
+
+                let (file_icon, icon_color) = {
+                    // Create a temporary TreeNode to reuse the icon logic
+                    let temp_node = TreeNode::new_file(&file_name, self.file.clone());
+                    temp_node.get_file_icon_and_color()
+                };
+
+                // File icon with matching color from filesystem tree
                 ui.label(
-                    egui::RichText::new(format!("Size: {}", file_size))
-                        .size(11.0)
-                        .color(super::theme::MutantColors::TEXT_SECONDARY)
+                    egui::RichText::new(file_icon)
+                        .size(16.0)
+                        .color(icon_color)
                 );
 
-                ui.separator();
+                ui.add_space(8.0);
 
-                // Pad info
+                // File name as title with professional styling
                 ui.label(
-                    egui::RichText::new(format!("Pads: {}/{}", confirmed_pads, pad_count))
-                        .size(11.0)
-                        .color(super::theme::MutantColors::TEXT_SECONDARY)
+                    egui::RichText::new(&self.file.key)
+                        .size(16.0)
+                        .strong()
+                        .color(super::theme::MutantColors::TEXT_PRIMARY)
                 );
 
-                ui.separator();
-
-                // Public/Private status
-                if is_public {
-                    ui.label(
-                        egui::RichText::new("Public")
-                            .size(11.0)
-                            .color(super::theme::MutantColors::SUCCESS)
-                    );
-                    if let Some(addr) = &public_address {
-                        ui.separator();
+                // Add some space before status indicators
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Show modified indicator if the file has been modified
+                    if self.file_modified {
                         ui.label(
-                            egui::RichText::new(format!("Address: {}", addr))
-                                .size(10.0)
-                                .color(super::theme::MutantColors::TEXT_MUTED)
+                            egui::RichText::new("● Modified")
+                                .size(11.0)
+                                .color(super::theme::MutantColors::WARNING)
+                        );
+
+                        if ui.add(crate::app::theme::primary_button("Save")).clicked() {
+                            // Save the file
+                            self.save_file(ui);
+                        }
+                    }
+
+                    // Public/Private status with colored indicator
+                    if self.file.is_public {
+                        ui.label(
+                            egui::RichText::new("🌐 Public")
+                                .size(11.0)
+                                .color(super::theme::MutantColors::SUCCESS)
+                        );
+                    } else {
+                        ui.label(
+                            egui::RichText::new("🔒 Private")
+                                .size(11.0)
+                                .color(super::theme::MutantColors::ACCENT_BLUE)
                         );
                     }
-                } else {
-                    ui.label(
-                        egui::RichText::new("Private")
-                            .size(11.0)
-                            .color(super::theme::MutantColors::TEXT_SECONDARY)
-                    );
-                }
+                });
+            });
 
-                // Show file type if available
-                if let Some(file_type) = &file_type {
-                    ui.separator();
-                    let type_text = match file_type {
-                        multimedia::FileType::Text => "Type: Text",
-                        multimedia::FileType::Code(lang) => &format!("Type: Code ({})", lang),
-                        multimedia::FileType::Image => "Type: Image",
-                        multimedia::FileType::Video => "Type: Video",
-                        multimedia::FileType::Other => "Type: Unknown",
+            ui.add_space(6.0);
+
+            // Bottom row: Detailed metadata with colors
+            ui.horizontal(|ui| {
+                // Store file details we need for display
+                let file_size = humanize_size(self.file.total_size);
+                let pad_count = self.file.pad_count;
+                let confirmed_pads = self.file.confirmed_pads;
+
+                // Size info with icon
+                ui.label(
+                    egui::RichText::new("📏")
+                        .size(10.0)
+                        .color(super::theme::MutantColors::ACCENT_CYAN)
+                );
+                ui.label(
+                    egui::RichText::new(format!("{}", file_size))
+                        .size(11.0)
+                        .color(super::theme::MutantColors::TEXT_SECONDARY)
+                );
+
+                ui.separator();
+
+                // Pad info with icon and progress color
+                ui.label(
+                    egui::RichText::new("🧩")
+                        .size(10.0)
+                        .color(super::theme::MutantColors::ACCENT_PURPLE)
+                );
+                let pad_color = if confirmed_pads == pad_count {
+                    super::theme::MutantColors::SUCCESS
+                } else {
+                    super::theme::MutantColors::WARNING
+                };
+                ui.label(
+                    egui::RichText::new(format!("{}/{} pads", confirmed_pads, pad_count))
+                        .size(11.0)
+                        .color(pad_color)
+                );
+
+                ui.separator();
+
+                // Show file type with colored icon
+                if let Some(file_type) = &self.file_type {
+                    let (type_icon, type_color) = match file_type {
+                        multimedia::FileType::Text => ("📄", super::theme::MutantColors::TEXT_SECONDARY),
+                        multimedia::FileType::Code(_) => ("📝", super::theme::MutantColors::ACCENT_GREEN),
+                        multimedia::FileType::Image => ("🖼️", super::theme::MutantColors::ACCENT_CYAN),
+                        multimedia::FileType::Video => ("🎬", super::theme::MutantColors::ACCENT_PURPLE),
+                        multimedia::FileType::Other => ("❓", super::theme::MutantColors::TEXT_MUTED),
                     };
+
+                    let type_text = match file_type {
+                        multimedia::FileType::Text => "Text".to_string(),
+                        multimedia::FileType::Code(lang) => format!("Code ({})", lang),
+                        multimedia::FileType::Image => "Image".to_string(),
+                        multimedia::FileType::Video => "Video".to_string(),
+                        multimedia::FileType::Other => "Unknown".to_string(),
+                    };
+
+                    ui.label(
+                        egui::RichText::new(type_icon)
+                            .size(10.0)
+                            .color(type_color)
+                    );
                     ui.label(
                         egui::RichText::new(type_text)
                             .size(11.0)
-                            .color(super::theme::MutantColors::TEXT_SECONDARY)
+                            .color(type_color)
                     );
                 }
 
-                // Show modified indicator and save button if the file has been modified
-                if file_modified {
+                // Show public address if available
+                if let Some(addr) = &self.file.public_address {
                     ui.separator();
                     ui.label(
-                        egui::RichText::new("Modified")
-                            .size(11.0)
-                            .color(super::theme::MutantColors::WARNING)
+                        egui::RichText::new("🔗")
+                            .size(10.0)
+                            .color(super::theme::MutantColors::ACCENT_BLUE)
                     );
-
-                    if ui.add(crate::app::theme::primary_button("Save")).clicked() {
-                        // Save the file
-                        self.save_file(ui);
-                    }
+                    ui.label(
+                        egui::RichText::new(format!("{}", &addr[..8]))
+                            .size(10.0)
+                            .color(super::theme::MutantColors::TEXT_MUTED)
+                    );
                 }
             });
         });
@@ -924,34 +979,11 @@ impl egui_dock::TabViewer for FsInternalTabViewer {
                     .map(|f| f.to_string_lossy().to_string())
                     .unwrap_or_else(|| file_tab.file.key.clone());
 
-                // Determine the file type to use for the icon
-                // Priority: file_content.file_type > file_tab.file_type > extension-based detection
-                let file_type_for_icon = if let Some(file_content) = &file_tab.file_content {
-                    Some(file_content.file_type.clone())
-                } else {
-                    file_tab.file_type.clone()
-                };
-
-                // Add an icon based on the file type
-                let file_icon = match &file_type_for_icon {
-                    Some(multimedia::FileType::Text) => "📄",
-                    Some(multimedia::FileType::Code(_)) => "📝",
-                    Some(multimedia::FileType::Image) => "🖼️",
-                    Some(multimedia::FileType::Video) => "🎬",
-                    Some(multimedia::FileType::Other) => "📄",
-                    None => {
-                        // Fallback to extension-based detection if file type is not yet determined
-                        if let Some(extension) = std::path::Path::new(&file_name).extension() {
-                            match extension.to_string_lossy().to_lowercase().as_str() {
-                                "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" => "📷",
-                                "mp4" | "avi" | "mkv" | "mov" | "wmv" | "flv" | "webm" => "🎬",
-                                "rs" | "js" | "ts" | "py" | "java" | "cpp" | "c" | "go" | "rb" | "php" => "📝",
-                                _ => "📄",
-                            }
-                        } else {
-                            "📄"
-                        }
-                    }
+                // Get file icon and color using the same logic as filesystem tree
+                let (file_icon, _icon_color) = {
+                    // Create a temporary TreeNode to reuse the icon logic
+                    let temp_node = TreeNode::new_file(&file_name, file_tab.file.clone());
+                    temp_node.get_file_icon_and_color()
                 };
 
                 // Add a modified indicator if the file has been modified
@@ -959,24 +991,38 @@ impl egui_dock::TabViewer for FsInternalTabViewer {
 
                 let title = format!("{}{}{}", file_icon, modified_indicator, file_name);
 
-                // Style the tab title with professional dark theme colors
+                // Tab title will be styled by egui_dock based on active/inactive state
+                // We'll handle the coloring in the tab styling system
                 egui::RichText::new(title)
                     .size(12.0) // Consistent with filesystem tree
-                    .color(super::theme::MutantColors::TEXT_PRIMARY)
                     .into()
             }
             FsInternalTab::Put(_) => {
                 egui::RichText::new("📤 Upload")
                     .size(12.0)
-                    .color(super::theme::MutantColors::TEXT_PRIMARY)
                     .into()
             }
             FsInternalTab::Stats(_) => {
                 egui::RichText::new("📊 Stats")
                     .size(12.0)
-                    .color(super::theme::MutantColors::TEXT_PRIMARY)
                     .into()
             }
+        }
+    }
+
+    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+        // Custom close button styling will be handled by egui_dock
+        // Return true to allow closing
+        match tab {
+            FsInternalTab::FileViewer(file_tab) => {
+                // You could add save confirmation here if the file is modified
+                if file_tab.file_modified {
+                    // For now, just allow closing - could add confirmation dialog
+                    log::info!("Closing modified file: {}", file_tab.file.key);
+                }
+                true
+            }
+            _ => true,
         }
     }
 
