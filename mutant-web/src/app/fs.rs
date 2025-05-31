@@ -173,8 +173,8 @@ impl TreeNode {
     /// Draw this node and its children
     /// Returns (view_clicked_details, download_clicked_details)
     fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize, selected_path: Option<&str>, window_id: &str) -> (Option<KeyDetails>, Option<KeyDetails>) {
-        // Ultra compact indentation for a cleaner look inside folders
-        let indent_per_level = 3.0;  // Reduced from 6.0 to 3.0
+        // Extremely compact indentation for maximum space efficiency
+        let indent_per_level = 1.5;  // Reduced from 3.0 to 1.5
         let total_indent = indent_per_level * (indent_level as f32);
 
         let mut view_clicked_details = None;
