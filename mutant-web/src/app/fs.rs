@@ -1802,32 +1802,29 @@ impl FsWindow {
                                 }
                             });
                         });
+
+                        // Sort children: directories first, then files
+                        let mut sorted_children: Vec<_> = self.root.children.iter_mut().collect();
+                        sorted_children.sort_by(|(_, a), (_, b)| {
+                            match (a.is_dir(), b.is_dir()) {
+                                (true, false) => std::cmp::Ordering::Less,    // Directories come before files
+                                (false, true) => std::cmp::Ordering::Greater, // Files come after directories
+                                _ => a.name.cmp(&b.name),                     // Sort alphabetically within each group
+                            }
+                        });
+
+                        // Draw the sorted children with indentation level 1 (since they are children of the root '/')
+                        for (_, child) in sorted_children {
+                            let (view_details, download_details) = child.ui(ui, 1, selected_path_ref, &self.window_id);
+                            if view_details.is_some() {
+                                view_details_clicked = view_details;
+                            }
+                            if download_details.is_some() {
+                                download_details_clicked = download_details;
+                            }
+                        }
                     }).header_response.clicked() || root_expanded;
                 });
-
-                // Only show children if root is expanded
-                if root_expanded {
-                    // Sort children: directories first, then files
-                    let mut sorted_children: Vec<_> = self.root.children.iter_mut().collect();
-                    sorted_children.sort_by(|(_, a), (_, b)| {
-                        match (a.is_dir(), b.is_dir()) {
-                            (true, false) => std::cmp::Ordering::Less,    // Directories come before files
-                            (false, true) => std::cmp::Ordering::Greater, // Files come after directories
-                            _ => a.name.cmp(&b.name),                     // Sort alphabetically within each group
-                        }
-                    });
-
-                    // Draw the sorted children with indentation level 1 (since they are children of the root '/')
-                    for (_, child) in sorted_children {
-                        let (view_details, download_details) = child.ui(ui, 1, selected_path_ref, &self.window_id);
-                        if view_details.is_some() {
-                            view_details_clicked = view_details;
-                        }
-                        if download_details.is_some() {
-                            download_details_clicked = download_details;
-                        }
-                    }
-                }
 
                 // Add some bottom padding
                 ui.add_space(8.0);
