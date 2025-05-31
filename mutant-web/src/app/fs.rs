@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock, Mutex}; // Added Mutex
 use std::collections::BTreeMap;
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 
 use humansize::{format_size, BINARY};
 use mutant_protocol::{KeyDetails, TaskProgress, GetEvent, TaskId}; // Added TaskProgress, GetEvent, TaskId
@@ -11,7 +11,7 @@ use lazy_static::lazy_static;
 
 use super::components::multimedia;
 use super::Window;
-use super::theme::secondary_button;
+
 use super::window_system::generate_unique_dock_area_id;
 use super::{put::PutWindow, stats::StatsWindow};
 use crate::utils::download_utils::{self, JsFileHandleResult, JsSimpleResult};
@@ -173,30 +173,66 @@ impl TreeNode {
     /// Draw this node and its children
     /// Returns (view_clicked_details, download_clicked_details)
     fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize, selected_path: Option<&str>, window_id: &str) -> (Option<KeyDetails>, Option<KeyDetails>) {
-        // Use a very small fixed indentation to avoid exponential growth
-        let indent_per_level = 2.0;
+        // More refined indentation for a cleaner look
+        let indent_per_level = 16.0;
         let total_indent = indent_per_level * (indent_level as f32);
 
         let mut view_clicked_details = None;
         let mut download_clicked_details = None;
+
+        // Add subtle vertical spacing between items
+        if indent_level > 0 {
+            ui.add_space(2.0);
+        }
 
         ui.horizontal(|ui| {
             // Apply the base indentation
             ui.add_space(total_indent);
 
             if self.is_dir() {
-                // Directory node
-                let icon = if self.expanded { "📂" } else { "📁" };
-                let text = format!("{} {}/", icon, self.name); // Add '/' at the end of folder names
+                // Directory node with improved styling
+                let icon = if self.expanded { "▼" } else { "▶" };
+                let folder_icon = "📁";
 
-                let header = egui::CollapsingHeader::new(text)
-                    .id_salt(format!("mutant_fs_{}dir_{}", window_id, self.path)) // Use window ID + path for unique ID
-                    .default_open(self.expanded);
+                // Create a more refined header with better spacing
+                ui.horizontal(|ui| {
+                    // Expansion arrow with consistent styling
+                    let arrow_text = RichText::new(icon)
+                        .size(12.0)
+                        .color(super::theme::MutantColors::TEXT_SECONDARY);
 
-                let mut child_view_details = None;
-                let mut child_download_details = None;
+                    let arrow_response = ui.add(
+                        egui::Label::new(arrow_text)
+                            .sense(egui::Sense::click())
+                    );
 
-                self.expanded = header.show(ui, |ui| {
+                    ui.add_space(4.0);
+
+                    // Folder icon and name
+                    let folder_text = RichText::new(format!("{} {}", folder_icon, self.name))
+                        .size(14.0)
+                        .color(super::theme::MutantColors::TEXT_PRIMARY);
+
+                    let folder_response = ui.add(
+                        egui::Label::new(folder_text)
+                            .sense(egui::Sense::click())
+                    );
+
+                    // Toggle expansion on click
+                    if arrow_response.clicked() || folder_response.clicked() {
+                        self.expanded = !self.expanded;
+                    }
+
+                    // Hover effect for the entire folder row
+                    if arrow_response.hovered() || folder_response.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                });
+
+                // Show children if expanded
+                if self.expanded {
+                    ui.end_row();
+
                     // Sort children: directories first, then files
                     let mut sorted_children: Vec<_> = self.children.iter_mut().collect();
                     sorted_children.sort_by(|(_, a), (_, b)| {
@@ -211,53 +247,160 @@ impl TreeNode {
                     for (_, child) in sorted_children {
                         let (view_details, down_details) = child.ui(ui, indent_level + 1, selected_path, window_id);
                         if view_details.is_some() {
-                            child_view_details = view_details;
+                            view_clicked_details = view_details;
                         }
                         if down_details.is_some() {
-                            child_download_details = down_details;
+                            download_clicked_details = down_details;
                         }
                     }
-                }).header_response.clicked() || self.expanded;
-
-                // Propagate click from children
-                if child_view_details.is_some() {
-                    view_clicked_details = child_view_details;
-                }
-                if child_download_details.is_some() {
-                    download_clicked_details = child_download_details;
                 }
             } else {
-                // File node - add extra space to align with folder names (accounting for arrow)
-                ui.add_space(18.0); // Add space to compensate for the arrow in front of folders
-
-                let icon = "📄";
+                // File node with improved styling and file type detection
                 let details = self.key_details.as_ref().unwrap();
-
-                // Check if this file is selected
                 let is_selected = selected_path.map_or(false, |path| path == &details.key);
 
-                // Style the text based on selection and public status
-                let text_display = if details.is_public {
-                    let text = RichText::new(format!("{} {} (public)", icon, self.name))
-                        .color(Color32::from_rgb(0, 128, 0));
-                    text
-                } else {
-                    RichText::new(format!("{} {}", icon, self.name))
-                };
+                // Determine file icon based on extension
+                let file_icon = self.get_file_icon();
 
-                // Make the file node clickable for viewing
-                if ui.selectable_label(is_selected, text_display).clicked() {
-                    view_clicked_details = Some(details.clone());
+                // Create a styled file row with hover effects
+                let file_rect = ui.available_rect_before_wrap();
+                let file_rect = egui::Rect::from_min_size(
+                    file_rect.min,
+                    egui::Vec2::new(file_rect.width(), 24.0)
+                );
+
+                // Background for selection and hover
+                if is_selected {
+                    ui.painter().rect_filled(
+                        file_rect,
+                        egui::Rounding::same(4),
+                        super::theme::MutantColors::SELECTION
+                    );
                 }
-                
-                // Add a download button
-                if ui.add(secondary_button("💾")).on_hover_text("Download file").clicked() {
-                    download_clicked_details = Some(details.clone());
-                }
+
+                ui.horizontal(|ui| {
+                    // File icon
+                    let icon_text = RichText::new(file_icon)
+                        .size(14.0)
+                        .color(super::theme::MutantColors::ACCENT_BLUE);
+                    ui.label(icon_text);
+
+                    ui.add_space(6.0);
+
+                    // File name with appropriate styling
+                    let file_color = if details.is_public {
+                        super::theme::MutantColors::SUCCESS
+                    } else {
+                        super::theme::MutantColors::TEXT_PRIMARY
+                    };
+
+                    let file_text = RichText::new(&self.name)
+                        .size(14.0)
+                        .color(file_color);
+
+                    let file_response = ui.add(
+                        egui::Label::new(file_text)
+                            .sense(egui::Sense::click())
+                    );
+
+                    // Add file size in a subtle way
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Download button (smaller and more subtle)
+                        let download_btn = ui.add_sized(
+                            [20.0, 20.0],
+                            egui::Button::new("⬇")
+                                .fill(egui::Color32::TRANSPARENT)
+                                .stroke(egui::Stroke::NONE)
+                        );
+
+                        if download_btn.clicked() {
+                            download_clicked_details = Some(details.clone());
+                        }
+
+                        if download_btn.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+
+                        ui.add_space(8.0);
+
+                        // File size
+                        let size_text = RichText::new(humanize_size(details.total_size))
+                            .size(11.0)
+                            .color(super::theme::MutantColors::TEXT_MUTED);
+                        ui.label(size_text);
+
+                        // Public indicator
+                        if details.is_public {
+                            ui.add_space(4.0);
+                            let public_text = RichText::new("PUB")
+                                .size(10.0)
+                                .color(super::theme::MutantColors::SUCCESS);
+                            ui.label(public_text);
+                        }
+                    });
+
+                    // Handle file click
+                    if file_response.clicked() {
+                        view_clicked_details = Some(details.clone());
+                    }
+
+                    if file_response.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                });
             }
         });
 
         (view_clicked_details, download_clicked_details)
+    }
+
+    /// Get appropriate icon for file based on extension
+    fn get_file_icon(&self) -> &'static str {
+        if let Some(extension) = std::path::Path::new(&self.name).extension() {
+            match extension.to_string_lossy().to_lowercase().as_str() {
+                // Code files
+                "rs" | "rust" => "🦀",
+                "js" | "ts" | "jsx" | "tsx" => "📜",
+                "py" | "python" => "🐍",
+                "java" | "class" => "☕",
+                "cpp" | "c" | "cc" | "cxx" | "h" | "hpp" => "⚙️",
+                "go" => "🐹",
+                "php" => "🐘",
+                "rb" | "ruby" => "💎",
+                "swift" => "🦉",
+                "kt" | "kotlin" => "🎯",
+                "cs" | "csharp" => "🔷",
+                "html" | "htm" => "🌐",
+                "css" | "scss" | "sass" | "less" => "🎨",
+                "json" | "yaml" | "yml" | "toml" | "xml" => "📋",
+
+                // Images
+                "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" => "🖼️",
+
+                // Videos
+                "mp4" | "avi" | "mkv" | "mov" | "wmv" | "flv" | "webm" => "🎬",
+
+                // Audio
+                "mp3" | "wav" | "flac" | "ogg" | "aac" | "m4a" => "🎵",
+
+                // Archives
+                "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" => "📦",
+
+                // Documents
+                "pdf" => "📕",
+                "doc" | "docx" => "📘",
+                "xls" | "xlsx" => "📗",
+                "ppt" | "pptx" => "📙",
+                "txt" | "md" | "readme" => "📄",
+
+                // Executables
+                "exe" | "msi" | "deb" | "rpm" | "dmg" | "app" => "⚡",
+
+                _ => "📄"
+            }
+        } else {
+            "📄"
+        }
     }
 }
 
@@ -767,12 +910,16 @@ impl Window for FsWindow {
     fn draw(&mut self, ui: &mut egui::Ui) {
         self.build_tree();
 
-        // Use a horizontal layout with two panels
+        // Use a horizontal layout with two panels - improved styling
         egui::SidePanel::left(format!("mutant_fs_tree_panel_{}", self.window_id))
             .resizable(true)
-            .min_width(200.0)
-            .default_width(300.0)
+            .min_width(220.0)
+            .default_width(320.0)
+            .max_width(500.0)
+            .show_separator_line(true)
             .show_inside(ui, |ui| {
+                // Apply consistent background styling
+                ui.style_mut().visuals.panel_fill = super::theme::MutantColors::BACKGROUND_MEDIUM;
                 self.draw_tree(ui);
             });
 
@@ -1486,47 +1633,96 @@ impl FsWindow {
 
     /// Draw the tree UI
     fn draw_tree(&mut self, ui: &mut egui::Ui) {
-        ui.heading("File Explorer");
+        // Modern header with better styling
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
 
+            // Explorer icon and title
+            let header_text = RichText::new("🗂️ File Explorer")
+                .size(18.0)
+                .color(super::theme::MutantColors::TEXT_PRIMARY)
+                .strong();
+            ui.label(header_text);
+
+            // Add a subtle refresh button
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let refresh_btn = ui.add_sized(
+                    [24.0, 24.0],
+                    egui::Button::new("🔄")
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::NONE)
+                );
+
+                if refresh_btn.clicked() {
+                    // Trigger a refresh of the file list
+                    let ctx = crate::app::context::context();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let _ = ctx.list_keys().await;
+                    });
+                }
+
+                if refresh_btn.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+            });
+        });
+
+        ui.add_space(4.0);
+
+        // Subtle separator line
         ui.separator();
 
-        // Draw the tree
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            // First, show the root folder (always expanded)
-            ui.horizontal(|ui| {
-                // Root folder icon with zero indentation
-                let icon = "📂";
-                ui.label(format!("{} /", icon));
-            });
+        // Draw the tree with improved styling
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                // Add some top padding
+                ui.add_space(8.0);
 
-            // Sort children: directories first, then files
-            let mut sorted_children: Vec<_> = self.root.children.iter_mut().collect();
-            sorted_children.sort_by(|(_, a), (_, b)| {
-                match (a.is_dir(), b.is_dir()) {
-                    (true, false) => std::cmp::Ordering::Less,    // Directories come before files
-                    (false, true) => std::cmp::Ordering::Greater, // Files come after directories
-                    _ => a.name.cmp(&b.name),                     // Sort alphabetically within each group
+                // First, show the root folder (always expanded) with improved styling
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0); // Left padding
+
+                    // Root folder with modern styling
+                    let root_text = RichText::new("📁 MutAnt Storage")
+                        .size(16.0)
+                        .color(super::theme::MutantColors::ACCENT_ORANGE)
+                        .strong();
+                    ui.label(root_text);
+                });
+
+                ui.add_space(4.0);
+
+                // Sort children: directories first, then files
+                let mut sorted_children: Vec<_> = self.root.children.iter_mut().collect();
+                sorted_children.sort_by(|(_, a), (_, b)| {
+                    match (a.is_dir(), b.is_dir()) {
+                        (true, false) => std::cmp::Ordering::Less,    // Directories come before files
+                        (false, true) => std::cmp::Ordering::Greater, // Files come after directories
+                        _ => a.name.cmp(&b.name),                     // Sort alphabetically within each group
+                    }
+                });
+
+                // Get the currently selected path for highlighting
+                let selected_path_ref = self.selected_path.as_deref();
+
+                // Track clicked nodes to handle after the loop
+                let mut view_details_clicked: Option<KeyDetails> = None;
+                let mut download_details_clicked: Option<KeyDetails> = None;
+
+                // Draw the sorted children with indentation and check if any file was clicked
+                for (_, child) in sorted_children {
+                    let (view_details, download_details) = child.ui(ui, 1, selected_path_ref, &self.window_id); // Start with indent level 1 since we're inside root
+                    if view_details.is_some() {
+                        view_details_clicked = view_details;
+                    }
+                    if download_details.is_some() {
+                        download_details_clicked = download_details;
+                    }
                 }
-            });
 
-            // Get the currently selected path for highlighting
-            let selected_path_ref = self.selected_path.as_deref();
-
-            // Track clicked nodes to handle after the loop
-            let mut view_details_clicked: Option<KeyDetails> = None;
-            let mut download_details_clicked: Option<KeyDetails> = None;
-
-
-            // Draw the sorted children with indentation and check if any file was clicked
-            for (_, child) in sorted_children {
-                let (view_details, download_details) = child.ui(ui, 1, selected_path_ref, &self.window_id); // Start with indent level 1 since we're inside root
-                if view_details.is_some() {
-                    view_details_clicked = view_details;
-                }
-                if download_details.is_some() {
-                    download_details_clicked = download_details;
-                }
-            }
+                // Add some bottom padding
+                ui.add_space(8.0);
 
             // Handle the view clicked node outside the loop to avoid borrow issues
             if let Some(details) = view_details_clicked {
