@@ -271,10 +271,10 @@ impl TreeNode {
                 }
 
                 // Calculate metadata width and positioning
-                let metadata_width = 120.0;
+                let metadata_width = 80.0; // Reduced from 120.0 for more compact layout
 
                 // Calculate text clipping area to prevent text from bleeding into the metadata area
-                let fade_width = 60.0; // Increased fade width for smoother transition
+                let fade_width = 30.0; // Reduced from 60.0 for more compact gradient
                 let text_clip_width = row_rect.width() - metadata_width - fade_width;
 
                 // Create a clipping rectangle for the text to prevent bleeding
@@ -1685,8 +1685,8 @@ impl FsWindow {
             .show(ui, |ui| {
                 // Draw the continuous gradient bar FIRST (behind the content)
                 let available_rect = ui.available_rect_before_wrap();
-                let metadata_width = 120.0;
-                let fade_width = 60.0;
+                let metadata_width = 80.0; // Reduced from 120.0 for more compact layout
+                let fade_width = 30.0; // Reduced from 60.0 for more compact gradient
                 let fade_start = available_rect.width() - metadata_width - fade_width;
                 let background_color = super::theme::MutantColors::BACKGROUND_MEDIUM;
 
