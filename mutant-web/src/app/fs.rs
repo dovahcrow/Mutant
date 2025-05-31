@@ -1666,24 +1666,24 @@ impl FsWindow {
     /// Draw the tree UI
     fn draw_tree(&mut self, ui: &mut egui::Ui) {
         // Modern header with better styling and padding
-        ui.add_space(12.0); // Top padding
+        ui.add_space(16.0); // Top padding
 
         ui.horizontal(|ui| {
-            ui.add_space(16.0); // Left padding
+            ui.add_space(20.0); // Left padding
 
-            // Explorer icon and title with fallback for missing glyphs
-            let header_text = RichText::new("� File Explorer")
+            // MutAnt Storage header with proper glyph and styling
+            let header_text = RichText::new("■ MutAnt Storage")
                 .size(18.0)
-                .color(super::theme::MutantColors::TEXT_PRIMARY)
+                .color(super::theme::MutantColors::ACCENT_ORANGE)
                 .strong();
             ui.label(header_text);
 
             // Add a subtle refresh button
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(16.0); // Right padding
+                ui.add_space(20.0); // Right padding
 
                 let refresh_btn = ui.add_sized(
-                    [24.0, 24.0],
+                    [26.0, 26.0],
                     egui::Button::new("↻")
                         .fill(egui::Color32::TRANSPARENT)
                         .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_MUTED))
@@ -1703,7 +1703,7 @@ impl FsWindow {
             });
         });
 
-        ui.add_space(8.0); // Space before separator
+        ui.add_space(12.0); // Space before separator
 
         // Subtle separator line
         ui.separator();
@@ -1771,21 +1771,7 @@ impl FsWindow {
                 ui.painter().rect_filled(metadata_rect, 0.0, metadata_color);
 
                 // Add some top padding
-                ui.add_space(8.0);
-
-                // First, show the root folder (always expanded) with improved styling
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0); // Left padding to match header
-
-                    // Root folder with modern styling and better colors
-                    let root_text = RichText::new("📁 MutAnt Storage")
-                        .size(16.0)
-                        .color(super::theme::MutantColors::ACCENT_ORANGE)
-                        .strong();
-                    ui.label(root_text);
-                });
-
-                ui.add_space(4.0);
+                ui.add_space(12.0);
 
                 // Sort children: directories first, then files
                 let mut sorted_children: Vec<_> = self.root.children.iter_mut().collect();
@@ -1806,7 +1792,7 @@ impl FsWindow {
 
                 // Draw the sorted children with indentation and check if any file was clicked
                 for (_, child) in sorted_children {
-                    let (view_details, download_details) = child.ui(ui, 1, selected_path_ref, &self.window_id); // Start with indent level 1 since we're inside root
+                    let (view_details, download_details) = child.ui(ui, 0, selected_path_ref, &self.window_id); // Start with indent level 0 since we removed the root folder display
                     if view_details.is_some() {
                         view_details_clicked = view_details;
                     }
