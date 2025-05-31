@@ -207,7 +207,7 @@ impl TreeNode {
                 let icon = if self.expanded { "📂" } else { "📁" };
                 let text = RichText::new(format!("{} {}/", icon, self.name))
                     .size(12.0)  // Match file font size for consistency
-                    .color(super::theme::MutantColors::ACCENT_CYAN);  // Special distinguishing color for folders
+                    .color(super::theme::MutantColors::ACCENT_ORANGE);  // Special distinguishing color for folders
 
                 let header = egui::CollapsingHeader::new(text)
                     .id_salt(format!("mutant_fs_{}dir_{}", window_id, self.path))
@@ -1780,7 +1780,7 @@ impl FsWindow {
                     let icon = if root_expanded { "📂" } else { "📁" };
                     let text = RichText::new(format!("{} /", icon))
                         .size(12.0)  // Match other folder sizes
-                        .color(super::theme::MutantColors::ACCENT_CYAN);  // Special distinguishing color for folders
+                        .color(super::theme::MutantColors::ACCENT_ORANGE);  // Special distinguishing color for folders
 
                     let header = egui::CollapsingHeader::new(text)
                         .id_salt(format!("mutant_fs_root_{}", self.window_id))
