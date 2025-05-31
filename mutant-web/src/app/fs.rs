@@ -1698,9 +1698,9 @@ impl FsWindow {
 
                 // Create a darker version of the background color for the gradient target
                 let darker_color = egui::Color32::from_rgb(
-                    (background_color.r() as f32 * 0.7) as u8,
-                    (background_color.g() as f32 * 0.7) as u8,
-                    (background_color.b() as f32 * 0.7) as u8,
+                    (background_color.r() as f32 * 0.5) as u8,
+                    (background_color.g() as f32 * 0.5) as u8,
+                    (background_color.b() as f32 * 0.5) as u8,
                 );
 
                 // Draw the gradient with more steps for smoother transition
@@ -1710,20 +1710,17 @@ impl FsWindow {
                 for i in 0..steps {
                     let progress = i as f32 / (steps - 1) as f32; // 0.0 to 1.0
 
-                    // Interpolate from transparent to darker color
-                    let alpha = (progress * 255.0) as u8;
+                    // Interpolate directly between background color and darker color
+                    let r = (background_color.r() as f32 * (1.0 - progress) + darker_color.r() as f32 * progress) as u8;
+                    let g = (background_color.g() as f32 * (1.0 - progress) + darker_color.g() as f32 * progress) as u8;
+                    let b = (background_color.b() as f32 * (1.0 - progress) + darker_color.b() as f32 * progress) as u8;
 
                     let step_rect = egui::Rect::from_min_size(
                         egui::Pos2::new(gradient_rect.left() + i as f32 * step_width, gradient_rect.top()),
                         egui::Vec2::new(step_width, gradient_rect.height())
                     );
 
-                    let fade_color = egui::Color32::from_rgba_unmultiplied(
-                        darker_color.r(),
-                        darker_color.g(),
-                        darker_color.b(),
-                        alpha
-                    );
+                    let fade_color = egui::Color32::from_rgb(r, g, b);
 
                     ui.painter().rect_filled(step_rect, 0.0, fade_color);
                 }
