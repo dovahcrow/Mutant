@@ -272,12 +272,11 @@ impl TreeNode {
 
                 // Calculate metadata width and positioning
                 let metadata_width = 120.0;
-                let text_available_width = row_rect.width() - metadata_width - 8.0; // 8px padding
 
-                // Draw the text with fade effect
+                // Draw the text
                 let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, 2.0);
 
-                // Calculate text size to determine if we need fade
+                // Calculate text and draw it
                 let font_id = egui::FontId::new(14.0, egui::FontFamily::Proportional);
                 let text_galley = ui.painter().layout_no_wrap(
                     format!("{} {}", file_icon, self.name),
@@ -285,33 +284,36 @@ impl TreeNode {
                     file_color
                 );
 
-                if text_galley.size().x > text_available_width {
-                    // Text is too long, draw with fade effect
-                    let fade_start = text_available_width - 30.0; // Start fade 30px before edge
+                // Draw the text normally
+                ui.painter().galley(text_pos, text_galley, file_color);
 
-                    // Draw the text (clipped to available width)
-                    let clip_rect = egui::Rect::from_min_size(
-                        text_pos,
-                        egui::Vec2::new(text_available_width, text_galley.size().y)
-                    );
-                    ui.painter().with_clip_rect(clip_rect).galley(text_pos, text_galley.clone(), file_color);
+                // Apply a smooth fade on the right side for ALL rows
+                let fade_width = 40.0;
+                let fade_start = row_rect.width() - metadata_width - fade_width;
 
-                    // Create fade overlay using a simple rect with alpha
-                    let fade_rect = egui::Rect::from_min_size(
-                        text_pos + egui::Vec2::new(fade_start, 0.0),
-                        egui::Vec2::new(30.0, text_galley.size().y)
+                let background_color = super::theme::MutantColors::BACKGROUND_MEDIUM;
+
+                // Create a smooth gradient using overlapping rectangles with proper blending
+                let steps = 20; // More steps for smoother gradient
+                let step_width = fade_width / steps as f32;
+
+                for i in 0..steps {
+                    let progress = i as f32 / (steps - 1) as f32; // 0.0 to 1.0
+                    let alpha = (progress * 255.0) as u8;
+
+                    let step_rect = egui::Rect::from_min_size(
+                        row_rect.left_top() + egui::Vec2::new(fade_start + i as f32 * step_width, 0.0),
+                        egui::Vec2::new(step_width, row_rect.height())
                     );
 
-                    // Draw fade overlay with background color
-                    let background_color = super::theme::MutantColors::BACKGROUND_MEDIUM;
-                    ui.painter().rect_filled(
-                        fade_rect,
-                        0.0,
-                        background_color
+                    let fade_color = egui::Color32::from_rgba_unmultiplied(
+                        background_color.r(),
+                        background_color.g(),
+                        background_color.b(),
+                        alpha
                     );
-                } else {
-                    // Text fits, draw normally
-                    ui.painter().galley(text_pos, text_galley, file_color);
+
+                    ui.painter().rect_filled(step_rect, 0.0, fade_color);
                 }
 
                 // Handle click on the entire row
