@@ -173,8 +173,8 @@ impl TreeNode {
     /// Draw this node and its children
     /// Returns (view_clicked_details, download_clicked_details)
     fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize, selected_path: Option<&str>, window_id: &str) -> (Option<KeyDetails>, Option<KeyDetails>) {
-        // More refined indentation for a cleaner look
-        let indent_per_level = 16.0;
+        // Reduced indentation for a cleaner look inside folders
+        let indent_per_level = 12.0;  // Reduced from 16.0
         let total_indent = indent_per_level * (indent_level as f32);
 
         let mut view_clicked_details = None;
@@ -186,6 +186,19 @@ impl TreeNode {
         }
 
         ui.horizontal(|ui| {
+            // Draw visual delimiter line for tree structure
+            if indent_level > 0 {
+                let line_color = super::theme::MutantColors::BORDER_LIGHT;
+                let line_x = total_indent - 6.0; // Position line slightly left of content
+                let line_start = ui.cursor().top();
+                let line_end = line_start + 20.0; // Height of one row
+
+                ui.painter().line_segment(
+                    [egui::Pos2::new(line_x, line_start), egui::Pos2::new(line_x, line_end)],
+                    egui::Stroke::new(1.0, line_color)
+                );
+            }
+
             // Apply the base indentation
             ui.add_space(total_indent);
 
@@ -194,7 +207,7 @@ impl TreeNode {
                 let icon = if self.expanded { "📂" } else { "📁" };
                 let text = RichText::new(format!("{} {}/", icon, self.name))
                     .size(12.0)  // Match file font size for consistency
-                    .color(super::theme::MutantColors::TEXT_SECONDARY);  // Use subdued color like files
+                    .color(super::theme::MutantColors::ACCENT_CYAN);  // Special distinguishing color for folders
 
                 let header = egui::CollapsingHeader::new(text)
                     .id_salt(format!("mutant_fs_{}dir_{}", window_id, self.path))
@@ -1740,57 +1753,79 @@ impl FsWindow {
                 let mut view_details_clicked: Option<KeyDetails> = None;
                 let mut download_details_clicked: Option<KeyDetails> = None;
 
-                // Draw the special root folder '/' that cannot be collapsed
+                // Draw the root folder '/' as a proper collapsible folder
+                let mut root_expanded = !self.root.children.is_empty(); // Default to expanded if there are children
+
                 ui.horizontal(|ui| {
-                    // Root folder icon and text - always expanded, cannot be collapsed
-                    let icon = "📂"; // Always open folder icon
+                    // Draw visual delimiter line for root folder
+                    let line_color = super::theme::MutantColors::BORDER_LIGHT;
+                    let line_x = 6.0; // Position line at the left edge
+                    let line_start = ui.cursor().top();
+                    let line_end = line_start + 20.0; // Height of one row
+
+                    ui.painter().line_segment(
+                        [egui::Pos2::new(line_x, line_start), egui::Pos2::new(line_x, line_end)],
+                        egui::Stroke::new(1.0, line_color)
+                    );
+
+                    // Root folder as collapsible header
+                    let icon = if root_expanded { "📂" } else { "📁" };
                     let text = RichText::new(format!("{} /", icon))
-                        .size(14.0)
-                        .color(super::theme::MutantColors::ACCENT_BLUE);
+                        .size(12.0)  // Match other folder sizes
+                        .color(super::theme::MutantColors::ACCENT_CYAN);  // Special distinguishing color for folders
 
-                    ui.label(text);
+                    let header = egui::CollapsingHeader::new(text)
+                        .id_salt(format!("mutant_fs_root_{}", self.window_id))
+                        .default_open(root_expanded);
 
-                    // Add refresh button to the right of the root folder
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let refresh_btn = ui.add_sized(
-                            [20.0, 20.0],
-                            egui::Button::new("↻")
-                                .fill(egui::Color32::TRANSPARENT)
-                                .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_MUTED))
-                        );
+                    root_expanded = header.show(ui, |ui| {
+                        // Add refresh button inside the root folder
+                        ui.horizontal(|ui| {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let refresh_btn = ui.add_sized(
+                                    [20.0, 20.0],
+                                    egui::Button::new("↻")
+                                        .fill(egui::Color32::TRANSPARENT)
+                                        .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_MUTED))
+                                );
 
-                        if refresh_btn.clicked() {
-                            // Trigger a refresh of the file list
-                            let ctx = crate::app::context::context();
-                            wasm_bindgen_futures::spawn_local(async move {
-                                let _ = ctx.list_keys().await;
+                                if refresh_btn.clicked() {
+                                    // Trigger a refresh of the file list
+                                    let ctx = crate::app::context::context();
+                                    wasm_bindgen_futures::spawn_local(async move {
+                                        let _ = ctx.list_keys().await;
+                                    });
+                                }
+
+                                if refresh_btn.hovered() {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
                             });
-                        }
+                        });
+                    }).header_response.clicked() || root_expanded;
+                });
 
-                        if refresh_btn.hovered() {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                // Only show children if root is expanded
+                if root_expanded {
+                    // Sort children: directories first, then files
+                    let mut sorted_children: Vec<_> = self.root.children.iter_mut().collect();
+                    sorted_children.sort_by(|(_, a), (_, b)| {
+                        match (a.is_dir(), b.is_dir()) {
+                            (true, false) => std::cmp::Ordering::Less,    // Directories come before files
+                            (false, true) => std::cmp::Ordering::Greater, // Files come after directories
+                            _ => a.name.cmp(&b.name),                     // Sort alphabetically within each group
                         }
                     });
-                });
 
-                // Sort children: directories first, then files
-                let mut sorted_children: Vec<_> = self.root.children.iter_mut().collect();
-                sorted_children.sort_by(|(_, a), (_, b)| {
-                    match (a.is_dir(), b.is_dir()) {
-                        (true, false) => std::cmp::Ordering::Less,    // Directories come before files
-                        (false, true) => std::cmp::Ordering::Greater, // Files come after directories
-                        _ => a.name.cmp(&b.name),                     // Sort alphabetically within each group
-                    }
-                });
-
-                // Draw the sorted children with indentation level 1 (since they are children of the root '/')
-                for (_, child) in sorted_children {
-                    let (view_details, download_details) = child.ui(ui, 1, selected_path_ref, &self.window_id);
-                    if view_details.is_some() {
-                        view_details_clicked = view_details;
-                    }
-                    if download_details.is_some() {
-                        download_details_clicked = download_details;
+                    // Draw the sorted children with indentation level 1 (since they are children of the root '/')
+                    for (_, child) in sorted_children {
+                        let (view_details, download_details) = child.ui(ui, 1, selected_path_ref, &self.window_id);
+                        if view_details.is_some() {
+                            view_details_clicked = view_details;
+                        }
+                        if download_details.is_some() {
+                            download_details_clicked = download_details;
+                        }
                     }
                 }
 
