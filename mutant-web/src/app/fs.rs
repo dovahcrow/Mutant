@@ -1698,9 +1698,9 @@ impl FsWindow {
 
                 // Create a darker version of the background color for the gradient target
                 let darker_color = egui::Color32::from_rgb(
-                    (background_color.r() as f32 * 0.5) as u8,
-                    (background_color.g() as f32 * 0.5) as u8,
-                    (background_color.b() as f32 * 0.5) as u8,
+                    (background_color.r() as f32 * 0.4) as u8,
+                    (background_color.g() as f32 * 0.4) as u8,
+                    (background_color.b() as f32 * 0.4) as u8,
                 );
 
                 // Draw the gradient with more steps for smoother transition
@@ -1710,27 +1710,36 @@ impl FsWindow {
                 for i in 0..steps {
                     let progress = i as f32 / (steps - 1) as f32; // 0.0 to 1.0
 
-                    // Interpolate directly between background color and darker color
-                    let r = (background_color.r() as f32 * (1.0 - progress) + darker_color.r() as f32 * progress) as u8;
-                    let g = (background_color.g() as f32 * (1.0 - progress) + darker_color.g() as f32 * progress) as u8;
-                    let b = (background_color.b() as f32 * (1.0 - progress) + darker_color.b() as f32 * progress) as u8;
+                    // Start with transparent (alpha = 0) and gradually increase alpha to show darker color
+                    let alpha = (progress * 180.0) as u8; // Max alpha of 180 for subtle effect
 
                     let step_rect = egui::Rect::from_min_size(
                         egui::Pos2::new(gradient_rect.left() + i as f32 * step_width, gradient_rect.top()),
                         egui::Vec2::new(step_width, gradient_rect.height())
                     );
 
-                    let fade_color = egui::Color32::from_rgb(r, g, b);
+                    let fade_color = egui::Color32::from_rgba_unmultiplied(
+                        darker_color.r(),
+                        darker_color.g(),
+                        darker_color.b(),
+                        alpha
+                    );
 
                     ui.painter().rect_filled(step_rect, 0.0, fade_color);
                 }
 
-                // Draw a solid darker background for the metadata area
+                // Draw a solid darker background for the metadata area with alpha blending
                 let metadata_rect = egui::Rect::from_min_size(
                     egui::Pos2::new(available_rect.right() - metadata_width, available_rect.top()),
                     egui::Vec2::new(metadata_width, available_rect.height())
                 );
-                ui.painter().rect_filled(metadata_rect, 0.0, darker_color);
+                let metadata_color = egui::Color32::from_rgba_unmultiplied(
+                    darker_color.r(),
+                    darker_color.g(),
+                    darker_color.b(),
+                    180 // Same alpha as the end of the gradient
+                );
+                ui.painter().rect_filled(metadata_rect, 0.0, metadata_color);
 
                 // Add some top padding
                 ui.add_space(8.0);
