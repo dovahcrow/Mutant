@@ -1148,26 +1148,18 @@ impl Window for FsWindow {
                     );
                 });
             } else {
-                // Create a custom style for the dock area with colored tabs
-                let mut dock_style = egui_dock::Style::from_egui(ui.style().as_ref());
+                // FORCE egui style override directly in the UI context
+                ui.style_mut().visuals.widgets.active.weak_bg_fill = super::theme::MutantColors::BACKGROUND_LIGHT;
+                ui.style_mut().visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0, super::theme::MutantColors::ACCENT_ORANGE);
+                ui.style_mut().visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, super::theme::MutantColors::ACCENT_ORANGE);
 
-                // Set tab colors directly in the dock style
-                dock_style.tab_bar.bg_fill = super::theme::MutantColors::BACKGROUND_MEDIUM;
+                ui.style_mut().visuals.widgets.inactive.weak_bg_fill = super::theme::MutantColors::BACKGROUND_MEDIUM;
+                ui.style_mut().visuals.widgets.inactive.bg_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
+                ui.style_mut().visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_MUTED);
 
-                // Active tab: orange border and text
-                dock_style.tab.active.bg_fill = super::theme::MutantColors::BACKGROUND_LIGHT;
-                dock_style.tab.active.outline_color = super::theme::MutantColors::ACCENT_ORANGE;
-                dock_style.tab.active.text_color = super::theme::MutantColors::ACCENT_ORANGE;
-
-                // Inactive tab: no border, dimmed text
-                dock_style.tab.inactive.bg_fill = super::theme::MutantColors::BACKGROUND_MEDIUM;
-                dock_style.tab.inactive.outline_color = egui::Color32::TRANSPARENT; // No border
-                dock_style.tab.inactive.text_color = super::theme::MutantColors::TEXT_MUTED;
-
-                // Hovered tab: orange border like you saw
-                dock_style.tab.hovered.bg_fill = super::theme::MutantColors::SURFACE_HOVER;
-                dock_style.tab.hovered.outline_color = super::theme::MutantColors::ACCENT_ORANGE;
-                dock_style.tab.hovered.text_color = super::theme::MutantColors::TEXT_PRIMARY;
+                ui.style_mut().visuals.widgets.hovered.weak_bg_fill = super::theme::MutantColors::SURFACE_HOVER;
+                ui.style_mut().visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, super::theme::MutantColors::ACCENT_ORANGE);
+                ui.style_mut().visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_PRIMARY);
 
                 // Create a custom tab viewer that handles colors
                 let mut tab_viewer = FsInternalTabViewer {};
@@ -1175,7 +1167,6 @@ impl Window for FsWindow {
                 // Show the internal dock area with a unique ID
                 egui_dock::DockArea::new(&mut self.internal_dock)
                     .id(egui::Id::new(format!("fs_internal_dock_{}", self.dock_area_id)))
-                    .style(dock_style)
                     .show_inside(ui, &mut tab_viewer);
             }
         });
