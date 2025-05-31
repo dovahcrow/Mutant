@@ -284,7 +284,8 @@ impl TreeNode {
                 );
 
                 // Draw the icon and filename with different colors and smaller font
-                let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, 2.0);
+                // Center the text vertically in the row
+                let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, (row_rect.height() - 12.0) / 2.0);
                 let font_id = egui::FontId::new(12.0, egui::FontFamily::Proportional);  // Smaller font size
 
                 // Draw icon with its specific color
@@ -315,9 +316,10 @@ impl TreeNode {
                 }
 
                 // Draw metadata in the right area (will appear on top of the continuous gradient)
+                // Align metadata vertically with the text
                 let metadata_rect = egui::Rect::from_min_size(
                     egui::Pos2::new(row_rect.right() - metadata_width, row_rect.top()),
-                    egui::Vec2::new(metadata_width, 20.0)
+                    egui::Vec2::new(metadata_width, row_rect.height())
                 );
 
                 // Create a temporary UI for the metadata area

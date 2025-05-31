@@ -36,7 +36,7 @@ impl MutantColors {
     pub const INFO: Color32 = Color32::from_rgb(0, 150, 255);                  // Info blue
     
     // Special colors
-    pub const SELECTION: Color32 = Color32::from_rgba_premultiplied(0, 150, 255, 60);  // Selection overlay
+    pub const SELECTION: Color32 = Color32::from_rgba_premultiplied(45, 45, 55, 120);  // Dark grey selection overlay
     pub const HIGHLIGHT: Color32 = Color32::from_rgba_premultiplied(255, 140, 0, 40);  // Highlight overlay
 }
 
