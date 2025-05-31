@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 // mod buildings;
 // mod chart;
 mod components;
-mod fs;
+pub mod fs;
 // mod flights;
 // mod infobar;
 // mod inventory;
@@ -255,24 +255,12 @@ pub async fn init() {
     // Fetch keys using the context
     let _ = ctx.list_keys().await;
 
-    // Initialize the window system
+    // Initialize the window system (for secondary windows only)
     init_window_system().await;
 
-    // Create the main window with the keys (file system view)
-    let main_window = fs::FsWindow::new();
+    // Note: FsWindow is now rendered directly in MyApp, not through the window system
+    // The window system is now only used for secondary windows that spawn from the FS window
 
-    // Add the main window to the system - this will be the primary docking area
-    window_system_mut().add_main_dock_area(main_window.into());
-
-    // // Create and add the put window (upload functionality)
-    // // This will be added as a tab to the main window, allowing for docking
-    // let put_window = put::PutWindow::new();
-    // window_system_mut().add_window(put_window.into());
-
-    // // Create and add the keys window
-    // let keys_window = main::MainWindow::new();
-    // window_system_mut().add_window(keys_window.into());
-
-    // Log that the window system is ready with docking enabled
-    log::info!("Window system initialized with docking enabled");
+    // Log that the initialization is complete
+    log::info!("App initialized - FS window will be rendered directly, window system ready for secondary windows");
 }

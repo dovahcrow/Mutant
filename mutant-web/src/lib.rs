@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, sync::{Arc, RwLock}};
 
-use app::{context::init_context, window_system_mut, DEFAULT_WS_URL};
+use app::{context::init_context, fs::FsWindow, Window, DEFAULT_WS_URL};
 use futures::{channel::oneshot, StreamExt};
 use log::{error, info};
 use mutant_client::{MutantClient, ProgressReceiver};
@@ -878,15 +878,13 @@ use eframe::egui;
 use wasm_bindgen_futures::spawn_local;
 
 struct MyApp {
-    name: String,
-    age: u32,
+    fs_window: FsWindow,
 }
 
 impl Default for MyApp {
     fn default() -> Self {
         Self {
-            name: "Arthur".to_owned(),
-            age: 42,
+            fs_window: FsWindow::new(),
         }
     }
 }
@@ -900,7 +898,8 @@ impl eframe::App for MyApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(app::theme::MutantColors::BACKGROUND_DARK))
             .show(ctx, |ui| {
-                window_system_mut().draw(ui);
+                // Render the static FS window directly
+                self.fs_window.draw(ui);
             });
 
         // Show notifications
