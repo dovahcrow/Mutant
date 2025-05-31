@@ -193,8 +193,8 @@ impl TreeNode {
                 // Directory node - use collapsing header for proper tree behavior
                 let icon = if self.expanded { "📂" } else { "📁" };
                 let text = RichText::new(format!("{} {}/", icon, self.name))
-                    .size(14.0)
-                    .color(super::theme::MutantColors::ACCENT_BLUE);
+                    .size(12.0)  // Match file font size for consistency
+                    .color(super::theme::MutantColors::TEXT_SECONDARY);  // Use subdued color like files
 
                 let header = egui::CollapsingHeader::new(text)
                     .id_salt(format!("mutant_fs_{}dir_{}", window_id, self.path))
