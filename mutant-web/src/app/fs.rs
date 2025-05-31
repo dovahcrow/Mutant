@@ -1665,48 +1665,8 @@ impl FsWindow {
 
     /// Draw the tree UI
     fn draw_tree(&mut self, ui: &mut egui::Ui) {
-        // Modern header with better styling and padding
-        ui.add_space(16.0); // Top padding
-
-        ui.horizontal(|ui| {
-            ui.add_space(20.0); // Left padding
-
-            // MutAnt Storage header with proper glyph and styling
-            let header_text = RichText::new("■ MutAnt Storage")
-                .size(18.0)
-                .color(super::theme::MutantColors::ACCENT_ORANGE)
-                .strong();
-            ui.label(header_text);
-
-            // Add a subtle refresh button
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(20.0); // Right padding
-
-                let refresh_btn = ui.add_sized(
-                    [26.0, 26.0],
-                    egui::Button::new("↻")
-                        .fill(egui::Color32::TRANSPARENT)
-                        .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_MUTED))
-                );
-
-                if refresh_btn.clicked() {
-                    // Trigger a refresh of the file list
-                    let ctx = crate::app::context::context();
-                    wasm_bindgen_futures::spawn_local(async move {
-                        let _ = ctx.list_keys().await;
-                    });
-                }
-
-                if refresh_btn.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                }
-            });
-        });
-
-        ui.add_space(12.0); // Space before separator
-
-        // Subtle separator line
-        ui.separator();
+        // Add minimal top padding
+        ui.add_space(8.0);
 
         // Draw the tree with improved styling
         let scroll_response = egui::ScrollArea::vertical()
@@ -1773,6 +1733,46 @@ impl FsWindow {
                 // Add some top padding
                 ui.add_space(12.0);
 
+                // Get the currently selected path for highlighting
+                let selected_path_ref = self.selected_path.as_deref();
+
+                // Track clicked nodes to handle after the loop
+                let mut view_details_clicked: Option<KeyDetails> = None;
+                let mut download_details_clicked: Option<KeyDetails> = None;
+
+                // Draw the special root folder '/' that cannot be collapsed
+                ui.horizontal(|ui| {
+                    // Root folder icon and text - always expanded, cannot be collapsed
+                    let icon = "📂"; // Always open folder icon
+                    let text = RichText::new(format!("{} /", icon))
+                        .size(14.0)
+                        .color(super::theme::MutantColors::ACCENT_BLUE);
+
+                    ui.label(text);
+
+                    // Add refresh button to the right of the root folder
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let refresh_btn = ui.add_sized(
+                            [20.0, 20.0],
+                            egui::Button::new("↻")
+                                .fill(egui::Color32::TRANSPARENT)
+                                .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_MUTED))
+                        );
+
+                        if refresh_btn.clicked() {
+                            // Trigger a refresh of the file list
+                            let ctx = crate::app::context::context();
+                            wasm_bindgen_futures::spawn_local(async move {
+                                let _ = ctx.list_keys().await;
+                            });
+                        }
+
+                        if refresh_btn.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                    });
+                });
+
                 // Sort children: directories first, then files
                 let mut sorted_children: Vec<_> = self.root.children.iter_mut().collect();
                 sorted_children.sort_by(|(_, a), (_, b)| {
@@ -1783,16 +1783,9 @@ impl FsWindow {
                     }
                 });
 
-                // Get the currently selected path for highlighting
-                let selected_path_ref = self.selected_path.as_deref();
-
-                // Track clicked nodes to handle after the loop
-                let mut view_details_clicked: Option<KeyDetails> = None;
-                let mut download_details_clicked: Option<KeyDetails> = None;
-
-                // Draw the sorted children with indentation and check if any file was clicked
+                // Draw the sorted children with indentation level 1 (since they are children of the root '/')
                 for (_, child) in sorted_children {
-                    let (view_details, download_details) = child.ui(ui, 0, selected_path_ref, &self.window_id); // Start with indent level 0 since we removed the root folder display
+                    let (view_details, download_details) = child.ui(ui, 1, selected_path_ref, &self.window_id);
                     if view_details.is_some() {
                         view_details_clicked = view_details;
                     }
