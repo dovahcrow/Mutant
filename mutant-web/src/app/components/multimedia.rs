@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, Image, RichText, Sense, TextureHandle, TextureOptions, Ui};
+use eframe::egui::{self, Image, RichText, Sense, TextureHandle, TextureOptions, Ui};
 use egui_extras::syntax_highlighting::{self, CodeTheme};
 use image;
 use mime_guess::from_path;
@@ -160,14 +160,15 @@ fn get_language_from_extension(file_path: &str) -> Option<String> {
     // }
 }
 
-// Get or create a code theme
+// Get or create a MutAnt-themed code theme
 fn get_code_theme(ui: &egui::Ui) -> Arc<CodeTheme> {
-    // Use a dark theme by default
+    // Use our custom MutAnt theme
     static CODE_THEME: std::sync::OnceLock<Arc<CodeTheme>> = std::sync::OnceLock::new();
 
     // Initialize the theme only once and store it in memory
     CODE_THEME.get_or_init(|| {
-        let theme = CodeTheme::dark(0.5); // 0.5 is the default dark mode contrast
+        // Create a dark theme with higher contrast for better readability
+        let theme = CodeTheme::dark(0.8); // Higher contrast for MutAnt theme
         let theme_clone = theme.clone();
         theme_clone.store_in_memory(ui.ctx());
         Arc::new(theme)
@@ -194,8 +195,9 @@ fn draw_code_editor(ui: &mut Ui, file_content: &mut FileContent, language: &str)
     });
 
     // Use a more efficient scroll area that only renders visible content
+    // Apply MutAnt theme to the scroll area
     egui::ScrollArea::vertical()
-        // .auto_shrink([false; 2])
+        .auto_shrink([false; 2])
         .show(ui, |ui| {
             // Use a more efficient layouter with caching
             // This is the key to performance improvement
@@ -240,8 +242,10 @@ fn draw_code_editor(ui: &mut Ui, file_content: &mut FileContent, language: &str)
 
 /// Draw a code viewer with syntax highlighting
 pub fn draw_code_viewer(ui: &mut Ui, file_content: &mut FileContent, language: &str) {
-    // Display file type information
-    ui.label(RichText::new(format!("Code file ({})", language)).color(Color32::LIGHT_BLUE));
+    use crate::app::theme::MutantColors;
+
+    // Display file type information with MutAnt theme colors
+    ui.label(RichText::new(format!("Code file ({})", language)).color(MutantColors::ACCENT_BLUE));
     ui.separator();
 
     // Use our optimized code editor with the appropriate language
@@ -259,13 +263,15 @@ pub fn draw_image_viewer(ui: &mut Ui, texture: &TextureHandle) {
 
 /// Draw a video player
 pub fn draw_video_player(ui: &mut Ui, video_url: &str) {
-    ui.label(RichText::new("Video Player").size(18.0));
+    use crate::app::theme::MutantColors;
+
+    ui.label(RichText::new("Video Player").size(18.0).color(MutantColors::TEXT_PRIMARY));
 
     // Create a unique ID for the video element
     let video_id = format!("video_{:?}", ui.id());
 
-    // Add a button to open the video in a new tab
-    if ui.button("Open Video in Browser").clicked() {
+    // Add a button to open the video in a new tab with MutAnt theme
+    if ui.add(crate::app::theme::secondary_button("Open Video in Browser")).clicked() {
         if let Some(window) = web_sys::window() {
             let _ = window.open_with_url(video_url);
         }
@@ -273,9 +279,9 @@ pub fn draw_video_player(ui: &mut Ui, video_url: &str) {
 
     ui.separator();
 
-    // Create a frame for the video
+    // Create a frame for the video with MutAnt theme colors
     let _frame = egui::Frame::default()
-        .fill(Color32::from_rgb(20, 20, 20))
+        .fill(MutantColors::BACKGROUND_DARK)
         .show(ui, |ui| {
             // Reserve space for the video
             let desired_size = egui::vec2(640.0, 360.0);
@@ -324,8 +330,10 @@ pub fn draw_video_player(ui: &mut Ui, video_url: &str) {
 
 /// Draw an error message for unsupported file types
 pub fn draw_unsupported_file(ui: &mut Ui) {
+    use crate::app::theme::MutantColors;
+
     ui.colored_label(
-        Color32::RED,
+        MutantColors::ERROR,
         "This file type is not supported for viewing. You can download the file instead."
     );
 }

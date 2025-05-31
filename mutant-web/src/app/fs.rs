@@ -337,7 +337,7 @@ impl FileViewerTab {
             ui.label(format!("Pads: {}/{}", confirmed_pads, pad_count));
             ui.separator();
             if is_public {
-                ui.label(RichText::new("Public").color(Color32::from_rgb(0, 128, 0)));
+                ui.label(RichText::new("Public").color(crate::app::theme::MutantColors::SUCCESS));
                 if let Some(addr) = &public_address {
                     ui.separator();
                     ui.label(format!("Address: {}", addr));
@@ -371,9 +371,9 @@ impl FileViewerTab {
             // Show modified indicator and save button if the file has been modified
             if file_modified {
                 ui.separator();
-                ui.label(RichText::new("Modified").color(Color32::YELLOW));
+                ui.label(RichText::new("Modified").color(crate::app::theme::MutantColors::WARNING));
 
-                if ui.button("Save").clicked() {
+                if ui.add(crate::app::theme::primary_button("Save")).clicked() {
                     // Save the file
                     self.save_file(ui);
                 }
@@ -704,16 +704,16 @@ impl Window for FsWindow {
                 self.file_viewer_dock_state = Some(DockState::new(vec![]));
             }
 
-            // Create a custom style for the dock area
+            // Create a custom style for the dock area with MutAnt theme
             let mut style = egui_dock::Style::from_egui(ui.ctx().style().as_ref());
 
-            // Configure the style to make docking more visible and user-friendly
+            // Configure the style to use MutAnt theme colors
             style.tab_bar.fill_tab_bar = false; // Don't fill the entire tab bar
-            style.tab_bar.bg_fill = egui::Color32::from_rgb(40, 40, 40);
-            style.tab.tab_body.bg_fill = egui::Color32::from_rgb(40, 40, 40);
-            style.tab.active.bg_fill = egui::Color32::from_rgb(50, 50, 50);
-            style.tab.focused.bg_fill = egui::Color32::from_rgb(50, 50, 50);
-            style.tab_bar.hline_color = egui::Color32::from_rgb(70, 70, 70);
+            style.tab_bar.bg_fill = crate::app::theme::MutantColors::BACKGROUND_MEDIUM;
+            style.tab.tab_body.bg_fill = crate::app::theme::MutantColors::BACKGROUND_DARK;
+            style.tab.active.bg_fill = crate::app::theme::MutantColors::SURFACE;
+            style.tab.focused.bg_fill = crate::app::theme::MutantColors::SURFACE_HOVER;
+            style.tab_bar.hline_color = crate::app::theme::MutantColors::BORDER_MEDIUM;
 
             // Draw the dock area
             if let Some(dock_state) = &mut self.file_viewer_dock_state {
@@ -751,7 +751,7 @@ impl Window for FsWindow {
                      ui.label(format!("{} downloaded", humansize::format_size(download.downloaded_bytes, humansize::BINARY)));
                 }
                 if let Some(err) = &download.error_message {
-                    ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
+                    ui.colored_label(crate::app::theme::MutantColors::ERROR, format!("Error: {}", err));
                 }
                 ui.separator();
             }
