@@ -1157,7 +1157,40 @@ impl FsWindow {
         wasm_bindgen_futures::spawn_local(async move {
             let ctx = crate::app::context::context();
 
-            match ctx.get_file_for_viewing(&key, is_public).await {
+            // Get the total file size for progress calculation
+            let total_file_size = Some(file_details.total_size);
+            let key_for_progress = key.clone();
+
+            match ctx.get_file_for_viewing_with_progress(
+                &key,
+                is_public,
+                move |downloaded_bytes, _total_bytes| {
+                    // Update progress in the UI using the known total file size
+                    if let Some(fs_window_ref) = get_main_fs_window() {
+                        let mut fs_window = fs_window_ref.write().unwrap();
+
+                        // Look for the file tab in the FsWindow's internal dock
+                        for (_, internal_tab) in fs_window.internal_dock.iter_all_tabs_mut() {
+                            if let FsInternalTab::FileViewer(file_tab) = internal_tab {
+                                if file_tab.file.key == key_for_progress {
+                                    file_tab.downloaded_bytes = downloaded_bytes;
+                                    file_tab.total_bytes = total_file_size;
+
+                                    // Calculate progress using the known total file size
+                                    if let Some(total) = total_file_size {
+                                        if total > 0 {
+                                            file_tab.loading_progress = (downloaded_bytes as f32 / total as f32).min(1.0);
+                                        } else {
+                                            file_tab.loading_progress = 0.0;
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            ).await {
                 Ok(data) => {
                     log::info!("Successfully loaded file content for: {} ({} bytes)", key, data.len());
 
