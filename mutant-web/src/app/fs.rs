@@ -316,17 +316,18 @@ impl TreeNode {
                 }
 
                 // Draw metadata in the right area (will appear on top of the continuous gradient)
-                // Align metadata vertically with the text
+                // Align metadata vertically with the text by offsetting the rect position
+                let vertical_offset = (row_rect.height() - 12.0) / 2.0;
                 let metadata_rect = egui::Rect::from_min_size(
-                    egui::Pos2::new(row_rect.right() - metadata_width, row_rect.top()),
-                    egui::Vec2::new(metadata_width, row_rect.height())
+                    egui::Pos2::new(row_rect.right() - metadata_width, row_rect.top() + vertical_offset),
+                    egui::Vec2::new(metadata_width, row_rect.height() - vertical_offset)
                 );
 
                 // Create a temporary UI for the metadata area
                 let mut metadata_ui = ui.new_child(
                     egui::UiBuilder::new()
                         .max_rect(metadata_rect)
-                        .layout(egui::Layout::right_to_left(egui::Align::Center))
+                        .layout(egui::Layout::right_to_left(egui::Align::TOP))
                 );
 
                 metadata_ui.add_space(4.0); // Minimal right padding to account for existing frame padding
