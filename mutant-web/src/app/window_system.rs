@@ -157,9 +157,12 @@ impl egui_dock::TabViewer for UnifiedTabViewer {
             }
         };
 
-        // Create a compact title that doesn't expand to fill all space
+        // Create a compact title with professional styling
         let title = format!("{}{}", icon, title_text);
-        egui::RichText::new(title).into()
+        egui::RichText::new(title)
+            .size(12.0) // Consistent with filesystem tree
+            .color(super::theme::MutantColors::TEXT_PRIMARY)
+            .into()
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {

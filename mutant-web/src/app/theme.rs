@@ -91,6 +91,17 @@ pub fn apply_mutant_theme(ctx: &egui::Context) {
     visuals.widgets.open.bg_stroke = Stroke::new(1.5, MutantColors::ACCENT_BLUE);
     visuals.widgets.open.fg_stroke = Stroke::new(1.0, MutantColors::TEXT_PRIMARY);
 
+    // === TAB STYLING ===
+    // Style tab headers to match the dark, professional theme
+    visuals.widgets.noninteractive.weak_bg_fill = MutantColors::BACKGROUND_MEDIUM; // Inactive tab background
+    visuals.widgets.inactive.weak_bg_fill = MutantColors::SURFACE; // Inactive tab background (hovered)
+    visuals.widgets.hovered.weak_bg_fill = MutantColors::SURFACE_HOVER; // Hovered tab background
+    visuals.widgets.active.weak_bg_fill = MutantColors::BACKGROUND_LIGHT; // Active tab background
+
+    // Tab bar background
+    visuals.window_fill = MutantColors::BACKGROUND_MEDIUM;
+    visuals.panel_fill = MutantColors::BACKGROUND_MEDIUM;
+
     // === RESIZE HANDLE ===
     visuals.resize_corner_size = 12.0;
 

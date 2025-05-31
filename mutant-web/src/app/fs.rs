@@ -533,70 +533,112 @@ impl FileViewerTab {
     pub fn draw(&mut self, ui: &mut egui::Ui) {
         // Don't override the style - let it inherit from the root theme
 
-        // Show file details at the top
-        ui.heading(&self.file.key);
+        // Create a professional header section with dark styling
+        let header_frame = egui::Frame::new()
+            .fill(super::theme::MutantColors::BACKGROUND_MEDIUM)
+            .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_DARK))
+            .inner_margin(egui::Margin::same(8));
 
-        // Store file details we need for display
-        let file_size = humanize_size(self.file.total_size);
-        let pad_count = self.file.pad_count;
-        let confirmed_pads = self.file.confirmed_pads;
-        let is_public = self.file.is_public;
-        let public_address = self.file.public_address.clone();
+        header_frame.show(ui, |ui| {
+            // File name as title with professional styling
+            ui.label(
+                egui::RichText::new(&self.file.key)
+                    .size(16.0)
+                    .strong()
+                    .color(super::theme::MutantColors::TEXT_PRIMARY)
+            );
 
-        // Store current state
-        let file_type = self.file_type.clone();
-        let file_modified = self.file_modified;
+            ui.add_space(4.0);
 
-        ui.horizontal(|ui| {
-            ui.label(format!("Size: {}", file_size));
-            ui.separator();
-            ui.label(format!("Pads: {}/{}", confirmed_pads, pad_count));
-            ui.separator();
-            if is_public {
-                ui.label(RichText::new("Public").color(crate::app::theme::MutantColors::SUCCESS));
-                if let Some(addr) = &public_address {
+            // Store file details we need for display
+            let file_size = humanize_size(self.file.total_size);
+            let pad_count = self.file.pad_count;
+            let confirmed_pads = self.file.confirmed_pads;
+            let is_public = self.file.is_public;
+            let public_address = self.file.public_address.clone();
+
+            // Store current state
+            let file_type = self.file_type.clone();
+            let file_modified = self.file_modified;
+
+            // Metadata row with consistent styling
+            ui.horizontal(|ui| {
+                // Size info
+                ui.label(
+                    egui::RichText::new(format!("Size: {}", file_size))
+                        .size(11.0)
+                        .color(super::theme::MutantColors::TEXT_SECONDARY)
+                );
+
+                ui.separator();
+
+                // Pad info
+                ui.label(
+                    egui::RichText::new(format!("Pads: {}/{}", confirmed_pads, pad_count))
+                        .size(11.0)
+                        .color(super::theme::MutantColors::TEXT_SECONDARY)
+                );
+
+                ui.separator();
+
+                // Public/Private status
+                if is_public {
+                    ui.label(
+                        egui::RichText::new("Public")
+                            .size(11.0)
+                            .color(super::theme::MutantColors::SUCCESS)
+                    );
+                    if let Some(addr) = &public_address {
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new(format!("Address: {}", addr))
+                                .size(10.0)
+                                .color(super::theme::MutantColors::TEXT_MUTED)
+                        );
+                    }
+                } else {
+                    ui.label(
+                        egui::RichText::new("Private")
+                            .size(11.0)
+                            .color(super::theme::MutantColors::TEXT_SECONDARY)
+                    );
+                }
+
+                // Show file type if available
+                if let Some(file_type) = &file_type {
                     ui.separator();
-                    ui.label(format!("Address: {}", addr));
+                    let type_text = match file_type {
+                        multimedia::FileType::Text => "Type: Text",
+                        multimedia::FileType::Code(lang) => &format!("Type: Code ({})", lang),
+                        multimedia::FileType::Image => "Type: Image",
+                        multimedia::FileType::Video => "Type: Video",
+                        multimedia::FileType::Other => "Type: Unknown",
+                    };
+                    ui.label(
+                        egui::RichText::new(type_text)
+                            .size(11.0)
+                            .color(super::theme::MutantColors::TEXT_SECONDARY)
+                    );
                 }
-            } else {
-                ui.label("Private");
-            }
 
-            // Show file type if available
-            if let Some(file_type) = &file_type {
-                ui.separator();
-                match file_type {
-                    multimedia::FileType::Text => {
-                        ui.label("Type: Text");
-                    },
-                    multimedia::FileType::Code(lang) => {
-                        ui.label(format!("Type: Code ({})", lang));
-                    },
-                    multimedia::FileType::Image => {
-                        ui.label("Type: Image");
-                    },
-                    multimedia::FileType::Video => {
-                        ui.label("Type: Video");
-                    },
-                    multimedia::FileType::Other => {
-                        ui.label("Type: Unknown");
-                    },
+                // Show modified indicator and save button if the file has been modified
+                if file_modified {
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new("Modified")
+                            .size(11.0)
+                            .color(super::theme::MutantColors::WARNING)
+                    );
+
+                    if ui.add(crate::app::theme::primary_button("Save")).clicked() {
+                        // Save the file
+                        self.save_file(ui);
+                    }
                 }
-            }
-
-            // Show modified indicator and save button if the file has been modified
-            if file_modified {
-                ui.separator();
-                ui.label(RichText::new("Modified").color(crate::app::theme::MutantColors::WARNING));
-
-                if ui.add(crate::app::theme::primary_button("Save")).clicked() {
-                    // Save the file
-                    self.save_file(ui);
-                }
-            }
+            });
         });
 
-        ui.separator();
+        ui.add_space(4.0);
 
         // Show loading indicator if we're loading content
         if self.is_loading {
@@ -912,18 +954,28 @@ impl egui_dock::TabViewer for FsInternalTabViewer {
                     }
                 };
 
-
                 // Add a modified indicator if the file has been modified
                 let modified_indicator = if file_tab.file_modified { "* " } else { "" };
 
                 let title = format!("{}{}{}", file_icon, modified_indicator, file_name);
-                egui::RichText::new(title).into()
+
+                // Style the tab title with professional dark theme colors
+                egui::RichText::new(title)
+                    .size(12.0) // Consistent with filesystem tree
+                    .color(super::theme::MutantColors::TEXT_PRIMARY)
+                    .into()
             }
             FsInternalTab::Put(_) => {
-                egui::RichText::new("📤 Upload").into()
+                egui::RichText::new("📤 Upload")
+                    .size(12.0)
+                    .color(super::theme::MutantColors::TEXT_PRIMARY)
+                    .into()
             }
             FsInternalTab::Stats(_) => {
-                egui::RichText::new("📊 Stats").into()
+                egui::RichText::new("📊 Stats")
+                    .size(12.0)
+                    .color(super::theme::MutantColors::TEXT_PRIMARY)
+                    .into()
             }
         }
     }
