@@ -5,12 +5,11 @@ use egui_dock::{DockArea, DockState, Style};
 use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 
-use super::{main::MainWindow, put::PutWindow, fs::{FsWindow, FileViewerTab}, stats::StatsWindow, Window, WindowType, theme::MutantColors};
+use super::{put::PutWindow, fs::{FsWindow, FileViewerTab}, stats::StatsWindow, Window, WindowType, theme::MutantColors};
 
 /// Unified tab type that can hold any kind of tab in the dock system
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub enum UnifiedTab {
-    Main(MainWindow),
     Put(PutWindow),
     Fs(FsWindow),
     Stats(StatsWindow),
@@ -20,7 +19,6 @@ pub enum UnifiedTab {
 impl UnifiedTab {
     pub fn name(&self) -> String {
         match self {
-            UnifiedTab::Main(w) => w.name(),
             UnifiedTab::Put(w) => w.name(),
             UnifiedTab::Fs(w) => w.name(),
             UnifiedTab::Stats(w) => w.name(),
@@ -30,7 +28,6 @@ impl UnifiedTab {
 
     pub fn draw(&mut self, ui: &mut egui::Ui) {
         match self {
-            UnifiedTab::Main(w) => w.draw(ui),
             UnifiedTab::Put(w) => w.draw(ui),
             UnifiedTab::Fs(w) => w.draw(ui), // Still use regular draw for now
             UnifiedTab::Stats(w) => w.draw(ui),
@@ -45,7 +42,6 @@ impl UnifiedTab {
 impl From<WindowType> for UnifiedTab {
     fn from(window_type: WindowType) -> Self {
         match window_type {
-            WindowType::Main(w) => UnifiedTab::Main(w),
             WindowType::Put(w) => UnifiedTab::Put(w),
             WindowType::Fs(w) => UnifiedTab::Fs(w),
             WindowType::Stats(w) => UnifiedTab::Stats(w),
@@ -111,18 +107,12 @@ pub fn new_file_viewer_tab(tab: FileViewerTab) {
         let has_tabs = window_system.tree.iter_all_tabs().next().is_some();
 
         if !has_tabs {
-            // If the tree has no tabs, create a main surface with a main window
-            window_system.tree = DockState::new(vec![UnifiedTab::Main(MainWindow::default())]);
-        }
-
-        // Check if the main surface has any tabs
-        let main_surface = window_system.tree.main_surface_mut();
-        if main_surface.num_tabs() == 0 {
-            main_surface.push_to_focused_leaf(UnifiedTab::Main(MainWindow::default()));
+            // If the tree has no tabs, create an empty main surface
+            window_system.tree = DockState::new(vec![]);
         }
 
         // Add the file viewer tab to the main surface
-        main_surface.push_to_focused_leaf(UnifiedTab::FileViewer(tab));
+        window_system.tree.main_surface_mut().push_to_focused_leaf(UnifiedTab::FileViewer(tab));
         log::info!("Successfully added file viewer tab to dock system");
     } else {
         log::info!("Tab for file {} already exists", tab.file.key);
@@ -141,7 +131,6 @@ impl egui_dock::TabViewer for UnifiedTabViewer {
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
         // Add an icon to the title to indicate the tab type
         let (icon, title_text) = match tab {
-            UnifiedTab::Main(_) => ("🛸 ", tab.name()),
             UnifiedTab::Put(_) => ("📤 ", tab.name()),
             UnifiedTab::Fs(_) => ("📁 ", tab.name()),
             UnifiedTab::Stats(_) => ("📊 ", tab.name()),
@@ -423,9 +412,7 @@ impl WindowSystem {
                             ui.add(button).on_hover_text(hover)
                         };
 
-                    if menu_button(ui, "🛸", "Main", is_window_open("MutAnt Keys")).clicked() {
-                        new_window(MainWindow::new());
-                    }
+
 
                     // if menu_button(ui, "⚙️", "Tasks", is_window_open("MutAnt Tasks")).clicked() {
                     //     new_window(TasksWindow::new());
@@ -584,11 +571,10 @@ impl WindowSystem {
         // Reset the window counter when initializing the window system
         *WINDOW_COUNTER.write().unwrap() = 0;
 
-        // Create a new DockState with the main window
-        // This will create a main surface with a single tab that can be used for docking
-        let tree = DockState::new(vec![UnifiedTab::Main(MainWindow::default())]);
+        // Create an empty DockState
+        let tree = DockState::new(vec![]);
 
-        log::info!("Initialized main window for docking");
+        log::info!("Initialized empty dock system");
 
         Self {
             tree,
@@ -604,11 +590,10 @@ impl Default for WindowSystem {
         // Reset the window counter when creating a new window system
         *WINDOW_COUNTER.write().unwrap() = 0;
 
-        // Create a DockState with a main window to ensure we have a main surface
-        // This prevents issues when trying to access main_surface() on an empty dock
-        let tree = DockState::new(vec![UnifiedTab::Main(MainWindow::default())]);
+        // Create an empty DockState
+        let tree = DockState::new(vec![]);
 
-        log::info!("Initialized default WindowSystem with main window");
+        log::info!("Initialized default WindowSystem");
 
         Self {
             frame: 0,

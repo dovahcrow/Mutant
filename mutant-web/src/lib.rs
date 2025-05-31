@@ -976,10 +976,6 @@ impl MyApp {
                         ui.add(button).on_hover_text(hover)
                     };
 
-                    if menu_button(ui, "🛸", "Main", is_window_open("MutAnt Keys")).clicked() {
-                        app::window_system::new_window(app::main::MainWindow::new());
-                    }
-
                     if menu_button(ui, "📤", "Upload", is_window_open("MutAnt Upload")).clicked() {
                         app::window_system::new_window(app::put::PutWindow::new());
                     }

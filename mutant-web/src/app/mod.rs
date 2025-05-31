@@ -29,7 +29,7 @@ pub mod theme;
 
 mod client_manager;
 pub mod context;
-pub mod main;
+
 pub mod put;
 // mod tasks;
 pub mod window_system;
@@ -54,7 +54,6 @@ pub trait Window: Send + Sync {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum WindowType {
-    Main(main::MainWindow),
     // Tasks(tasks::TasksWindow),
     Put(put::PutWindow),
     Fs(fs::FsWindow),
@@ -79,7 +78,6 @@ pub enum WindowType {
 impl Window for WindowType {
     fn name(&self) -> String {
         match self {
-            Self::Main(window) => window.name(),
             // Self::Tasks(window) => window.name(),
             Self::Put(window) => window.name(),
             Self::Fs(window) => window.name(),
@@ -104,7 +102,6 @@ impl Window for WindowType {
 
     fn draw(&mut self, ui: &mut egui::Ui) {
         match self {
-            Self::Main(window) => window.draw(ui),
             // Self::Tasks(window) => window.draw(ui),
             Self::Put(window) => window.draw(ui),
             Self::Fs(window) => window.draw(ui),
@@ -128,11 +125,7 @@ impl Window for WindowType {
     }
 }
 
-impl From<main::MainWindow> for WindowType {
-    fn from(window: main::MainWindow) -> Self {
-        Self::Main(window)
-    }
-}
+
 
 // impl From<tasks::TasksWindow> for WindowType {
 //     fn from(window: tasks::TasksWindow) -> Self {
