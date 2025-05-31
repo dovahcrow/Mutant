@@ -71,13 +71,10 @@ impl Context {
     }
 
     pub async fn list_keys(&self) -> Vec<KeyDetails> {
-        info!("Fetching keys from daemon");
-
         // Create a simple direct call to avoid complex operations
         let result = self.client.list_keys().await;
 
         if let Ok(keys) = result {
-            info!("Successfully retrieved {} keys from daemon", keys.len());
 
             // Create a minimal copy to avoid complex operations
             let mut safe_keys = Vec::with_capacity(keys.len());
@@ -102,7 +99,7 @@ impl Context {
                 *cache = safe_keys.clone();
             }
 
-            info!("Updated keys cache with {} keys", safe_keys.len());
+
 
             safe_keys
         } else {
@@ -114,13 +111,10 @@ impl Context {
 
     // Get list of tasks from cache only
     pub async fn list_tasks(&self) -> Vec<TaskListEntry> {
-        info!("Fetching tasks from daemon");
-
         // Create a simple direct call to avoid complex operations
         let result = self.client.list_tasks().await;
 
         if let Ok(tasks) = result {
-            info!("Successfully retrieved {} tasks from daemon", tasks.len());
 
             // Create a minimal copy to avoid complex operations
             let mut safe_tasks = Vec::with_capacity(tasks.len());
@@ -152,13 +146,10 @@ impl Context {
 
     // Get stats from daemon and update cache
     pub async fn get_stats(&self) -> Option<StatsResponse> {
-        info!("Fetching stats from daemon");
-
         // Create a simple direct call to avoid complex operations
         let result = self.client.get_stats().await;
 
         if let Ok(stats) = result {
-            info!("Successfully retrieved stats from daemon");
 
             // Create a safe copy of the stats
             let safe_stats = StatsResponse {
@@ -242,7 +233,6 @@ impl Context {
 
     // Get a key (not cached)
     pub async fn get_key(&self, name: &str, destination: &str) -> Result<(), String> {
-        info!("Getting key {} via daemon", name);
 
         // Safely call the client manager
         let result = self.client.get(name.to_string(), Some(destination.to_string()), false).await;
@@ -350,7 +340,7 @@ impl Context {
         ),
         String,
     > {
-        info!("Starting streamed get for key: {}, is_public: {}", user_key, is_public);
+
         // Note: `self.client` is of type `ClientSender` which seems to be the sender to the client_manager.
         // The `start_get_stream` function is a free function in `client_manager.rs`.
         // So, we should call `client_manager::start_get_stream` directly.
@@ -359,11 +349,8 @@ impl Context {
 
     // Get file content for viewing by collecting all streamed data
     pub async fn get_file_for_viewing(&self, user_key: &str, is_public: bool) -> Result<Vec<u8>, String> {
-        info!("Getting file for viewing: {}, is_public: {}", user_key, is_public);
-
         // Start the streaming get
-        let (task_id, mut _progress_receiver, mut data_receiver) = self.start_streamed_get(user_key, is_public).await?;
-        info!("Started streaming get for viewing, task_id: {}", task_id);
+        let (_task_id, mut _progress_receiver, mut data_receiver) = self.start_streamed_get(user_key, is_public).await?;
 
         let mut collected_data = Vec::new();
 
@@ -395,11 +382,8 @@ impl Context {
     where
         F: FnMut(usize, Option<usize>) + Send + 'static,
     {
-        info!("Getting file for viewing with progress: {}, is_public: {}", user_key, is_public);
-
         // Start the streaming get
-        let (task_id, mut _progress_receiver, mut data_receiver) = self.start_streamed_get(user_key, is_public).await?;
-        info!("Started streaming get for viewing, task_id: {}", task_id);
+        let (_task_id, mut _progress_receiver, mut data_receiver) = self.start_streamed_get(user_key, is_public).await?;
 
         let mut collected_data = Vec::new();
 
@@ -408,7 +392,6 @@ impl Context {
             match data_result {
                 Ok(chunk) => {
                     collected_data.extend_from_slice(&chunk);
-                    info!("Collected chunk of {} bytes for viewing, total so far: {}", chunk.len(), collected_data.len());
 
                     // Call progress callback
                     progress_callback(collected_data.len(), None);
@@ -420,7 +403,7 @@ impl Context {
             }
         }
 
-        info!("Completed collecting file data for viewing, total size: {} bytes", collected_data.len());
+
         Ok(collected_data)
     }
 
@@ -452,7 +435,7 @@ impl Context {
             put_progress.insert(put_id.clone(), progress.clone());
         }
 
-        info!("Created progress object with ID: {}", put_id);
+
         (put_id, progress)
     }
 
@@ -467,7 +450,7 @@ impl Context {
         no_verify: bool,
         progress_opt: Option<(String, Arc<RwLock<Progress>>)>,
     ) -> Result<(String, Arc<RwLock<Progress>>), String> {
-        info!("Putting key {} via daemon", key);
+
 
         // Use the provided progress object or create a new one
         let (put_id, progress) = match progress_opt {
@@ -514,7 +497,7 @@ impl Context {
             get_progress.insert(get_id.clone(), progress.clone());
         }
 
-        info!("Created get progress object with ID: {}", get_id);
+
         (get_id, progress)
     }
 
@@ -538,11 +521,8 @@ impl Context {
     }
 
     pub async fn mv(&self, old_key: &str, new_key: &str) -> Result<(), String> {
-        info!("Renaming key '{}' to '{}' via daemon", old_key, new_key);
-
         match self.client.mv(old_key.to_string(), new_key.to_string()).await {
             Ok(_) => {
-                info!("Successfully renamed key '{}' to '{}'", old_key, new_key);
                 // Refresh the key list
                 let _ = self.list_keys().await;
                 Ok(())
@@ -564,7 +544,7 @@ impl Context {
         public: bool,
         no_verify: bool,
     ) -> Result<TaskId, String> {
-        info!("Initializing streaming put for key '{}' ({} bytes)", key_name, total_size);
+
 
         // Initialize the streaming put and get both task ID and progress receiver
         let (task_id, progress_rx) = self.client.put_streaming_init(key_name, total_size, filename, storage_mode, public, no_verify).await?;
@@ -588,7 +568,7 @@ impl Context {
             client_put_progress.insert(task_id.to_string(), progress.clone());
         }
 
-        info!("Created streaming put progress object for task ID: {} (stored in both context and client sender)", task_id);
+
 
         // Start listening for progress updates for this task using the progress receiver
         self.start_streaming_put_progress_listener(task_id, progress, progress_rx).await;
@@ -609,28 +589,22 @@ impl Context {
 
     // Start listening for progress updates for a streaming put operation
     async fn start_streaming_put_progress_listener(&self, task_id: TaskId, progress: Arc<RwLock<Progress>>, progress_rx: mutant_client::ProgressReceiver) {
-        info!("Starting streaming put progress listener for task: {}", task_id);
 
         // Spawn a task to handle progress updates
         wasm_bindgen_futures::spawn_local(async move {
             let mut progress_rx = progress_rx;
             let mut progress_count = 0;
 
-            info!("Streaming put progress listener started for task: {}", task_id);
+
 
             while let Some(progress_result) = progress_rx.recv().await {
                 progress_count += 1;
                 match progress_result {
                     Ok(task_progress) => {
-                        info!("Streaming put progress #{} for task {}: {:?}", progress_count, task_id, task_progress);
-
                         match task_progress {
                             mutant_protocol::TaskProgress::Put(put_event) => {
                                 match put_event {
                                     mutant_protocol::PutEvent::Starting { total_chunks, initial_written_count, initial_confirmed_count, chunks_to_reserve } => {
-                                        info!("Put Starting for task {}: {} total chunks, {} to reserve, {} initial written, {} initial confirmed",
-                                            task_id, total_chunks, chunks_to_reserve, initial_written_count, initial_confirmed_count);
-
                                         // Initialize the operation in the progress object
                                         let mut progress_guard = progress.write().unwrap();
                                         progress_guard.operation.insert("put".to_string(), ProgressOperation {
@@ -640,53 +614,40 @@ impl Context {
                                             nb_written: initial_written_count,
                                             nb_confirmed: initial_confirmed_count,
                                         });
-                                        info!("Initialized progress object for streaming put task {}", task_id);
                                     },
                                     mutant_protocol::PutEvent::PadReserved => {
-                                        info!("Put PadReserved for task {}", task_id);
-
                                         // Update reserved count
                                         let mut progress_guard = progress.write().unwrap();
                                         if let Some(op) = progress_guard.operation.get_mut("put") {
                                             op.nb_reserved += 1;
-                                            info!("Updated reserved count: {}/{}", op.nb_reserved, op.total_pads);
                                         }
                                     },
                                     mutant_protocol::PutEvent::PadsWritten => {
-                                        info!("Put PadsWritten for task {}", task_id);
-
                                         // Update written count
                                         let mut progress_guard = progress.write().unwrap();
                                         if let Some(op) = progress_guard.operation.get_mut("put") {
                                             op.nb_written += 1;
-                                            info!("Updated written count: {}/{}", op.nb_written, op.total_pads);
                                         }
                                     },
                                     mutant_protocol::PutEvent::PadsConfirmed => {
-                                        info!("Put PadsConfirmed for task {}", task_id);
-
                                         // Update confirmed count
                                         let mut progress_guard = progress.write().unwrap();
                                         if let Some(op) = progress_guard.operation.get_mut("put") {
                                             op.nb_confirmed += 1;
-                                            info!("Updated confirmed count: {}/{}", op.nb_confirmed, op.total_pads);
                                         }
                                     },
                                     mutant_protocol::PutEvent::Complete => {
-                                        info!("Put Complete for task {}", task_id);
-
                                         // Mark operation as complete
                                         let mut progress_guard = progress.write().unwrap();
                                         if let Some(op) = progress_guard.operation.get_mut("put") {
                                             op.nb_confirmed = op.total_pads;
-                                            info!("Marked streaming put operation as complete for task {}", task_id);
                                         }
                                         break; // Exit the loop when complete
                                     },
                                 }
                             },
                             _ => {
-                                info!("Streaming put progress #{} for task {}: Unexpected progress type: {:?}", progress_count, task_id, task_progress);
+                                // Unexpected progress type
                             }
                         }
                     },
@@ -697,7 +658,7 @@ impl Context {
                 }
             }
 
-            info!("Streaming put progress listener finished for task {} after {} updates", task_id, progress_count);
+
         });
     }
 }

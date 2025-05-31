@@ -11,8 +11,8 @@ use url::Url;
 use wasm_bindgen_futures::spawn_local;
 
 use mutant_protocol::{
-    ExportResult, HealthCheckResult, ImportResult, KeyDetails, MvRequest, PurgeResult, PutEvent, PutSource, Request,
-    Response, StatsResponse, StorageMode, SyncResult, Task, TaskId, TaskListEntry, TaskProgress,
+    ExportResult, HealthCheckResult, ImportResult, KeyDetails, PurgeResult, PutSource, Request,
+    StatsResponse, StorageMode, SyncResult, Task, TaskId, TaskListEntry, TaskProgress,
     TaskResult, TaskStatus, TaskStoppedResponse, TaskType, PutRequest, PutDataRequest,
 };
 
@@ -156,8 +156,8 @@ impl MutantClient {
                         info!("CLIENT: WASM response handler started");
                         while let Some(response) = client_clone.next_response().await {
                             match response {
-                                Ok(resp) => {
-                                    info!("CLIENT: Received response: {:?}", resp);
+                                Ok(_resp) => {
+                                    // Response processed by process_response
                                 },
                                 Err(e) => {
                                     error!("CLIENT: Error processing response: {:?}", e);
@@ -175,8 +175,8 @@ impl MutantClient {
                         info!("CLIENT: Native response handler started");
                         while let Some(response) = client_clone.next_response().await {
                             match response {
-                                Ok(resp) => {
-                                    info!("CLIENT: Received response: {:?}", resp);
+                                Ok(_resp) => {
+                                    // Response processed by process_response
                                 },
                                 Err(e) => {
                                     error!("CLIENT: Error processing response: {:?}", e);
@@ -276,9 +276,6 @@ impl MutantClient {
         public: bool,
         no_verify: bool,
     ) -> Result<(TaskId, ProgressReceiver), ClientError> {
-        info!("CLIENT: put_streaming_init() called with user_key={}, total_size={}, filename={:?}",
-              user_key, total_size, filename);
-
         // Check connection state
         let connection_state = self.state.lock().unwrap().clone();
         if connection_state != ConnectionState::Connected {
@@ -313,8 +310,6 @@ impl MutantClient {
         let (completion_tx, _completion_rx) = oneshot::channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
-        info!("CLIENT: Creating task channels for streaming put operation");
-
         self.pending_requests.lock().unwrap().insert(
             key.clone(),
             PendingSender::TaskCreation(
@@ -331,12 +326,10 @@ impl MutantClient {
             self.pending_requests.lock().unwrap().remove(&key);
             return Err(e);
         }
-        info!("CLIENT: Put streaming init request sent successfully, waiting for TaskCreated response");
 
         // Wait for the TaskCreated response with the real task ID
         let task_id = match task_creation_rx.await {
             Ok(Ok(id)) => {
-                info!("CLIENT: Streaming put task created with ID: {}", id);
                 id
             }
             Ok(Err(e)) => {
@@ -348,8 +341,6 @@ impl MutantClient {
                 return Err(ClientError::InternalError(format!("TaskCreated channel canceled: {:?}", e)));
             }
         };
-
-        info!("CLIENT: Returning TaskId {} and progress receiver for streaming put", task_id);
         Ok((task_id, progress_rx))
     }
 
@@ -390,12 +381,8 @@ impl MutantClient {
         ),
         ClientError,
     > {
-        info!("CLIENT: get() called with user_key={}, destination_path={:?}, public={}, stream_data={}",
-              user_key, destination_path, public, stream_data);
-
         // Check connection state
         let connection_state = self.state.lock().unwrap().clone();
-        info!("CLIENT: Current connection state: {:?}", connection_state);
 
         if connection_state != ConnectionState::Connected {
             error!("CLIENT: Cannot send get request - not connected (state: {:?})", connection_state);
@@ -404,14 +391,12 @@ impl MutantClient {
 
         // Create the request
         let key = PendingRequestKey::TaskCreation;
-        info!("CLIENT: Creating Get request");
         let req = Request::Get(mutant_protocol::GetRequest {
             user_key: user_key.to_string(),
             destination_path: destination_path.map(|s| s.to_string()),
             public,
             stream_data,
         });
-        info!("CLIENT: Created Get request: {:?}", req);
 
         // Check if there's already a pending request
         let pending_key_exists = self.pending_requests.lock().unwrap().contains_key(&key);
@@ -422,24 +407,18 @@ impl MutantClient {
             ));
         }
 
-        info!("CLIENT: Creating channels for get request");
         let (completion_tx, completion_rx) = oneshot::channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
         // Create data stream channel if streaming is enabled
         let (data_stream_tx, data_stream_rx) = if stream_data {
-            info!("CLIENT: Creating data stream channel for streaming");
             let (tx, rx) = mpsc::unbounded_channel();
             (Some(tx), Some(rx))
         } else {
-            info!("CLIENT: No data stream channel needed (not streaming)");
             (None, None)
         };
 
-        info!("CLIENT: Creating task creation channel");
         let (task_creation_tx, task_creation_rx) = oneshot::channel();
-
-        info!("CLIENT: Inserting pending request");
         self.pending_requests.lock().unwrap().insert(
             key.clone(),
             PendingSender::TaskCreation(
@@ -448,7 +427,6 @@ impl MutantClient {
                 TaskType::Get,
             ),
         );
-        info!("CLIENT: Pending request inserted");
 
         // Send the request
         if let Err(e) = self.send_request(req).await {
@@ -457,34 +435,26 @@ impl MutantClient {
             self.pending_requests.lock().unwrap().remove(&key);
             return Err(e);
         }
-        info!("CLIENT: Get request sent successfully, waiting for TaskCreated response via task_creation_rx");
 
         // Await the TaskId from the response handler
         let task_id = match task_creation_rx.await {
             Ok(Ok(id)) => {
-                info!("CLIENT: Task created with ID: {}", id);
                 id
             }
             Ok(Err(e)) => {
                 error!("CLIENT: Failed to create task (error from oneshot): {:?}", e);
-                // No need to remove from pending_requests here, as TaskCreationFailed in response_handler should do it.
                 return Err(e);
             }
             Err(e) => { // oneshot::Canceled
                 error!("CLIENT: TaskCreated channel canceled while awaiting TaskId: {:?}", e);
-                // No need to remove from pending_requests here, as TaskCreationFailed in response_handler should do it,
-                // or if the response handler never runs, the pending request might linger.
-                // However, if send_request succeeded, the response_handler *should* eventually process it or timeout.
                 return Err(ClientError::InternalError(format!("TaskCreated channel canceled: {:?}", e)));
             }
         };
 
         // Define the overall completion future
         let overall_completion_future = async move {
-            info!("CLIENT: overall_completion_future waiting for task {} completion", task_id);
             match completion_rx.await {
                 Ok(result) => {
-                    info!("CLIENT: Task {} completed with result: {:?}", task_id, result);
                     result
                 },
                 Err(e) => { // oneshot::Canceled
@@ -493,8 +463,6 @@ impl MutantClient {
                 }
             }
         };
-
-        info!("CLIENT: Returning TaskId, overall_completion_future, progress_rx, and data_stream_rx for task {}", task_id);
         Ok((task_id, overall_completion_future, progress_rx, data_stream_rx))
     }
 

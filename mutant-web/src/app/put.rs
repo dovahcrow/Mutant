@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use wasm_bindgen::{JsCast, closure::Closure};
 use wasm_bindgen_futures::spawn_local;
-use web_sys::{File, FileReader, HtmlInputElement, Event};
+use web_sys::{File, FileReader, Event};
 use web_time::{Duration, SystemTime};
 
 use super::Window;
@@ -175,12 +175,8 @@ impl PutWindow {
                 // Read the progress
                 let progress_guard = progress.read().unwrap();
 
-                log::debug!("Found progress object for put ID: {}", put_id);
-
                 // Check if we have an operation
                 if let Some(op) = progress_guard.operation.get("put") {
-                    log::info!("Found operation in progress: total_pads={}, reserved={}, written={}, confirmed={}",
-                        op.total_pads, op.nb_reserved, op.nb_written, op.nb_confirmed);
 
                     // Update UI based on progress
                     let total_chunks = op.total_pads;
@@ -212,9 +208,6 @@ impl PutWindow {
                         0.0
                     };
 
-                    log::info!("Calculated progress: reservation={:.2}%, upload={:.2}%, confirmation={:.2}%",
-                        reservation_progress * 100.0, upload_progress * 100.0, confirmation_progress * 100.0);
-
                     // Update progress bars
                     *self.reservation_progress.write().unwrap() = reservation_progress;
                     *self.upload_progress.write().unwrap() = upload_progress;
@@ -222,11 +215,6 @@ impl PutWindow {
 
                     // Update total chunks
                     *self.total_chunks.write().unwrap() = total_chunks;
-
-                    log::info!("Updated progress bars: reservation={:.2}%, upload={:.2}%, confirmation={:.2}%",
-                        *self.reservation_progress.read().unwrap() * 100.0,
-                        *self.upload_progress.read().unwrap() * 100.0,
-                        *self.confirmation_progress.read().unwrap() * 100.0);
 
                     // Check if operation is complete
                     if confirmed_count == total_chunks && total_chunks > 0 {
@@ -243,11 +231,9 @@ impl PutWindow {
                         notifications::info("Upload complete!".to_string());
 
                         // Refresh the keys list to update the file explorer
-                        log::info!("Refreshing keys list after upload completion");
                         spawn_local(async {
                             let ctx = context::context();
                             let _ = ctx.list_keys().await;
-                            log::info!("Keys list refreshed successfully after upload completion");
                         });
 
                         // If this is a public upload, get the key details to find the public address
@@ -299,21 +285,17 @@ impl PutWindow {
         daemon_upload_progress: Arc<RwLock<f32>>,
         daemon_upload_bytes: Arc<RwLock<u64>>,
     ) {
-        log::info!("Starting TRUE streaming upload for {} ({} bytes)", filename, file_size);
+
 
         spawn_local(async move {
             let ctx = context::context();
             let file_size_u64 = file_size as u64;
 
             // Step 1: Initialize streaming put with daemon
-            log::info!("Initializing streaming put with daemon");
             match ctx.put_streaming_init(&key_name, file_size_u64, &filename, storage_mode, public, no_verify).await {
                 Ok(task_id) => {
-                    log::info!("Streaming put initialized with task ID: {}", task_id);
-
                     // Store the task ID for progress tracking
                     let task_id_string = task_id.to_string();
-                    log::info!("UI: Storing task ID for progress tracking: '{}'", task_id_string);
                     *current_put_id.write().unwrap() = Some(task_id_string);
 
                     // Step 2: Stream file chunks directly to daemon
@@ -324,15 +306,14 @@ impl PutWindow {
                     let mut chunk_index = 0usize;
                     let total_chunks = ((file_size_u64 + CHUNK_SIZE - 1) / CHUNK_SIZE) as usize;
 
-                    log::info!("Starting to stream {} chunks of {} bytes each", total_chunks, CHUNK_SIZE);
+
 
                     while offset < file_size_u64 {
                         let chunk_size = std::cmp::min(CHUNK_SIZE, file_size_u64 - offset);
                         let end_offset = offset + chunk_size;
                         let is_last = end_offset >= file_size_u64;
 
-                        log::debug!("Reading and sending chunk {}/{}: {} to {} ({} bytes, is_last={})",
-                            chunk_index + 1, total_chunks, offset, end_offset, chunk_size, is_last);
+
 
                         // Create a blob slice for this chunk
                         let blob_slice = match file.slice_with_f64_and_f64(offset as f64, end_offset as f64) {
@@ -353,8 +334,6 @@ impl PutWindow {
                                 // Send this chunk directly to daemon
                                 match ctx.put_streaming_chunk(task_id, chunk_index, total_chunks, chunk_data, is_last).await {
                                     Ok(_) => {
-                                        log::debug!("Chunk {}/{} sent successfully to daemon", chunk_index + 1, total_chunks);
-
                                         offset = end_offset;
                                         chunk_index += 1;
 
@@ -362,9 +341,6 @@ impl PutWindow {
                                         let progress = offset as f32 / file_size_u64 as f32;
                                         *daemon_upload_progress.write().unwrap() = progress;
                                         *daemon_upload_bytes.write().unwrap() = offset;
-
-                                        log::debug!("Daemon upload progress: {:.1}% ({}/{} bytes)",
-                                            progress * 100.0, offset, file_size_u64);
 
                                         // Small delay to keep UI responsive
                                         if !is_last {
@@ -395,7 +371,6 @@ impl PutWindow {
                         }
                     }
 
-                    log::info!("All {} chunks sent successfully to daemon", total_chunks);
                     *is_uploading_to_daemon.write().unwrap() = false;
 
                     // Final progress update - 100% complete
@@ -405,11 +380,9 @@ impl PutWindow {
                     notifications::info("File upload to daemon completed!".to_string());
 
                     // Refresh the keys list to update the file explorer
-                    log::info!("Refreshing keys list after successful upload");
                     spawn_local(async {
                         let ctx = context::context();
                         let _ = ctx.list_keys().await;
-                        log::info!("Keys list refreshed successfully");
                     });
                 },
                 Err(e) => {
@@ -474,7 +447,6 @@ impl PutWindow {
     }
 
     fn start_upload(&self) {
-        log::info!("Starting file selection and upload");
 
         // Get upload parameters
         let key_name = self.key_name.read().unwrap().clone();
@@ -500,8 +472,7 @@ impl PutWindow {
         *self.upload_progress.write().unwrap() = 0.0;
         *self.confirmation_progress.write().unwrap() = 0.0;
 
-        log::info!("Upload parameters: key={}, public={}, mode={:?}, no_verify={}",
-            key_name, public, storage_mode, no_verify);
+
 
         // Directly trigger file selection for upload
         self.select_file_and_upload(key_name, storage_mode, public, no_verify);
@@ -514,7 +485,7 @@ impl PutWindow {
         public: bool,
         no_verify: bool,
     ) {
-        log::info!("Opening file picker for direct upload");
+
 
         // Create file input element
         let document = web_sys::window().unwrap().document().unwrap();
@@ -546,7 +517,7 @@ impl PutWindow {
                         let file_name = file.name();
                         let file_size_js = file.size();
 
-                        log::info!("File selected for upload: {} ({} bytes)", file_name, file_size_js);
+
 
                         // Update state with selected file info
                         *selected_file.write().unwrap() = Some(file_name.clone());
@@ -572,7 +543,6 @@ impl PutWindow {
                     }
                 } else {
                     // User cancelled file selection
-                    log::info!("File selection cancelled");
                     *is_uploading.write().unwrap() = false;
                     *is_uploading_to_daemon.write().unwrap() = false;
                 }

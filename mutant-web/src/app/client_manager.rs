@@ -54,7 +54,6 @@ async fn ensure_connected(client: &mut MutantClient, connected: &mut bool) -> Re
 
     match client.connect(DEFAULT_WS_URL).await {
         Ok(_) => {
-            info!("Connected to daemon");
             *connected = true;
             Ok(())
         }
@@ -87,8 +86,7 @@ async fn handle_get_operation(
         Ok((_task_id, task_future, _progress_rx, _data_stream_rx)) => {
             // Wait for the task to complete
             match task_future.await {
-                Ok(result) => {
-                    info!("Get task completed: {:?}", result);
+                Ok(_result) => {
                     // Only send if the receiver is still interested
                     if !sender.is_canceled() {
                         let _ = sender.send(Ok(()));
@@ -128,11 +126,8 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
         while let Some(cmd) = rx.next().await {
             match cmd {
                 ClientCommand::ListKeys(sender) => {
-                    info!("Processing ListKeys command");
-
                     // Ensure we're connected
                     if let Err(e) = ensure_connected(&mut client, &mut connected).await {
-                        info!("Connection failed for ListKeys: {}", e);
                         // Only send if the receiver is still interested
                         if !sender.is_canceled() {
                             let _ = sender.send(Err(e));
@@ -140,12 +135,9 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                         continue;
                     }
 
-                    info!("Connection established, sending list_keys request");
-
                     // Execute the command with proper error handling
                     let result = match client.list_keys().await {
                         Ok(keys) => {
-                            info!("Successfully retrieved {} keys", keys.len());
                             Ok(keys)
                         }
                         Err(e) => {
@@ -162,8 +154,6 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
 
                     // Only send if the receiver is still interested
                     if !sender.is_canceled() {
-                        info!("Sending list_keys response to caller");
-
                         // Create a safe copy of the result to avoid memory issues
                         let safe_result = match &result {
                             Ok(keys) => {
@@ -178,12 +168,9 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                         };
 
                         // Send the safe result
-                        match sender.send(safe_result) {
-                            Ok(_) => info!("Successfully sent list_keys response to caller"),
-                            Err(e) => error!("Failed to send list_keys response: {:?}", e)
+                        if let Err(e) = sender.send(safe_result) {
+                            error!("Failed to send list_keys response: {:?}", e)
                         }
-                    } else {
-                        info!("Receiver canceled, not sending list_keys response");
                     }
                 }
                 ClientCommand::ListTasks(sender) => {

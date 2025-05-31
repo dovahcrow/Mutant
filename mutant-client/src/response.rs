@@ -1,4 +1,4 @@
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, trace, warn};
 use mutant_protocol::{
     ErrorResponse, ExportResponse, ImportResponse, ListKeysResponse, MvSuccessResponse, Response,
     RmSuccessResponse, Task, TaskCreatedResponse, TaskListResponse, TaskProgress,
@@ -23,7 +23,6 @@ impl MutantClient {
         task_channels: &TaskChannelsMap,
         pending_requests: &PendingRequestMap,
     ) {
-        log::warn!("PROCESS RESPONSE: {:#?}", response);
         match response {
             Response::TaskCreated(TaskCreatedResponse { task_id }) => {
                 let pending_sender = pending_requests
@@ -367,29 +366,17 @@ impl MutantClient {
     }
 
     pub async fn next_response(&mut self) -> Option<Result<Response, ClientError>> {
-        info!("CLIENT: Waiting for next WebSocket response");
-
         if let Some(receiver) = &mut self.receiver {
-            info!("CLIENT: WebSocket receiver is available");
-
             // Use a loop to handle non-text messages without recursion
             loop {
                 // Use the async next() method from nash-ws to wait for the next message
-                info!("CLIENT: Awaiting next WebSocket message");
                 match receiver.next().await {
                     Some(Ok(message)) => {
-                        info!("CLIENT: Received WebSocket message");
-
                         // Process the message
                         match message {
                             nash_ws::Message::Text(text) => {
-                                info!("CLIENT: Received text message: {}", text);
-
                                 match serde_json::from_str::<Response>(&text) {
                                     Ok(response) => {
-                                        info!("CLIENT: Successfully deserialized response: {:?}", response);
-
-                                        info!("CLIENT: Processing response");
                                         Self::process_response(
                                             response.clone(),
                                             &self.tasks,
@@ -397,7 +384,6 @@ impl MutantClient {
                                             &self.pending_requests,
                                         );
 
-                                        info!("CLIENT: Response processed, returning");
                                         return Some(Ok(response));
                                     }
                                     Err(e) => {
@@ -407,13 +393,11 @@ impl MutantClient {
                                     }
                                 }
                             }
-                            nash_ws::Message::Binary(data) => {
-                                info!("CLIENT: Received binary WebSocket message of {} bytes, expected text", data.len());
+                            nash_ws::Message::Binary(_data) => {
                                 // Continue the loop to wait for the next message
                                 continue;
                             }
                             _ => {
-                                info!("CLIENT: Received unexpected WebSocket message type");
                                 // Continue the loop to wait for the next message
                                 continue;
                             }
@@ -424,7 +408,6 @@ impl MutantClient {
                         return Some(Err(ClientError::WebSocketError(format!("{:?}", e))));
                     }
                     None => {
-                        info!("CLIENT: WebSocket connection closed");
                         return None;
                     }
                 }
