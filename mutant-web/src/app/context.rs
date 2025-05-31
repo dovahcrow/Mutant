@@ -1,7 +1,7 @@
 use std::{collections::{BTreeMap, HashMap}, sync::{Arc, Mutex, RwLock}};
 
 use lazy_static::lazy_static;
-use log::{error, info, warn};
+use log::error;
 use mutant_protocol::{KeyDetails, StatsResponse, StorageMode, TaskListEntry, TaskId, TaskProgress};
 use tokio::sync::mpsc;
 
@@ -248,85 +248,9 @@ impl Context {
         }
     }
 
-    // Get file content directly without saving to disk
-    pub async fn get_file_content(&self, name: &str, _is_public: bool) -> Result<String, String> {
-        warn!("get_file_content is deprecated for downloads. Use start_streamed_get instead. Key: {}", name);
-        // info!("Getting file content for key {} via daemon (is_public={})", name, is_public);
 
-        // // Call the client with no destination to stream the data
-        // info!("Calling client.get with streaming enabled");
-        // let result = self.client.get(name.to_string(), None, is_public).await;
 
-        // match result {
-        //     Ok((task_result, Some(data))) => {
-        //         info!("Successfully retrieved file content for key {}, size: {} bytes", name, data.len());
-        //         info!("Task result: {:?}", task_result);
 
-        //         // Try to convert the data to a string
-        //         match String::from_utf8(data) {
-        //             Ok(content) => {
-        //                 info!("Successfully converted data to UTF-8 string, length: {}", content.len());
-        //                 Ok(content)
-        //             },
-        //             Err(_) => {
-        //                 // If it's not valid UTF-8, return a binary data message
-        //                 error!("Data is not valid UTF-8, cannot display as text");
-        //                 Err("File contains binary data that cannot be displayed as text".to_string())
-        //             }
-        //         }
-        //     },
-        //     Ok((task_result, None)) => {
-        //         error!("No data received for key {}, task result: {:?}", name, task_result);
-        //         Err("No data received".to_string())
-        //     },
-        //     Err(e) => {
-        //         error!("Failed to get file content: {}", e);
-        //         Err(e)
-        //     }
-        // }
-        Err(format!("get_file_content is deprecated for downloads. Use start_streamed_get. Key: {}", name))
-    }
-
-    // Get file binary data directly without saving to disk
-    pub async fn get_file_binary(&self, name: &str, _is_public: bool) -> Result<Vec<u8>, String> {
-        warn!("get_file_binary is deprecated for downloads. Use start_streamed_get instead. Key: {}", name);
-        // info!("Getting binary file content for key {} via daemon (is_public={})", name, is_public);
-
-        // // Create a progress object for tracking this get operation
-        // let (get_id, progress) = self.create_get_progress(name);
-        // info!("Created progress tracking with ID: {}", get_id);
-
-        // // Call the client with no destination to stream the data
-        // info!("Calling client.get with streaming enabled");
-        // let result = self.client.get(name.to_string(), None, is_public).await;
-
-        // match result {
-        //     Ok((task_result, Some(data))) => {
-        //         info!("Successfully retrieved binary file content for key {}, size: {} bytes", name, data.len());
-        //         info!("Task result: {:?}", task_result);
-
-        //         // Mark the operation as complete in the progress object
-        //         {
-        //             let mut progress_guard = progress.write().unwrap();
-        //             if let Some(op) = progress_guard.operation.get_mut("get") {
-        //                 op.nb_confirmed = op.total_pads;
-        //                 info!("Marked get operation as complete in progress object");
-        //             }
-        //         }
-
-        //         Ok(data)
-        //     },
-        //     Ok((task_result, None)) => {
-        //         error!("No data received for key {}, task result: {:?}", name, task_result);
-        //         Err("No data received".to_string())
-        //     },
-        //     Err(e) => {
-        //         error!("Failed to get file content: {}", e);
-        //         Err(e)
-        //     }
-        // }
-        Err(format!("get_file_binary is deprecated for downloads. Use start_streamed_get. Key: {}", name))
-    }
 
     pub async fn start_streamed_get(
         &self,
@@ -347,30 +271,7 @@ impl Context {
         client_manager::start_get_stream(user_key, is_public).await
     }
 
-    // Get file content for viewing by collecting all streamed data
-    pub async fn get_file_for_viewing(&self, user_key: &str, is_public: bool) -> Result<Vec<u8>, String> {
-        // Start the streaming get
-        let (_task_id, mut _progress_receiver, mut data_receiver) = self.start_streamed_get(user_key, is_public).await?;
 
-        let mut collected_data = Vec::new();
-
-        // Collect all data chunks
-        while let Some(data_result) = data_receiver.recv().await {
-            match data_result {
-                Ok(chunk) => {
-                    collected_data.extend_from_slice(&chunk);
-                    info!("Collected chunk of {} bytes for viewing, total so far: {}", chunk.len(), collected_data.len());
-                }
-                Err(e) => {
-                    error!("Error receiving data chunk for viewing: {}", e);
-                    return Err(format!("Error receiving data chunk: {}", e));
-                }
-            }
-        }
-
-        info!("Completed collecting file data for viewing, total size: {} bytes", collected_data.len());
-        Ok(collected_data)
-    }
 
     // Get file content for viewing with progress callback
     pub async fn get_file_for_viewing_with_progress<F>(
