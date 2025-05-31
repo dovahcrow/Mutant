@@ -98,11 +98,14 @@ pub fn apply_mutant_theme(ctx: &egui::Context) {
     visuals.widgets.hovered.weak_bg_fill = MutantColors::SURFACE_HOVER; // Hovered tab background
     visuals.widgets.active.weak_bg_fill = MutantColors::BACKGROUND_LIGHT; // Active tab background
 
-    // Tab text colors
+    // Tab text colors - these will be applied by egui_dock
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, MutantColors::TEXT_MUTED); // Inactive tab text (dimmed white)
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, MutantColors::TEXT_SECONDARY); // Inactive tab text (dimmed white)
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, MutantColors::TEXT_MUTED); // Inactive tab text (dimmed white)
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, MutantColors::TEXT_PRIMARY); // Hovered tab text
     visuals.widgets.active.fg_stroke = Stroke::new(1.0, MutantColors::ACCENT_ORANGE); // Active tab text (orange)
+
+    // Close button styling (red)
+    visuals.error_fg_color = MutantColors::ERROR; // Close button color
 
     // Tab bar background
     visuals.window_fill = MutantColors::BACKGROUND_MEDIUM;
