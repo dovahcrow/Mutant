@@ -1778,7 +1778,7 @@ impl FsWindow {
                 // Draw the root folder '/' as a proper collapsible folder
                 let mut root_expanded = !self.root.children.is_empty(); // Default to expanded if there are children
 
-                // Create a custom layout for the root folder with refresh button
+                // Draw the root folder with refresh button positioned like a file's download button
                 let row_response = ui.allocate_response(
                     egui::Vec2::new(ui.available_width(), 20.0),
                     egui::Sense::click()
@@ -1832,7 +1832,7 @@ impl FsWindow {
                     }).header_response.clicked() || root_expanded;
                 });
 
-                // Draw refresh button at the right side of the root folder row
+                // Draw refresh button at the same position as file download buttons
                 let text_baseline_y = row_rect.top() + (row_rect.height() - 12.0) / 2.0;
                 let button_width = 20.0;
                 let current_x = row_rect.right() - 4.0; // Start with right padding
