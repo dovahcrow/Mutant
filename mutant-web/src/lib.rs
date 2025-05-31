@@ -944,6 +944,13 @@ impl MyApp {
                 ui.vertical_centered(|ui| {
                     ui.add_space(15.0);
 
+                    // Helper function to check if a window type is currently open
+                    let is_window_open = |window_name: &str| {
+                        window_system_mut().tree().iter_all_tabs().any(|(_, tab)| {
+                            tab.name() == window_name
+                        })
+                    };
+
                     // Helper function to create a button with different styling when active
                     let menu_button = |ui: &mut egui::Ui, icon: &str, hover: &str, is_active: bool| {
                         let button = if is_active {
@@ -969,20 +976,15 @@ impl MyApp {
                         ui.add(button).on_hover_text(hover)
                     };
 
-                    // Files button (always active since we're showing the FS window)
-                    if menu_button(ui, "📁", "Files", true).clicked() {
-                        // Already showing files - could refresh or do nothing
-                    }
-
-                    if menu_button(ui, "🛸", "Main", false).clicked() {
+                    if menu_button(ui, "🛸", "Main", is_window_open("MutAnt Keys")).clicked() {
                         app::window_system::new_window(app::main::MainWindow::new());
                     }
 
-                    if menu_button(ui, "📤", "Upload", false).clicked() {
+                    if menu_button(ui, "📤", "Upload", is_window_open("MutAnt Upload")).clicked() {
                         app::window_system::new_window(app::put::PutWindow::new());
                     }
 
-                    if menu_button(ui, "📊", "Stats", false).clicked() {
+                    if menu_button(ui, "📊", "Stats", is_window_open("MutAnt Stats")).clicked() {
                         app::window_system::new_window(app::stats::StatsWindow::new());
                     }
 
