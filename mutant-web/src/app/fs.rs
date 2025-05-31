@@ -1756,6 +1756,14 @@ impl FsWindow {
                 // Draw the root folder '/' as a proper collapsible folder
                 let mut root_expanded = !self.root.children.is_empty(); // Default to expanded if there are children
 
+                // Create a custom layout for the root folder with refresh button
+                let row_response = ui.allocate_response(
+                    egui::Vec2::new(ui.available_width(), 20.0),
+                    egui::Sense::click()
+                );
+
+                let row_rect = row_response.rect;
+
                 ui.horizontal(|ui| {
                     // Draw visual delimiter line for root folder
                     let line_color = super::theme::MutantColors::BORDER_LIGHT;
@@ -1802,38 +1810,42 @@ impl FsWindow {
                     }).header_response.clicked() || root_expanded;
                 });
 
-                // Add some spacing before the refresh button
-                ui.add_space(12.0);
+                // Draw refresh button at the right side of the root folder row
+                let text_baseline_y = row_rect.top() + (row_rect.height() - 12.0) / 2.0;
+                let button_width = 20.0;
+                let current_x = row_rect.right() - 4.0; // Start with right padding
 
-                // Add refresh button at the bottom left (within the scroll area)
-                ui.horizontal(|ui| {
-                    let refresh_btn = ui.add_sized(
-                        [20.0, 20.0],
-                        egui::Button::new("🔄")
-                            .fill(egui::Color32::TRANSPARENT)
-                            .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_MUTED))
-                    );
+                let button_rect = egui::Rect::from_min_size(
+                    egui::Pos2::new(current_x - button_width, text_baseline_y),
+                    egui::Vec2::new(button_width, 12.0)
+                );
 
-                    if refresh_btn.clicked() {
-                        // Trigger a refresh of the file list
-                        let ctx = crate::app::context::context();
-                        wasm_bindgen_futures::spawn_local(async move {
-                            let _ = ctx.list_keys().await;
-                        });
-                    }
+                // Draw refresh button manually
+                let button_response = ui.allocate_rect(button_rect, egui::Sense::click());
+                if button_response.clicked() {
+                    // Trigger a refresh of the file list
+                    let ctx = crate::app::context::context();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let _ = ctx.list_keys().await;
+                    });
+                }
+                if button_response.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
 
-                    if refresh_btn.hovered() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                    }
+                // Draw the refresh icon at the exact text baseline
+                let refresh_galley = ui.painter().layout_no_wrap(
+                    "🔄".to_string(),
+                    egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                    super::theme::MutantColors::TEXT_MUTED
+                );
+                ui.painter().galley(
+                    egui::Pos2::new(current_x - button_width / 2.0 - refresh_galley.rect.width() / 2.0, text_baseline_y),
+                    refresh_galley,
+                    super::theme::MutantColors::TEXT_MUTED
+                );
 
-                    // Add a small label next to the button
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new("Refresh")
-                            .size(10.0)
-                            .color(super::theme::MutantColors::TEXT_MUTED)
-                    );
-                });
+
 
                 // Add some bottom padding
                 ui.add_space(8.0);
