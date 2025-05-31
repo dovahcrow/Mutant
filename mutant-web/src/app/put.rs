@@ -14,6 +14,7 @@ use super::Window;
 use super::components::progress::detailed_progress;
 use super::context;
 use super::notifications;
+use super::theme::{MutantColors, primary_button, success_button};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PutWindow {
@@ -600,29 +601,34 @@ impl PutWindow {
 
         if !is_processing && !upload_complete {
             // File selection section
-            ui.heading("Upload File");
-            ui.add_space(10.0);
+            ui.heading(RichText::new("📤 Upload File").size(20.0).color(MutantColors::TEXT_PRIMARY));
+            ui.add_space(15.0);
 
-            // Key name input
-            ui.horizontal(|ui| {
-                ui.label("Key Name:");
-                let mut key_name = self.key_name.write().unwrap();
-                ui.text_edit_singleline(&mut *key_name);
+            // Key name input with styled frame
+            ui.group(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Key Name:").color(MutantColors::TEXT_PRIMARY));
+                    ui.add_space(5.0);
+                    let mut key_name = self.key_name.write().unwrap();
+                    ui.text_edit_singleline(&mut *key_name);
+                });
             });
 
-            ui.add_space(5.0);
+            ui.add_space(10.0);
 
             // Show selected file info if any (from previous upload)
             if let Some(filename) = &*self.selected_file.read().unwrap() {
-                ui.horizontal(|ui| {
-                    ui.label("Last Selected File:");
-                    ui.label(filename);
-                });
+                ui.group(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new("Last Selected File:").color(MutantColors::TEXT_SECONDARY));
+                        ui.label(RichText::new(filename).color(MutantColors::ACCENT_BLUE));
 
-                if let Some(size) = *self.file_size.read().unwrap() {
-                    ui.label(format!("Size: {} bytes", size));
-                }
-                ui.add_space(5.0);
+                        if let Some(size) = *self.file_size.read().unwrap() {
+                            ui.label(RichText::new(format!("Size: {} bytes", size)).color(MutantColors::TEXT_MUTED));
+                        }
+                    });
+                });
+                ui.add_space(10.0);
             }
 
             ui.add_space(10.0);
@@ -664,18 +670,24 @@ impl PutWindow {
             // Upload button - now triggers file selection and upload
             let can_upload = !self.key_name.read().unwrap().is_empty();
 
-            if ui.add_enabled(can_upload, egui::Button::new("Select File and Upload")).clicked() {
-                self.start_upload();
-            }
+            ui.add_space(15.0);
+            ui.horizontal(|ui| {
+                if ui.add_enabled(can_upload, primary_button("📁 Select File and Upload")).clicked() {
+                    self.start_upload();
+                }
+            });
 
             if !can_upload {
-                ui.label(RichText::new("Please enter a key name").color(Color32::LIGHT_RED));
+                ui.add_space(5.0);
+                ui.label(RichText::new("⚠ Please enter a key name").color(MutantColors::WARNING));
             }
 
             // Show error message if any
             if let Some(error) = &*self.error_message.read().unwrap() {
                 ui.add_space(10.0);
-                ui.label(RichText::new(format!("Error: {}", error)).color(Color32::RED));
+                ui.group(|ui| {
+                    ui.label(RichText::new(format!("❌ Error: {}", error)).color(MutantColors::ERROR));
+                });
             }
         } else if is_reading_file {
             // File reading progress section
@@ -850,10 +862,12 @@ impl PutWindow {
                 });
             }
 
-            ui.add_space(10.0);
-            if ui.button("Upload Another File").clicked() {
-                self.reset();
-            }
+            ui.add_space(15.0);
+            ui.horizontal(|ui| {
+                if ui.add(success_button("📤 Upload Another File")).clicked() {
+                    self.reset();
+                }
+            });
         }
     }
 }

@@ -5,7 +5,7 @@ use egui_dock::{DockArea, DockState, Style};
 use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 
-use super::{main::MainWindow, put::PutWindow, fs::FsWindow, stats::StatsWindow, Window, WindowType};
+use super::{main::MainWindow, put::PutWindow, fs::FsWindow, stats::StatsWindow, Window, WindowType, theme::MutantColors};
 
 
 lazy_static! {
@@ -177,10 +177,13 @@ impl WindowSystem {
     pub fn draw(&mut self, ui: &mut egui::Ui) {
         // Change from SidePanel::right to SidePanel::left
         SidePanel::left("left_menu")
-            .exact_width(25.0)
+            .exact_width(60.0)
+            .frame(egui::Frame::new()
+                .fill(MutantColors::BACKGROUND_MEDIUM)
+                .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_DARK)))
             .show_inside(ui, |ui| {
                 ui.vertical_centered(|ui| {
-                    ui.add_space(10.0);
+                    ui.add_space(15.0);
 
                     // Helper function to check if window is open
                     let is_window_open = |name: &str| {
@@ -192,13 +195,26 @@ impl WindowSystem {
                     // Helper function to create a button with different styling when active
                     let menu_button =
                         |ui: &mut egui::Ui, icon: &str, hover: &str, is_open: bool| {
-                            let button = egui::Button::new(if is_open {
-                                RichText::new(icon)
-                                    .strong()
-                                    .background_color(ui.style().visuals.selection.bg_fill)
+                            let button = if is_open {
+                                egui::Button::new(
+                                    RichText::new(icon)
+                                        .size(18.0)
+                                        .strong()
+                                        .color(MutantColors::BACKGROUND_DARK)
+                                )
+                                .fill(MutantColors::ACCENT_ORANGE)
+                                .stroke(egui::Stroke::new(2.0, MutantColors::ACCENT_ORANGE))
+                                .min_size([40.0, 40.0].into())
                             } else {
-                                RichText::new(icon)
-                            });
+                                egui::Button::new(
+                                    RichText::new(icon)
+                                        .size(16.0)
+                                        .color(MutantColors::TEXT_SECONDARY)
+                                )
+                                .fill(MutantColors::SURFACE)
+                                .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_MEDIUM))
+                                .min_size([40.0, 40.0].into())
+                            };
                             ui.add(button).on_hover_text(hover)
                         };
 
@@ -272,17 +288,24 @@ impl WindowSystem {
 
         // Configure the style to make docking more visible and user-friendly
         style.tab_bar.fill_tab_bar = false; // Don't fill the entire tab bar
-        // Keep the original background color for the tab bar
-        style.tab_bar.bg_fill = egui::Color32::from_rgb(40, 40, 40);
-        style.tab.tab_body.bg_fill = egui::Color32::from_rgb(40, 40, 40);
 
-        style.tab.active.bg_fill = egui::Color32::from_rgb(50, 50, 50);
-        style.tab.focused.bg_fill = egui::Color32::from_rgb(50, 50, 50);
+        // Use MutAnt theme colors for tab styling
+        style.tab_bar.bg_fill = MutantColors::BACKGROUND_MEDIUM;
+        style.tab.tab_body.bg_fill = MutantColors::BACKGROUND_LIGHT;
 
+        // Active and focused tabs use accent color
+        style.tab.active.bg_fill = MutantColors::ACCENT_ORANGE;
+        style.tab.active.text_color = MutantColors::BACKGROUND_DARK;
+        style.tab.focused.bg_fill = MutantColors::SURFACE_HOVER;
+        style.tab.focused.text_color = MutantColors::TEXT_PRIMARY;
 
-        // Use darker colors for the horizontal line to increase contrast
-        style.tab_bar.hline_color = egui::Color32::from_rgb(70, 70, 70); // Darker line color
-        style.tab_bar.corner_radius = CornerRadius::default();
+        // Inactive tabs
+        style.tab.inactive.bg_fill = MutantColors::SURFACE;
+        style.tab.inactive.text_color = MutantColors::TEXT_SECONDARY;
+
+        // Tab bar styling
+        style.tab_bar.hline_color = MutantColors::BORDER_MEDIUM;
+        style.tab_bar.corner_radius = CornerRadius::same(6);
 
         // Create the dock area with docking enabled
         DockArea::new(&mut self.tree)

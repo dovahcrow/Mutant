@@ -25,6 +25,7 @@ pub mod notifications;
 // mod ships;
 mod stats;
 // mod trades;
+pub mod theme;
 
 mod client_manager;
 pub mod context;

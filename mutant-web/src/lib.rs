@@ -893,24 +893,15 @@ impl Default for MyApp {
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Configure the visuals for higher contrast window frames
-        let mut visuals = ctx.style().visuals.clone();
-
-        // Keep the original window fill color but make frames darker for better contrast
-        visuals.window_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(80, 80, 80)); // Darker border with increased contrast
-        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(90, 90, 90)); // Darker widget borders
-        visuals.window_fill = egui::Color32::from_rgb(20, 20, 20); // Slightly darker background
-
-        // Make sure the window rounding is consistent
-        // visuals.window_rounding = egui::CornerRadius::same(4.0);
-
-        // Apply the modified visuals
-        ctx.set_visuals(visuals);
+        // Apply the MutAnt theme
+        app::theme::apply_mutant_theme(ctx);
 
         // Show the main panel with the window system
-        egui::CentralPanel::default().show(ctx, |ui| {
-            window_system_mut().draw(ui);
-        });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(app::theme::MutantColors::BACKGROUND_DARK))
+            .show(ctx, |ui| {
+                window_system_mut().draw(ui);
+            });
 
         // Show notifications
         app::notifications::show_notifications(ctx);
@@ -964,14 +955,14 @@ impl eframe::App for MyApp {
 // }
 
 pub fn run() {
-    use wasm_bindgen::JsCast as _;
-
     // Redirect `log` message to `console.log` and friends:
     // Use wasm_logger instead of eframe::WebLogger
     // wasm_logger is already initialized in the start function
 
     #[cfg(target_arch = "wasm32")]
     {
+        use wasm_bindgen::JsCast as _;
+
         let web_options = eframe::WebOptions::default();
 
         wasm_bindgen_futures::spawn_local(async {
@@ -986,15 +977,49 @@ pub fn run() {
                 .dyn_into::<web_sys::HtmlCanvasElement>()
                 .expect("the_canvas_id was not a HtmlCanvasElement");
 
+            // Set canvas to fill the viewport
+            let window = web_sys::window().expect("No window");
+            let inner_width = window.inner_width().unwrap().as_f64().unwrap() as u32;
+            let inner_height = window.inner_height().unwrap().as_f64().unwrap() as u32;
+
+            canvas.set_width(inner_width);
+            canvas.set_height(inner_height);
+
+            // Set CSS size to match
+            let canvas_style = canvas.style();
+            canvas_style.set_property("width", "100vw").unwrap();
+            canvas_style.set_property("height", "100vh").unwrap();
+            canvas_style.set_property("position", "fixed").unwrap();
+            canvas_style.set_property("top", "0").unwrap();
+            canvas_style.set_property("left", "0").unwrap();
+            canvas_style.set_property("z-index", "1").unwrap();
+
             app::init().await;
 
             let start_result = eframe::WebRunner::new()
                 .start(
-                    canvas,
+                    canvas.clone(),
                     web_options,
                     Box::new(|cc| Ok(Box::new(MyApp::default()))),
                 )
                 .await;
+
+            // Add resize event listener to keep canvas full-screen
+            let resize_closure = {
+                let canvas = canvas.clone();
+                let window = window.clone();
+                wasm_bindgen::closure::Closure::wrap(Box::new(move || {
+                    let inner_width = window.inner_width().unwrap().as_f64().unwrap() as u32;
+                    let inner_height = window.inner_height().unwrap().as_f64().unwrap() as u32;
+                    canvas.set_width(inner_width);
+                    canvas.set_height(inner_height);
+                }) as Box<dyn Fn()>)
+            };
+
+            window
+                .add_event_listener_with_callback("resize", resize_closure.as_ref().unchecked_ref())
+                .unwrap();
+            resize_closure.forget(); // Keep the closure alive
 
             // Remove the loading text and spinner:
             if let Some(loading_text) = document.get_element_by_id("loading_text") {

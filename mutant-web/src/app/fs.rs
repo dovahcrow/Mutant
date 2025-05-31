@@ -10,6 +10,7 @@ use base64::Engine;
 
 use super::components::multimedia;
 use super::Window;
+use super::theme::secondary_button;
 use crate::utils::download_utils::{self, JsFileHandleResult, JsSimpleResult};
 use js_sys::Uint8Array;
 use wasm_bindgen_futures::spawn_local;
@@ -233,7 +234,7 @@ impl TreeNode {
                 }
                 
                 // Add a download button
-                if ui.button("💾").on_hover_text("Download file").clicked() {
+                if ui.add(secondary_button("💾")).on_hover_text("Download file").clicked() {
                     download_clicked_details = Some(details.clone());
                 }
             }

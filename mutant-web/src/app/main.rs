@@ -5,7 +5,7 @@ use humansize::{format_size, BINARY};
 use mutant_protocol::KeyDetails;
 use std::sync::RwLock;
 
-use super::Window;
+use super::{Window, theme::{primary_button, secondary_button}};
 
 use serde::{Deserialize, Serialize};
 
@@ -114,7 +114,7 @@ impl MainWindow {
 
         // Actions section
         ui.horizontal(|ui| {
-            if ui.button("Refresh").clicked() {
+            if ui.add(primary_button("🔄 Refresh")).clicked() {
                 log::info!("Refresh clicked");
                 let _keys = self.keys.clone();
                 let connected_ref = Arc::new(RwLock::new(false));
@@ -126,8 +126,9 @@ impl MainWindow {
                 });
             }
 
+            ui.add_space(8.0);
 
-            if ui.button("Sync").clicked() {
+            if ui.add(secondary_button("🔄 Sync")).clicked() {
                 // This will be implemented later to sync with the network
                 log::info!("Sync clicked");
             }
