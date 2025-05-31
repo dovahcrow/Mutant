@@ -66,6 +66,10 @@ pub struct PutWindow {
 
     // Progress tracking ID
     current_put_id: Arc<RwLock<Option<String>>>,
+
+    /// Unique identifier for this window instance to avoid widget ID conflicts
+    #[serde(skip)]
+    window_id: String,
 }
 
 impl Default for PutWindow {
@@ -105,6 +109,7 @@ impl Default for PutWindow {
             elapsed_time: Arc::new(RwLock::new(Duration::from_secs(0))),
             last_progress_check: Arc::new(RwLock::new(SystemTime::now())),
             current_put_id: Arc::new(RwLock::new(None)),
+            window_id: uuid::Uuid::new_v4().to_string(),
         }
     }
 }
@@ -647,7 +652,7 @@ impl PutWindow {
                     ui.label("Storage Mode:");
                     let mut storage_mode = self.storage_mode.write().unwrap();
 
-                    egui::ComboBox::new("storage_mode", "")
+                    egui::ComboBox::new(format!("mutant_put_storage_mode_{}", self.window_id), "")
                         .selected_text(format!("{:?}", *storage_mode))
                         .show_ui(ui, |ui| {
                             ui.selectable_value(&mut *storage_mode, StorageMode::Light, "Light");

@@ -12,12 +12,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MainWindow {
     keys: Arc<RwLock<Vec<KeyDetails>>>,
+    /// Unique identifier for this window instance to avoid widget ID conflicts
+    #[serde(skip)]
+    window_id: String,
 }
 
 impl Default for MainWindow {
     fn default() -> Self {
         Self {
             keys: crate::app::context::context().get_key_cache(),
+            window_id: uuid::Uuid::new_v4().to_string(),
         }
     }
 }
@@ -46,7 +50,7 @@ impl MainWindow {
             ui.label(RichText::new("No keys stored.").color(Color32::GRAY));
         } else {
             // Create a table to display the keys
-            egui::Grid::new("keys_grid")
+            egui::Grid::new(format!("mutant_main_keys_grid_{}", self.window_id))
                 .num_columns(5)
                 .spacing([20.0, 8.0])
                 .striped(true)

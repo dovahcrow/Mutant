@@ -76,11 +76,25 @@ lazy_static! {
     static ref WINDOW_COUNTER: RwLock<usize> = RwLock::new(0);
 }
 
+// Global dock area ID counter to ensure unique IDs across all dock areas
+lazy_static! {
+    static ref DOCK_AREA_ID_COUNTER: RwLock<usize> = RwLock::new(0);
+}
+
+/// Generate a unique dock area ID
+pub fn generate_unique_dock_area_id() -> String {
+    let mut counter = DOCK_AREA_ID_COUNTER.write().unwrap();
+    *counter += 1;
+    format!("mutant_dock_area_{}", *counter)
+}
+
 pub struct WindowSystem {
     tree: DockState<WindowType>,
     need_focus: Option<(i32, i32)>,
     // chart_window: ChartWindow,
     frame: usize,
+    /// Unique dock area ID for this window system
+    dock_area_id: String,
 }
 
 impl WindowSystem {
@@ -310,7 +324,7 @@ impl WindowSystem {
         // Create the dock area with docking enabled
         DockArea::new(&mut self.tree)
             .style(style)
-            .id(Id::new("egui_dock::DockArea"))
+            .id(Id::new(&self.dock_area_id))
             .show_inside(ui, &mut TabViewer {});
 
         self.frame += 1;
@@ -364,7 +378,9 @@ impl WindowSystem {
         match serde_json::from_str::<DockState<WindowType>>(&data) {
             Ok(tree) => Self {
                 tree,
-                ..Default::default()
+                frame: 0,
+                need_focus: None,
+                dock_area_id: generate_unique_dock_area_id(),
             },
             Err(e) => {
                 log::warn!("Failed to deserialize window state: {:?}", e);
@@ -385,7 +401,9 @@ impl WindowSystem {
 
         Self {
             tree,
-            ..Default::default()
+            frame: 0,
+            need_focus: None,
+            dock_area_id: generate_unique_dock_area_id(),
         }
     }
 }
@@ -401,6 +419,7 @@ impl Default for WindowSystem {
             frame: 0,
             tree,
             need_focus: None,
+            dock_area_id: generate_unique_dock_area_id(),
         }
     }
 }

@@ -11,6 +11,7 @@ use base64::Engine;
 use super::components::multimedia;
 use super::Window;
 use super::theme::secondary_button;
+use super::window_system::generate_unique_dock_area_id;
 use crate::utils::download_utils::{self, JsFileHandleResult, JsSimpleResult};
 use js_sys::Uint8Array;
 use wasm_bindgen_futures::spawn_local;
@@ -155,7 +156,7 @@ impl TreeNode {
 
     /// Draw this node and its children
     /// Returns (view_clicked_details, download_clicked_details)
-    fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize, selected_path: Option<&str>) -> (Option<KeyDetails>, Option<KeyDetails>) {
+    fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize, selected_path: Option<&str>, window_id: &str) -> (Option<KeyDetails>, Option<KeyDetails>) {
         // Use a very small fixed indentation to avoid exponential growth
         let indent_per_level = 2.0;
         let total_indent = indent_per_level * (indent_level as f32);
@@ -173,7 +174,7 @@ impl TreeNode {
                 let text = format!("{} {}/", icon, self.name); // Add '/' at the end of folder names
 
                 let header = egui::CollapsingHeader::new(text)
-                    .id_salt(format!("dir_{}", self.path)) // Use full path for unique ID
+                    .id_salt(format!("mutant_fs_{}dir_{}", window_id, self.path)) // Use window ID + path for unique ID
                     .default_open(self.expanded);
 
                 let mut child_view_details = None;
@@ -192,7 +193,7 @@ impl TreeNode {
 
                     // Draw the sorted children with exactly one more level of indentation
                     for (_, child) in sorted_children {
-                        let (view_details, down_details) = child.ui(ui, indent_level + 1, selected_path);
+                        let (view_details, down_details) = child.ui(ui, indent_level + 1, selected_path, window_id);
                         if view_details.is_some() {
                             child_view_details = view_details;
                         }
@@ -666,6 +667,12 @@ pub struct FsWindow {
     file_viewer_tab_viewer: FileViewerTabViewer,
     #[serde(skip)] // active_downloads should not be serialized
     active_downloads: Arc<Mutex<Vec<ActiveDownload>>>,
+    /// Unique identifier for this window instance to avoid widget ID conflicts
+    #[serde(skip)]
+    window_id: String,
+    /// Unique dock area ID for the file viewer
+    #[serde(skip)]
+    dock_area_id: String,
 }
 
 impl Default for FsWindow {
@@ -677,6 +684,8 @@ impl Default for FsWindow {
             file_viewer_dock_state: Some(DockState::new(vec![])),
             file_viewer_tab_viewer: FileViewerTabViewer {},
             active_downloads: Arc::new(Mutex::new(Vec::new())),
+            window_id: uuid::Uuid::new_v4().to_string(),
+            dock_area_id: generate_unique_dock_area_id(),
         }
     }
 }
@@ -690,7 +699,7 @@ impl Window for FsWindow {
         self.build_tree();
 
         // Use a horizontal layout with two panels
-        egui::SidePanel::left("file_tree_panel")
+        egui::SidePanel::left(format!("mutant_fs_tree_panel_{}", self.window_id))
             .resizable(true)
             .min_width(200.0)
             .default_width(300.0)
@@ -719,7 +728,7 @@ impl Window for FsWindow {
             if let Some(dock_state) = &mut self.file_viewer_dock_state {
                 egui_dock::DockArea::new(dock_state)
                     .style(style)
-                    .id(egui::Id::new("file_viewer_dock_area"))
+                    .id(egui::Id::new(&self.dock_area_id))
                     .show_inside(ui, &mut self.file_viewer_tab_viewer);
             }
 
@@ -731,45 +740,43 @@ impl Window for FsWindow {
             }
         });
 
-        // Draw Active Downloads UI
-        ui.separator(); // Visually separate from file viewer
-        ui.heading("Active Downloads");
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            let mut downloads_guard = self.active_downloads.lock().unwrap();
-            // Remove completed/failed downloads after a delay or via a clear button (not implemented here)
-            // For now, just display them.
-            for download in downloads_guard.iter() {
-                ui.label(format!("File: {}", download.file_name));
-                ui.label(format!("Status: {:?}", download.status));
-                if download.key_details.total_size > 0 {
-                    ui.add(egui::ProgressBar::new(download.progress_val).show_percentage());
-                    ui.label(format!("{} / {} bytes", 
-                        humansize::format_size(download.downloaded_bytes, humansize::BINARY), 
-                        humansize::format_size(download.key_details.total_size, humansize::BINARY)
-                    ));
-                } else {
-                     ui.label(format!("{} downloaded", humansize::format_size(download.downloaded_bytes, humansize::BINARY)));
-                }
-                if let Some(err) = &download.error_message {
-                    ui.colored_label(crate::app::theme::MutantColors::ERROR, format!("Error: {}", err));
-                }
-                ui.separator();
-            }
-            // Keep only non-completed/failed for now, or implement manual clearing
-            downloads_guard.retain(|d| match d.status {
-                DownloadStatus::Completed | DownloadStatus::Failed | DownloadStatus::Cancelled => false,
-                _ => true,
-            });
-        });
+        // // Draw Active Downloads UI
+        // ui.separator(); // Visually separate from file viewer
+        // ui.heading("Active Downloads");
+        // egui::ScrollArea::vertical().show(ui, |ui| {
+        //     let mut downloads_guard = self.active_downloads.lock().unwrap();
+        //     // Remove completed/failed downloads after a delay or via a clear button (not implemented here)
+        //     // For now, just display them.
+        //     for download in downloads_guard.iter() {
+        //         ui.label(format!("File: {}", download.file_name));
+        //         ui.label(format!("Status: {:?}", download.status));
+        //         if download.key_details.total_size > 0 {
+        //             ui.add(egui::ProgressBar::new(download.progress_val).show_percentage());
+        //             ui.label(format!("{} / {} bytes", 
+        //                 humansize::format_size(download.downloaded_bytes, humansize::BINARY), 
+        //                 humansize::format_size(download.key_details.total_size, humansize::BINARY)
+        //             ));
+        //         } else {
+        //              ui.label(format!("{} downloaded", humansize::format_size(download.downloaded_bytes, humansize::BINARY)));
+        //         }
+        //         if let Some(err) = &download.error_message {
+        //             ui.colored_label(crate::app::theme::MutantColors::ERROR, format!("Error: {}", err));
+        //         }
+        //         ui.separator();
+        //     }
+        //     // Keep only non-completed/failed for now, or implement manual clearing
+        //     downloads_guard.retain(|d| match d.status {
+        //         DownloadStatus::Completed | DownloadStatus::Failed | DownloadStatus::Cancelled => false,
+        //         _ => true,
+        //     });
+        // });
     }
 }
 
 impl FsWindow {
     pub fn new() -> Self {
-        // Ensure active_downloads is initialized here if not relying on Default::default() pattern
-        let mut new_self = Self::default();
-        new_self.active_downloads = Arc::new(Mutex::new(Vec::new())); // Explicitly ensure
-        new_self
+        // Use default implementation which already includes unique window_id
+        Self::default()
     }
     
     fn update_download_state_js_writer(
@@ -1173,7 +1180,7 @@ impl FsWindow {
 
             // Draw the sorted children with indentation and check if any file was clicked
             for (_, child) in sorted_children {
-                let (view_details, download_details) = child.ui(ui, 1, selected_path_ref); // Start with indent level 1 since we're inside root
+                let (view_details, download_details) = child.ui(ui, 1, selected_path_ref, &self.window_id); // Start with indent level 1 since we're inside root
                 if view_details.is_some() {
                     view_details_clicked = view_details;
                 }
