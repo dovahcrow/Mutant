@@ -878,13 +878,18 @@ use eframe::egui;
 use wasm_bindgen_futures::spawn_local;
 
 struct MyApp {
-    fs_window: FsWindow,
+    fs_window: Arc<RwLock<FsWindow>>,
 }
 
 impl Default for MyApp {
     fn default() -> Self {
+        let fs_window = Arc::new(RwLock::new(FsWindow::new()));
+
+        // Set the global reference for async tasks
+        app::fs::set_main_fs_window(fs_window.clone());
+
         Self {
-            fs_window: FsWindow::new(),
+            fs_window,
         }
     }
 }
@@ -945,8 +950,8 @@ impl MyApp {
                     ui.add_space(15.0);
 
                     // Check window states before creating buttons
-                    let upload_open = self.fs_window.is_window_open("MutAnt Upload");
-                    let stats_open = self.fs_window.is_window_open("MutAnt Stats");
+                    let upload_open = self.fs_window.read().unwrap().is_window_open("MutAnt Upload");
+                    let stats_open = self.fs_window.read().unwrap().is_window_open("MutAnt Stats");
 
                     // Helper function to create a button with different styling when active
                     let menu_button = |ui: &mut egui::Ui, icon: &str, hover: &str, is_active: bool| {
@@ -974,11 +979,11 @@ impl MyApp {
                     };
 
                     if menu_button(ui, "📤", "Upload", upload_open).clicked() {
-                        self.fs_window.add_put_tab();
+                        self.fs_window.write().unwrap().add_put_tab();
                     }
 
                     if menu_button(ui, "📊", "Stats", stats_open).clicked() {
-                        self.fs_window.add_stats_tab();
+                        self.fs_window.write().unwrap().add_stats_tab();
                     }
 
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |_ui| {
@@ -1006,7 +1011,7 @@ impl eframe::App for MyApp {
             .show(ctx, |ui| {
                 // Render the static FS window directly
                 // All windows now dock within the FS window's internal dock system
-                self.fs_window.draw(ui);
+                self.fs_window.write().unwrap().draw(ui);
             });
 
         // Show notifications

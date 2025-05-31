@@ -6,6 +6,7 @@ use eframe::egui::{self, Color32, RichText};
 use humansize::{format_size, BINARY};
 use mutant_protocol::{KeyDetails, TaskProgress, GetEvent, TaskId}; // Added TaskProgress, GetEvent, TaskId
 use serde::{Deserialize, Serialize};
+use lazy_static::lazy_static;
 
 
 use super::components::multimedia;
@@ -19,6 +20,20 @@ use wasm_bindgen_futures::spawn_local;
 use log::{info, error}; // Ensure log levels are imported
 use serde_wasm_bindgen;
 
+// Global reference to the main FsWindow for async task access
+lazy_static! {
+    static ref MAIN_FS_WINDOW: Arc<RwLock<Option<Arc<RwLock<FsWindow>>>>> = Arc::new(RwLock::new(None));
+}
+
+/// Set the global reference to the main FsWindow
+pub fn set_main_fs_window(fs_window: Arc<RwLock<FsWindow>>) {
+    *MAIN_FS_WINDOW.write().unwrap() = Some(fs_window);
+}
+
+/// Get a reference to the main FsWindow for async tasks
+pub fn get_main_fs_window() -> Option<Arc<RwLock<FsWindow>>> {
+    MAIN_FS_WINDOW.read().unwrap().clone()
+}
 
 /// Helper function to format file sizes in a human-readable way
 fn humanize_size(size: usize) -> String {
@@ -509,11 +524,20 @@ impl FileViewerTab {
                     }
                 },
                 multimedia::FileType::Image => {
-                    // Image viewer
+                    // Image viewer - create texture if not already created
+                    if self.image_texture.is_none() && self.file_binary.is_some() {
+                        // Create the texture from binary data
+                        if let Some(binary_data) = &self.file_binary {
+                            self.image_texture = multimedia::load_image(ui.ctx(), binary_data);
+                        }
+                    }
+
                     if let Some(texture) = &self.image_texture {
                         multimedia::draw_image_viewer(ui, texture);
+                    } else if self.file_binary.is_some() {
+                        ui.label("Error: Failed to create image texture");
                     } else {
-                        ui.label("Error: Image texture not loaded");
+                        ui.label("Loading image...");
                     }
                 },
                 multimedia::FileType::Video => {
@@ -1114,9 +1138,155 @@ impl FsWindow {
             }
 
             log::info!("FsWindow: Successfully added tab to internal dock for: {}", file_details.key);
+
+            // Start loading the file content asynchronously
+            self.load_file_content(file_details);
         } else {
             log::info!("FsWindow: Tab for file {} already exists in internal dock", file_details.key);
         }
+    }
+
+    /// Load file content asynchronously and update the tab when complete
+    fn load_file_content(&self, file_details: KeyDetails) {
+        let key = file_details.key.clone();
+        let is_public = file_details.is_public;
+
+        log::info!("Starting async file loading for: {}", key);
+
+        // Spawn async task to load file content
+        wasm_bindgen_futures::spawn_local(async move {
+            let ctx = crate::app::context::context();
+
+            match ctx.get_file_for_viewing(&key, is_public).await {
+                Ok(data) => {
+                    log::info!("Successfully loaded file content for: {} ({} bytes)", key, data.len());
+
+                    // Update the tab with the loaded content using the global FsWindow reference
+                    if let Some(fs_window_ref) = get_main_fs_window() {
+                        let mut fs_window = fs_window_ref.write().unwrap();
+
+                        // Look for the file tab in the FsWindow's internal dock
+                        for (_, internal_tab) in fs_window.internal_dock.iter_all_tabs_mut() {
+                            if let FsInternalTab::FileViewer(file_tab) = internal_tab {
+                                if file_tab.file.key == key {
+                                    // Update the tab with loaded content
+                                    file_tab.is_loading = false;
+
+                                    // Determine file type and process content
+                                    let file_type = super::components::multimedia::detect_file_type(&data, &key);
+                                    file_tab.file_type = Some(file_type.clone());
+
+                                    // Process content based on file type
+                                    match file_type {
+                                        super::components::multimedia::FileType::Text => {
+                                            let content = String::from_utf8_lossy(&data).to_string();
+                                            file_tab.content = content.clone();
+
+                                            // Update FileContent
+                                            if let Some(file_content) = &mut file_tab.file_content {
+                                                file_content.file_type = file_type;
+                                                file_content.raw_data = data;
+                                                file_content.editable_content = Some(content);
+                                                file_content.content_modified = false;
+                                            }
+                                        },
+                                        super::components::multimedia::FileType::Code(lang) => {
+                                            let content = String::from_utf8_lossy(&data).to_string();
+                                            file_tab.content = content.clone();
+
+                                            // Update FileContent
+                                            if let Some(file_content) = &mut file_tab.file_content {
+                                                file_content.file_type = super::components::multimedia::FileType::Code(lang);
+                                                file_content.raw_data = data;
+                                                file_content.editable_content = Some(content);
+                                                file_content.content_modified = false;
+                                            }
+                                        },
+                                        super::components::multimedia::FileType::Image => {
+                                            // Store binary data for image processing
+                                            file_tab.file_binary = Some(data.clone());
+
+                                            // Create image texture for display
+                                            // We need to get the egui context to create the texture
+                                            // Since we're in an async context, we'll create the texture in the UI thread
+                                            // For now, we'll store the data and create the texture when drawing
+
+                                            // Update FileContent
+                                            if let Some(file_content) = &mut file_tab.file_content {
+                                                file_content.file_type = file_type;
+                                                file_content.raw_data = data.clone();
+                                                file_content.editable_content = None;
+                                                file_content.content_modified = false;
+                                            }
+                                        },
+                                        super::components::multimedia::FileType::Video => {
+                                            // Store binary data for video processing
+                                            file_tab.file_binary = Some(data.clone());
+
+                                            // Update FileContent
+                                            if let Some(file_content) = &mut file_tab.file_content {
+                                                file_content.file_type = file_type;
+                                                file_content.raw_data = data;
+                                                file_content.editable_content = None;
+                                                file_content.content_modified = false;
+                                            }
+                                        },
+                                        super::components::multimedia::FileType::Other => {
+                                            // Store binary data
+                                            file_tab.file_binary = Some(data.clone());
+
+                                            // Update FileContent
+                                            if let Some(file_content) = &mut file_tab.file_content {
+                                                file_content.file_type = file_type;
+                                                file_content.raw_data = data;
+                                                file_content.editable_content = None;
+                                                file_content.content_modified = false;
+                                            }
+                                        },
+                                    }
+
+                                    log::info!("Updated file tab content for: {}", key);
+                                    return; // Exit early since we found and updated the tab
+                                }
+                            }
+                        }
+
+                        log::warn!("Could not find file tab for key: {} in main FsWindow", key);
+                    } else {
+                        log::warn!("Main FsWindow reference not available for key: {}", key);
+                    }
+                },
+                Err(e) => {
+                    log::error!("Failed to load file content for {}: {}", key, e);
+
+                    // Update the tab with error state using the global FsWindow reference
+                    if let Some(fs_window_ref) = get_main_fs_window() {
+                        let mut fs_window = fs_window_ref.write().unwrap();
+
+                        // Look for the file tab in the FsWindow's internal dock
+                        for (_, internal_tab) in fs_window.internal_dock.iter_all_tabs_mut() {
+                            if let FsInternalTab::FileViewer(file_tab) = internal_tab {
+                                if file_tab.file.key == key {
+                                    file_tab.is_loading = false;
+                                    file_tab.content = format!("Error loading file: {}", e);
+
+                                    // Update FileContent with error
+                                    if let Some(file_content) = &mut file_tab.file_content {
+                                        file_content.editable_content = Some(file_tab.content.clone());
+                                        file_content.raw_data = file_tab.content.as_bytes().to_vec();
+                                    }
+                                    return; // Exit early since we found and updated the tab
+                                }
+                            }
+                        }
+
+                        log::warn!("Could not find file tab for error update, key: {} in main FsWindow", key);
+                    } else {
+                        log::warn!("Main FsWindow reference not available for error update, key: {}", key);
+                    }
+                }
+            }
+        });
     }
 
     /// Add a new Put window tab to the internal dock system
@@ -1299,10 +1469,8 @@ impl FsWindow {
                 self.selected_path = Some(details.key.clone());
 
                 // Add a new tab for this file using the unified dock system
+                // The add_file_tab method now automatically triggers async file loading
                 self.add_file_tab(details);
-
-                // TODO: Add async file loading logic here
-                // For now, the tab is created empty and will be loaded later
             }
             
             // Handle the download click
