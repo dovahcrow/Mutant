@@ -420,7 +420,7 @@ impl TreeNode {
                 "json" | "yaml" | "yml" | "toml" | "xml" => ("📋", super::theme::MutantColors::TEXT_MUTED),
 
                 // Images - green tones
-                "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" => ("🖼️", super::theme::MutantColors::ACCENT_GREEN),
+                "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" => ("📷", super::theme::MutantColors::ACCENT_GREEN),
 
                 // Videos - purple/magenta tones
                 "mp4" | "avi" | "mkv" | "mov" | "wmv" | "flv" | "webm" => ("🎬", super::theme::MutantColors::ACCENT_PURPLE),
@@ -880,14 +880,36 @@ impl egui_dock::TabViewer for FsInternalTabViewer {
                     .map(|f| f.to_string_lossy().to_string())
                     .unwrap_or_else(|| file_tab.file.key.clone());
 
+                // Determine the file type to use for the icon
+                // Priority: file_content.file_type > file_tab.file_type > extension-based detection
+                let file_type_for_icon = if let Some(file_content) = &file_tab.file_content {
+                    Some(file_content.file_type.clone())
+                } else {
+                    file_tab.file_type.clone()
+                };
+
                 // Add an icon based on the file type
-                let file_icon = match &file_tab.file_type {
+                let file_icon = match &file_type_for_icon {
                     Some(multimedia::FileType::Text) => "📄",
                     Some(multimedia::FileType::Code(_)) => "📝",
                     Some(multimedia::FileType::Image) => "🖼️",
                     Some(multimedia::FileType::Video) => "🎬",
-                    Some(multimedia::FileType::Other) | None => "📄",
+                    Some(multimedia::FileType::Other) => "📄",
+                    None => {
+                        // Fallback to extension-based detection if file type is not yet determined
+                        if let Some(extension) = std::path::Path::new(&file_name).extension() {
+                            match extension.to_string_lossy().to_lowercase().as_str() {
+                                "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" => "📷",
+                                "mp4" | "avi" | "mkv" | "mov" | "wmv" | "flv" | "webm" => "🎬",
+                                "rs" | "js" | "ts" | "py" | "java" | "cpp" | "c" | "go" | "rb" | "php" => "📝",
+                                _ => "📄",
+                            }
+                        } else {
+                            "📄"
+                        }
+                    }
                 };
+
 
                 // Add a modified indicator if the file has been modified
                 let modified_indicator = if file_tab.file_modified { "* " } else { "" };
