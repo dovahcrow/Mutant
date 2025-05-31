@@ -212,15 +212,25 @@ fn draw_code_editor(ui: &mut Ui, file_content: &mut FileContent, language: &str)
 
                 job.wrap.max_width = wrap_width;
 
+                // Override the font to use the theme's monospace font size (12.0)
+                // This ensures the code editor uses the same font size as the rest of the UI
+                if let Some(monospace_font) = ui.style().text_styles.get(&egui::TextStyle::Monospace) {
+                    // Update all text sections to use the correct font
+                    for section in &mut job.sections {
+                        section.format.font_id = monospace_font.clone();
+                    }
+                }
+
                 // Return the layout job
                 ui.fonts(|f| f.layout_job(job))
             };
 
             // Add the TextEdit with the optimized layouter
+            // Use the same font size as the rest of the UI (12.0 for monospace)
             let response = ui.add(
                 egui::TextEdit::multiline(content)
                     .desired_width(f32::INFINITY)
-                    .font(egui::TextStyle::Monospace)
+                    .font(egui::TextStyle::Monospace) // This will use the theme's 12.0 size
                     .code_editor()
                     .lock_focus(true)
                     .layouter(&mut layouter)
