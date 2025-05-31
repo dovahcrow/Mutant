@@ -315,58 +315,70 @@ impl TreeNode {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
 
-                // Draw metadata in the right area (will appear on top of the continuous gradient)
-                // Align metadata vertically with the text by offsetting the rect position
-                let vertical_offset = (row_rect.height() - 12.0) / 2.0;
-                let metadata_rect = egui::Rect::from_min_size(
-                    egui::Pos2::new(row_rect.right() - metadata_width, row_rect.top() + vertical_offset),
-                    egui::Vec2::new(metadata_width, row_rect.height() - vertical_offset)
+                // Draw metadata manually at the exact same position as text
+                let text_baseline_y = row_rect.top() + (row_rect.height() - 12.0) / 2.0;
+
+                // Calculate positions for metadata elements from right to left
+                let mut current_x = row_rect.right() - 4.0; // Start with right padding
+
+                // Download button position
+                let button_width = 20.0;
+                let button_rect = egui::Rect::from_min_size(
+                    egui::Pos2::new(current_x - button_width, text_baseline_y),
+                    egui::Vec2::new(button_width, 12.0)
                 );
 
-                // Create a temporary UI for the metadata area
-                let mut metadata_ui = ui.new_child(
-                    egui::UiBuilder::new()
-                        .max_rect(metadata_rect)
-                        .layout(egui::Layout::right_to_left(egui::Align::TOP))
-                );
-
-                metadata_ui.add_space(4.0); // Minimal right padding to account for existing frame padding
-
-                // Download button - green down arrow
-                let download_btn = metadata_ui.add_sized(
-                    [20.0, 20.0],
-                    egui::Button::new(
-                        egui::RichText::new("⬇")  // Down arrow
-                            .color(super::theme::MutantColors::ACCENT_GREEN)
-                            .size(14.0)
-                    )
-                        .fill(egui::Color32::TRANSPARENT)
-                        .stroke(egui::Stroke::NONE)
-                );
-
-                if download_btn.clicked() {
+                // Draw download button manually
+                let button_response = ui.allocate_rect(button_rect, egui::Sense::click());
+                if button_response.clicked() {
                     download_clicked_details = Some(details.clone());
                 }
-
-                if download_btn.hovered() {
+                if button_response.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
 
-                metadata_ui.add_space(8.0);
+                // Draw the arrow icon at the exact text baseline
+                let arrow_galley = ui.painter().layout_no_wrap(
+                    "⬇".to_string(),
+                    egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                    super::theme::MutantColors::ACCENT_GREEN
+                );
+                ui.painter().galley(
+                    egui::Pos2::new(current_x - button_width / 2.0 - arrow_galley.rect.width() / 2.0, text_baseline_y),
+                    arrow_galley,
+                    super::theme::MutantColors::ACCENT_GREEN
+                );
 
-                // File size
-                let size_text = RichText::new(humanize_size(details.total_size))
-                    .size(11.0)
-                    .color(super::theme::MutantColors::TEXT_MUTED);
-                metadata_ui.label(size_text);
+                current_x -= button_width + 8.0; // Move left for next element
 
-                // Public indicator
+                // File size text
+                let size_text = humanize_size(details.total_size);
+                let size_galley = ui.painter().layout_no_wrap(
+                    size_text,
+                    egui::FontId::new(11.0, egui::FontFamily::Proportional),
+                    super::theme::MutantColors::TEXT_MUTED
+                );
+                current_x -= size_galley.rect.width();
+                ui.painter().galley(
+                    egui::Pos2::new(current_x, text_baseline_y),
+                    size_galley,
+                    super::theme::MutantColors::TEXT_MUTED
+                );
+
+                // Public indicator if needed
                 if details.is_public {
-                    metadata_ui.add_space(4.0);
-                    let public_text = RichText::new("PUB")
-                        .size(10.0)
-                        .color(super::theme::MutantColors::SUCCESS);
-                    metadata_ui.label(public_text);
+                    current_x -= 4.0; // Small spacing
+                    let pub_galley = ui.painter().layout_no_wrap(
+                        "PUB".to_string(),
+                        egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                        super::theme::MutantColors::SUCCESS
+                    );
+                    current_x -= pub_galley.rect.width();
+                    ui.painter().galley(
+                        egui::Pos2::new(current_x, text_baseline_y),
+                        pub_galley,
+                        super::theme::MutantColors::SUCCESS
+                    );
                 }
             }
         });
