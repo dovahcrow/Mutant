@@ -2,7 +2,7 @@ use std::sync::{Arc, RwLock, Mutex}; // Added Mutex
 use std::collections::BTreeMap;
 
 use eframe::egui::{self, Color32, RichText};
-use egui_dock::DockState;
+
 use humansize::{format_size, BINARY};
 use mutant_protocol::{KeyDetails, TaskProgress, GetEvent, TaskId}; // Added TaskProgress, GetEvent, TaskId
 use serde::{Deserialize, Serialize};
@@ -582,15 +582,16 @@ impl FileViewerTab {
                     // Get a mutable reference to the window system
                     let mut window_system = crate::app::window_system::window_system_mut();
 
-                    // Find our window and update it
-                    if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
-                        // Find the tab with this file and update it
-                        if let Some(tab) = window.find_tab_mut(&key) {
-                            tab.is_loading = false;
-                        }
+                    // Find the tab with this file and update it
+                    if let Some(tab) = window_system.find_file_viewer_tab_mut(&key) {
+                        tab.is_loading = false;
+                    }
 
-                        // Refresh the key list
-                        let _ = ctx.list_keys().await;
+                    // Refresh the key list
+                    let _ = ctx.list_keys().await;
+
+                    // Find our window and rebuild tree
+                    if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
                         window.build_tree();
                     }
                 },
@@ -598,14 +599,11 @@ impl FileViewerTab {
                     // Get a mutable reference to the window system
                     let mut window_system = crate::app::window_system::window_system_mut();
 
-                    // Find our window and update it
-                    if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
-                        // Find the tab with this file and update it
-                        if let Some(tab) = window.find_tab_mut(&key) {
-                            tab.is_loading = false;
-                            tab.file_modified = true; // Keep the modified flag since save failed
-                            tab.content = format!("Error saving file: {}", e);
-                        }
+                    // Find the tab with this file and update it
+                    if let Some(tab) = window_system.find_file_viewer_tab_mut(&key) {
+                        tab.is_loading = false;
+                        tab.file_modified = true; // Keep the modified flag since save failed
+                        tab.content = format!("Error saving file: {}", e);
                     }
                 }
             }
@@ -613,46 +611,7 @@ impl FileViewerTab {
     }
 }
 
-/// Tab viewer for the file viewer area
-#[derive(Clone, Serialize, Deserialize)]
-struct FileViewerTabViewer {}
-
-impl egui_dock::TabViewer for FileViewerTabViewer {
-    type Tab = FileViewerTab;
-
-    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        // Get the file name from the path
-        let file_name = std::path::Path::new(&tab.file.key)
-            .file_name()
-            .map(|f| f.to_string_lossy().to_string())
-            .unwrap_or_else(|| tab.file.key.clone());
-
-        // Add an icon based on the file type
-        let icon = match &tab.file_type {
-            Some(multimedia::FileType::Text) => "📄",
-            Some(multimedia::FileType::Code(_)) => "📝",
-            Some(multimedia::FileType::Image) => "🖼️",
-            Some(multimedia::FileType::Video) => "🎬",
-            Some(multimedia::FileType::Other) | None => "📄",
-        };
-
-        // Add a modified indicator if the file has been modified
-        let modified_indicator = if tab.file_modified { "* " } else { "" };
-
-        // Create a compact title that doesn't expand to fill all space
-        let title = format!("{}{}{}", modified_indicator, icon, file_name);
-        egui::RichText::new(title).into()
-    }
-
-    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        tab.draw(ui);
-    }
-
-    // Allow all tabs to be closable
-    fn closeable(&mut self, _tab: &mut Self::Tab) -> bool {
-        true
-    }
-}
+// FileViewerTabViewer is no longer needed - using unified dock system
 
 /// The filesystem tree window
 #[derive(Clone, Serialize, Deserialize)]
@@ -661,10 +620,7 @@ pub struct FsWindow {
     root: TreeNode,
     /// Path of the selected file (for highlighting in the tree)
     selected_path: Option<String>,
-    /// Dock state for the file viewer area
-    #[serde(skip)]
-    file_viewer_dock_state: Option<DockState<FileViewerTab>>,
-    file_viewer_tab_viewer: FileViewerTabViewer,
+    // Removed internal dock system - now using unified dock system
     #[serde(skip)] // active_downloads should not be serialized
     active_downloads: Arc<Mutex<Vec<ActiveDownload>>>,
     /// Unique identifier for this window instance to avoid widget ID conflicts
@@ -681,8 +637,6 @@ impl Default for FsWindow {
             keys: crate::app::context::context().get_key_cache(),
             root: TreeNode::default(),
             selected_path: None,
-            file_viewer_dock_state: Some(DockState::new(vec![])),
-            file_viewer_tab_viewer: FileViewerTabViewer {},
             active_downloads: Arc::new(Mutex::new(Vec::new())),
             window_id: uuid::Uuid::new_v4().to_string(),
             dock_area_id: generate_unique_dock_area_id(),
@@ -708,36 +662,15 @@ impl Window for FsWindow {
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            // Initialize the dock state if it doesn't exist
-            if self.file_viewer_dock_state.is_none() {
-                self.file_viewer_dock_state = Some(DockState::new(vec![]));
-            }
-
-            // Create a custom style for the dock area with MutAnt theme
-            let mut style = egui_dock::Style::from_egui(ui.ctx().style().as_ref());
-
-            // Configure the style to use MutAnt theme colors
-            style.tab_bar.fill_tab_bar = false; // Don't fill the entire tab bar
-            style.tab_bar.bg_fill = crate::app::theme::MutantColors::BACKGROUND_MEDIUM;
-            style.tab.tab_body.bg_fill = crate::app::theme::MutantColors::BACKGROUND_DARK;
-            style.tab.active.bg_fill = crate::app::theme::MutantColors::SURFACE;
-            style.tab.focused.bg_fill = crate::app::theme::MutantColors::SURFACE_HOVER;
-            style.tab_bar.hline_color = crate::app::theme::MutantColors::BORDER_MEDIUM;
-
-            // Draw the dock area
-            if let Some(dock_state) = &mut self.file_viewer_dock_state {
-                egui_dock::DockArea::new(dock_state)
-                    .style(style)
-                    .id(egui::Id::new(&self.dock_area_id))
-                    .show_inside(ui, &mut self.file_viewer_tab_viewer);
-            }
-
-            // If no tabs are open, show a message
-            if self.file_viewer_dock_state.as_ref().map_or(true, |ds| ds.iter_all_tabs().count() == 0) {
-                ui.centered_and_justified(|ui| {
-                    ui.heading("Select a file to view its content");
+            // Show instructions for using the unified dock system
+            ui.centered_and_justified(|ui| {
+                ui.vertical_centered(|ui| {
+                    ui.heading("File Viewer");
+                    ui.add_space(10.0);
+                    ui.label("Click on a file in the tree to open it in a new tab.");
+                    ui.label("File tabs will appear in the main dock area and can be moved freely.");
                 });
-            }
+            });
         });
 
         // // Draw Active Downloads UI
@@ -1028,60 +961,15 @@ impl FsWindow {
     }
 
 
-    /// Find a tab by key (read-only)
-    pub fn find_tab(&self, key: &str) -> Option<&FileViewerTab> {
-        if let Some(dock_state) = &self.file_viewer_dock_state {
-            // Iterate through all tabs in the dock state
-            for (_, tab) in dock_state.iter_all_tabs() {
-                if tab.file.key == key {
-                    return Some(tab);
-                }
-            }
-        }
-        None
-    }
+    // find_tab methods removed - use WindowSystem methods directly
 
-    /// Find a tab by key (mutable)
-    pub fn find_tab_mut(&mut self, key: &str) -> Option<&mut FileViewerTab> {
-        if let Some(dock_state) = &mut self.file_viewer_dock_state {
-            // Iterate through all tabs in the dock state
-            for (_, tab) in dock_state.iter_all_tabs_mut() {
-                if tab.file.key == key {
-                    return Some(tab);
-                }
-            }
-        }
-        None
-    }
-
-    /// Add a new tab for a file
+    /// Add a new tab for a file - now uses the unified dock system
     fn add_file_tab(&mut self, file_details: KeyDetails) {
         // Create a new tab
         let tab = FileViewerTab::new(file_details.clone());
 
-        // Add the tab to the dock state
-        if let Some(dock_state) = &mut self.file_viewer_dock_state {
-            // Check if a tab for this file already exists
-            let tab_exists = dock_state.iter_all_tabs().any(|(_, t)| t.file.key == file_details.key);
-
-            if !tab_exists {
-                // Add the tab to the focused leaf or create a new surface if none exists
-                if dock_state.main_surface().is_empty() {
-                    // First tab - create a new surface
-                    dock_state.push_to_focused_leaf(tab);
-                } else {
-                    // Add to the focused leaf
-                    dock_state.main_surface_mut().push_to_focused_leaf(tab);
-                }
-            } else {
-                // Focus the existing tab - we need to find it in the tree
-                // For now, we'll just log that the tab exists
-                log::info!("Tab for file {} already exists", file_details.key);
-
-                // In the future, we could implement a way to focus the existing tab
-                // This would require tracking node indices and tab indices
-            }
-        }
+        // Use the unified dock system to add the tab
+        crate::app::window_system::new_file_viewer_tab(tab);
     }
 
     /// Build the tree from the current keys
@@ -1194,174 +1082,11 @@ impl FsWindow {
                 // Update the selected path for highlighting in the tree
                 self.selected_path = Some(details.key.clone());
 
-                // Create a new tab for this file
-                let file_details_for_tab = details.clone(); // Clone for add_file_tab
-                let key_for_tab = file_details_for_tab.key.clone();
-                let is_public_for_tab = file_details_for_tab.is_public;
+                // Add a new tab for this file using the unified dock system
+                self.add_file_tab(details);
 
-
-                // Add a new tab for this file
-                self.add_file_tab(file_details_for_tab);
-
-                // Get the tab we just added
-                if let Some(_tab) = self.find_tab_mut(&key_for_tab) {
-                    // Spawn a task to fetch the content
-                    let window_id = ui.id();
-                    let ctx_clone_ui = ui.ctx().clone(); // Clone egui context for async task
-                    // let key_clone_async = key_for_tab.clone(); // Clone key for async task - already done with key_for_tab
-
-                    wasm_bindgen_futures::spawn_local(async move {
-                        let app_ctx = crate::app::context::context();
-
-                        // Set up progress tracking
-                        let key_for_progress = key_for_tab.clone();
-                        let window_id_for_progress = window_id;
-
-                        // Get the total file size from KeyDetails for accurate progress calculation
-                        let total_file_size = {
-                            let window_system = crate::app::window_system::window_system();
-                            if let Some(window) = window_system.get_window::<FsWindow>(window_id_for_progress) {
-                                if let Some(tab) = window.find_tab(&key_for_progress) {
-                                    Some(tab.file.total_size)
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        };
-
-                        // Use the new streaming-based method for viewing files with progress tracking
-                        match app_ctx.get_file_for_viewing_with_progress(
-                            &key_for_tab,
-                            is_public_for_tab,
-                            move |downloaded_bytes, _total_bytes| {
-                                // Update progress in the UI using the known total file size
-                                let mut window_system = crate::app::window_system::window_system_mut();
-                                if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id_for_progress) {
-                                    if let Some(tab) = window.find_tab_mut(&key_for_progress) {
-                                        tab.downloaded_bytes = downloaded_bytes;
-                                        tab.total_bytes = total_file_size;
-
-                                        // Calculate progress using the known total file size
-                                        if let Some(total) = total_file_size {
-                                            if total > 0 {
-                                                tab.loading_progress = (downloaded_bytes as f32 / total as f32).min(1.0);
-                                            } else {
-                                                tab.loading_progress = 0.0;
-                                            }
-                                        } else if downloaded_bytes > 0 {
-                                            // Fallback: show some progress even without total
-                                            tab.loading_progress = 0.1; // Minimal progress to show we're receiving data
-                                        }
-                                    }
-                                }
-                            }
-                        ).await {
-                            Ok(binary_data) => {
-                                let data_len = binary_data.len(); // Get length before moving data
-                                let mut window_system = crate::app::window_system::window_system_mut();
-                                if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
-                                    if let Some(tab) = window.find_tab_mut(&key_for_tab) {
-                                        tab.file_binary = Some(binary_data.clone());
-                                        let file_type = multimedia::detect_file_type(&binary_data, &key_for_tab);
-                                        tab.file_type = Some(file_type.clone());
-
-                                        match file_type {
-                                            multimedia::FileType::Text => {
-                                                if let Ok(text) = String::from_utf8(binary_data.clone()) {
-                                                    tab.content = text;
-                                                    if let Some(file_content) = &mut tab.file_content {
-                                                        file_content.file_type = multimedia::FileType::Text;
-                                                        file_content.raw_data = binary_data;
-                                                        file_content.editable_content = Some(tab.content.clone());
-                                                        file_content.content_modified = false;
-                                                    }
-                                                } else {
-                                                    tab.content = "Error: File contains binary data not displayable as text".to_string();
-                                                }
-                                            },
-                                            multimedia::FileType::Code(lang) => {
-                                                if let Ok(text) = String::from_utf8(binary_data.clone()) {
-                                                    tab.content = text;
-                                                    tab.file_type = Some(multimedia::FileType::Code(lang.clone()));
-                                                    if let Some(file_content) = &mut tab.file_content {
-                                                        file_content.file_type = multimedia::FileType::Code(lang);
-                                                        file_content.raw_data = binary_data;
-                                                        file_content.editable_content = Some(tab.content.clone());
-                                                        file_content.content_modified = false;
-                                                    }
-                                                } else {
-                                                    tab.content = "Error: File contains binary data not displayable as code".to_string();
-                                                }
-                                            },
-                                            multimedia::FileType::Image => {
-                                                if let Some(texture) = multimedia::load_image(&ctx_clone_ui, &binary_data) {
-                                                    tab.image_texture = Some(texture.clone());
-                                                    tab.content = "Image loaded".to_string();
-                                                    if let Some(file_content) = &mut tab.file_content {
-                                                        file_content.file_type = multimedia::FileType::Image;
-                                                        file_content.raw_data = binary_data;
-                                                        file_content.image_texture = Some(texture);
-                                                    }
-                                                } else {
-                                                    tab.content = "Error: Failed to load image".to_string();
-                                                }
-                                            },
-                                            multimedia::FileType::Video => {
-                                                let mime_type = mime_guess::from_path(&key_for_tab).first_or_octet_stream().essence_str().to_string();
-                                                let data_url_encoded = base64::engine::general_purpose::STANDARD.encode(&binary_data);
-                                                let video_url = format!("data:{};base64,{}", mime_type, data_url_encoded);
-                                                tab.video_url = Some(video_url.clone());
-                                                tab.content = "Video loaded".to_string();
-                                                if let Some(file_content) = &mut tab.file_content {
-                                                    file_content.file_type = multimedia::FileType::Video;
-                                                    file_content.raw_data = binary_data;
-                                                    file_content.video_url = Some(video_url);
-                                                }
-                                            },
-                                            multimedia::FileType::Other => {
-                                                if let Ok(text) = String::from_utf8(binary_data.clone()) {
-                                                    tab.content = text;
-                                                    tab.file_type = Some(multimedia::FileType::Text); // Display as text
-                                                } else {
-                                                    tab.content = "Unsupported file type for viewing".to_string();
-                                                }
-                                                 if let Some(file_content) = &mut tab.file_content {
-                                                    file_content.file_type = multimedia::FileType::Other; // Or Text, if decided above
-                                                    file_content.raw_data = binary_data;
-                                                    file_content.editable_content = Some(tab.content.clone());
-                                                }
-                                            }
-                                        }
-                                        tab.is_loading = false;
-                                        // Reset progress tracking
-                                        tab.loading_progress = 1.0;
-                                        tab.total_bytes = Some(data_len);
-                                        tab.downloaded_bytes = data_len;
-                                    }
-                                }
-                            },
-                            Err(e) => {
-                                let mut window_system = crate::app::window_system::window_system_mut();
-                                if let Some(window) = window_system.get_window_mut::<FsWindow>(window_id) {
-                                    if let Some(tab) = window.find_tab_mut(&key_for_tab) {
-                                        tab.content = format!("Error loading file for viewing: {}", e);
-                                        tab.is_loading = false;
-                                        // Reset progress tracking on error
-                                        tab.loading_progress = 0.0;
-                                        tab.total_bytes = None;
-                                        tab.downloaded_bytes = 0;
-                                        if let Some(file_content) = &mut tab.file_content {
-                                            file_content.file_type = multimedia::FileType::Text;
-                                            file_content.editable_content = Some(tab.content.clone());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    });
-                }
+                // TODO: Add async file loading logic here
+                // For now, the tab is created empty and will be loaded later
             }
             
             // Handle the download click

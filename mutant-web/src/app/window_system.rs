@@ -5,8 +5,58 @@ use egui_dock::{DockArea, DockState, Style};
 use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 
-use super::{main::MainWindow, put::PutWindow, fs::FsWindow, stats::StatsWindow, Window, WindowType, theme::MutantColors};
+use super::{main::MainWindow, put::PutWindow, fs::{FsWindow, FileViewerTab}, stats::StatsWindow, Window, WindowType, theme::MutantColors};
 
+/// Unified tab type that can hold any kind of tab in the dock system
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub enum UnifiedTab {
+    Main(MainWindow),
+    Put(PutWindow),
+    Fs(FsWindow),
+    Stats(StatsWindow),
+    FileViewer(FileViewerTab),
+}
+
+impl UnifiedTab {
+    pub fn name(&self) -> String {
+        match self {
+            UnifiedTab::Main(w) => w.name(),
+            UnifiedTab::Put(w) => w.name(),
+            UnifiedTab::Fs(w) => w.name(),
+            UnifiedTab::Stats(w) => w.name(),
+            UnifiedTab::FileViewer(tab) => tab.file.key.clone(),
+        }
+    }
+
+    pub fn draw(&mut self, ui: &mut egui::Ui) {
+        match self {
+            UnifiedTab::Main(w) => w.draw(ui),
+            UnifiedTab::Put(w) => w.draw(ui),
+            UnifiedTab::Fs(w) => w.draw(ui),
+            UnifiedTab::Stats(w) => w.draw(ui),
+            UnifiedTab::FileViewer(tab) => tab.draw(ui),
+        }
+    }
+}
+
+// Conversion from WindowType to UnifiedTab
+impl From<WindowType> for UnifiedTab {
+    fn from(window_type: WindowType) -> Self {
+        match window_type {
+            WindowType::Main(w) => UnifiedTab::Main(w),
+            WindowType::Put(w) => UnifiedTab::Put(w),
+            WindowType::Fs(w) => UnifiedTab::Fs(w),
+            WindowType::Stats(w) => UnifiedTab::Stats(w),
+        }
+    }
+}
+
+// Conversion from FileViewerTab to UnifiedTab
+impl From<FileViewerTab> for UnifiedTab {
+    fn from(tab: FileViewerTab) -> Self {
+        UnifiedTab::FileViewer(tab)
+    }
+}
 
 lazy_static! {
     static ref WINDOW_SYSTEM: Arc<RwLock<WindowSystem>> =
@@ -39,25 +89,68 @@ pub fn new_window<T: Into<WindowType> + 'static>(window: T) {
     });
 }
 
+/// Add a file viewer tab to the unified dock system
+pub fn new_file_viewer_tab(tab: FileViewerTab) {
+    let mut window_system = window_system_mut();
+
+    // Check if a tab for this file already exists
+    let tab_exists = window_system.tree.iter_all_tabs().any(|(_, unified_tab)| {
+        if let UnifiedTab::FileViewer(existing_tab) = unified_tab {
+            existing_tab.file.key == tab.file.key
+        } else {
+            false
+        }
+    });
+
+    if !tab_exists {
+        // Add the tab to the main surface
+        window_system.tree.main_surface_mut().push_to_focused_leaf(UnifiedTab::FileViewer(tab));
+    } else {
+        log::info!("Tab for file {} already exists", tab.file.key);
+        // TODO: Focus the existing tab
+    }
+}
 
 
 
-struct TabViewer {}
 
-impl egui_dock::TabViewer for TabViewer {
-    type Tab = WindowType;
+struct UnifiedTabViewer {}
+
+impl egui_dock::TabViewer for UnifiedTabViewer {
+    type Tab = UnifiedTab;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
         // Add an icon to the title to indicate the tab type
-        let icon = match tab {
-            WindowType::Main(_) => "🛸 ",
-            WindowType::Put(_) => "📤 ",
-            WindowType::Fs(_) => "📁 ",
-            WindowType::Stats(_) => "📊 ",
+        let (icon, title_text) = match tab {
+            UnifiedTab::Main(_) => ("🛸 ", tab.name()),
+            UnifiedTab::Put(_) => ("📤 ", tab.name()),
+            UnifiedTab::Fs(_) => ("📁 ", tab.name()),
+            UnifiedTab::Stats(_) => ("📊 ", tab.name()),
+            UnifiedTab::FileViewer(file_tab) => {
+                // Get the file name from the path
+                let file_name = std::path::Path::new(&file_tab.file.key)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| file_tab.file.key.clone());
+
+                // Add an icon based on the file type
+                let file_icon = match &file_tab.file_type {
+                    Some(super::components::multimedia::FileType::Text) => "📄",
+                    Some(super::components::multimedia::FileType::Code(_)) => "📝",
+                    Some(super::components::multimedia::FileType::Image) => "🖼️",
+                    Some(super::components::multimedia::FileType::Video) => "🎬",
+                    Some(super::components::multimedia::FileType::Other) | None => "📄",
+                };
+
+                // Add a modified indicator if the file has been modified
+                let modified_indicator = if file_tab.file_modified { "* " } else { "" };
+
+                (file_icon, format!("{}{}", modified_indicator, file_name))
+            }
         };
 
         // Create a compact title that doesn't expand to fill all space
-        let title = format!("{}{}", icon, tab.name());
+        let title = format!("{}{}", icon, title_text);
         egui::RichText::new(title).into()
     }
 
@@ -89,7 +182,7 @@ pub fn generate_unique_dock_area_id() -> String {
 }
 
 pub struct WindowSystem {
-    tree: DockState<WindowType>,
+    tree: DockState<UnifiedTab>,
     need_focus: Option<(i32, i32)>,
     // chart_window: ChartWindow,
     frame: usize,
@@ -119,7 +212,7 @@ impl WindowSystem {
         let position = [60.0 + (*counter as f32 * 20.0), 20.0 + (*counter as f32 * 20.0)];
 
         // Create a new window
-        let surface = self.tree.add_window(vec![window]);
+        let surface = self.tree.add_window(vec![window.into()]);
 
         // Set the window position and size
         self.tree
@@ -131,7 +224,7 @@ impl WindowSystem {
 
     pub fn add_main_dock_area(&mut self, window: WindowType) {
         // Add to main surface - this will allow docking
-        self.tree.main_surface_mut().push_to_focused_leaf(window);
+        self.tree.main_surface_mut().push_to_focused_leaf(window.into());
     }
 
     fn default_window_size(window_type: &WindowType) -> [f32; 2] {
@@ -155,9 +248,9 @@ impl WindowSystem {
         // For now, we'll just return the first window of the requested type
 
         // Iterate through all tabs in the tree
-        for (_, window_type) in self.tree.iter_all_tabs_mut() {
-            // Try to downcast to the requested type based on the window type
-            if let WindowType::Fs(fs_window) = window_type {
+        for (_, unified_tab) in self.tree.iter_all_tabs_mut() {
+            // Try to downcast to the requested type based on the unified tab type
+            if let UnifiedTab::Fs(fs_window) = unified_tab {
                 // Check if this is the type we're looking for
                 if std::any::TypeId::of::<T>() == std::any::TypeId::of::<FsWindow>() {
                     // This is unsafe, but we've verified the type
@@ -174,9 +267,9 @@ impl WindowSystem {
         // For now, we'll just return the first window of the requested type
 
         // Iterate through all tabs in the tree
-        for (_, window_type) in self.tree.iter_all_tabs() {
-            // Try to downcast to the requested type based on the window type
-            if let WindowType::Fs(fs_window) = window_type {
+        for (_, unified_tab) in self.tree.iter_all_tabs() {
+            // Try to downcast to the requested type based on the unified tab type
+            if let UnifiedTab::Fs(fs_window) = unified_tab {
                 // Check if this is the type we're looking for
                 if std::any::TypeId::of::<T>() == std::any::TypeId::of::<FsWindow>() {
                     // This is unsafe, but we've verified the type
@@ -325,7 +418,7 @@ impl WindowSystem {
         DockArea::new(&mut self.tree)
             .style(style)
             .id(Id::new(&self.dock_area_id))
-            .show_inside(ui, &mut TabViewer {});
+            .show_inside(ui, &mut UnifiedTabViewer {});
 
         self.frame += 1;
 
@@ -375,7 +468,7 @@ impl WindowSystem {
             None => return Self::default_with_main_window(),
         };
 
-        match serde_json::from_str::<DockState<WindowType>>(&data) {
+        match serde_json::from_str::<DockState<UnifiedTab>>(&data) {
             Ok(tree) => Self {
                 tree,
                 frame: 0,
@@ -395,7 +488,7 @@ impl WindowSystem {
 
         // Create a new DockState with the main window
         // This will create a main surface with a single tab that can be used for docking
-        let tree = DockState::new(vec![MainWindow::default().into()]);
+        let tree = DockState::new(vec![UnifiedTab::Main(MainWindow::default())]);
 
         log::info!("Initialized main window for docking");
 
@@ -442,6 +535,32 @@ pub async fn init_window_system() {
     //         window_system_mut().request_focus(pos);
     //     }
     // });
+}
+
+impl WindowSystem {
+    /// Find a FileViewerTab by key (read-only)
+    pub fn find_file_viewer_tab(&self, key: &str) -> Option<&FileViewerTab> {
+        for (_, unified_tab) in self.tree.iter_all_tabs() {
+            if let UnifiedTab::FileViewer(tab) = unified_tab {
+                if tab.file.key == key {
+                    return Some(tab);
+                }
+            }
+        }
+        None
+    }
+
+    /// Find a FileViewerTab by key (mutable)
+    pub fn find_file_viewer_tab_mut(&mut self, key: &str) -> Option<&mut FileViewerTab> {
+        for (_, unified_tab) in self.tree.iter_all_tabs_mut() {
+            if let UnifiedTab::FileViewer(tab) = unified_tab {
+                if tab.file.key == key {
+                    return Some(tab);
+                }
+            }
+        }
+        None
+    }
 }
 
 // pub fn focus_first_base() {
