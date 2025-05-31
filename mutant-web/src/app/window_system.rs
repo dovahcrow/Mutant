@@ -163,18 +163,24 @@ impl egui_dock::TabViewer for UnifiedTabViewer {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        // Don't override the style - let it inherit from the root theme
-        // For FsWindow tabs, we need to use the special draw method that avoids deadlock
-        // For other tabs, use the regular draw method
-        match tab {
-            UnifiedTab::Fs(_) => {
-                // Use regular draw for now - the shared dock functionality will be handled differently
-                tab.draw(ui);
+        // Set proper background for the content area
+        let frame = egui::Frame::new()
+            .fill(super::theme::MutantColors::BACKGROUND_DARK)
+            .inner_margin(egui::Margin::same(8));
+
+        frame.show(ui, |ui| {
+            // For FsWindow tabs, we need to use the special draw method that avoids deadlock
+            // For other tabs, use the regular draw method
+            match tab {
+                UnifiedTab::Fs(_) => {
+                    // Use regular draw for now - the shared dock functionality will be handled differently
+                    tab.draw(ui);
+                }
+                _ => {
+                    tab.draw(ui);
+                }
             }
-            _ => {
-                tab.draw(ui);
-            }
-        }
+        });
     }
 
     // Allow all tabs to be closable

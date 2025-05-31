@@ -929,8 +929,14 @@ impl egui_dock::TabViewer for FsInternalTabViewer {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        // Don't override the style - let it inherit from the root theme
-        tab.draw(ui);
+        // Set proper background for the content area
+        let frame = egui::Frame::new()
+            .fill(super::theme::MutantColors::BACKGROUND_DARK)
+            .inner_margin(egui::Margin::same(8));
+
+        frame.show(ui, |ui| {
+            tab.draw(ui);
+        });
     }
 
     // Allow all tabs to be closable
@@ -1041,30 +1047,9 @@ impl Window for FsWindow {
                     );
                 });
             } else {
-                // Create a custom style for the internal dock area
-                let mut style = egui_dock::Style::from_egui(ui.ctx().style().as_ref());
-
-                // Use MutAnt theme colors for tab styling
-                style.tab_bar.bg_fill = super::theme::MutantColors::BACKGROUND_MEDIUM;
-                style.tab.tab_body.bg_fill = super::theme::MutantColors::BACKGROUND_LIGHT;
-
-                // Active and focused tabs use accent color
-                style.tab.active.bg_fill = super::theme::MutantColors::ACCENT_ORANGE;
-                style.tab.active.text_color = super::theme::MutantColors::BACKGROUND_DARK;
-                style.tab.focused.bg_fill = super::theme::MutantColors::SURFACE_HOVER;
-                style.tab.focused.text_color = super::theme::MutantColors::TEXT_PRIMARY;
-
-                // Inactive tabs
-                style.tab.inactive.bg_fill = super::theme::MutantColors::SURFACE;
-                style.tab.inactive.text_color = super::theme::MutantColors::TEXT_SECONDARY;
-
-                // Tab bar styling
-                style.tab_bar.hline_color = super::theme::MutantColors::BORDER_MEDIUM;
-                style.tab_bar.corner_radius = eframe::egui::CornerRadius::same(6);
-
+                // Don't override the style - let it inherit from the root MutAnt theme
                 // Show the internal dock area with a unique ID
                 egui_dock::DockArea::new(&mut self.internal_dock)
-                    .style(style)
                     .id(egui::Id::new(format!("fs_internal_dock_{}", self.dock_area_id)))
                     .show_inside(ui, &mut FsInternalTabViewer {});
             }
