@@ -6,7 +6,7 @@ use eframe::egui::{self, Color32, RichText};
 use humansize::{format_size, BINARY};
 use mutant_protocol::{KeyDetails, TaskProgress, GetEvent, TaskId}; // Added TaskProgress, GetEvent, TaskId
 use serde::{Deserialize, Serialize};
-use base64::Engine;
+
 
 use super::components::multimedia;
 use super::Window;

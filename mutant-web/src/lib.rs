@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, sync::{Arc, RwLock}};
 
-use app::{context::init_context, fs::FsWindow, Window, DEFAULT_WS_URL};
+use app::{context::init_context, fs::FsWindow, Window, window_system_mut, DEFAULT_WS_URL};
 use futures::{channel::oneshot, StreamExt};
 use log::{error, info};
 use mutant_client::{MutantClient, ProgressReceiver};
@@ -975,18 +975,15 @@ impl MyApp {
                     }
 
                     if menu_button(ui, "🛸", "Main", false).clicked() {
-                        // Spawn a new main window in the window system
-                        log::info!("Opening Main window");
+                        app::window_system::new_window(app::main::MainWindow::new());
                     }
 
                     if menu_button(ui, "📤", "Upload", false).clicked() {
-                        // Spawn a new upload window in the window system
-                        log::info!("Opening Upload window");
+                        app::window_system::new_window(app::put::PutWindow::new());
                     }
 
                     if menu_button(ui, "📊", "Stats", false).clicked() {
-                        // Spawn a new stats window in the window system
-                        log::info!("Opening Stats window");
+                        app::window_system::new_window(app::stats::StatsWindow::new());
                     }
 
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |_ui| {
@@ -1014,6 +1011,10 @@ impl eframe::App for MyApp {
             .show(ctx, |ui| {
                 // Render the static FS window directly
                 self.fs_window.draw(ui);
+
+                // Also render the window system dock area for secondary windows
+                // This will show floating windows as part of the dock system
+                window_system_mut().draw_dock_only(ui);
             });
 
         // Show notifications

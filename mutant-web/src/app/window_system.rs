@@ -320,6 +320,65 @@ impl WindowSystem {
         None
     }
 
+    /// Draw only the dock area without the left menu (for use with external menu)
+    pub fn draw_dock_only(&mut self, ui: &mut egui::Ui) {
+        // Create a custom style for the dock area
+        let mut style = Style::from_egui(ui.ctx().style().as_ref());
+
+        // Configure the style to make docking more visible and user-friendly
+        style.tab_bar.fill_tab_bar = false; // Don't fill the entire tab bar
+
+        // Use MutAnt theme colors for tab styling
+        style.tab_bar.bg_fill = MutantColors::BACKGROUND_MEDIUM;
+        style.tab.tab_body.bg_fill = MutantColors::BACKGROUND_LIGHT;
+
+        // Active and focused tabs use accent color
+        style.tab.active.bg_fill = MutantColors::ACCENT_ORANGE;
+        style.tab.active.text_color = MutantColors::BACKGROUND_DARK;
+        style.tab.focused.bg_fill = MutantColors::SURFACE_HOVER;
+        style.tab.focused.text_color = MutantColors::TEXT_PRIMARY;
+
+        // Inactive tabs
+        style.tab.inactive.bg_fill = MutantColors::SURFACE;
+        style.tab.inactive.text_color = MutantColors::TEXT_SECONDARY;
+
+        // Tab bar styling
+        style.tab_bar.hline_color = MutantColors::BORDER_MEDIUM;
+        style.tab_bar.corner_radius = CornerRadius::same(6);
+
+        // Create the dock area with docking enabled
+        DockArea::new(&mut self.tree)
+            .style(style)
+            .id(Id::new(&self.dock_area_id))
+            .show_inside(ui, &mut UnifiedTabViewer {});
+
+        self.frame += 1;
+
+        if self.frame >= 10 {
+            let window = web_sys::window().unwrap();
+
+            // Try to serialize the dock state
+            match serde_json::to_string(&self.tree) {
+                Ok(serie) => {
+                    // Try to save to localStorage, but handle quota exceeded errors gracefully
+                    if let Some(storage) = window.local_storage().ok().flatten() {
+                        // Attempt to set the value, but don't unwrap to avoid panicking
+                        if let Err(e) = storage.set("egui_dock::DockArea", &serie) {
+                            log::warn!("Failed to save window state to localStorage: {:?}", e);
+                            // Continue without crashing - the user will just lose window state
+                        }
+                    }
+                },
+                Err(e) => {
+                    log::warn!("Failed to serialize window state: {:?}", e);
+                    // Continue without crashing
+                }
+            }
+
+            self.frame = 0;
+        }
+    }
+
     pub fn draw(&mut self, ui: &mut egui::Ui) {
         // Change from SidePanel::right to SidePanel::left
         SidePanel::left("left_menu")
