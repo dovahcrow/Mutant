@@ -273,10 +273,18 @@ impl TreeNode {
                 // Calculate metadata width and positioning
                 let metadata_width = 120.0;
 
-                // Draw the text
-                let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, 2.0);
+                // Calculate text clipping area to prevent text from bleeding into the metadata area
+                let fade_width = 60.0; // Increased fade width for smoother transition
+                let text_clip_width = row_rect.width() - metadata_width - fade_width;
 
-                // Calculate text and draw it
+                // Create a clipping rectangle for the text to prevent bleeding
+                let text_clip_rect = egui::Rect::from_min_size(
+                    row_rect.left_top(),
+                    egui::Vec2::new(text_clip_width, row_rect.height())
+                );
+
+                // Draw the text with clipping
+                let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, 2.0);
                 let font_id = egui::FontId::new(14.0, egui::FontFamily::Proportional);
                 let text_galley = ui.painter().layout_no_wrap(
                     format!("{} {}", file_icon, self.name),
@@ -284,37 +292,8 @@ impl TreeNode {
                     file_color
                 );
 
-                // Draw the text normally
-                ui.painter().galley(text_pos, text_galley, file_color);
-
-                // Apply a smooth fade on the right side for ALL rows
-                let fade_width = 40.0;
-                let fade_start = row_rect.width() - metadata_width - fade_width;
-
-                let background_color = super::theme::MutantColors::BACKGROUND_MEDIUM;
-
-                // Create a smooth gradient using overlapping rectangles with proper blending
-                let steps = 20; // More steps for smoother gradient
-                let step_width = fade_width / steps as f32;
-
-                for i in 0..steps {
-                    let progress = i as f32 / (steps - 1) as f32; // 0.0 to 1.0
-                    let alpha = (progress * 255.0) as u8;
-
-                    let step_rect = egui::Rect::from_min_size(
-                        row_rect.left_top() + egui::Vec2::new(fade_start + i as f32 * step_width, 0.0),
-                        egui::Vec2::new(step_width, row_rect.height())
-                    );
-
-                    let fade_color = egui::Color32::from_rgba_unmultiplied(
-                        background_color.r(),
-                        background_color.g(),
-                        background_color.b(),
-                        alpha
-                    );
-
-                    ui.painter().rect_filled(step_rect, 0.0, fade_color);
-                }
+                // Clip the text drawing to prevent overflow
+                ui.painter().with_clip_rect(text_clip_rect).galley(text_pos, text_galley, file_color);
 
                 // Handle click on the entire row
                 if row_response.clicked() {
@@ -325,17 +304,10 @@ impl TreeNode {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
 
-                // Draw metadata ON TOP of the fade gradient, positioned absolutely at the right edge
+                // Draw metadata in the right area (will appear on top of the continuous gradient)
                 let metadata_rect = egui::Rect::from_min_size(
                     egui::Pos2::new(row_rect.right() - metadata_width, row_rect.top()),
                     egui::Vec2::new(metadata_width, 20.0)
-                );
-
-                // Draw a solid background for the metadata area to ensure it appears on top
-                ui.painter().rect_filled(
-                    metadata_rect,
-                    0.0,
-                    background_color
                 );
 
                 // Create a temporary UI for the metadata area
@@ -344,6 +316,8 @@ impl TreeNode {
                         .max_rect(metadata_rect)
                         .layout(egui::Layout::right_to_left(egui::Align::Center))
                 );
+
+                metadata_ui.add_space(8.0); // Right padding
 
                 // Download button
                 let download_btn = metadata_ui.add_sized(
@@ -1706,9 +1680,52 @@ impl FsWindow {
         ui.separator();
 
         // Draw the tree with improved styling
-        egui::ScrollArea::vertical()
+        let scroll_response = egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
+                // Draw the continuous gradient bar FIRST (behind the content)
+                let available_rect = ui.available_rect_before_wrap();
+                let metadata_width = 120.0;
+                let fade_width = 60.0;
+                let fade_start = available_rect.width() - metadata_width - fade_width;
+                let background_color = super::theme::MutantColors::BACKGROUND_MEDIUM;
+
+                // Create a smooth continuous gradient bar that spans the entire available height
+                let gradient_rect = egui::Rect::from_min_size(
+                    egui::Pos2::new(available_rect.left() + fade_start, available_rect.top()),
+                    egui::Vec2::new(fade_width + metadata_width, available_rect.height())
+                );
+
+                // Draw the gradient with more steps for smoother transition
+                let steps = 30;
+                let step_width = fade_width / steps as f32;
+
+                for i in 0..steps {
+                    let progress = i as f32 / (steps - 1) as f32; // 0.0 to 1.0
+                    let alpha = (progress * 255.0) as u8;
+
+                    let step_rect = egui::Rect::from_min_size(
+                        egui::Pos2::new(gradient_rect.left() + i as f32 * step_width, gradient_rect.top()),
+                        egui::Vec2::new(step_width, gradient_rect.height())
+                    );
+
+                    let fade_color = egui::Color32::from_rgba_unmultiplied(
+                        background_color.r(),
+                        background_color.g(),
+                        background_color.b(),
+                        alpha
+                    );
+
+                    ui.painter().rect_filled(step_rect, 0.0, fade_color);
+                }
+
+                // Draw a solid background for the metadata area
+                let metadata_rect = egui::Rect::from_min_size(
+                    egui::Pos2::new(available_rect.right() - metadata_width, available_rect.top()),
+                    egui::Vec2::new(metadata_width, available_rect.height())
+                );
+                ui.painter().rect_filled(metadata_rect, 0.0, background_color);
+
                 // Add some top padding
                 ui.add_space(8.0);
 
@@ -1757,22 +1774,28 @@ impl FsWindow {
                 // Add some bottom padding
                 ui.add_space(8.0);
 
-            // Handle the view clicked node outside the loop to avoid borrow issues
-            if let Some(details) = view_details_clicked {
-                // Update the selected path for highlighting in the tree
-                self.selected_path = Some(details.key.clone());
+                (view_details_clicked, download_details_clicked)
+            });
 
-                // Add a new tab for this file using the unified dock system
-                // The add_file_tab method now automatically triggers async file loading
-                self.add_file_tab(details);
-            }
-            
-            // Handle the download click
-            if let Some(details) = download_details_clicked {
-                self.initiate_download(details, ui.ctx().clone());
-            }
-        });
+
+
+        // Handle the view clicked node outside the loop to avoid borrow issues
+        if let Some(details) = scroll_response.inner.0 {
+            // Update the selected path for highlighting in the tree
+            self.selected_path = Some(details.key.clone());
+
+            // Add a new tab for this file using the unified dock system
+            // The add_file_tab method now automatically triggers async file loading
+            self.add_file_tab(details);
+        }
+
+        // Handle the download click
+        if let Some(details) = scroll_response.inner.1 {
+            self.initiate_download(details, ui.ctx().clone());
+        }
     }
+
+
 
 
 }
