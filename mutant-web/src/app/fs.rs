@@ -1696,12 +1696,21 @@ impl FsWindow {
                     egui::Vec2::new(fade_width + metadata_width, available_rect.height())
                 );
 
+                // Create a darker version of the background color for the gradient target
+                let darker_color = egui::Color32::from_rgb(
+                    (background_color.r() as f32 * 0.7) as u8,
+                    (background_color.g() as f32 * 0.7) as u8,
+                    (background_color.b() as f32 * 0.7) as u8,
+                );
+
                 // Draw the gradient with more steps for smoother transition
                 let steps = 30;
                 let step_width = fade_width / steps as f32;
 
                 for i in 0..steps {
                     let progress = i as f32 / (steps - 1) as f32; // 0.0 to 1.0
+
+                    // Interpolate from transparent to darker color
                     let alpha = (progress * 255.0) as u8;
 
                     let step_rect = egui::Rect::from_min_size(
@@ -1710,21 +1719,21 @@ impl FsWindow {
                     );
 
                     let fade_color = egui::Color32::from_rgba_unmultiplied(
-                        background_color.r(),
-                        background_color.g(),
-                        background_color.b(),
+                        darker_color.r(),
+                        darker_color.g(),
+                        darker_color.b(),
                         alpha
                     );
 
                     ui.painter().rect_filled(step_rect, 0.0, fade_color);
                 }
 
-                // Draw a solid background for the metadata area
+                // Draw a solid darker background for the metadata area
                 let metadata_rect = egui::Rect::from_min_size(
                     egui::Pos2::new(available_rect.right() - metadata_width, available_rect.top()),
                     egui::Vec2::new(metadata_width, available_rect.height())
                 );
-                ui.painter().rect_filled(metadata_rect, 0.0, background_color);
+                ui.painter().rect_filled(metadata_rect, 0.0, darker_color);
 
                 // Add some top padding
                 ui.add_space(8.0);
