@@ -45,8 +45,6 @@ use window_system::init_window_system;
 // pub use infobar::InfobarWindow;
 // pub use research::ResearchWindow;
 
-pub use window_system::window_system_mut;
-
 pub trait Window: Send + Sync {
     fn name(&self) -> String;
     fn draw(&mut self, ui: &mut egui::Ui);

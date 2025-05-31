@@ -12,6 +12,7 @@ use super::components::multimedia;
 use super::Window;
 use super::theme::secondary_button;
 use super::window_system::generate_unique_dock_area_id;
+use super::{put::PutWindow, stats::StatsWindow};
 use crate::utils::download_utils::{self, JsFileHandleResult, JsSimpleResult};
 use js_sys::Uint8Array;
 use wasm_bindgen_futures::spawn_local;
@@ -620,33 +621,75 @@ impl FileViewerTab {
     }
 }
 
-/// TabViewer for FileViewerTab in the FsWindow's internal dock
-struct FileViewerTabViewer {}
+/// Unified tab type for the FsWindow's internal dock system
+#[derive(Clone, Serialize, Deserialize)]
+pub enum FsInternalTab {
+    FileViewer(FileViewerTab),
+    Put(PutWindow),
+    Stats(StatsWindow),
+}
 
-impl egui_dock::TabViewer for FileViewerTabViewer {
-    type Tab = FileViewerTab;
+impl FsInternalTab {
+    pub fn name(&self) -> String {
+        match self {
+            Self::FileViewer(tab) => {
+                let file_name = std::path::Path::new(&tab.file.key)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| tab.file.key.clone());
+                file_name
+            }
+            Self::Put(window) => window.name(),
+            Self::Stats(window) => window.name(),
+        }
+    }
+
+    pub fn draw(&mut self, ui: &mut egui::Ui) {
+        match self {
+            Self::FileViewer(tab) => tab.draw(ui),
+            Self::Put(window) => window.draw(ui),
+            Self::Stats(window) => window.draw(ui),
+        }
+    }
+}
+
+/// TabViewer for FsInternalTab in the FsWindow's internal dock
+struct FsInternalTabViewer {}
+
+impl egui_dock::TabViewer for FsInternalTabViewer {
+    type Tab = FsInternalTab;
 
     fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
-        // Get the file name from the path
-        let file_name = std::path::Path::new(&tab.file.key)
-            .file_name()
-            .map(|f| f.to_string_lossy().to_string())
-            .unwrap_or_else(|| tab.file.key.clone());
+        match tab {
+            FsInternalTab::FileViewer(file_tab) => {
+                // Get the file name from the path
+                let file_name = std::path::Path::new(&file_tab.file.key)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| file_tab.file.key.clone());
 
-        // Add an icon based on the file type
-        let file_icon = match &tab.file_type {
-            Some(multimedia::FileType::Text) => "📄",
-            Some(multimedia::FileType::Code(_)) => "📝",
-            Some(multimedia::FileType::Image) => "🖼️",
-            Some(multimedia::FileType::Video) => "🎬",
-            Some(multimedia::FileType::Other) | None => "📄",
-        };
+                // Add an icon based on the file type
+                let file_icon = match &file_tab.file_type {
+                    Some(multimedia::FileType::Text) => "📄",
+                    Some(multimedia::FileType::Code(_)) => "📝",
+                    Some(multimedia::FileType::Image) => "🖼️",
+                    Some(multimedia::FileType::Video) => "🎬",
+                    Some(multimedia::FileType::Other) | None => "📄",
+                };
 
-        // Add a modified indicator if the file has been modified
-        let modified_indicator = if tab.file_modified { "* " } else { "" };
+                // Add a modified indicator if the file has been modified
+                let modified_indicator = if file_tab.file_modified { "* " } else { "" };
 
-        let title = format!("{}{}{}", file_icon, modified_indicator, file_name);
-        egui::RichText::new(title).into()
+                let title = format!("{}{}{}", file_icon, modified_indicator, file_name);
+                egui::RichText::new(title).into()
+            }
+            FsInternalTab::Put(_) => {
+                egui::RichText::new("📤 Upload").into()
+            }
+            FsInternalTab::Stats(_) => {
+                egui::RichText::new("📊 Stats").into()
+            }
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
@@ -666,14 +709,14 @@ pub struct FsWindow {
     root: TreeNode,
     /// Path of the selected file (for highlighting in the tree)
     selected_path: Option<String>,
-    /// Internal dock system for file viewers within this window
-    file_viewer_dock: egui_dock::DockState<FileViewerTab>,
+    /// Internal dock system for all tabs within this window
+    internal_dock: egui_dock::DockState<FsInternalTab>,
     #[serde(skip)] // active_downloads should not be serialized
     active_downloads: Arc<Mutex<Vec<ActiveDownload>>>,
     /// Unique identifier for this window instance to avoid widget ID conflicts
     #[serde(skip)]
     window_id: String,
-    /// Unique dock area ID for the file viewer area within this FsWindow
+    /// Unique dock area ID for the internal dock area within this FsWindow
     #[serde(skip)]
     dock_area_id: String,
 }
@@ -684,7 +727,7 @@ impl Default for FsWindow {
             keys: crate::app::context::context().get_key_cache(),
             root: TreeNode::default(),
             selected_path: None,
-            file_viewer_dock: egui_dock::DockState::new(vec![]),
+            internal_dock: egui_dock::DockState::new(vec![]),
             active_downloads: Arc::new(Mutex::new(Vec::new())),
             window_id: uuid::Uuid::new_v4().to_string(),
             dock_area_id: generate_unique_dock_area_id(),
@@ -710,16 +753,18 @@ impl Window for FsWindow {
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            // Show the internal dock system for file viewers
-            if self.file_viewer_dock.iter_all_tabs().next().is_none() {
-                // Show instructions when no files are open
+            // Show the internal dock system for all tabs
+            if self.internal_dock.iter_all_tabs().next().is_none() {
+                // Show instructions when no tabs are open
                 ui.centered_and_justified(|ui| {
                     ui.vertical_centered(|ui| {
-                        ui.heading("File Viewer");
+                        ui.heading("MutAnt Workspace");
                         ui.add_space(10.0);
                         ui.label("Click on a file in the tree to open it here.");
                         ui.add_space(5.0);
-                        ui.label("You can also drag file tabs between this dock and the main dock area.");
+                        ui.label("Use the left menu to open Upload or Stats windows.");
+                        ui.add_space(5.0);
+                        ui.label("All windows will dock in this area.");
                     });
                 });
             } else {
@@ -745,10 +790,10 @@ impl Window for FsWindow {
                 style.tab_bar.corner_radius = eframe::egui::CornerRadius::same(6);
 
                 // Show the internal dock area with a unique ID
-                egui_dock::DockArea::new(&mut self.file_viewer_dock)
+                egui_dock::DockArea::new(&mut self.internal_dock)
                     .style(style)
                     .id(egui::Id::new(format!("fs_internal_dock_{}", self.dock_area_id)))
-                    .show_inside(ui, &mut FileViewerTabViewer {});
+                    .show_inside(ui, &mut FsInternalTabViewer {});
             }
         });
 
@@ -1047,27 +1092,100 @@ impl FsWindow {
         log::info!("FsWindow: Creating new file viewer tab for: {}", file_details.key);
 
         // Check if a tab for this file already exists in the internal dock
-        let tab_exists = self.file_viewer_dock.iter_all_tabs().any(|(_, existing_tab)| {
-            existing_tab.file.key == file_details.key
+        let tab_exists = self.internal_dock.iter_all_tabs().any(|(_, existing_tab)| {
+            match existing_tab {
+                FsInternalTab::FileViewer(file_tab) => file_tab.file.key == file_details.key,
+                _ => false,
+            }
         });
 
         if !tab_exists {
             // Create a new tab
-            let tab = FileViewerTab::new(file_details.clone());
+            let file_tab = FileViewerTab::new(file_details.clone());
+            let tab = FsInternalTab::FileViewer(file_tab);
 
-            // Add directly to the internal dock system (no deadlock since we're not accessing the main window system)
-            if self.file_viewer_dock.iter_all_tabs().next().is_none() {
+            // Add directly to the internal dock system
+            if self.internal_dock.iter_all_tabs().next().is_none() {
                 // If the dock is empty, create a new surface
-                self.file_viewer_dock = egui_dock::DockState::new(vec![tab]);
+                self.internal_dock = egui_dock::DockState::new(vec![tab]);
             } else {
                 // Add to the existing surface
-                self.file_viewer_dock.main_surface_mut().push_to_focused_leaf(tab);
+                self.internal_dock.main_surface_mut().push_to_focused_leaf(tab);
             }
 
             log::info!("FsWindow: Successfully added tab to internal dock for: {}", file_details.key);
         } else {
             log::info!("FsWindow: Tab for file {} already exists in internal dock", file_details.key);
         }
+    }
+
+    /// Add a new Put window tab to the internal dock system
+    pub fn add_put_tab(&mut self) {
+        log::info!("FsWindow: Creating new Put window tab");
+
+        // Check if a Put tab already exists
+        let tab_exists = self.internal_dock.iter_all_tabs().any(|(_, existing_tab)| {
+            matches!(existing_tab, FsInternalTab::Put(_))
+        });
+
+        if !tab_exists {
+            // Create a new Put window
+            let put_window = PutWindow::new();
+            let tab = FsInternalTab::Put(put_window);
+
+            // Add to the internal dock system
+            if self.internal_dock.iter_all_tabs().next().is_none() {
+                // If the dock is empty, create a new surface
+                self.internal_dock = egui_dock::DockState::new(vec![tab]);
+            } else {
+                // Add to the existing surface
+                self.internal_dock.main_surface_mut().push_to_focused_leaf(tab);
+            }
+
+            log::info!("FsWindow: Successfully added Put tab to internal dock");
+        } else {
+            log::info!("FsWindow: Put tab already exists in internal dock");
+        }
+    }
+
+    /// Add a new Stats window tab to the internal dock system
+    pub fn add_stats_tab(&mut self) {
+        log::info!("FsWindow: Creating new Stats window tab");
+
+        // Check if a Stats tab already exists
+        let tab_exists = self.internal_dock.iter_all_tabs().any(|(_, existing_tab)| {
+            matches!(existing_tab, FsInternalTab::Stats(_))
+        });
+
+        if !tab_exists {
+            // Create a new Stats window
+            let stats_window = StatsWindow::new();
+            let tab = FsInternalTab::Stats(stats_window);
+
+            // Add to the internal dock system
+            if self.internal_dock.iter_all_tabs().next().is_none() {
+                // If the dock is empty, create a new surface
+                self.internal_dock = egui_dock::DockState::new(vec![tab]);
+            } else {
+                // Add to the existing surface
+                self.internal_dock.main_surface_mut().push_to_focused_leaf(tab);
+            }
+
+            log::info!("FsWindow: Successfully added Stats tab to internal dock");
+        } else {
+            log::info!("FsWindow: Stats tab already exists in internal dock");
+        }
+    }
+
+    /// Check if a specific window type is currently open in the internal dock
+    pub fn is_window_open(&self, window_name: &str) -> bool {
+        self.internal_dock.iter_all_tabs().any(|(_, tab)| {
+            match tab {
+                FsInternalTab::Put(_) => window_name == "MutAnt Upload",
+                FsInternalTab::Stats(_) => window_name == "MutAnt Stats",
+                FsInternalTab::FileViewer(_) => false, // File viewers don't count for menu highlighting
+            }
+        })
     }
 
     /// Build the tree from the current keys

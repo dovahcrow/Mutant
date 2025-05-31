@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, sync::{Arc, RwLock}};
 
-use app::{context::init_context, fs::FsWindow, Window, window_system_mut, DEFAULT_WS_URL};
+use app::{context::init_context, fs::FsWindow, Window, DEFAULT_WS_URL};
 use futures::{channel::oneshot, StreamExt};
 use log::{error, info};
 use mutant_client::{MutantClient, ProgressReceiver};
@@ -944,12 +944,9 @@ impl MyApp {
                 ui.vertical_centered(|ui| {
                     ui.add_space(15.0);
 
-                    // Helper function to check if a window type is currently open
-                    let is_window_open = |window_name: &str| {
-                        window_system_mut().tree().iter_all_tabs().any(|(_, tab)| {
-                            tab.name() == window_name
-                        })
-                    };
+                    // Check window states before creating buttons
+                    let upload_open = self.fs_window.is_window_open("MutAnt Upload");
+                    let stats_open = self.fs_window.is_window_open("MutAnt Stats");
 
                     // Helper function to create a button with different styling when active
                     let menu_button = |ui: &mut egui::Ui, icon: &str, hover: &str, is_active: bool| {
@@ -976,12 +973,12 @@ impl MyApp {
                         ui.add(button).on_hover_text(hover)
                     };
 
-                    if menu_button(ui, "📤", "Upload", is_window_open("MutAnt Upload")).clicked() {
-                        app::window_system::new_window(app::put::PutWindow::new());
+                    if menu_button(ui, "📤", "Upload", upload_open).clicked() {
+                        self.fs_window.add_put_tab();
                     }
 
-                    if menu_button(ui, "📊", "Stats", is_window_open("MutAnt Stats")).clicked() {
-                        app::window_system::new_window(app::stats::StatsWindow::new());
+                    if menu_button(ui, "📊", "Stats", stats_open).clicked() {
+                        self.fs_window.add_stats_tab();
                     }
 
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |_ui| {
@@ -1008,11 +1005,8 @@ impl eframe::App for MyApp {
             .frame(egui::Frame::new().fill(app::theme::MutantColors::BACKGROUND_DARK))
             .show(ctx, |ui| {
                 // Render the static FS window directly
+                // All windows now dock within the FS window's internal dock system
                 self.fs_window.draw(ui);
-
-                // Also render the window system dock area for secondary windows
-                // This will show floating windows as part of the dock system
-                window_system_mut().draw_dock_only(ui);
             });
 
         // Show notifications
