@@ -240,14 +240,14 @@ impl TreeNode {
                 let details = self.key_details.as_ref().unwrap();
                 let is_selected = selected_path.map_or(false, |path| path == &details.key);
 
-                // Determine file icon based on extension
-                let file_icon = self.get_file_icon();
+                // Determine file icon and color based on extension
+                let (file_icon, icon_color) = self.get_file_icon_and_color();
 
-                // Style the text based on selection and public status
-                let file_color = if details.is_public {
+                // Style the filename text - less bright color and smaller font
+                let filename_color = if details.is_public {
                     super::theme::MutantColors::SUCCESS
                 } else {
-                    super::theme::MutantColors::TEXT_PRIMARY
+                    super::theme::MutantColors::TEXT_SECONDARY  // Less bright than TEXT_PRIMARY
                 };
 
                 // Create file display text with icon
@@ -283,17 +283,27 @@ impl TreeNode {
                     egui::Vec2::new(text_clip_width, row_rect.height())
                 );
 
-                // Draw the text with clipping
+                // Draw the icon and filename with different colors and smaller font
                 let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, 2.0);
-                let font_id = egui::FontId::new(14.0, egui::FontFamily::Proportional);
-                let text_galley = ui.painter().layout_no_wrap(
-                    format!("{} {}", file_icon, self.name),
-                    font_id.clone(),
-                    file_color
-                );
+                let font_id = egui::FontId::new(12.0, egui::FontFamily::Proportional);  // Smaller font size
 
-                // Clip the text drawing to prevent overflow
-                ui.painter().with_clip_rect(text_clip_rect).galley(text_pos, text_galley, file_color);
+                // Draw icon with its specific color
+                let icon_galley = ui.painter().layout_no_wrap(
+                    file_icon.to_string(),
+                    font_id.clone(),
+                    icon_color
+                );
+                let icon_width = icon_galley.rect.width() + 4.0; // Get width before moving
+                ui.painter().with_clip_rect(text_clip_rect).galley(text_pos, icon_galley, icon_color);
+
+                // Draw filename with less bright color, positioned after the icon
+                let filename_pos = text_pos + egui::Vec2::new(icon_width, 0.0);
+                let filename_galley = ui.painter().layout_no_wrap(
+                    format!(" {}", self.name),
+                    font_id.clone(),
+                    filename_color
+                );
+                ui.painter().with_clip_rect(text_clip_rect).galley(filename_pos, filename_galley, filename_color);
 
                 // Handle click on the entire row
                 if row_response.clicked() {
@@ -319,10 +329,14 @@ impl TreeNode {
 
                 metadata_ui.add_space(4.0); // Minimal right padding to account for existing frame padding
 
-                // Download button
+                // Download button - green down arrow
                 let download_btn = metadata_ui.add_sized(
                     [20.0, 20.0],
-                    egui::Button::new("💾")
+                    egui::Button::new(
+                        egui::RichText::new("⬇")  // Down arrow
+                            .color(super::theme::MutantColors::ACCENT_GREEN)
+                            .size(14.0)
+                    )
                         .fill(egui::Color32::TRANSPARENT)
                         .stroke(egui::Stroke::NONE)
                 );
@@ -357,52 +371,52 @@ impl TreeNode {
         (view_clicked_details, download_clicked_details)
     }
 
-    /// Get appropriate icon for file based on extension
-    fn get_file_icon(&self) -> &'static str {
+    /// Get appropriate icon and color for file based on extension
+    fn get_file_icon_and_color(&self) -> (&'static str, egui::Color32) {
         if let Some(extension) = std::path::Path::new(&self.name).extension() {
             match extension.to_string_lossy().to_lowercase().as_str() {
-                // Code files
-                "rs" | "rust" => "🦀",
-                "js" | "ts" | "jsx" | "tsx" => "📜",
-                "py" | "python" => "🐍",
-                "java" | "class" => "☕",
-                "cpp" | "c" | "cc" | "cxx" | "h" | "hpp" => "⚙️",
-                "go" => "🐹",
-                "php" => "🐘",
-                "rb" | "ruby" => "💎",
-                "swift" => "🦉",
-                "kt" | "kotlin" => "🎯",
-                "cs" | "csharp" => "🔷",
-                "html" | "htm" => "🌐",
-                "css" | "scss" | "sass" | "less" => "🎨",
-                "json" | "yaml" | "yml" | "toml" | "xml" => "📋",
+                // Code files - bright colors for different languages
+                "rs" | "rust" => ("🦀", super::theme::MutantColors::ACCENT_ORANGE),
+                "js" | "ts" | "jsx" | "tsx" => ("📜", super::theme::MutantColors::WARNING),
+                "py" | "python" => ("🐍", super::theme::MutantColors::ACCENT_GREEN),
+                "java" | "class" => ("☕", super::theme::MutantColors::ACCENT_ORANGE),
+                "cpp" | "c" | "cc" | "cxx" | "h" | "hpp" => ("⚙️", super::theme::MutantColors::ACCENT_BLUE),
+                "go" => ("🐹", super::theme::MutantColors::ACCENT_CYAN),
+                "php" => ("🐘", super::theme::MutantColors::ACCENT_PURPLE),
+                "rb" | "ruby" => ("💎", super::theme::MutantColors::ERROR),
+                "swift" => ("🦉", super::theme::MutantColors::ACCENT_ORANGE),
+                "kt" | "kotlin" => ("🎯", super::theme::MutantColors::ACCENT_PURPLE),
+                "cs" | "csharp" => ("🔷", super::theme::MutantColors::ACCENT_BLUE),
+                "html" | "htm" => ("🌐", super::theme::MutantColors::ACCENT_ORANGE),
+                "css" | "scss" | "sass" | "less" => ("🎨", super::theme::MutantColors::ACCENT_BLUE),
+                "json" | "yaml" | "yml" | "toml" | "xml" => ("📋", super::theme::MutantColors::TEXT_MUTED),
 
-                // Images
-                "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" => "🖼️",
+                // Images - green tones
+                "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" => ("🖼️", super::theme::MutantColors::ACCENT_GREEN),
 
-                // Videos
-                "mp4" | "avi" | "mkv" | "mov" | "wmv" | "flv" | "webm" => "🎬",
+                // Videos - purple/magenta tones
+                "mp4" | "avi" | "mkv" | "mov" | "wmv" | "flv" | "webm" => ("🎬", super::theme::MutantColors::ACCENT_PURPLE),
 
-                // Audio
-                "mp3" | "wav" | "flac" | "ogg" | "aac" | "m4a" => "🎵",
+                // Audio - cyan tones
+                "mp3" | "wav" | "flac" | "ogg" | "aac" | "m4a" => ("🎵", super::theme::MutantColors::ACCENT_CYAN),
 
-                // Archives
-                "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" => "📦",
+                // Archives - orange tones
+                "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" => ("📦", super::theme::MutantColors::ACCENT_ORANGE),
 
-                // Documents
-                "pdf" => "📕",
-                "doc" | "docx" => "📘",
-                "xls" | "xlsx" => "📗",
-                "ppt" | "pptx" => "📙",
-                "txt" | "md" | "readme" => "📄",
+                // Documents - different colors for different types
+                "pdf" => ("📕", super::theme::MutantColors::ERROR),
+                "doc" | "docx" => ("📘", super::theme::MutantColors::ACCENT_BLUE),
+                "xls" | "xlsx" => ("📗", super::theme::MutantColors::ACCENT_GREEN),
+                "ppt" | "pptx" => ("📙", super::theme::MutantColors::WARNING),
+                "txt" | "md" | "readme" => ("📄", super::theme::MutantColors::TEXT_MUTED),
 
-                // Executables
-                "exe" | "msi" | "deb" | "rpm" | "dmg" | "app" => "⚡",
+                // Executables - bright warning colors
+                "exe" | "msi" | "deb" | "rpm" | "dmg" | "app" => ("⚡", super::theme::MutantColors::WARNING),
 
-                _ => "📄"
+                _ => ("📄", super::theme::MutantColors::TEXT_MUTED)
             }
         } else {
-            "📄"
+            ("📄", super::theme::MutantColors::TEXT_MUTED)
         }
     }
 }
