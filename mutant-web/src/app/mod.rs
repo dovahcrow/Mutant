@@ -23,16 +23,16 @@ pub mod notifications;
 // mod research;
 // mod ship;
 // mod ships;
-mod stats;
+pub mod stats;
 // mod trades;
 pub mod theme;
 
 mod client_manager;
 pub mod context;
-mod main;
-mod put;
+pub mod main;
+pub mod put;
 // mod tasks;
-mod window_system;
+pub mod window_system;
 
 pub const DEFAULT_WS_URL: &str = "ws://localhost:3030/ws";
 

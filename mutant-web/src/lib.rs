@@ -889,12 +889,126 @@ impl Default for MyApp {
     }
 }
 
+impl MyApp {
+    /// Draw the header bar at the top of the screen
+    fn draw_header(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("header")
+            .exact_height(40.0)
+            .frame(egui::Frame::new()
+                .fill(app::theme::MutantColors::BACKGROUND_MEDIUM)
+                .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_DARK)))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(10.0);
+
+                    // MutAnt logo/title
+                    ui.label(
+                        egui::RichText::new("🛸 MutAnt")
+                            .size(18.0)
+                            .strong()
+                            .color(app::theme::MutantColors::ACCENT_ORANGE)
+                    );
+
+                    ui.separator();
+
+                    // Connection status
+                    ui.label(
+                        egui::RichText::new("Connected")
+                            .size(12.0)
+                            .color(app::theme::MutantColors::SUCCESS)
+                    );
+
+                    // Push remaining content to the right
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(10.0);
+
+                        // Version info
+                        ui.label(
+                            egui::RichText::new("v0.1.0")
+                                .size(10.0)
+                                .color(app::theme::MutantColors::TEXT_MUTED)
+                        );
+                    });
+                });
+            });
+    }
+
+    /// Draw the left menu bar
+    fn draw_left_menu(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::left("left_menu")
+            .exact_width(60.0)
+            .frame(egui::Frame::new()
+                .fill(app::theme::MutantColors::BACKGROUND_MEDIUM)
+                .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_DARK)))
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(15.0);
+
+                    // Helper function to create a button with different styling when active
+                    let menu_button = |ui: &mut egui::Ui, icon: &str, hover: &str, is_active: bool| {
+                        let button = if is_active {
+                            egui::Button::new(
+                                egui::RichText::new(icon)
+                                    .size(18.0)
+                                    .strong()
+                                    .color(app::theme::MutantColors::BACKGROUND_DARK)
+                            )
+                            .fill(app::theme::MutantColors::ACCENT_ORANGE)
+                            .stroke(egui::Stroke::new(2.0, app::theme::MutantColors::ACCENT_ORANGE))
+                            .min_size([40.0, 40.0].into())
+                        } else {
+                            egui::Button::new(
+                                egui::RichText::new(icon)
+                                    .size(16.0)
+                                    .color(app::theme::MutantColors::TEXT_SECONDARY)
+                            )
+                            .fill(app::theme::MutantColors::SURFACE)
+                            .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_MEDIUM))
+                            .min_size([40.0, 40.0].into())
+                        };
+                        ui.add(button).on_hover_text(hover)
+                    };
+
+                    // Files button (always active since we're showing the FS window)
+                    if menu_button(ui, "📁", "Files", true).clicked() {
+                        // Already showing files - could refresh or do nothing
+                    }
+
+                    if menu_button(ui, "🛸", "Main", false).clicked() {
+                        // Spawn a new main window in the window system
+                        log::info!("Opening Main window");
+                    }
+
+                    if menu_button(ui, "📤", "Upload", false).clicked() {
+                        // Spawn a new upload window in the window system
+                        log::info!("Opening Upload window");
+                    }
+
+                    if menu_button(ui, "📊", "Stats", false).clicked() {
+                        // Spawn a new stats window in the window system
+                        log::info!("Opening Stats window");
+                    }
+
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |_ui| {
+                        // Future: logout button or other bottom actions
+                    });
+                });
+            });
+    }
+}
+
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Apply the MutAnt theme
         app::theme::apply_mutant_theme(ctx);
 
-        // Show the main panel with the window system
+        // Show the header
+        self.draw_header(ctx);
+
+        // Show the left menu
+        self.draw_left_menu(ctx);
+
+        // Show the main FS window in the remaining space
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(app::theme::MutantColors::BACKGROUND_DARK))
             .show(ctx, |ui| {
