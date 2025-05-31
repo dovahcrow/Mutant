@@ -190,49 +190,18 @@ impl TreeNode {
             ui.add_space(total_indent);
 
             if self.is_dir() {
-                // Directory node with improved styling
-                let icon = if self.expanded { "▼" } else { "▶" };
-                let folder_icon = "📁";
+                // Directory node - use collapsing header for proper tree behavior
+                let icon = if self.expanded { "📂" } else { "📁" };
+                let text = format!("{} {}/", icon, self.name);
 
-                // Create a more refined header with better spacing
-                ui.horizontal(|ui| {
-                    // Expansion arrow with consistent styling
-                    let arrow_text = RichText::new(icon)
-                        .size(12.0)
-                        .color(super::theme::MutantColors::TEXT_SECONDARY);
+                let header = egui::CollapsingHeader::new(text)
+                    .id_salt(format!("mutant_fs_{}dir_{}", window_id, self.path))
+                    .default_open(self.expanded);
 
-                    let arrow_response = ui.add(
-                        egui::Label::new(arrow_text)
-                            .sense(egui::Sense::click())
-                    );
+                let mut child_view_details = None;
+                let mut child_download_details = None;
 
-                    ui.add_space(4.0);
-
-                    // Folder icon and name
-                    let folder_text = RichText::new(format!("{} {}", folder_icon, self.name))
-                        .size(14.0)
-                        .color(super::theme::MutantColors::TEXT_PRIMARY);
-
-                    let folder_response = ui.add(
-                        egui::Label::new(folder_text)
-                            .sense(egui::Sense::click())
-                    );
-
-                    // Toggle expansion on click
-                    if arrow_response.clicked() || folder_response.clicked() {
-                        self.expanded = !self.expanded;
-                    }
-
-                    // Hover effect for the entire folder row
-                    if arrow_response.hovered() || folder_response.hovered() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                    }
-                });
-
-                // Show children if expanded
-                if self.expanded {
-                    ui.end_row();
-
+                self.expanded = header.show(ui, |ui| {
                     // Sort children: directories first, then files
                     let mut sorted_children: Vec<_> = self.children.iter_mut().collect();
                     sorted_children.sort_by(|(_, a), (_, b)| {
@@ -247,106 +216,114 @@ impl TreeNode {
                     for (_, child) in sorted_children {
                         let (view_details, down_details) = child.ui(ui, indent_level + 1, selected_path, window_id);
                         if view_details.is_some() {
-                            view_clicked_details = view_details;
+                            child_view_details = view_details;
                         }
                         if down_details.is_some() {
-                            download_clicked_details = down_details;
+                            child_download_details = down_details;
                         }
                     }
+                }).header_response.clicked() || self.expanded;
+
+                // Propagate click from children
+                if child_view_details.is_some() {
+                    view_clicked_details = child_view_details;
+                }
+                if child_download_details.is_some() {
+                    download_clicked_details = child_download_details;
                 }
             } else {
-                // File node with improved styling and file type detection
+                // File node - add extra space to align with folder names (accounting for arrow)
+                ui.add_space(18.0); // Add space to compensate for the arrow in front of folders
+
                 let details = self.key_details.as_ref().unwrap();
                 let is_selected = selected_path.map_or(false, |path| path == &details.key);
 
                 // Determine file icon based on extension
                 let file_icon = self.get_file_icon();
 
-                // Create a styled file row with hover effects
-                let file_rect = ui.available_rect_before_wrap();
-                let file_rect = egui::Rect::from_min_size(
-                    file_rect.min,
-                    egui::Vec2::new(file_rect.width(), 24.0)
-                );
+                // Style the text based on selection and public status
+                let file_color = if details.is_public {
+                    super::theme::MutantColors::SUCCESS
+                } else {
+                    super::theme::MutantColors::TEXT_PRIMARY
+                };
 
-                // Background for selection and hover
-                if is_selected {
-                    ui.painter().rect_filled(
-                        file_rect,
-                        egui::Rounding::same(4),
-                        super::theme::MutantColors::SELECTION
-                    );
-                }
+                // Create file display text with icon
+                let text_display = RichText::new(format!("{} {}", file_icon, self.name))
+                    .size(14.0)
+                    .color(file_color);
 
+                // Make the file node clickable for viewing with proper layout
                 ui.horizontal(|ui| {
-                    // File icon
-                    let icon_text = RichText::new(file_icon)
-                        .size(14.0)
-                        .color(super::theme::MutantColors::ACCENT_BLUE);
-                    ui.label(icon_text);
+                    // Add selection background if selected
+                    if is_selected {
+                        let rect = ui.available_rect_before_wrap();
+                        ui.painter().rect_filled(
+                            rect,
+                            egui::Rounding::same(4),
+                            super::theme::MutantColors::SELECTION
+                        );
+                    }
+                    // File name (takes available space but leaves room for metadata)
+                    ui.allocate_ui_with_layout(
+                        [ui.available_width() - 120.0, 20.0].into(), // Reserve 120px for size and download button
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            let file_response = ui.add(
+                                egui::Label::new(text_display)
+                                    .sense(egui::Sense::click())
+                                    .truncate() // Truncate long filenames
+                            );
 
-                    ui.add_space(6.0);
+                            if file_response.clicked() {
+                                view_clicked_details = Some(details.clone());
+                            }
 
-                    // File name with appropriate styling
-                    let file_color = if details.is_public {
-                        super::theme::MutantColors::SUCCESS
-                    } else {
-                        super::theme::MutantColors::TEXT_PRIMARY
-                    };
-
-                    let file_text = RichText::new(&self.name)
-                        .size(14.0)
-                        .color(file_color);
-
-                    let file_response = ui.add(
-                        egui::Label::new(file_text)
-                            .sense(egui::Sense::click())
+                            if file_response.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                        }
                     );
 
-                    // Add file size in a subtle way
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Download button (smaller and more subtle)
-                        let download_btn = ui.add_sized(
-                            [20.0, 20.0],
-                            egui::Button::new("⬇")
-                                .fill(egui::Color32::TRANSPARENT)
-                                .stroke(egui::Stroke::NONE)
-                        );
+                    // Right side metadata (fixed width)
+                    ui.allocate_ui_with_layout(
+                        [120.0, 20.0].into(),
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            // Download button
+                            let download_btn = ui.add_sized(
+                                [20.0, 20.0],
+                                egui::Button::new("💾")
+                                    .fill(egui::Color32::TRANSPARENT)
+                                    .stroke(egui::Stroke::NONE)
+                            );
 
-                        if download_btn.clicked() {
-                            download_clicked_details = Some(details.clone());
-                        }
+                            if download_btn.clicked() {
+                                download_clicked_details = Some(details.clone());
+                            }
 
-                        if download_btn.hovered() {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        }
+                            if download_btn.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
 
-                        ui.add_space(8.0);
-
-                        // File size
-                        let size_text = RichText::new(humanize_size(details.total_size))
-                            .size(11.0)
-                            .color(super::theme::MutantColors::TEXT_MUTED);
-                        ui.label(size_text);
-
-                        // Public indicator
-                        if details.is_public {
                             ui.add_space(4.0);
-                            let public_text = RichText::new("PUB")
-                                .size(10.0)
-                                .color(super::theme::MutantColors::SUCCESS);
-                            ui.label(public_text);
+
+                            // File size
+                            let size_text = RichText::new(humanize_size(details.total_size))
+                                .size(11.0)
+                                .color(super::theme::MutantColors::TEXT_MUTED);
+                            ui.label(size_text);
+
+                            // Public indicator
+                            if details.is_public {
+                                ui.add_space(4.0);
+                                let public_text = RichText::new("PUB")
+                                    .size(10.0)
+                                    .color(super::theme::MutantColors::SUCCESS);
+                                ui.label(public_text);
+                            }
                         }
-                    });
-
-                    // Handle file click
-                    if file_response.clicked() {
-                        view_clicked_details = Some(details.clone());
-                    }
-
-                    if file_response.hovered() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                    }
+                    );
                 });
             }
         });
