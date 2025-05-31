@@ -779,17 +779,49 @@ impl Window for FsWindow {
         egui::CentralPanel::default().show_inside(ui, |ui| {
             // Show the internal dock system for all tabs
             if self.internal_dock.iter_all_tabs().next().is_none() {
-                // Show instructions when no tabs are open
-                ui.centered_and_justified(|ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.heading("MutAnt Workspace");
-                        ui.add_space(10.0);
-                        ui.label("Click on a file in the tree to open it here.");
-                        ui.add_space(5.0);
-                        ui.label("Use the left menu to open Upload or Stats windows.");
-                        ui.add_space(5.0);
-                        ui.label("All windows will dock in this area.");
-                    });
+                // Show instructions when no tabs are open - properly centered both horizontally and vertically
+                let available_rect = ui.available_rect_before_wrap();
+
+                // Use vertical centering with flexible spacing
+                ui.vertical_centered(|ui| {
+                    // Add flexible space to push content to vertical center
+                    let content_height = 120.0; // Approximate height of our content
+                    let top_space = (available_rect.height() - content_height) / 2.0;
+                    if top_space > 0.0 {
+                        ui.add_space(top_space);
+                    }
+
+                    // Main heading with dimmed color
+                    ui.label(
+                        egui::RichText::new("MutAnt Workspace")
+                            .size(24.0)
+                            .color(super::theme::MutantColors::TEXT_MUTED)
+                    );
+
+                    ui.add_space(15.0);
+
+                    // Instructions with even more dimmed color
+                    ui.label(
+                        egui::RichText::new("Click on a file in the tree to open it here.")
+                            .size(14.0)
+                            .color(super::theme::MutantColors::TEXT_DISABLED)
+                    );
+
+                    ui.add_space(8.0);
+
+                    ui.label(
+                        egui::RichText::new("Use the left menu to open Upload or Stats windows.")
+                            .size(14.0)
+                            .color(super::theme::MutantColors::TEXT_DISABLED)
+                    );
+
+                    ui.add_space(8.0);
+
+                    ui.label(
+                        egui::RichText::new("All windows will dock in this area.")
+                            .size(14.0)
+                            .color(super::theme::MutantColors::TEXT_DISABLED)
+                    );
                 });
             } else {
                 // Create a custom style for the internal dock area
