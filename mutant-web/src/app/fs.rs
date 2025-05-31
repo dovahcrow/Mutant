@@ -173,8 +173,8 @@ impl TreeNode {
     /// Draw this node and its children
     /// Returns (view_clicked_details, download_clicked_details)
     fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize, selected_path: Option<&str>, window_id: &str) -> (Option<KeyDetails>, Option<KeyDetails>) {
-        // Much more compact indentation for a cleaner look inside folders
-        let indent_per_level = 6.0;  // Reduced from 12.0 to 6.0
+        // Ultra compact indentation for a cleaner look inside folders
+        let indent_per_level = 3.0;  // Reduced from 6.0 to 3.0
         let total_indent = indent_per_level * (indent_level as f32);
 
         let mut view_clicked_details = None;
@@ -1802,41 +1802,41 @@ impl FsWindow {
                     }).header_response.clicked() || root_expanded;
                 });
 
+                // Add some spacing before the refresh button
+                ui.add_space(12.0);
+
+                // Add refresh button at the bottom left (within the scroll area)
+                ui.horizontal(|ui| {
+                    let refresh_btn = ui.add_sized(
+                        [20.0, 20.0],
+                        egui::Button::new("🔄")
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_MUTED))
+                    );
+
+                    if refresh_btn.clicked() {
+                        // Trigger a refresh of the file list
+                        let ctx = crate::app::context::context();
+                        wasm_bindgen_futures::spawn_local(async move {
+                            let _ = ctx.list_keys().await;
+                        });
+                    }
+
+                    if refresh_btn.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+
+                    // Add a small label next to the button
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("Refresh")
+                            .size(10.0)
+                            .color(super::theme::MutantColors::TEXT_MUTED)
+                    );
+                });
+
                 // Add some bottom padding
                 ui.add_space(8.0);
-
-                // Add refresh button at the bottom left
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                    ui.horizontal(|ui| {
-                        let refresh_btn = ui.add_sized(
-                            [24.0, 24.0],
-                            egui::Button::new("🔄")
-                                .fill(egui::Color32::TRANSPARENT)
-                                .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_MUTED))
-                        );
-
-                        if refresh_btn.clicked() {
-                            // Trigger a refresh of the file list
-                            let ctx = crate::app::context::context();
-                            wasm_bindgen_futures::spawn_local(async move {
-                                let _ = ctx.list_keys().await;
-                            });
-                        }
-
-                        if refresh_btn.hovered() {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        }
-
-                        // Add a small label next to the button
-                        ui.add_space(4.0);
-                        ui.label(
-                            egui::RichText::new("Refresh")
-                                .size(10.0)
-                                .color(super::theme::MutantColors::TEXT_MUTED)
-                        );
-                    });
-                    ui.add_space(8.0);
-                });
 
                 (view_details_clicked, download_details_clicked)
             });
