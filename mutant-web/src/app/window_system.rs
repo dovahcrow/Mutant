@@ -1,7 +1,7 @@
 use std::sync::{Arc, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use eframe::egui::{self, CornerRadius, Id, RichText, SidePanel};
-use egui_dock::{DockArea, DockState, Style};
+use eframe::egui::{self, Id, RichText, SidePanel};
+use egui_dock::{DockArea, DockState};
 use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 
@@ -163,6 +163,7 @@ impl egui_dock::TabViewer for UnifiedTabViewer {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        // Don't override the style - let it inherit from the root theme
         // For FsWindow tabs, we need to use the special draw method that avoids deadlock
         // For other tabs, use the regular draw method
         match tab {
@@ -311,33 +312,9 @@ impl WindowSystem {
 
     /// Draw only the dock area without the left menu (for use with external menu)
     pub fn draw_dock_only(&mut self, ui: &mut egui::Ui) {
-        // Create a custom style for the dock area
-        let mut style = Style::from_egui(ui.ctx().style().as_ref());
-
-        // Configure the style to make docking more visible and user-friendly
-        style.tab_bar.fill_tab_bar = false; // Don't fill the entire tab bar
-
-        // Use MutAnt theme colors for tab styling
-        style.tab_bar.bg_fill = MutantColors::BACKGROUND_MEDIUM;
-        style.tab.tab_body.bg_fill = MutantColors::BACKGROUND_LIGHT;
-
-        // Active and focused tabs use accent color
-        style.tab.active.bg_fill = MutantColors::ACCENT_ORANGE;
-        style.tab.active.text_color = MutantColors::BACKGROUND_DARK;
-        style.tab.focused.bg_fill = MutantColors::SURFACE_HOVER;
-        style.tab.focused.text_color = MutantColors::TEXT_PRIMARY;
-
-        // Inactive tabs
-        style.tab.inactive.bg_fill = MutantColors::SURFACE;
-        style.tab.inactive.text_color = MutantColors::TEXT_SECONDARY;
-
-        // Tab bar styling
-        style.tab_bar.hline_color = MutantColors::BORDER_MEDIUM;
-        style.tab_bar.corner_radius = CornerRadius::same(6);
-
+        // Don't override the style - let it inherit from the root MutAnt theme
         // Create the dock area with docking enabled
         DockArea::new(&mut self.tree)
-            .style(style)
             .id(Id::new(&self.dock_area_id))
             .show_inside(ui, &mut UnifiedTabViewer {});
 
@@ -475,33 +452,9 @@ impl WindowSystem {
                 });
             });
 
-        // Create a custom style for the dock area
-        let mut style = Style::from_egui(ui.ctx().style().as_ref());
-
-        // Configure the style to make docking more visible and user-friendly
-        style.tab_bar.fill_tab_bar = false; // Don't fill the entire tab bar
-
-        // Use MutAnt theme colors for tab styling
-        style.tab_bar.bg_fill = MutantColors::BACKGROUND_MEDIUM;
-        style.tab.tab_body.bg_fill = MutantColors::BACKGROUND_LIGHT;
-
-        // Active and focused tabs use accent color
-        style.tab.active.bg_fill = MutantColors::ACCENT_ORANGE;
-        style.tab.active.text_color = MutantColors::BACKGROUND_DARK;
-        style.tab.focused.bg_fill = MutantColors::SURFACE_HOVER;
-        style.tab.focused.text_color = MutantColors::TEXT_PRIMARY;
-
-        // Inactive tabs
-        style.tab.inactive.bg_fill = MutantColors::SURFACE;
-        style.tab.inactive.text_color = MutantColors::TEXT_SECONDARY;
-
-        // Tab bar styling
-        style.tab_bar.hline_color = MutantColors::BORDER_MEDIUM;
-        style.tab_bar.corner_radius = CornerRadius::same(6);
-
+        // Don't override the style - let it inherit from the root MutAnt theme
         // Create the dock area with docking enabled
         DockArea::new(&mut self.tree)
-            .style(style)
             .id(Id::new(&self.dock_area_id))
             .show_inside(ui, &mut UnifiedTabViewer {});
 

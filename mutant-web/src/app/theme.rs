@@ -103,23 +103,23 @@ pub fn apply_mutant_theme(ctx: &egui::Context) {
     // === TEXT STYLES ===
     style.text_styles.insert(
         egui::TextStyle::Heading,
-        egui::FontId::new(24.0, egui::FontFamily::Proportional),
+        egui::FontId::new(18.0, egui::FontFamily::Proportional), // Smaller heading
     );
     style.text_styles.insert(
         egui::TextStyle::Body,
-        egui::FontId::new(14.0, egui::FontFamily::Proportional),
+        egui::FontId::new(13.0, egui::FontFamily::Proportional), // Smaller body text
     );
     style.text_styles.insert(
         egui::TextStyle::Button,
-        egui::FontId::new(14.0, egui::FontFamily::Proportional),
+        egui::FontId::new(13.0, egui::FontFamily::Proportional), // Smaller button text
     );
     style.text_styles.insert(
         egui::TextStyle::Small,
-        egui::FontId::new(12.0, egui::FontFamily::Proportional),
+        egui::FontId::new(11.0, egui::FontFamily::Proportional), // Smaller small text
     );
     style.text_styles.insert(
         egui::TextStyle::Monospace,
-        egui::FontId::new(13.0, egui::FontFamily::Monospace),
+        egui::FontId::new(12.0, egui::FontFamily::Monospace), // Smaller monospace
     );
 
     // Apply the style

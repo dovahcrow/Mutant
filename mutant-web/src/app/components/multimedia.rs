@@ -160,19 +160,16 @@ fn get_language_from_extension(file_path: &str) -> Option<String> {
     // }
 }
 
-// Get or create a MutAnt-themed code theme
+// Get or create a MutAnt-themed code theme that respects the current context
 fn get_code_theme(ui: &egui::Ui) -> Arc<CodeTheme> {
-    // Use our custom MutAnt theme
-    static CODE_THEME: std::sync::OnceLock<Arc<CodeTheme>> = std::sync::OnceLock::new();
+    // Create a custom dark theme that matches our MutAnt theme colors
+    // We don't use static storage anymore to ensure it respects theme updates
+    let theme = CodeTheme::dark(0.9); // Higher contrast for better readability
 
-    // Initialize the theme only once and store it in memory
-    CODE_THEME.get_or_init(|| {
-        // Create a dark theme with higher contrast for better readability
-        let theme = CodeTheme::dark(0.8); // Higher contrast for MutAnt theme
-        let theme_clone = theme.clone();
-        theme_clone.store_in_memory(ui.ctx());
-        Arc::new(theme)
-    }).clone()
+    // Store in context memory for this frame
+    let theme_clone = theme.clone();
+    theme_clone.store_in_memory(ui.ctx());
+    Arc::new(theme)
 }
 
 /// Draw a text viewer with syntax highlighting
@@ -195,13 +192,9 @@ fn draw_code_editor(ui: &mut Ui, file_content: &mut FileContent, language: &str)
         }
     };
 
-    // Set a larger font size for the editor
-    ui.style_mut().text_styles.get_mut(&egui::TextStyle::Monospace).map(|font_id| {
-        font_id.size = 16.0; // Increase font size
-    });
+    // Don't override the style - let it inherit from the root theme
 
     // Use a more efficient scroll area that only renders visible content
-    // Apply MutAnt theme to the scroll area
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
@@ -216,11 +209,6 @@ fn draw_code_editor(ui: &mut Ui, file_content: &mut FileContent, language: &str)
                     string,
                     language,
                 );
-
-                // Set the text size in the layout job
-                job.sections.iter_mut().for_each(|section| {
-                    section.format.font_id.size = 16.0;
-                });
 
                 job.wrap.max_width = wrap_width;
 
@@ -248,10 +236,8 @@ fn draw_code_editor(ui: &mut Ui, file_content: &mut FileContent, language: &str)
 
 /// Draw a code viewer with syntax highlighting
 pub fn draw_code_viewer(ui: &mut Ui, file_content: &mut FileContent, language: &str) {
-    use crate::app::theme::MutantColors;
-
-    // Display file type information with MutAnt theme colors
-    ui.label(RichText::new(format!("Code file ({})", language)).color(MutantColors::ACCENT_BLUE));
+    // Display file type information
+    ui.label(format!("Code file ({})", language));
     ui.separator();
 
     // Use our optimized code editor with the appropriate language

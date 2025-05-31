@@ -531,6 +531,8 @@ impl FileViewerTab {
 
     /// Draw the file viewer tab
     pub fn draw(&mut self, ui: &mut egui::Ui) {
+        // Don't override the style - let it inherit from the root theme
+
         // Show file details at the top
         ui.heading(&self.file.key);
 
@@ -927,6 +929,7 @@ impl egui_dock::TabViewer for FsInternalTabViewer {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        // Don't override the style - let it inherit from the root theme
         tab.draw(ui);
     }
 
