@@ -192,7 +192,9 @@ impl TreeNode {
             if self.is_dir() {
                 // Directory node - use collapsing header for proper tree behavior
                 let icon = if self.expanded { "📂" } else { "📁" };
-                let text = format!("{} {}/", icon, self.name);
+                let text = RichText::new(format!("{} {}/", icon, self.name))
+                    .size(14.0)
+                    .color(super::theme::MutantColors::ACCENT_BLUE);
 
                 let header = egui::CollapsingHeader::new(text)
                     .id_salt(format!("mutant_fs_{}dir_{}", window_id, self.path))
@@ -264,66 +266,57 @@ impl TreeNode {
                             super::theme::MutantColors::SELECTION
                         );
                     }
-                    // File name (takes available space but leaves room for metadata)
-                    ui.allocate_ui_with_layout(
-                        [ui.available_width() - 120.0, 20.0].into(), // Reserve 120px for size and download button
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            let file_response = ui.add(
-                                egui::Label::new(text_display)
-                                    .sense(egui::Sense::click())
-                                    .truncate() // Truncate long filenames
-                            );
 
-                            if file_response.clicked() {
-                                view_clicked_details = Some(details.clone());
-                            }
-
-                            if file_response.hovered() {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                            }
-                        }
+                    // File name (clickable, takes available space)
+                    let file_response = ui.add(
+                        egui::Label::new(text_display)
+                            .sense(egui::Sense::click())
+                            .truncate() // Truncate long filenames
                     );
 
-                    // Right side metadata (fixed width)
-                    ui.allocate_ui_with_layout(
-                        [120.0, 20.0].into(),
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            // Download button
-                            let download_btn = ui.add_sized(
-                                [20.0, 20.0],
-                                egui::Button::new("💾")
-                                    .fill(egui::Color32::TRANSPARENT)
-                                    .stroke(egui::Stroke::NONE)
-                            );
+                    if file_response.clicked() {
+                        view_clicked_details = Some(details.clone());
+                    }
 
-                            if download_btn.clicked() {
-                                download_clicked_details = Some(details.clone());
-                            }
+                    if file_response.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
 
-                            if download_btn.hovered() {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                            }
+                    // Right-aligned metadata
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Download button
+                        let download_btn = ui.add_sized(
+                            [20.0, 20.0],
+                            egui::Button::new("💾")
+                                .fill(egui::Color32::TRANSPARENT)
+                                .stroke(egui::Stroke::NONE)
+                        );
 
+                        if download_btn.clicked() {
+                            download_clicked_details = Some(details.clone());
+                        }
+
+                        if download_btn.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+
+                        ui.add_space(8.0);
+
+                        // File size
+                        let size_text = RichText::new(humanize_size(details.total_size))
+                            .size(11.0)
+                            .color(super::theme::MutantColors::TEXT_MUTED);
+                        ui.label(size_text);
+
+                        // Public indicator
+                        if details.is_public {
                             ui.add_space(4.0);
-
-                            // File size
-                            let size_text = RichText::new(humanize_size(details.total_size))
-                                .size(11.0)
-                                .color(super::theme::MutantColors::TEXT_MUTED);
-                            ui.label(size_text);
-
-                            // Public indicator
-                            if details.is_public {
-                                ui.add_space(4.0);
-                                let public_text = RichText::new("PUB")
-                                    .size(10.0)
-                                    .color(super::theme::MutantColors::SUCCESS);
-                                ui.label(public_text);
-                            }
+                            let public_text = RichText::new("PUB")
+                                .size(10.0)
+                                .color(super::theme::MutantColors::SUCCESS);
+                            ui.label(public_text);
                         }
-                    );
+                    });
                 });
             }
         });
@@ -1610,12 +1603,14 @@ impl FsWindow {
 
     /// Draw the tree UI
     fn draw_tree(&mut self, ui: &mut egui::Ui) {
-        // Modern header with better styling
-        ui.horizontal(|ui| {
-            ui.add_space(8.0);
+        // Modern header with better styling and padding
+        ui.add_space(12.0); // Top padding
 
-            // Explorer icon and title
-            let header_text = RichText::new("🗂️ File Explorer")
+        ui.horizontal(|ui| {
+            ui.add_space(16.0); // Left padding
+
+            // Explorer icon and title with fallback for missing glyphs
+            let header_text = RichText::new("� File Explorer")
                 .size(18.0)
                 .color(super::theme::MutantColors::TEXT_PRIMARY)
                 .strong();
@@ -1623,11 +1618,13 @@ impl FsWindow {
 
             // Add a subtle refresh button
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(16.0); // Right padding
+
                 let refresh_btn = ui.add_sized(
                     [24.0, 24.0],
-                    egui::Button::new("🔄")
+                    egui::Button::new("↻")
                         .fill(egui::Color32::TRANSPARENT)
-                        .stroke(egui::Stroke::NONE)
+                        .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_MUTED))
                 );
 
                 if refresh_btn.clicked() {
@@ -1644,7 +1641,7 @@ impl FsWindow {
             });
         });
 
-        ui.add_space(4.0);
+        ui.add_space(8.0); // Space before separator
 
         // Subtle separator line
         ui.separator();
@@ -1658,9 +1655,9 @@ impl FsWindow {
 
                 // First, show the root folder (always expanded) with improved styling
                 ui.horizontal(|ui| {
-                    ui.add_space(8.0); // Left padding
+                    ui.add_space(16.0); // Left padding to match header
 
-                    // Root folder with modern styling
+                    // Root folder with modern styling and better colors
                     let root_text = RichText::new("📁 MutAnt Storage")
                         .size(16.0)
                         .color(super::theme::MutantColors::ACCENT_ORANGE)
