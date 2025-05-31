@@ -7,8 +7,22 @@ use mutant_protocol::{KeyDetails, StatsResponse, Task, TaskId, TaskListEntry, Ta
 use tokio::sync::mpsc;
 use wasm_bindgen_futures::spawn_local;
 
-// Default WebSocket URL for the daemon
-pub const DEFAULT_WS_URL: &str = "ws://localhost:3030/ws";
+// Function to get the WebSocket URL based on current domain
+pub fn get_daemon_ws_url() -> String {
+    let window = web_sys::window().expect("no global `window` exists");
+    let location = window.location();
+    let hostname = location.hostname().expect("should have a hostname");
+
+    // Use the hostname with the default daemon port 3030
+    let daemon_url = format!("ws://{}:3030/ws", hostname);
+    log::info!("Dynamic WebSocket URL: {}", daemon_url);
+    daemon_url
+}
+
+// Default WebSocket URL for the daemon (now dynamic)
+pub fn default_ws_url() -> String {
+    get_daemon_ws_url()
+}
 
 // Commands that can be sent to the client manager
 enum ClientCommand {
@@ -52,7 +66,8 @@ async fn ensure_connected(client: &mut MutantClient, connected: &mut bool) -> Re
         return Ok(());
     }
 
-    match client.connect(DEFAULT_WS_URL).await {
+    let ws_url = default_ws_url();
+    match client.connect(&ws_url).await {
         Ok(_) => {
             *connected = true;
             Ok(())
@@ -73,7 +88,8 @@ async fn handle_get_operation(
     sender: oneshot::Sender<Result<(), String>>
 ) {
     // Connect the client first since cloned clients don't have a connection
-    if let Err(e) = client.connect(DEFAULT_WS_URL).await {
+    let ws_url = default_ws_url();
+    if let Err(e) = client.connect(&ws_url).await {
         error!("Failed to connect cloned client: {:?}", e);
         if !sender.is_canceled() {
             let _ = sender.send(Err(format!("Failed to connect: {:?}", e)));
@@ -368,7 +384,8 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                     // Spawn a separate task to handle the put operation
                     spawn_local(async move {
                         // Connect the client first since cloned clients don't have a connection
-                        if let Err(e) = put_client.connect(DEFAULT_WS_URL).await {
+                        let ws_url = default_ws_url();
+                        if let Err(e) = put_client.connect(&ws_url).await {
                             error!("Failed to connect cloned client: {:?}", e);
                             if !sender.is_canceled() {
                                 let _ = sender.send(Err(format!("Failed to connect: {:?}", e)));

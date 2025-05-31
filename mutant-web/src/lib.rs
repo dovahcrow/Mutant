@@ -99,7 +99,7 @@ impl Client {
             };
 
             info!("Connecting to daemon");
-            this.connect(DEFAULT_WS_URL).await.unwrap();
+            this.connect(&DEFAULT_WS_URL()).await.unwrap();
             info!("Client connected");
 
             // Note: Progress updates for streaming put operations are now handled

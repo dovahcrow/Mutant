@@ -136,6 +136,7 @@ pub struct AppOptions {
     pub local: bool,
     pub alphanet: bool,
     pub ignore_ctrl_c: bool,
+    pub bind_address: String,
 }
 
 pub async fn run(options: AppOptions) -> Result<(), Error> {
@@ -244,9 +245,9 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
             },
         );
 
-    // Define server address
-    // TODO: Make this configurable
-    let addr: SocketAddr = ([127, 0, 0, 1], 3030).into();
+    // Parse the bind address from options
+    let addr: SocketAddr = options.bind_address.parse()
+        .map_err(|e| Error::Internal(format!("Invalid bind address '{}': {}", options.bind_address, e)))?;
     log::info!("WebSocket server listening on {}", addr);
 
     let ignore_ctrl_c = options.ignore_ctrl_c;

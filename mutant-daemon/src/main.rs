@@ -16,6 +16,8 @@ struct Args {
     alphanet: bool,
     #[arg(long)]
     ignore_ctrl_c: bool,
+    #[arg(long, default_value = "127.0.0.1:3030", help = "Address to bind the WebSocket server to")]
+    bind: String,
 }
 
 #[tokio::main]
@@ -34,6 +36,7 @@ async fn main() -> Result<(), Error> {
         local: args.local,
         alphanet: args.alphanet,
         ignore_ctrl_c: args.ignore_ctrl_c,
+        bind_address: args.bind,
     };
 
     // Run the application

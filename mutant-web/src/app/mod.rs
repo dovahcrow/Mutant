@@ -34,7 +34,8 @@ pub mod put;
 // mod tasks;
 pub mod window_system;
 
-pub const DEFAULT_WS_URL: &str = "ws://localhost:3030/ws";
+// Re-export the dynamic URL function
+pub use client_manager::default_ws_url as DEFAULT_WS_URL;
 
 
 pub use context::context;
