@@ -325,10 +325,17 @@ impl TreeNode {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
 
-                // Draw metadata on top, positioned absolutely at the right edge
+                // Draw metadata ON TOP of the fade gradient, positioned absolutely at the right edge
                 let metadata_rect = egui::Rect::from_min_size(
                     egui::Pos2::new(row_rect.right() - metadata_width, row_rect.top()),
                     egui::Vec2::new(metadata_width, 20.0)
+                );
+
+                // Draw a solid background for the metadata area to ensure it appears on top
+                ui.painter().rect_filled(
+                    metadata_rect,
+                    0.0,
+                    background_color
                 );
 
                 // Create a temporary UI for the metadata area
