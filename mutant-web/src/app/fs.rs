@@ -317,7 +317,7 @@ impl TreeNode {
                         .layout(egui::Layout::right_to_left(egui::Align::Center))
                 );
 
-                metadata_ui.add_space(12.0); // Right padding - increased for better balance
+                metadata_ui.add_space(4.0); // Minimal right padding to account for existing frame padding
 
                 // Download button
                 let download_btn = metadata_ui.add_sized(
