@@ -251,73 +251,123 @@ impl TreeNode {
                 };
 
                 // Create file display text with icon
-                let text_display = RichText::new(format!("{} {}", file_icon, self.name))
-                    .size(14.0)
-                    .color(file_color);
+                // We'll draw the text manually for better control over fade effects
 
                 // Make the file node clickable for viewing with proper layout
-                ui.horizontal(|ui| {
-                    // Add selection background if selected
-                    if is_selected {
-                        let rect = ui.available_rect_before_wrap();
-                        ui.painter().rect_filled(
-                            rect,
-                            egui::Rounding::same(4),
-                            super::theme::MutantColors::SELECTION
-                        );
-                    }
+                let row_response = ui.allocate_response(
+                    egui::Vec2::new(ui.available_width(), 20.0),
+                    egui::Sense::click()
+                );
 
-                    // File name (clickable, takes available space)
-                    let file_response = ui.add(
-                        egui::Label::new(text_display)
-                            .sense(egui::Sense::click())
-                            .truncate() // Truncate long filenames
+                let row_rect = row_response.rect;
+
+                // Add selection background for the entire row
+                if is_selected {
+                    ui.painter().rect_filled(
+                        row_rect,
+                        4.0,
+                        super::theme::MutantColors::SELECTION
+                    );
+                }
+
+                // Calculate metadata width and positioning
+                let metadata_width = 120.0;
+                let text_available_width = row_rect.width() - metadata_width - 8.0; // 8px padding
+
+                // Draw the text with fade effect
+                let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, 2.0);
+
+                // Calculate text size to determine if we need fade
+                let font_id = egui::FontId::new(14.0, egui::FontFamily::Proportional);
+                let text_galley = ui.painter().layout_no_wrap(
+                    format!("{} {}", file_icon, self.name),
+                    font_id.clone(),
+                    file_color
+                );
+
+                if text_galley.size().x > text_available_width {
+                    // Text is too long, draw with fade effect
+                    let fade_start = text_available_width - 30.0; // Start fade 30px before edge
+
+                    // Draw the text (clipped to available width)
+                    let clip_rect = egui::Rect::from_min_size(
+                        text_pos,
+                        egui::Vec2::new(text_available_width, text_galley.size().y)
+                    );
+                    ui.painter().with_clip_rect(clip_rect).galley(text_pos, text_galley.clone(), file_color);
+
+                    // Create fade overlay using a simple rect with alpha
+                    let fade_rect = egui::Rect::from_min_size(
+                        text_pos + egui::Vec2::new(fade_start, 0.0),
+                        egui::Vec2::new(30.0, text_galley.size().y)
                     );
 
-                    if file_response.clicked() {
-                        view_clicked_details = Some(details.clone());
-                    }
+                    // Draw fade overlay with background color
+                    let background_color = super::theme::MutantColors::BACKGROUND_MEDIUM;
+                    ui.painter().rect_filled(
+                        fade_rect,
+                        0.0,
+                        background_color
+                    );
+                } else {
+                    // Text fits, draw normally
+                    ui.painter().galley(text_pos, text_galley, file_color);
+                }
 
-                    if file_response.hovered() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                    }
+                // Handle click on the entire row
+                if row_response.clicked() {
+                    view_clicked_details = Some(details.clone());
+                }
 
-                    // Right-aligned metadata
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Download button
-                        let download_btn = ui.add_sized(
-                            [20.0, 20.0],
-                            egui::Button::new("💾")
-                                .fill(egui::Color32::TRANSPARENT)
-                                .stroke(egui::Stroke::NONE)
-                        );
+                if row_response.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
 
-                        if download_btn.clicked() {
-                            download_clicked_details = Some(details.clone());
-                        }
+                // Draw metadata on top, positioned absolutely at the right edge
+                let metadata_rect = egui::Rect::from_min_size(
+                    egui::Pos2::new(row_rect.right() - metadata_width, row_rect.top()),
+                    egui::Vec2::new(metadata_width, 20.0)
+                );
 
-                        if download_btn.hovered() {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        }
+                // Create a temporary UI for the metadata area
+                let mut metadata_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(metadata_rect)
+                        .layout(egui::Layout::right_to_left(egui::Align::Center))
+                );
 
-                        ui.add_space(8.0);
+                // Download button
+                let download_btn = metadata_ui.add_sized(
+                    [20.0, 20.0],
+                    egui::Button::new("💾")
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::NONE)
+                );
 
-                        // File size
-                        let size_text = RichText::new(humanize_size(details.total_size))
-                            .size(11.0)
-                            .color(super::theme::MutantColors::TEXT_MUTED);
-                        ui.label(size_text);
+                if download_btn.clicked() {
+                    download_clicked_details = Some(details.clone());
+                }
 
-                        // Public indicator
-                        if details.is_public {
-                            ui.add_space(4.0);
-                            let public_text = RichText::new("PUB")
-                                .size(10.0)
-                                .color(super::theme::MutantColors::SUCCESS);
-                            ui.label(public_text);
-                        }
-                    });
-                });
+                if download_btn.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+
+                metadata_ui.add_space(8.0);
+
+                // File size
+                let size_text = RichText::new(humanize_size(details.total_size))
+                    .size(11.0)
+                    .color(super::theme::MutantColors::TEXT_MUTED);
+                metadata_ui.label(size_text);
+
+                // Public indicator
+                if details.is_public {
+                    metadata_ui.add_space(4.0);
+                    let public_text = RichText::new("PUB")
+                        .size(10.0)
+                        .color(super::theme::MutantColors::SUCCESS);
+                    metadata_ui.label(public_text);
+                }
             }
         });
 
