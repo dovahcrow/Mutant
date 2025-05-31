@@ -286,6 +286,8 @@ pub struct FileViewerTab {
 impl FileViewerTab {
     /// Create a new file viewer tab
     pub fn new(file: KeyDetails) -> Self {
+        log::info!("Creating new FileViewerTab for: {}", file.key);
+
         // Initial content while loading
         let initial_content = "Loading file content...".to_string();
 
@@ -300,7 +302,7 @@ impl FileViewerTab {
             video_url: None,
         };
 
-        Self {
+        let tab = Self {
             file,
             content: initial_content,
             is_loading: true,
@@ -313,7 +315,10 @@ impl FileViewerTab {
             loading_progress: 0.0,
             total_bytes: None,
             downloaded_bytes: 0,
-        }
+        };
+
+        log::info!("Successfully created FileViewerTab");
+        tab
     }
 
     /// Draw the file viewer tab
@@ -611,7 +616,44 @@ impl FileViewerTab {
     }
 }
 
-// FileViewerTabViewer is no longer needed - using unified dock system
+/// TabViewer for FileViewerTab in the FsWindow's internal dock
+struct FileViewerTabViewer {}
+
+impl egui_dock::TabViewer for FileViewerTabViewer {
+    type Tab = FileViewerTab;
+
+    fn title(&mut self, tab: &mut Self::Tab) -> egui::WidgetText {
+        // Get the file name from the path
+        let file_name = std::path::Path::new(&tab.file.key)
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_else(|| tab.file.key.clone());
+
+        // Add an icon based on the file type
+        let file_icon = match &tab.file_type {
+            Some(multimedia::FileType::Text) => "📄",
+            Some(multimedia::FileType::Code(_)) => "📝",
+            Some(multimedia::FileType::Image) => "🖼️",
+            Some(multimedia::FileType::Video) => "🎬",
+            Some(multimedia::FileType::Other) | None => "📄",
+        };
+
+        // Add a modified indicator if the file has been modified
+        let modified_indicator = if tab.file_modified { "* " } else { "" };
+
+        let title = format!("{}{}{}", file_icon, modified_indicator, file_name);
+        egui::RichText::new(title).into()
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
+        tab.draw(ui);
+    }
+
+    // Allow all tabs to be closable
+    fn closeable(&mut self, _tab: &mut Self::Tab) -> bool {
+        true
+    }
+}
 
 /// The filesystem tree window
 #[derive(Clone, Serialize, Deserialize)]
@@ -620,7 +662,8 @@ pub struct FsWindow {
     root: TreeNode,
     /// Path of the selected file (for highlighting in the tree)
     selected_path: Option<String>,
-    // Removed internal dock system - now using unified dock system
+    /// Internal dock system for file viewers within this window
+    file_viewer_dock: egui_dock::DockState<FileViewerTab>,
     #[serde(skip)] // active_downloads should not be serialized
     active_downloads: Arc<Mutex<Vec<ActiveDownload>>>,
     /// Unique identifier for this window instance to avoid widget ID conflicts
@@ -637,6 +680,7 @@ impl Default for FsWindow {
             keys: crate::app::context::context().get_key_cache(),
             root: TreeNode::default(),
             selected_path: None,
+            file_viewer_dock: egui_dock::DockState::new(vec![]),
             active_downloads: Arc::new(Mutex::new(Vec::new())),
             window_id: uuid::Uuid::new_v4().to_string(),
             dock_area_id: generate_unique_dock_area_id(),
@@ -662,15 +706,46 @@ impl Window for FsWindow {
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            // Show instructions for using the unified dock system
-            ui.centered_and_justified(|ui| {
-                ui.vertical_centered(|ui| {
-                    ui.heading("File Viewer");
-                    ui.add_space(10.0);
-                    ui.label("Click on a file in the tree to open it in a new tab.");
-                    ui.label("File tabs will appear in the main dock area and can be moved freely.");
+            // Show the internal dock system for file viewers
+            if self.file_viewer_dock.iter_all_tabs().next().is_none() {
+                // Show instructions when no files are open
+                ui.centered_and_justified(|ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.heading("File Viewer");
+                        ui.add_space(10.0);
+                        ui.label("Click on a file in the tree to open it here.");
+                        ui.add_space(5.0);
+                        ui.label("You can also drag file tabs between this dock and the main dock area.");
+                    });
                 });
-            });
+            } else {
+                // Create a custom style for the internal dock area
+                let mut style = egui_dock::Style::from_egui(ui.ctx().style().as_ref());
+
+                // Use MutAnt theme colors for tab styling
+                style.tab_bar.bg_fill = super::theme::MutantColors::BACKGROUND_MEDIUM;
+                style.tab.tab_body.bg_fill = super::theme::MutantColors::BACKGROUND_LIGHT;
+
+                // Active and focused tabs use accent color
+                style.tab.active.bg_fill = super::theme::MutantColors::ACCENT_ORANGE;
+                style.tab.active.text_color = super::theme::MutantColors::BACKGROUND_DARK;
+                style.tab.focused.bg_fill = super::theme::MutantColors::SURFACE_HOVER;
+                style.tab.focused.text_color = super::theme::MutantColors::TEXT_PRIMARY;
+
+                // Inactive tabs
+                style.tab.inactive.bg_fill = super::theme::MutantColors::SURFACE;
+                style.tab.inactive.text_color = super::theme::MutantColors::TEXT_SECONDARY;
+
+                // Tab bar styling
+                style.tab_bar.hline_color = super::theme::MutantColors::BORDER_MEDIUM;
+                style.tab_bar.corner_radius = eframe::egui::CornerRadius::same(6);
+
+                // Show the internal dock area with a unique ID
+                egui_dock::DockArea::new(&mut self.file_viewer_dock)
+                    .style(style)
+                    .id(egui::Id::new(format!("fs_internal_dock_{}", self.dock_area_id)))
+                    .show_inside(ui, &mut FileViewerTabViewer {});
+            }
         });
 
         // // Draw Active Downloads UI
@@ -963,13 +1038,32 @@ impl FsWindow {
 
     // find_tab methods removed - use WindowSystem methods directly
 
-    /// Add a new tab for a file - now uses the unified dock system
+    /// Add a new tab for a file - adds to the internal dock system
     fn add_file_tab(&mut self, file_details: KeyDetails) {
-        // Create a new tab
-        let tab = FileViewerTab::new(file_details.clone());
+        log::info!("FsWindow: Creating new file viewer tab for: {}", file_details.key);
 
-        // Use the unified dock system to add the tab
-        crate::app::window_system::new_file_viewer_tab(tab);
+        // Check if a tab for this file already exists in the internal dock
+        let tab_exists = self.file_viewer_dock.iter_all_tabs().any(|(_, existing_tab)| {
+            existing_tab.file.key == file_details.key
+        });
+
+        if !tab_exists {
+            // Create a new tab
+            let tab = FileViewerTab::new(file_details.clone());
+
+            // Add directly to the internal dock system (no deadlock since we're not accessing the main window system)
+            if self.file_viewer_dock.iter_all_tabs().next().is_none() {
+                // If the dock is empty, create a new surface
+                self.file_viewer_dock = egui_dock::DockState::new(vec![tab]);
+            } else {
+                // Add to the existing surface
+                self.file_viewer_dock.main_surface_mut().push_to_focused_leaf(tab);
+            }
+
+            log::info!("FsWindow: Successfully added tab to internal dock for: {}", file_details.key);
+        } else {
+            log::info!("FsWindow: Tab for file {} already exists in internal dock", file_details.key);
+        }
     }
 
     /// Build the tree from the current keys

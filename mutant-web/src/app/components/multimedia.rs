@@ -187,7 +187,13 @@ fn draw_code_editor(ui: &mut Ui, file_content: &mut FileContent, language: &str)
     let theme = get_code_theme(ui);
 
     // Get a mutable reference to the editable content
-    let content = file_content.editable_content.as_mut().unwrap();
+    let content = match file_content.editable_content.as_mut() {
+        Some(content) => content,
+        None => {
+            ui.label("Error: No editable content available");
+            return;
+        }
+    };
 
     // Set a larger font size for the editor
     ui.style_mut().text_styles.get_mut(&egui::TextStyle::Monospace).map(|font_id| {

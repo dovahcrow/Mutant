@@ -91,6 +91,8 @@ pub fn new_window<T: Into<WindowType> + 'static>(window: T) {
 
 /// Add a file viewer tab to the unified dock system
 pub fn new_file_viewer_tab(tab: FileViewerTab) {
+    log::info!("Adding new file viewer tab for: {}", tab.file.key);
+
     let mut window_system = window_system_mut();
 
     // Check if a tab for this file already exists
@@ -103,8 +105,23 @@ pub fn new_file_viewer_tab(tab: FileViewerTab) {
     });
 
     if !tab_exists {
-        // Add the tab to the main surface
-        window_system.tree.main_surface_mut().push_to_focused_leaf(UnifiedTab::FileViewer(tab));
+        // Ensure we have a valid dock tree
+        let has_tabs = window_system.tree.iter_all_tabs().next().is_some();
+
+        if !has_tabs {
+            // If the tree has no tabs, create a main surface with a main window
+            window_system.tree = DockState::new(vec![UnifiedTab::Main(MainWindow::default())]);
+        }
+
+        // Check if the main surface has any tabs
+        let main_surface = window_system.tree.main_surface_mut();
+        if main_surface.num_tabs() == 0 {
+            main_surface.push_to_focused_leaf(UnifiedTab::Main(MainWindow::default()));
+        }
+
+        // Add the file viewer tab to the main surface
+        main_surface.push_to_focused_leaf(UnifiedTab::FileViewer(tab));
+        log::info!("Successfully added file viewer tab to dock system");
     } else {
         log::info!("Tab for file {} already exists", tab.file.key);
         // TODO: Focus the existing tab
@@ -506,7 +523,11 @@ impl Default for WindowSystem {
         // Reset the window counter when creating a new window system
         *WINDOW_COUNTER.write().unwrap() = 0;
 
-        let tree = DockState::new(vec![]);
+        // Create a DockState with a main window to ensure we have a main surface
+        // This prevents issues when trying to access main_surface() on an empty dock
+        let tree = DockState::new(vec![UnifiedTab::Main(MainWindow::default())]);
+
+        log::info!("Initialized default WindowSystem with main window");
 
         Self {
             frame: 0,
