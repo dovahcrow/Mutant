@@ -32,11 +32,13 @@ impl UnifiedTab {
         match self {
             UnifiedTab::Main(w) => w.draw(ui),
             UnifiedTab::Put(w) => w.draw(ui),
-            UnifiedTab::Fs(w) => w.draw(ui),
+            UnifiedTab::Fs(w) => w.draw(ui), // Still use regular draw for now
             UnifiedTab::Stats(w) => w.draw(ui),
             UnifiedTab::FileViewer(tab) => tab.draw(ui),
         }
     }
+
+// draw_with_dock_state method removed - using simple dual dock approach
 }
 
 // Conversion from WindowType to UnifiedTab
@@ -131,7 +133,7 @@ pub fn new_file_viewer_tab(tab: FileViewerTab) {
 
 
 
-struct UnifiedTabViewer {}
+pub struct UnifiedTabViewer {}
 
 impl egui_dock::TabViewer for UnifiedTabViewer {
     type Tab = UnifiedTab;
@@ -172,7 +174,17 @@ impl egui_dock::TabViewer for UnifiedTabViewer {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        tab.draw(ui);
+        // For FsWindow tabs, we need to use the special draw method that avoids deadlock
+        // For other tabs, use the regular draw method
+        match tab {
+            UnifiedTab::Fs(_) => {
+                // Use regular draw for now - the shared dock functionality will be handled differently
+                tab.draw(ui);
+            }
+            _ => {
+                tab.draw(ui);
+            }
+        }
     }
 
     // Allow all tabs to be closable
@@ -208,6 +220,16 @@ pub struct WindowSystem {
 }
 
 impl WindowSystem {
+    /// Get a mutable reference to the dock tree
+    pub fn tree_mut(&mut self) -> &mut DockState<UnifiedTab> {
+        &mut self.tree
+    }
+
+    /// Get a reference to the dock tree
+    pub fn tree(&self) -> &DockState<UnifiedTab> {
+        &self.tree
+    }
+
     pub fn add_window(&mut self, window: WindowType) {
         // Check if a window with the same name already exists
         if self

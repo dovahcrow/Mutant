@@ -281,6 +281,9 @@ pub struct FileViewerTab {
     /// Bytes downloaded so far
     #[serde(skip)]
     pub downloaded_bytes: usize,
+    /// Preferred dock area ID (for smart placement)
+    #[serde(skip)]
+    pub preferred_dock_area: Option<String>,
 }
 
 impl FileViewerTab {
@@ -315,6 +318,7 @@ impl FileViewerTab {
             loading_progress: 0.0,
             total_bytes: None,
             downloaded_bytes: 0,
+            preferred_dock_area: None,
         };
 
         log::info!("Successfully created FileViewerTab");
@@ -669,7 +673,7 @@ pub struct FsWindow {
     /// Unique identifier for this window instance to avoid widget ID conflicts
     #[serde(skip)]
     window_id: String,
-    /// Unique dock area ID for the file viewer
+    /// Unique dock area ID for the file viewer area within this FsWindow
     #[serde(skip)]
     dock_area_id: String,
 }
