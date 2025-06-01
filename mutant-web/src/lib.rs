@@ -944,23 +944,6 @@ impl MyApp {
                 ui.vertical_centered(|ui| {
                     ui.add_space(15.0);
 
-                    // Toggle button at the top
-                    let toggle_icon = if self.sidebar_expanded { "◀" } else { "▶" };
-                    let toggle_button = egui::Button::new(
-                        egui::RichText::new(toggle_icon)
-                            .size(14.0)
-                            .color(app::theme::MutantColors::TEXT_SECONDARY)
-                    )
-                    .fill(app::theme::MutantColors::SURFACE)
-                    .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_MEDIUM))
-                    .min_size([30.0, 30.0].into());
-
-                    if ui.add(toggle_button).clicked() {
-                        self.sidebar_expanded = !self.sidebar_expanded;
-                    }
-
-                    ui.add_space(10.0);
-
                     // Check window states before creating buttons
                     let upload_open = self.fs_window.read().unwrap().is_window_open("MutAnt Upload");
                     let stats_open = self.fs_window.read().unwrap().is_window_open("MutAnt Stats");
@@ -1066,6 +1049,32 @@ impl eframe::App for MyApp {
 
         // Show the left menu
         self.draw_left_menu(ctx);
+
+        // Draw the toggle button as a floating circular button that overlaps with the main content
+        let sidebar_width = if self.sidebar_expanded { 200.0 } else { 60.0 };
+        let toggle_icon = if self.sidebar_expanded { "◀" } else { "▶" };
+        let button_size = 24.0;
+        let button_pos = egui::pos2(sidebar_width - 12.0, 60.0); // Position it to overlap with the main content
+
+        // Create a floating area for the toggle button
+        egui::Area::new(egui::Id::new("sidebar_toggle"))
+            .fixed_pos(button_pos)
+            .show(ctx, |ui| {
+                // Create a circular button with subtle styling
+                let button = egui::Button::new(
+                    egui::RichText::new(toggle_icon)
+                        .size(12.0)
+                        .color(app::theme::MutantColors::TEXT_SECONDARY)
+                )
+                .fill(app::theme::MutantColors::BACKGROUND_MEDIUM)
+                .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_MEDIUM))
+                .min_size([button_size, button_size].into())
+                .corner_radius(egui::CornerRadius::same(12)); // Make it circular
+
+                if ui.add(button).clicked() {
+                    self.sidebar_expanded = !self.sidebar_expanded;
+                }
+            });
 
         // Show the main FS window in the remaining space
         egui::CentralPanel::default()
