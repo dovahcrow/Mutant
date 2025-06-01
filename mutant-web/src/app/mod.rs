@@ -139,8 +139,8 @@ impl From<put::PutWindow> for WindowType {
     }
 }
 
-impl From<fs::FsWindow> for WindowType {
-    fn from(window: fs_window::FsWindow) -> Self { // Updated path
+impl From<fs_window::FsWindow> for WindowType {
+    fn from(window: fs_window::FsWindow) -> Self {
         Self::Fs(window)
     }
 }

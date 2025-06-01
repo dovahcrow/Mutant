@@ -5,7 +5,7 @@ use log::{info, error};
 use wasm_bindgen_futures::spawn_local;
 use js_sys::Uint8Array;
 use crate::utils::download_utils::{self, JsFileHandleResult, JsSimpleResult};
-use crate::app::context;
+
 use eframe::egui;
 use tokio::sync::watch; // For stop_signal
 

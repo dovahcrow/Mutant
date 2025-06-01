@@ -8,7 +8,7 @@ use crate::app::window_system;
 use wasm_bindgen_futures::spawn_local;
 use log;
 use humansize::{format_size, BINARY}; // For humanize_size
-use crate::app::fs::FsWindow; // For save_file -> get_window_mut FsWindow type
+use crate::app::fs_window::FsWindow; // For save_file -> get_window_mut FsWindow type
 
 // Helper function to format file sizes (redefined locally)
 fn humanize_size(size: usize) -> String {

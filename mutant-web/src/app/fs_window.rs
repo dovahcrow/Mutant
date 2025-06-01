@@ -1,23 +1,15 @@
 use std::sync::{Arc, RwLock, Mutex}; // Added Mutex
-use std::collections::BTreeMap;
 
 use eframe::egui::{self, RichText};
 
-use humansize::{format_size, BINARY};
-use mutant_protocol::{KeyDetails, TaskProgress, GetEvent, TaskId}; // Added TaskProgress, GetEvent, TaskId
+use mutant_protocol::KeyDetails;
 use serde::{Deserialize, Serialize};
-use lazy_static::lazy_static;
 
 // Updated use statements
 use crate::app::components::multimedia;
 use crate::app::Window;
-use crate::app::window_system::{generate_unique_dock_area_id, window_system_mut};
+use crate::app::window_system::generate_unique_dock_area_id;
 use crate::app::{put::PutWindow, stats::StatsWindow};
-use crate::utils::download_utils::{self, JsFileHandleResult, JsSimpleResult}; // Assuming this was already correct or is fine
-use js_sys::Uint8Array; // Remains as is
-use wasm_bindgen_futures::spawn_local; // Remains as is
-use log::{info, error}; // Remains as is
-use serde_wasm_bindgen; // Remains as is
 
 // Direct imports for moved types are no longer needed if always fully qualified.
 // Example: use crate::app::fs::tree::TreeNode; // No longer needed if using full path
@@ -288,7 +280,7 @@ impl FsWindow {
                     log::info!("Successfully loaded file content for: {} ({} bytes)", key, data.len());
 
                     // Update the tab with the loaded content using the global FsWindow reference
-                    if let Some(fs_window_ref) = get_main_fs_window() {
+                    if let Some(fs_window_ref) = crate::app::fs::global::get_main_fs_window() {
                         let mut fs_window = fs_window_ref.write().unwrap();
 
                         // Look for the file tab in the FsWindow's internal dock
@@ -486,7 +478,7 @@ impl FsWindow {
 
     /// Build the tree from the current keys
     /// If force_rebuild is true, the tree will be rebuilt even if it's not empty
-    fn build_tree(&mut self) {
+    pub fn build_tree(&mut self) {
         // Get the current key count to check if we need to rebuild
         let keys = self.keys.read().unwrap();
         let current_key_count = keys.len();

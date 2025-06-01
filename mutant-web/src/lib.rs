@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, sync::{Arc, RwLock}};
 
-use app::{context::init_context, fs::FsWindow, Window, DEFAULT_WS_URL};
+use app::{context::init_context, fs_window::FsWindow, Window, DEFAULT_WS_URL};
 use futures::{channel::oneshot, StreamExt};
 use log::{error, info};
 use mutant_client::{MutantClient, ProgressReceiver};
@@ -886,7 +886,7 @@ impl Default for MyApp {
         let fs_window = Arc::new(RwLock::new(FsWindow::new()));
 
         // Set the global reference for async tasks
-        app::fs::set_main_fs_window(fs_window.clone());
+        app::fs::global::set_main_fs_window(fs_window.clone());
 
         Self {
             fs_window,

@@ -5,7 +5,7 @@ use egui_dock::{DockArea, DockState};
 use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 
-use super::{put::PutWindow, fs::{FsWindow, FileViewerTab}, stats::StatsWindow, Window, WindowType, theme::MutantColors};
+use super::{put::PutWindow, fs_window::FsWindow, fs::viewer_tab::FileViewerTab, stats::StatsWindow, Window, WindowType, theme::MutantColors};
 
 /// Unified tab type that can hold any kind of tab in the dock system
 #[derive(Clone, serde::Serialize, serde::Deserialize)]

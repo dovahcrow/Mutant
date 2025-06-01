@@ -3,7 +3,7 @@ use eframe::egui::{self, RichText};
 use mutant_protocol::KeyDetails;
 use serde::{Deserialize, Serialize};
 use crate::app::theme;
-use crate::app::components::multimedia; // For get_file_icon_and_color
+
 use humansize::{format_size, BINARY}; // For humanize_size
 
 /// Helper function to format file sizes in a human-readable way

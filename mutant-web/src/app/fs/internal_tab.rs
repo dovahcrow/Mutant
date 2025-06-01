@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use eframe::egui;
 use egui_dock;
 use crate::app::fs::viewer_tab::FileViewerTab;
+use crate::app::Window;
 use crate::app::put::PutWindow;
 use crate::app::stats::StatsWindow;
 use crate::app::theme;
