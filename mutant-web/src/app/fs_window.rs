@@ -224,8 +224,43 @@ impl FsWindow {
 
             log::info!("FsWindow: Successfully added tab to internal dock for: {}", file_details.key);
 
-            // Start loading the file content asynchronously
-            self.load_file_content(file_details);
+            // Determine if this is a video file to skip full download
+            let key_to_find = file_details.key.clone();
+            let mut tab_updated_for_video = false;
+
+            let file_type_hint = crate::app::components::multimedia::detect_file_type(&[], &key_to_find);
+
+            if file_type_hint == crate::app::components::multimedia::FileType::Video {
+                log::info!("Hint suggests {} is a video. Attempting to set up for streaming.", key_to_find);
+                // The tab was just added, find it to update its state for streaming
+                for (_surface_index, tab_mut) in self.internal_dock.iter_all_tabs_mut() {
+                    if let crate::app::fs::internal_tab::FsInternalTab::FileViewer(file_viewer_tab_mut) = tab_mut {
+                        if file_viewer_tab_mut.file.key == key_to_find {
+                            log::info!("Found tab for video {}. Updating for streaming.", key_to_find);
+                            // Call update_content on FileViewerTab to set it up for streaming
+                            file_viewer_tab_mut.update_content(
+                                Vec::new(), // Empty data, as we will stream
+                                Some(crate::app::components::multimedia::FileType::Video),
+                                true // is_initial_load = true
+                            );
+                            // is_loading is now set inside update_content
+                            tab_updated_for_video = true;
+                            break;
+                        }
+                    }
+                }
+                if !tab_updated_for_video {
+                    log::warn!("Could not find the newly added video tab for {} to update for streaming. Falling back to full load.", key_to_find);
+                    // Fallback to normal load if tab not found immediately (should not happen)
+                    self.load_file_content(file_details);
+                } else {
+                    log::info!("Video tab {} configured for streaming, skipping full download.", key_to_find);
+                }
+            } else {
+                log::info!("{} is not a video according to hint, proceeding with full download.", key_to_find);
+                // Start loading the file content asynchronously for non-video files
+                self.load_file_content(file_details);
+            }
         } else {
             log::info!("FsWindow: Tab for file {} already exists in internal dock", file_details.key);
         }
@@ -287,88 +322,14 @@ impl FsWindow {
                         for (_, internal_tab) in fs_window.internal_dock.iter_all_tabs_mut() {
                             if let crate::app::fs::internal_tab::FsInternalTab::FileViewer(file_tab) = internal_tab {
                                 if file_tab.file.key == key {
-                                    // Update the tab with loaded content
-                                    file_tab.is_loading = false;
-
-                                    // Determine file type and process content
-                                    let file_type = multimedia::detect_file_type(&data, &key); // Use crate::app::components::multimedia
-                                    file_tab.file_type = Some(file_type.clone());
-
-                                    // Process content based on file type
-                                    match file_type {
-                                        multimedia::FileType::Text => { // Use crate::app::components::multimedia
-                                            let content = String::from_utf8_lossy(&data).to_string();
-                                            file_tab.content = content.clone();
-
-                                            // Update FileContent
-                                            if let Some(file_content) = &mut file_tab.file_content {
-                                                file_content.file_type = file_type; // Already correct type
-                                                file_content.raw_data = data;
-                                                file_content.editable_content = Some(content);
-                                                file_content.content_modified = false;
-                                            }
-                                        },
-                                        multimedia::FileType::Code(lang) => { // Use crate::app::components::multimedia
-                                            let content = String::from_utf8_lossy(&data).to_string();
-                                            file_tab.content = content.clone();
-
-                                            // Update FileContent
-                                            if let Some(file_content) = &mut file_tab.file_content {
-                                                file_content.file_type = multimedia::FileType::Code(lang.clone()); // Use crate::app::components::multimedia
-                                                file_content.raw_data = data;
-                                                file_content.editable_content = Some(content);
-                                                file_content.content_modified = false;
-                                            }
-                                        },
-                                        multimedia::FileType::Image => { // Use crate::app::components::multimedia
-                                            // Store binary data for image processing
-                                            file_tab.file_binary = Some(data.clone());
-
-                                            // Create image texture for display
-                                            // We need to get the egui context to create the texture
-                                            // Since we're in an async context, we'll create the texture in the UI thread
-                                            // For now, we'll store the data and create the texture when drawing
-
-                                            // Update FileContent
-                                            if let Some(file_content) = &mut file_tab.file_content {
-                                                file_content.file_type = file_type; // Already correct type
-                                                file_content.raw_data = data.clone();
-                                                file_content.editable_content = None;
-                                                file_content.content_modified = false;
-                                            }
-                                        },
-                                        multimedia::FileType::Video => { // Use crate::app::components::multimedia
-                                            // Store binary data for video processing
-                                            file_tab.file_binary = Some(data.clone());
-
-                                            // Update FileContent
-                                            if let Some(file_content) = &mut file_tab.file_content {
-                                                file_content.file_type = file_type; // Already correct type
-                                                file_content.raw_data = data;
-                                                file_content.editable_content = None;
-                                                file_content.content_modified = false;
-                                            }
-                                        },
-                                        multimedia::FileType::Other => { // Use crate::app::components::multimedia
-                                            // Store binary data
-                                            file_tab.file_binary = Some(data.clone());
-
-                                            // Update FileContent
-                                            if let Some(file_content) = &mut file_tab.file_content {
-                                                file_content.file_type = file_type; // Already correct type
-                                                file_content.raw_data = data;
-                                                file_content.editable_content = None;
-                                                file_content.content_modified = false;
-                                            }
-                                        },
-                                    }
-
+                                    let file_type_detected_from_data = crate::app::components::multimedia::detect_file_type(&data, &key);
+                                    file_tab.update_content(data, Some(file_type_detected_from_data), true);
+                                    // is_loading is set inside update_content
                                     log::info!("Updated file tab content for: {}", key);
                                     return; // Exit early since we found and updated the tab
                                 }
                             }
                         }
-
                         log::warn!("Could not find file tab for key: {} in main FsWindow", key);
                     } else {
                         log::warn!("Main FsWindow reference not available for key: {}", key);
@@ -376,28 +337,24 @@ impl FsWindow {
                 },
                 Err(e) => {
                     log::error!("Failed to load file content for {}: {}", key, e);
-
                     // Update the tab with error state using the global FsWindow reference
                     if let Some(fs_window_ref) = crate::app::fs::global::get_main_fs_window() { // Updated path
                         let mut fs_window = fs_window_ref.write().unwrap();
-
                         // Look for the file tab in the FsWindow's internal dock
                         for (_, internal_tab) in fs_window.internal_dock.iter_all_tabs_mut() {
                             if let crate::app::fs::internal_tab::FsInternalTab::FileViewer(file_tab) = internal_tab {
                                 if file_tab.file.key == key {
-                                    file_tab.is_loading = false;
-                                    file_tab.content = format!("Error loading file: {}", e);
-
-                                    // Update FileContent with error
-                                    if let Some(file_content) = &mut file_tab.file_content {
-                                        file_content.editable_content = Some(file_tab.content.clone());
-                                        file_content.raw_data = file_tab.content.as_bytes().to_vec();
-                                    }
+                                    let error_message = format!("Error loading file: {}", e);
+                                    file_tab.update_content(
+                                        error_message.into_bytes(),
+                                        Some(multimedia::FileType::Other), // Treat error display as 'Other'
+                                        true // is_initial_load = true
+                                    );
+                                    // is_loading is set inside update_content
                                     return; // Exit early since we found and updated the tab
                                 }
                             }
                         }
-
                         log::warn!("Could not find file tab for error update, key: {} in main FsWindow", key);
                     } else {
                         log::warn!("Main FsWindow reference not available for error update, key: {}", key);

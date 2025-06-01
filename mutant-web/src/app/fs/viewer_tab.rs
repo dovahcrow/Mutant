@@ -88,6 +88,78 @@ impl FileViewerTab {
         }
     }
 
+    pub fn update_content(&mut self, binary_data: Vec<u8>, file_type_hint: Option<multimedia::FileType>, is_initial_load: bool) {
+        log::info!("FileViewerTab::update_content for {}, is_initial_load: {}, file_type_hint: {:?}", self.file.key, is_initial_load, file_type_hint);
+
+        self.file_type = file_type_hint.clone(); // Store the determined file type
+
+        let mut ws_url_for_file_content: Option<String> = None;
+
+        if self.file_type == Some(multimedia::FileType::Video) {
+            // Generate WebSocket URL
+            let filename = std::path::Path::new(&self.file.key)
+                .file_name()
+                .map_or_else(|| "unknown_video".to_string(), |f| f.to_string_lossy().into_owned());
+
+            let base_ws_url = crate::app::client_manager::get_daemon_ws_url();
+            let video_stream_base_url = if base_ws_url.ends_with("/ws") {
+                base_ws_url[0..base_ws_url.len()-3].to_string()
+            } else {
+                log::warn!("Base WebSocket URL for video streaming in FileViewerTab does not end with /ws: {}", base_ws_url);
+                base_ws_url // Use as is, hoping it's ws://host:port
+            };
+            let actual_ws_url = format!("{}/video_stream/{}", video_stream_base_url, filename);
+
+            log::info!("FileViewerTab for {}: Generated video_ws_url: {}", self.file.key, actual_ws_url);
+            self.video_url = Some(actual_ws_url.clone());
+            ws_url_for_file_content = Some(actual_ws_url);
+
+            if is_initial_load {
+                self.file_binary = Some(Vec::new()); // No full binary data for videos
+                self.content = format!("<Video: {}>", self.file.key); // Placeholder text content
+            }
+        } else {
+            self.video_url = None;
+            if is_initial_load {
+                // For non-videos, store binary_data if provided (e.g. for images)
+                // Textual content will be processed by FileContent
+                self.file_binary = Some(binary_data.clone());
+            }
+        }
+
+        // Create or update FileContent
+        if is_initial_load || self.file_content.is_none() {
+             log::info!("FileViewerTab for {}: Creating FileContent. ws_url_for_fc: {:?}", self.file.key, ws_url_for_file_content);
+            self.file_content = Some(multimedia::FileContent::new(
+                binary_data.clone(), // Pass binary_data, it will be emptied by FileContent::new if it's a video and ws_url is present
+                &self.file.key,
+                ws_url_for_file_content.clone() // Pass the potentially generated ws_url
+            ));
+        } else if let Some(fc) = &mut self.file_content {
+            log::info!("FileViewerTab for {}: Re-creating FileContent on non-initial update. ws_url_for_fc: {:?}", self.file.key, ws_url_for_file_content);
+            // Update existing FileContent or recreate. Re-creating for simplicity here.
+            *fc = multimedia::FileContent::new(
+                binary_data.clone(),
+                &self.file.key,
+                ws_url_for_file_content.clone()
+            );
+        }
+
+        // Update text content for text-based files after FileContent is created/updated
+        if self.file_type != Some(multimedia::FileType::Video) && self.file_type != Some(multimedia::FileType::Image) && self.file_type != Some(multimedia::FileType::Other) {
+            if let Some(fc) = &self.file_content {
+                if let Some(text_content) = &fc.editable_content {
+                    self.content = text_content.clone();
+                } else {
+                     self.content = String::from_utf8_lossy(fc.raw_data.as_slice()).to_string();
+                }
+            }
+        }
+
+        self.is_loading = false;
+        log::info!("FileViewerTab::update_content for {} finished. is_loading: false.", self.file.key);
+    }
+
     /// Draw the file viewer tab
     pub fn draw(&mut self, ui: &mut egui::Ui) {
         let header_frame = egui::Frame::new()

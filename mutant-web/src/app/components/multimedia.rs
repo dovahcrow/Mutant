@@ -31,50 +31,50 @@ pub struct FileContent {
 }
 
 impl FileContent {
-    pub fn new(raw_data: Vec<u8>, file_path: &str) -> Self {
-        // Tentative: Pass empty slice for video type detection to avoid needing full data
-        let file_type = detect_file_type(
-            if file_path.ends_with(".mp4") || file_path.ends_with(".webm") || file_path.ends_with(".ogv") { &[] } else { &raw_data },
+    pub fn new(raw_data: Vec<u8>, file_path: &str, websocket_url_for_video: Option<String>) -> Self {
+        let detected_file_type = detect_file_type(
+            if websocket_url_for_video.is_some() ||
+               file_path.ends_with(".mp4") || file_path.ends_with(".webm") ||
+               file_path.ends_with(".ogv") || file_path.ends_with(".mov")
+            { &[] } else { &raw_data },
             file_path,
         );
 
-        let mut video_url_placeholder = None;
-        let final_raw_data = if file_type == FileType::Video {
-            // Construct a placeholder WebSocket URL.
-            // This will be replaced with a proper URL generation mechanism later.
-            let filename: String = std::path::Path::new(file_path)
-                .file_name()
-                .map_or_else(|| "unknown_video".to_string(), |f| f.to_string_lossy().into_owned());
+        let mut final_video_url: Option<String> = None;
+        let final_raw_data: Vec<u8>;
 
-            // Get the base WebSocket URL from client_manager
-            let base_ws_url = crate::app::client_manager::get_daemon_ws_url(); // Expected format: ws://<host>:<port>/ws
-
-            // Construct the video stream URL
-            // Remove "/ws" suffix and append the video stream path
-            let video_stream_base_url = if base_ws_url.ends_with("/ws") {
-                base_ws_url[0..base_ws_url.len()-3].to_string()
+        if detected_file_type == FileType::Video {
+            if let Some(provided_url) = websocket_url_for_video {
+                final_video_url = Some(provided_url);
+                log::info!("Using provided video_ws_url in FileContent: {:?}", final_video_url);
             } else {
-                // Fallback or error if the URL format is unexpected
-                log::warn!("Base WebSocket URL does not end with /ws: {}. Assuming it's the base path.", base_ws_url);
-                // Attempt to use it as is if it looks like ws://host:port or similar
-                base_ws_url
-            };
-            video_url_placeholder = Some(format!("{}/video_stream/{}", video_stream_base_url, filename));
-            log::info!("Constructed video_ws_url: {:?}", video_url_placeholder);
-
-            Vec::new() // Do not store raw_data for videos
+                // Generate URL if not provided (fallback, though FileViewerTab should provide it)
+                let filename = std::path::Path::new(file_path)
+                    .file_name()
+                    .map_or_else(|| "unknown_video".to_string(), |f| f.to_string_lossy().into_owned());
+                let base_ws_url = crate::app::client_manager::get_daemon_ws_url();
+                let video_stream_base_url = if base_ws_url.ends_with("/ws") {
+                    base_ws_url[0..base_ws_url.len()-3].to_string()
+                } else {
+                    log::warn!("Base WebSocket URL for video does not end with /ws: {}", base_ws_url);
+                    base_ws_url
+                };
+                final_video_url = Some(format!("{}/video_stream/{}", video_stream_base_url, filename));
+                log::info!("FileContent generated video_ws_url: {:?}", final_video_url);
+            }
+            final_raw_data = Vec::new(); // Do not store raw_data for videos
         } else {
-            raw_data
-        };
+            final_raw_data = raw_data;
+        }
 
         // Initialize with processed data and detected type
         let mut content = Self {
-            file_type,
-            raw_data: final_raw_data, // Use potentially cleared raw_data
+            file_type: detected_file_type, // Use the type detected at the start of this function
+            raw_data: final_raw_data,
             editable_content: None,
             content_modified: false,
             image_texture: None,
-            video_url: video_url_placeholder, // Assign the generated WS URL for videos
+            video_url: final_video_url, // Assign the determined video_url
         };
 
         // Process content based on file type
