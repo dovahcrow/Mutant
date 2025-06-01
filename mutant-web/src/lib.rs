@@ -903,25 +903,28 @@ impl MyApp {
                 .fill(app::theme::MutantColors::BACKGROUND_MEDIUM)
                 .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_DARK)))
             .show(ctx, |ui| {
-                ui.horizontal_centered(|ui| {
-                    ui.add_space(15.0);
+                // Center the entire horizontal layout vertically within the 40px header
+                ui.centered_and_justified(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.add_space(15.0);
 
-                    // MutAnt title (removed glyph, added proper padding and vertical centering)
-                    ui.label(
-                        egui::RichText::new("MutAnt")
-                            .size(18.0)
-                            .strong()
-                            .color(app::theme::MutantColors::ACCENT_ORANGE)
-                    );
+                        // MutAnt title
+                        ui.label(
+                            egui::RichText::new("MutAnt")
+                                .size(16.0)
+                                .strong()
+                                .color(app::theme::MutantColors::ACCENT_ORANGE)
+                        );
 
-                    ui.separator();
+                        ui.separator();
 
-                    // Connection status
-                    ui.label(
-                        egui::RichText::new("Connected")
-                            .size(12.0)
-                            .color(app::theme::MutantColors::SUCCESS)
-                    );
+                        // Connection status
+                        ui.label(
+                            egui::RichText::new("Connected")
+                                .size(14.0)
+                                .color(app::theme::MutantColors::SUCCESS)
+                        );
+                    });
                 });
             });
     }
