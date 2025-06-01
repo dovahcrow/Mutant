@@ -903,12 +903,12 @@ impl MyApp {
                 .fill(app::theme::MutantColors::BACKGROUND_MEDIUM)
                 .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_DARK)))
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add_space(10.0);
+                ui.horizontal_centered(|ui| {
+                    ui.add_space(15.0);
 
-                    // MutAnt logo/title
+                    // MutAnt title (removed glyph, added proper padding and vertical centering)
                     ui.label(
-                        egui::RichText::new("🛸 MutAnt")
+                        egui::RichText::new("MutAnt")
                             .size(18.0)
                             .strong()
                             .color(app::theme::MutantColors::ACCENT_ORANGE)
@@ -922,18 +922,6 @@ impl MyApp {
                             .size(12.0)
                             .color(app::theme::MutantColors::SUCCESS)
                     );
-
-                    // Push remaining content to the right
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(10.0);
-
-                        // Version info
-                        ui.label(
-                            egui::RichText::new("v0.1.0")
-                                .size(10.0)
-                                .color(app::theme::MutantColors::TEXT_MUTED)
-                        );
-                    });
                 });
             });
     }
@@ -986,8 +974,32 @@ impl MyApp {
                         self.fs_window.write().unwrap().add_stats_tab();
                     }
 
-                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |_ui| {
-                        // Future: logout button or other bottom actions
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                        ui.add_space(10.0);
+
+                        // Version info at bottom - clickable to open GitHub
+                        let version_text = format!("v{}", env!("CARGO_PKG_VERSION"));
+                        let version_response = ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&version_text)
+                                    .size(10.0)
+                                    .color(app::theme::MutantColors::TEXT_MUTED)
+                            )
+                            .sense(egui::Sense::click())
+                        );
+
+                        if version_response.clicked() {
+                            // Open GitHub repository
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                let window = web_sys::window().unwrap();
+                                let _ = window.open_with_url("https://github.com/Champii/MutAnt");
+                            }
+                        }
+
+                        if version_response.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
                     });
                 });
             });
