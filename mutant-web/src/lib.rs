@@ -1182,7 +1182,7 @@ pub fn run() {
                 .start(
                     canvas.clone(),
                     web_options,
-                    Box::new(|cc| Ok(Box::new(MyApp::default()))),
+                    Box::new(|_cc| Ok(Box::new(MyApp::default()))),
                 )
                 .await;
 

@@ -245,7 +245,7 @@ impl FileViewerTab {
                 },
                 multimedia::FileType::Video => {
                     if let Some(url) = &self.video_url {
-                        multimedia::draw_video_player(ui, url);
+                        multimedia::draw_video_player(ui, url, &self.file.key);
                     } else { ui.label("Error: Video URL not available"); }
                 },
                 multimedia::FileType::Other => {

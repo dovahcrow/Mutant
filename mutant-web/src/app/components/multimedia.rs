@@ -2,8 +2,8 @@ use eframe::egui::{self, Image, RichText, Sense, TextureHandle, TextureOptions, 
 use egui_extras::syntax_highlighting::{self, CodeTheme};
 use image;
 use mime_guess::from_path;
-use wasm_bindgen::{JsCast, prelude::*};
-use web_sys;
+use wasm_bindgen; // Keep for #[wasm_bindgen] attribute in bindings module
+// JsCast and prelude removed as they were unused at top level. web_sys also removed.
 use base64::Engine;
 use crate::app::theme::MutantColors;
 use log;
@@ -42,9 +42,9 @@ impl FileContent {
         let final_raw_data = if file_type == FileType::Video {
             // Construct a placeholder WebSocket URL.
             // This will be replaced with a proper URL generation mechanism later.
-            let filename = std::path::Path::new(file_path)
+            let filename: String = std::path::Path::new(file_path)
                 .file_name()
-                .map_or_else(|| "unknown_video", |f| f.to_string_lossy().into_owned());
+                .map_or_else(|| "unknown_video".to_string(), |f| f.to_string_lossy().into_owned());
 
             // Get the base WebSocket URL from client_manager
             let base_ws_url = crate::app::client_manager::get_daemon_ws_url(); // Expected format: ws://<host>:<port>/ws
