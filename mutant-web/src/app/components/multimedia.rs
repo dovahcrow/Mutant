@@ -2,9 +2,11 @@ use eframe::egui::{self, Image, RichText, Sense, TextureHandle, TextureOptions, 
 use egui_extras::syntax_highlighting::{self, CodeTheme};
 use image;
 use mime_guess::from_path;
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, prelude::*};
 use web_sys;
 use base64::Engine;
+use crate::app::theme::MutantColors;
+use log;
 use std::sync::Arc;
 
 /// Enum representing different types of files
@@ -21,25 +23,58 @@ pub enum FileType {
 #[derive(Clone)]
 pub struct FileContent {
     pub file_type: FileType,
-    pub raw_data: Vec<u8>,
+    pub raw_data: Vec<u8>, // For videos, this will be empty.
     pub editable_content: Option<String>,  // Separate field for edited content
     pub content_modified: bool,            // Flag to track if content was modified
     pub image_texture: Option<TextureHandle>,
-    pub video_url: Option<String>,
+    pub video_url: Option<String>, // WebSocket URL for video streaming
 }
 
 impl FileContent {
     pub fn new(raw_data: Vec<u8>, file_path: &str) -> Self {
-        let file_type = detect_file_type(&raw_data, file_path);
+        // Tentative: Pass empty slice for video type detection to avoid needing full data
+        let file_type = detect_file_type(
+            if file_path.ends_with(".mp4") || file_path.ends_with(".webm") || file_path.ends_with(".ogv") { &[] } else { &raw_data },
+            file_path,
+        );
 
-        // Initialize with raw data and detected type
+        let mut video_url_placeholder = None;
+        let final_raw_data = if file_type == FileType::Video {
+            // Construct a placeholder WebSocket URL.
+            // This will be replaced with a proper URL generation mechanism later.
+            let filename = std::path::Path::new(file_path)
+                .file_name()
+                .map_or_else(|| "unknown_video", |f| f.to_string_lossy().into_owned());
+
+            // Get the base WebSocket URL from client_manager
+            let base_ws_url = crate::app::client_manager::get_daemon_ws_url(); // Expected format: ws://<host>:<port>/ws
+
+            // Construct the video stream URL
+            // Remove "/ws" suffix and append the video stream path
+            let video_stream_base_url = if base_ws_url.ends_with("/ws") {
+                base_ws_url[0..base_ws_url.len()-3].to_string()
+            } else {
+                // Fallback or error if the URL format is unexpected
+                log::warn!("Base WebSocket URL does not end with /ws: {}. Assuming it's the base path.", base_ws_url);
+                // Attempt to use it as is if it looks like ws://host:port or similar
+                base_ws_url
+            };
+            video_url_placeholder = Some(format!("{}/video_stream/{}", video_stream_base_url, filename));
+            log::info!("Constructed video_ws_url: {:?}", video_url_placeholder);
+
+            Vec::new() // Do not store raw_data for videos
+        } else {
+            raw_data
+        };
+
+        // Initialize with processed data and detected type
         let mut content = Self {
             file_type,
-            raw_data,
+            raw_data: final_raw_data, // Use potentially cleared raw_data
             editable_content: None,
             content_modified: false,
             image_texture: None,
-            video_url: None,
+            video_url: video_url_placeholder, // Assign the generated WS URL for videos
         };
 
         // Process content based on file type
@@ -68,13 +103,17 @@ impl FileContent {
                     self.file_type = FileType::Other;
                 }
             },
+            FileType::Video => {
+                // Video content is handled by video_url, no raw_data processing needed here.
+            }
             _ => {
                 // Other types are handled when rendering
             }
         }
     }
 
-    /// Create a data URL for binary content (used for images and videos)
+    /// Create a data URL for binary content (used for images)
+    /// Note: This should not be used for videos anymore as they will be streamed.
     pub fn create_data_url(&self, mime_type: &str) -> String {
         let base64_data = base64::engine::general_purpose::STANDARD.encode(&self.raw_data);
         format!("data:{};base64,{}", mime_type, base64_data)
@@ -263,71 +302,87 @@ pub fn draw_image_viewer(ui: &mut Ui, texture: &TextureHandle) {
     });
 }
 
-/// Draw a video player
-pub fn draw_video_player(ui: &mut Ui, video_url: &str) {
-    use crate::app::theme::MutantColors;
+// Declare JS bindings
+pub mod bindings {
+    use wasm_bindgen::prelude::*;
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(js_name = initMpegtsPlayer)] // JS function name matches JS side
+        pub fn init_mpegts_player(
+            video_element_id: String,
+            websocket_url: String,
+            x: f32,
+            y: f32,
+            width: f32,
+            height: f32
+        );
 
-    ui.label(RichText::new("Video Player").size(18.0).color(MutantColors::TEXT_PRIMARY));
+        #[wasm_bindgen(js_name = cleanupMpegtsPlayer)]
+        pub fn cleanup_mpegts_player(video_element_id: String);
+    }
+}
 
-    // Create a unique ID for the video element
-    let video_id = format!("video_{:?}", ui.id());
-
-    // Add a button to open the video in a new tab with MutAnt theme
-    if ui.add(crate::app::theme::secondary_button("Open Video in Browser")).clicked() {
-        if let Some(window) = web_sys::window() {
-            let _ = window.open_with_url(video_url);
-        }
+/// Draw a video player using mpegts.js
+pub fn draw_video_player(ui: &mut Ui, video_ws_url: &str, file_key: &str) {
+    if video_ws_url.is_empty() {
+        ui.colored_label(MutantColors::ERROR, "Video URL is missing.");
+        return;
     }
 
+    ui.label(RichText::new("Video Player").size(18.0).color(MutantColors::TEXT_PRIMARY));
     ui.separator();
 
-    // Create a frame for the video with MutAnt theme colors
-    let _frame = egui::Frame::default()
-        .fill(MutantColors::BACKGROUND_DARK)
-        .show(ui, |ui| {
-            // Reserve space for the video
-            let desired_size = egui::vec2(640.0, 360.0);
-            let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+    // Create a unique ID for the video element that mpegts.js will use or create.
+    // The file_key ensures uniqueness across multiple video players.
+    let video_element_id = format!("video_element_{}", file_key.replace(|c: char| !c.is_alphanumeric(), "_"));
 
-            // Create or update the video element
-            if let Some(window) = web_sys::window() {
-                if let Some(document) = window.document() {
-                    // Check if the video element already exists
-                    let video_element = match document.get_element_by_id(&video_id) {
-                        Some(element) => element,
-                        None => {
-                            // Create a new video element
-                            let element = document.create_element("video").unwrap();
-                            element.set_id(&video_id);
+    // Reserve space for the video. The actual <video> tag will be created by JS.
+    // This space is where JS should place the video player.
+    // The JS side will need to handle the positioning.
+    let desired_size = egui::vec2(640.0, 480.0); // Or make this responsive
+    let (rect, _response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
 
-                            // Set video attributes
-                            element.set_attribute("controls", "true").unwrap();
-                            element.set_attribute("style", "position: absolute; z-index: 1;").unwrap();
+    // Use a unique egui ID for storing the initialization state.
+    let initialized_flag_id = egui::Id::new(&video_element_id).with("mpegts_initialized");
 
-                            // Create a source element
-                            let source = document.create_element("source").unwrap();
-                            source.set_attribute("src", video_url).unwrap();
+    let is_initialized = ui.ctx().memory_mut(|mem| mem.data.get_temp::<bool>(initialized_flag_id).unwrap_or(false));
 
-                            // Append source to video
-                            element.append_child(&source).unwrap();
+    if !is_initialized {
+        log::info!(
+            "Calling JS: initMpegtsPlayer('{}', '{}', x: {}, y: {}, w: {}, h: {})",
+            video_element_id, video_ws_url, rect.min.x, rect.min.y, rect.width(), rect.height()
+        );
+        // Call the JavaScript function to initialize the mpegts.js player.
+        // The JS function is responsible for creating/finding the video element with `video_element_id`
+        // and setting up the mpegts.js player.
+        bindings::init_mpegts_player(
+            video_element_id.clone(),
+            video_ws_url.to_string(),
+            rect.min.x,
+            rect.min.y,
+            rect.width(),
+            rect.height()
+        );
 
-                            // Append video to document body
-                            document.body().unwrap().append_child(&element).unwrap();
+        // Store the initialization state to prevent re-initialization.
+        ui.ctx().memory_mut(|mem| mem.data.insert_temp(initialized_flag_id, true));
+    }
 
-                            element
-                        }
-                    };
+    // Optional: Add a placeholder or instructions if needed.
+    // For example, you could use ui.label or add a frame with a specific background.
+    // The JS will overlay the video on top of this area.
+    // ui.add(egui::Label::new(format!("Video player area for ID: {}", video_element_id)));
 
-                    // Position the video element over the allocated space
-                    let html_element = video_element.dyn_into::<web_sys::HtmlElement>().unwrap();
-                    html_element.style().set_property("position", "absolute").unwrap();
-                    html_element.style().set_property("left", &format!("{}px", rect.min.x)).unwrap();
-                    html_element.style().set_property("top", &format!("{}px", rect.min.y)).unwrap();
-                    html_element.style().set_property("width", &format!("{}px", rect.width())).unwrap();
-                    html_element.style().set_property("height", &format!("{}px", rect.height())).unwrap();
-                }
-            }
-        });
+    // TODO: Handle cleanup. When the component showing the video is removed,
+    // we should call `bindings::cleanup_mpegts_player(video_element_id.clone());`
+    // and remove the initialized_flag_id from memory. This typically happens in a Drop impl
+    // or equivalent for the component holding the video player state.
+    // For now, cleanup is manual or relies on page reload.
+    // Example debug cleanup:
+    // if ui.button("DEBUG: Cleanup Player").clicked() {
+    //     bindings::cleanup_mpegts_player(video_element_id.clone());
+    //     ui.ctx().memory_mut(|mem| mem.data.remove::<bool>(initialized_flag_id));
+    // }
 }
 
 /// Draw an error message for unsupported file types
