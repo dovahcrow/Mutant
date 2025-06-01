@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 // mod buildings;
 // mod chart;
 mod components;
-pub mod fs;
+pub mod fs_window; // Renamed from fs.rs
+pub mod fs; // New directory module
 // mod flights;
 // mod infobar;
 // mod inventory;
@@ -55,7 +56,7 @@ pub trait Window: Send + Sync {
 pub enum WindowType {
     // Tasks(tasks::TasksWindow),
     Put(put::PutWindow),
-    Fs(fs::FsWindow),
+    Fs(fs_window::FsWindow), // Updated path
     Stats(stats::StatsWindow),
     // Bases(bases::BasesWindow),
     // Base(base::BaseWindow),
@@ -139,7 +140,7 @@ impl From<put::PutWindow> for WindowType {
 }
 
 impl From<fs::FsWindow> for WindowType {
-    fn from(window: fs::FsWindow) -> Self {
+    fn from(window: fs_window::FsWindow) -> Self { // Updated path
         Self::Fs(window)
     }
 }
