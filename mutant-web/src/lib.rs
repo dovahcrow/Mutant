@@ -879,6 +879,7 @@ use wasm_bindgen_futures::spawn_local;
 
 struct MyApp {
     fs_window: Arc<RwLock<FsWindow>>,
+    sidebar_expanded: bool,
 }
 
 impl Default for MyApp {
@@ -890,6 +891,7 @@ impl Default for MyApp {
 
         Self {
             fs_window,
+            sidebar_expanded: false,
         }
     }
 }
@@ -931,8 +933,10 @@ impl MyApp {
 
     /// Draw the left menu bar
     fn draw_left_menu(&mut self, ctx: &egui::Context) {
+        let sidebar_width = if self.sidebar_expanded { 200.0 } else { 60.0 };
+
         egui::SidePanel::left("left_menu")
-            .exact_width(60.0)
+            .exact_width(sidebar_width)
             .frame(egui::Frame::new()
                 .fill(app::theme::MutantColors::BACKGROUND_MEDIUM)
                 .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_DARK)))
@@ -940,40 +944,83 @@ impl MyApp {
                 ui.vertical_centered(|ui| {
                     ui.add_space(15.0);
 
+                    // Toggle button at the top
+                    let toggle_icon = if self.sidebar_expanded { "◀" } else { "▶" };
+                    let toggle_button = egui::Button::new(
+                        egui::RichText::new(toggle_icon)
+                            .size(14.0)
+                            .color(app::theme::MutantColors::TEXT_SECONDARY)
+                    )
+                    .fill(app::theme::MutantColors::SURFACE)
+                    .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_MEDIUM))
+                    .min_size([30.0, 30.0].into());
+
+                    if ui.add(toggle_button).clicked() {
+                        self.sidebar_expanded = !self.sidebar_expanded;
+                    }
+
+                    ui.add_space(10.0);
+
                     // Check window states before creating buttons
                     let upload_open = self.fs_window.read().unwrap().is_window_open("MutAnt Upload");
                     let stats_open = self.fs_window.read().unwrap().is_window_open("MutAnt Stats");
 
                     // Helper function to create a button with different styling when active
-                    let menu_button = |ui: &mut egui::Ui, icon: &str, hover: &str, is_active: bool| {
-                        let button = if is_active {
-                            egui::Button::new(
-                                egui::RichText::new(icon)
-                                    .size(18.0)
-                                    .strong()
-                                    .color(app::theme::MutantColors::BACKGROUND_DARK)
-                            )
-                            .fill(app::theme::MutantColors::ACCENT_ORANGE)
-                            .stroke(egui::Stroke::new(2.0, app::theme::MutantColors::ACCENT_ORANGE))
-                            .min_size([40.0, 40.0].into())
+                    let menu_button = |ui: &mut egui::Ui, icon: &str, label: &str, hover: &str, is_active: bool| {
+                        if self.sidebar_expanded {
+                            // Expanded mode: horizontal layout with icon and label
+                            let button = if is_active {
+                                egui::Button::new(
+                                    egui::RichText::new(format!("{} {}", icon, label))
+                                        .size(16.0)
+                                        .strong()
+                                        .color(app::theme::MutantColors::BACKGROUND_DARK)
+                                )
+                                .fill(app::theme::MutantColors::ACCENT_ORANGE)
+                                .stroke(egui::Stroke::new(2.0, app::theme::MutantColors::ACCENT_ORANGE))
+                                .min_size([180.0, 40.0].into())
+                            } else {
+                                egui::Button::new(
+                                    egui::RichText::new(format!("{} {}", icon, label))
+                                        .size(14.0)
+                                        .color(app::theme::MutantColors::TEXT_SECONDARY)
+                                )
+                                .fill(app::theme::MutantColors::SURFACE)
+                                .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_MEDIUM))
+                                .min_size([180.0, 40.0].into())
+                            };
+                            ui.add(button)
                         } else {
-                            egui::Button::new(
-                                egui::RichText::new(icon)
-                                    .size(16.0)
-                                    .color(app::theme::MutantColors::TEXT_SECONDARY)
-                            )
-                            .fill(app::theme::MutantColors::SURFACE)
-                            .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_MEDIUM))
-                            .min_size([40.0, 40.0].into())
-                        };
-                        ui.add(button).on_hover_text(hover)
+                            // Collapsed mode: icon only (original behavior)
+                            let button = if is_active {
+                                egui::Button::new(
+                                    egui::RichText::new(icon)
+                                        .size(18.0)
+                                        .strong()
+                                        .color(app::theme::MutantColors::BACKGROUND_DARK)
+                                )
+                                .fill(app::theme::MutantColors::ACCENT_ORANGE)
+                                .stroke(egui::Stroke::new(2.0, app::theme::MutantColors::ACCENT_ORANGE))
+                                .min_size([40.0, 40.0].into())
+                            } else {
+                                egui::Button::new(
+                                    egui::RichText::new(icon)
+                                        .size(16.0)
+                                        .color(app::theme::MutantColors::TEXT_SECONDARY)
+                                )
+                                .fill(app::theme::MutantColors::SURFACE)
+                                .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_MEDIUM))
+                                .min_size([40.0, 40.0].into())
+                            };
+                            ui.add(button).on_hover_text(hover)
+                        }
                     };
 
-                    if menu_button(ui, "📤", "Upload", upload_open).clicked() {
+                    if menu_button(ui, "📤", "Upload", "Upload", upload_open).clicked() {
                         self.fs_window.write().unwrap().add_put_tab();
                     }
 
-                    if menu_button(ui, "📊", "Stats", stats_open).clicked() {
+                    if menu_button(ui, "📊", "Stats", "Stats", stats_open).clicked() {
                         self.fs_window.write().unwrap().add_stats_tab();
                     }
 
