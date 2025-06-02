@@ -54,6 +54,9 @@ pub struct FileViewerTab {
     /// Preferred dock area ID (for smart placement)
     #[serde(skip)]
     pub preferred_dock_area: Option<String>,
+    /// Video element ID for cleanup purposes
+    #[serde(skip)]
+    pub video_element_id: Option<String>,
 }
 
 impl FileViewerTab {
@@ -85,6 +88,7 @@ impl FileViewerTab {
             total_bytes: None,
             downloaded_bytes: 0,
             preferred_dock_area: None,
+            video_element_id: None,
         }
     }
 
@@ -317,6 +321,9 @@ impl FileViewerTab {
                 },
                 multimedia::FileType::Video => {
                     if let Some(url) = &self.video_url {
+                        // Store the video element ID for cleanup
+                        let video_element_id = format!("video_element_{}", self.file.key.replace(|c: char| !c.is_alphanumeric(), "_"));
+                        self.video_element_id = Some(video_element_id.clone());
                         multimedia::draw_video_player(ui, url, &self.file.key);
                     } else { ui.label("Error: Video URL not available"); }
                 },
@@ -332,6 +339,14 @@ impl FileViewerTab {
                     self.file_modified = true; fc.content_modified = false;
                 }
             } else { ui.label("No file content available"); }
+        }
+    }
+
+    /// Cleanup video player if it exists
+    pub fn cleanup_video_player(&self) {
+        if let Some(video_element_id) = &self.video_element_id {
+            log::info!("Cleaning up video player for tab: {}", self.file.key);
+            multimedia::bindings::cleanup_video_player(video_element_id.clone());
         }
     }
 
@@ -375,5 +390,12 @@ impl FileViewerTab {
                 }
             }
         });
+    }
+}
+
+impl Drop for FileViewerTab {
+    fn drop(&mut self) {
+        // Cleanup video player when the tab is dropped
+        self.cleanup_video_player();
     }
 }

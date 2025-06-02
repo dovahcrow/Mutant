@@ -190,6 +190,17 @@ impl egui_dock::TabViewer for UnifiedTabViewer {
     fn closeable(&mut self, _tab: &mut Self::Tab) -> bool {
         true
     }
+
+    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+        match tab {
+            UnifiedTab::FileViewer(file_tab) => {
+                // Cleanup video player if it exists
+                file_tab.cleanup_video_player();
+                true
+            }
+            _ => true,
+        }
+    }
 }
 
 // Static counter to track window positions

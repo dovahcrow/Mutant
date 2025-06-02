@@ -75,6 +75,8 @@ impl egui_dock::TabViewer for FsInternalTabViewer {
                 if file_tab.file_modified {
                     log::info!("Closing modified file: {}", file_tab.file.key);
                 }
+                // Cleanup video player if it exists
+                file_tab.cleanup_video_player();
                 true
             }
             _ => true,

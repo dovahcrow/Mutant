@@ -320,6 +320,15 @@ pub mod bindings {
         #[wasm_bindgen(js_name = cleanupVideoPlayer)]
         pub fn cleanup_video_player(video_element_id: String);
 
+        #[wasm_bindgen(js_name = updateVideoPlayerPosition)]
+        pub fn update_video_player_position(
+            video_element_id: String,
+            x: f32,
+            y: f32,
+            width: f32,
+            height: f32
+        );
+
         // Keep legacy binding for backward compatibility
         #[wasm_bindgen(js_name = initMpegtsPlayer)]
         pub fn init_mpegts_player(
@@ -380,6 +389,15 @@ pub fn draw_video_player(ui: &mut Ui, video_ws_url: &str, file_key: &str) {
 
         // Store the initialization state to prevent re-initialization.
         ui.ctx().memory_mut(|mem| mem.data.insert_temp(initialized_flag_id, true));
+    } else {
+        // Update position if the video player is already initialized
+        bindings::update_video_player_position(
+            video_element_id.clone(),
+            rect.min.x,
+            rect.min.y,
+            rect.width(),
+            rect.height()
+        );
     }
 
     // Optional: Add a placeholder or instructions if needed.

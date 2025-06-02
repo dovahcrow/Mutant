@@ -315,6 +315,22 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
     console.log(`HTTP streaming MP4 player initialized for ${videoElementId}`);
 }
 
+// Function to update video player position
+function updateVideoPlayerPosition(videoElementId, x, y, width, height) {
+    console.log(`updateVideoPlayerPosition called for element: ${videoElementId}, x: ${x}, y: ${y}, width: ${width}, height: ${height}`);
+    const playerEntry = window.mutantActiveVideoPlayers[videoElementId];
+
+    if (playerEntry && playerEntry.videoElement) {
+        playerEntry.videoElement.style.left = x + 'px';
+        playerEntry.videoElement.style.top = y + 'px';
+        playerEntry.videoElement.style.width = width + 'px';
+        playerEntry.videoElement.style.height = height + 'px';
+        console.log(`Video player ${videoElementId} position updated.`);
+    } else {
+        console.warn(`No active player found for ID ${videoElementId} to update position.`);
+    }
+}
+
 // Universal cleanup function for all player types
 function cleanupVideoPlayer(videoElementId) {
     console.log(`cleanupVideoPlayer called for element: ${videoElementId}`);
