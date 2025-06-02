@@ -65,6 +65,11 @@
 *   **Task Management:** Monitor, query, and control background tasks.
 *   **Async-first Design:** Built on `tokio` for high-performance non-blocking operations.
 *   **Dual Interface:** Use as a Rust library (`mutant-lib`) or via the `mutant` CLI.
+*   **Web Interface**
+       - Customizable windowed workspace 
+       - Image viewer
+       - Text/Code viewer/editor
+       - Universal video format support with real-time transcoding and streaming with ffmpeg
 
 ## Getting Started
 

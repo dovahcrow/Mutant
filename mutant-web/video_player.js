@@ -165,6 +165,21 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
     // Set the video source directly - this enables true HTTP streaming with range requests
     videoElement.src = httpUrl;
 
+    // Try to get duration from server headers for transcoded videos
+    fetch(httpUrl, { method: 'HEAD' })
+        .then(response => {
+            const durationHeader = response.headers.get('x-video-duration');
+            if (durationHeader) {
+                const duration = parseFloat(durationHeader);
+                console.log(`Got duration from server header: ${duration} seconds for ${videoElementId}`);
+                // Store the duration for use when metadata loads
+                videoElement.dataset.serverDuration = duration.toString();
+            }
+        })
+        .catch(e => {
+            console.log(`Failed to fetch duration header for ${videoElementId}:`, e);
+        });
+
     // Set up video event listeners for HTTP streaming
     videoElement.addEventListener('loadstart', () => {
         console.log(`Video load started for ${videoElementId}`);
@@ -172,6 +187,15 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
 
     videoElement.addEventListener('loadedmetadata', () => {
         console.log(`Video metadata loaded for ${videoElementId}. Duration: ${videoElement.duration}s`);
+
+        // If we have a server duration and the video duration is not set or incorrect, use server duration
+        const serverDuration = videoElement.dataset.serverDuration;
+        if (serverDuration && (!videoElement.duration || videoElement.duration === Infinity || isNaN(videoElement.duration))) {
+            const duration = parseFloat(serverDuration);
+            console.log(`Using server duration ${duration}s instead of video duration ${videoElement.duration}s for ${videoElementId}`);
+            // Note: We can't directly set videoElement.duration, but we can use it in our progress calculations
+            videoElement.dataset.effectiveDuration = duration.toString();
+        }
     });
 
     videoElement.addEventListener('loadeddata', () => {
@@ -197,7 +221,9 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
     videoElement.addEventListener('progress', () => {
         if (videoElement.buffered.length > 0) {
             const bufferedEnd = videoElement.buffered.end(videoElement.buffered.length - 1);
-            const duration = videoElement.duration;
+            const effectiveDuration = videoElement.dataset.effectiveDuration || videoElement.dataset.serverDuration;
+            const duration = effectiveDuration ? parseFloat(effectiveDuration) : videoElement.duration;
+
             if (duration > 0) {
                 const percent = (bufferedEnd / duration * 100).toFixed(1);
                 console.log(`Video buffered: ${percent}% (${bufferedEnd.toFixed(1)}s / ${duration.toFixed(1)}s) for ${videoElementId}`);

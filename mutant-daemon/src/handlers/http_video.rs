@@ -2,7 +2,7 @@ use std::sync::Arc;
 use warp::{Reply, Rejection, http::StatusCode};
 use mutant_lib::{MutAnt, storage::ScratchpadAddress};
 use futures_util::StreamExt;
-use super::transcoding::{needs_transcoding, get_transcoded_mime_type, TranscodedVideoStream};
+use super::transcoding::{needs_transcoding, get_transcoded_mime_type, TranscodedVideoStream, probe_video_duration};
 
 /// Handle HTTP video requests with range support and transcoding for unsupported formats
 pub async fn handle_http_video(
@@ -47,8 +47,17 @@ async fn handle_transcoded_video(
 ) -> Result<warp::reply::Response, Rejection> {
     log::info!("Starting transcoding for video: {}", filename);
 
-    // Create transcoded video stream
-    let transcoded_stream = match TranscodedVideoStream::new(video_data).await {
+    // First, probe the video to get duration
+    let duration = match probe_video_duration(&video_data).await {
+        Ok(d) => Some(d),
+        Err(e) => {
+            log::warn!("Failed to probe video duration for {}: {}", filename, e);
+            None
+        }
+    };
+
+    // Create transcoded video stream with duration
+    let transcoded_stream = match TranscodedVideoStream::new(video_data, duration).await {
         Ok(stream) => stream,
         Err(e) => {
             log::error!("Failed to start transcoding for {}: {}", filename, e);
@@ -87,6 +96,12 @@ async fn handle_transcoded_video(
     response.headers_mut().insert("content-type", get_transcoded_mime_type().parse().unwrap());
     response.headers_mut().insert("cache-control", "no-cache".parse().unwrap());
     response.headers_mut().insert("connection", "keep-alive".parse().unwrap());
+
+    // Add duration header if we have it
+    if let Some(duration_seconds) = duration {
+        response.headers_mut().insert("x-video-duration", duration_seconds.to_string().parse().unwrap());
+        log::info!("Added duration header: {:.2} seconds for {}", duration_seconds, filename);
+    }
 
     // Don't set content-length since we're streaming
     *response.status_mut() = StatusCode::OK;
