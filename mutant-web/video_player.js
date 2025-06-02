@@ -161,9 +161,14 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
     videoElement.style.width = width + 'px';
     videoElement.style.height = height + 'px';
     videoElement.style.backgroundColor = '#000';
+    videoElement.style.border = '2px solid #ff8c00'; // Orange border for debugging
+    videoElement.style.zIndex = '1000'; // Ensure it's on top
 
     // Append to the document body
     document.body.appendChild(videoElement);
+
+    console.log(`Video element created and positioned at (${x}, ${y}) with size ${width}x${height}`);
+    console.log(`Video element in DOM:`, document.getElementById(videoElementId));
 
     let websocket = null;
     let chunks = [];
@@ -216,9 +221,15 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
             // Set the video source to the blob URL
             videoElement.src = blobUrl;
 
+            // Store the blob URL for cleanup
+            window.mutantActiveVideoPlayers[videoElementId].blobUrl = blobUrl;
+
             // Optional: Auto-play the video once it's loaded
             videoElement.addEventListener('loadeddata', () => {
                 console.log(`Video loaded for ${videoElementId}, ready to play`);
+                console.log(`Video element dimensions: ${videoElement.videoWidth}x${videoElement.videoHeight}`);
+                console.log(`Video element position: ${videoElement.style.left}, ${videoElement.style.top}`);
+                console.log(`Video element visible:`, videoElement.offsetWidth > 0 && videoElement.offsetHeight > 0);
             });
 
             videoElement.addEventListener('error', (e) => {
