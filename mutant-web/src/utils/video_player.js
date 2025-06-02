@@ -1,8 +1,10 @@
+console.log("video_player.js loaded and executing");
+
 // mutant-web/src/utils/video_player.js
 
 window.mutantActiveVideoPlayers = window.mutantActiveVideoPlayers || {};
 
-window.initMpegtsPlayer = function(videoElementId, websocketUrl, x, y, width, height) {
+function initMpegtsPlayer(videoElementId, websocketUrl, x, y, width, height) {
     console.log(`initMpegtsPlayer called for element: ${videoElementId}, url: ${websocketUrl}`);
     console.log(`Positioning - x: ${x}, y: ${y}, width: ${width}, height: ${height}`);
 
@@ -19,7 +21,7 @@ window.initMpegtsPlayer = function(videoElementId, websocketUrl, x, y, width, he
     // If a player for this ID already exists, clean it up first
     if (window.mutantActiveVideoPlayers[videoElementId]) {
         console.warn(`Player for ${videoElementId} already exists. Cleaning up old one.`);
-        window.cleanupMpegtsPlayer(videoElementId); // Ensure calling the window version
+        cleanupMpegtsPlayer(videoElementId);
     }
 
     // Create the video element
@@ -54,7 +56,7 @@ window.initMpegtsPlayer = function(videoElementId, websocketUrl, x, y, width, he
     player.on(mpegts.Events.ERROR, (err) => {
         console.error(`mpegts.js Error for ${videoElementId}:`, err);
         // Potentially cleanup and remove video element on critical error
-        // window.cleanupMpegtsPlayer(videoElementId); // Ensure calling the window version
+        // cleanupMpegtsPlayer(videoElementId);
     });
 
     player.on(mpegts.Events.LOADING_COMPLETE, () => {
@@ -79,7 +81,7 @@ window.initMpegtsPlayer = function(videoElementId, websocketUrl, x, y, width, he
         // player.play(); // Autoplay if desired, or let user click controls
     } catch (e) {
         console.error(`Error calling player.load() or player.play() for ${videoElementId}:`, e);
-        window.cleanupMpegtsPlayer(videoElementId); // Clean up if load fails immediately
+        cleanupMpegtsPlayer(videoElementId); // Clean up if load fails immediately
         return;
     }
 
@@ -88,9 +90,9 @@ window.initMpegtsPlayer = function(videoElementId, websocketUrl, x, y, width, he
         videoElement: videoElement
     };
     console.log(`Player initialized and stored for ${videoElementId}`);
-};
+}
 
-window.cleanupMpegtsPlayer = function(videoElementId) {
+function cleanupMpegtsPlayer(videoElementId) {
     console.log(`cleanupMpegtsPlayer called for element: ${videoElementId}`);
     const playerEntry = window.mutantActiveVideoPlayers[videoElementId];
 
@@ -121,7 +123,7 @@ window.cleanupMpegtsPlayer = function(videoElementId) {
             console.log(`Fallback: Video element ${videoElementId} removed from DOM.`);
         }
     }
-};
+}
 
 // Make functions available for wasm_bindgen (Rust)
 // These are already global in this script context, so wasm_bindgen can find them by name.
