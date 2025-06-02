@@ -59,76 +59,37 @@ async fn handle_transcoded_video(
         }
     };
 
-    // Collect all transcoded data
-    let mut transcoded_data = Vec::new();
-    let mut stream = Box::pin(transcoded_stream);
-    let mut chunk_count = 0;
+    // For transcoded content, we don't support range requests initially
+    // The browser will get the full stream and handle buffering
+    if range_header.is_some() {
+        log::info!("Range request for transcoded content not supported, serving full stream for {}", filename);
+    }
 
-    log::debug!("Starting to collect transcoded data chunks for {}", filename);
-    while let Some(chunk_result) = stream.next().await {
+    log::info!("Starting streaming response for transcoded video: {}", filename);
+
+    // Convert our stream to a warp-compatible stream
+    let body_stream = transcoded_stream.map(|chunk_result| {
         match chunk_result {
-            Ok(chunk) => {
-                chunk_count += 1;
-                let chunk_size = chunk.len();
-                log::debug!("Collected chunk {} with {} bytes for {}", chunk_count, chunk_size, filename);
-                transcoded_data.extend_from_slice(&chunk);
-            },
+            Ok(chunk) => Ok(warp::hyper::body::Bytes::from(chunk)),
             Err(e) => {
-                log::error!("Transcoding error for {}: {}", filename, e);
-                return Ok(warp::reply::with_status(
-                    format!("Transcoding error: {}", e),
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                ).into_response());
+                log::error!("Transcoding stream error: {}", e);
+                // Convert to a hyper error
+                Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
             }
         }
-    }
-    log::debug!("Finished collecting {} chunks for {}", chunk_count, filename);
+    });
 
-    let transcoded_size = transcoded_data.len();
-    log::info!("Transcoding completed for {}: {} bytes", filename, transcoded_size);
+    // Create streaming response
+    let body = warp::hyper::Body::wrap_stream(body_stream);
+    let mut response = warp::reply::Response::new(body);
 
-    // Handle range requests for transcoded content
-    let has_range = range_header.is_some();
-    let (start, end) = if let Some(ref range) = range_header {
-        parse_range_header(range, transcoded_size)
-    } else {
-        (0, transcoded_size - 1)
-    };
-
-    // Validate range
-    if start >= transcoded_size || end >= transcoded_size || start > end {
-        log::warn!("Invalid range request: {}-{} for transcoded file size {}", start, end, transcoded_size);
-        return Ok(warp::reply::with_status(
-            "Invalid range",
-            StatusCode::RANGE_NOT_SATISFIABLE,
-        ).into_response());
-    }
-
-    let content_length = end - start + 1;
-    let chunk = transcoded_data[start..=end].to_vec();
-
-    log::info!("Serving transcoded range {}-{}/{} ({} bytes) for {}", start, end, transcoded_size, content_length, filename);
-
-    // Build response
-    let mut response = warp::reply::Response::new(chunk.into());
-
-    // Set content type for transcoded MP4
+    // Set headers for streaming
     response.headers_mut().insert("content-type", get_transcoded_mime_type().parse().unwrap());
+    response.headers_mut().insert("cache-control", "no-cache".parse().unwrap());
+    response.headers_mut().insert("connection", "keep-alive".parse().unwrap());
 
-    if has_range {
-        // Partial content response
-        response.headers_mut().insert("content-range",
-            format!("bytes {}-{}/{}", start, end, transcoded_size).parse().unwrap());
-        response.headers_mut().insert("content-length", content_length.to_string().parse().unwrap());
-        *response.status_mut() = StatusCode::PARTIAL_CONTENT;
-    } else {
-        // Full content response
-        response.headers_mut().insert("content-length", transcoded_size.to_string().parse().unwrap());
-        *response.status_mut() = StatusCode::OK;
-    }
-
-    // Enable range requests
-    response.headers_mut().insert("accept-ranges", "bytes".parse().unwrap());
+    // Don't set content-length since we're streaming
+    *response.status_mut() = StatusCode::OK;
 
     // CORS headers
     response.headers_mut().insert("access-control-allow-origin", "*".parse().unwrap());
