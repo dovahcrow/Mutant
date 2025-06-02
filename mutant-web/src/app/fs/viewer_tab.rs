@@ -9,6 +9,31 @@ use wasm_bindgen_futures::spawn_local;
 use log;
 use humansize::{format_size, BINARY}; // For humanize_size
 use crate::app::fs_window::FsWindow; // For save_file -> get_window_mut FsWindow type
+use std::sync::{Arc, RwLock};
+use lazy_static::lazy_static;
+use std::collections::HashSet;
+
+// Global state to track which video players are currently active (being drawn)
+lazy_static! {
+    static ref ACTIVE_VIDEO_PLAYERS: Arc<RwLock<HashSet<String>>> = Arc::new(RwLock::new(HashSet::new()));
+}
+
+/// Update z-index for all video players based on which tabs are currently visible
+pub fn update_video_player_z_index() {
+    // Get the list of currently visible players
+    let visible_players = {
+        let active = ACTIVE_VIDEO_PLAYERS.read().unwrap();
+        active.clone()
+    };
+
+    // Call JavaScript to update z-index for all players
+    multimedia::bindings::update_video_players_z_index(
+        visible_players.into_iter().collect::<Vec<String>>().join(",")
+    );
+
+    // Clear the active players set for the next frame
+    ACTIVE_VIDEO_PLAYERS.write().unwrap().clear();
+}
 
 // Helper function to format file sizes (redefined locally)
 fn humanize_size(size: usize) -> String {
@@ -164,8 +189,18 @@ impl FileViewerTab {
         log::info!("FileViewerTab::update_content for {} finished. is_loading: false.", self.file.key);
     }
 
+    /// Mark this tab as currently active (being drawn)
+    fn mark_as_active(&self) {
+        if let Some(video_element_id) = &self.video_element_id {
+            let mut active_players = ACTIVE_VIDEO_PLAYERS.write().unwrap();
+            active_players.insert(video_element_id.clone());
+        }
+    }
+
     /// Draw the file viewer tab
     pub fn draw(&mut self, ui: &mut egui::Ui) {
+        // Mark this tab as active since it's being drawn
+        self.mark_as_active();
         let header_frame = egui::Frame::new()
             .fill(theme::MutantColors::BACKGROUND_MEDIUM)
             .stroke(egui::Stroke::new(1.0, theme::MutantColors::BORDER_DARK))
@@ -347,6 +382,22 @@ impl FileViewerTab {
         if let Some(video_element_id) = &self.video_element_id {
             log::info!("Cleaning up video player for tab: {}", self.file.key);
             multimedia::bindings::cleanup_video_player(video_element_id.clone());
+        }
+    }
+
+    /// Hide video player when tab becomes inactive
+    pub fn hide_video_player(&self) {
+        if let Some(video_element_id) = &self.video_element_id {
+            log::info!("Hiding video player for tab: {}", self.file.key);
+            multimedia::bindings::hide_video_player(video_element_id.clone());
+        }
+    }
+
+    /// Show video player when tab becomes active
+    pub fn show_video_player(&self) {
+        if let Some(video_element_id) = &self.video_element_id {
+            log::info!("Showing video player for tab: {}", self.file.key);
+            multimedia::bindings::show_video_player(video_element_id.clone());
         }
     }
 

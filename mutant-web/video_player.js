@@ -168,6 +168,7 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
     durationOverlay.style.zIndex = '1001';
     durationOverlay.style.pointerEvents = 'none';
     durationOverlay.style.display = 'none'; // Hidden initially
+    durationOverlay.dataset.shouldShow = 'false'; // Track if overlay should be visible
 
     // Append to the document body
     document.body.appendChild(videoElement);
@@ -193,6 +194,7 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
                 videoElement.dataset.serverDuration = duration.toString();
 
                 // Show the custom duration overlay for transcoded content
+                durationOverlay.dataset.shouldShow = 'true';
                 durationOverlay.style.display = 'block';
 
                 // Function to format seconds to MM:SS
@@ -315,9 +317,9 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
     console.log(`HTTP streaming MP4 player initialized for ${videoElementId}`);
 }
 
-// Function to update video player position
-function updateVideoPlayerPosition(videoElementId, x, y, width, height) {
-    console.log(`updateVideoPlayerPosition called for element: ${videoElementId}, x: ${x}, y: ${y}, width: ${width}, height: ${height}`);
+// Function to update video player position and visibility
+function updateVideoPlayerPosition(videoElementId, x, y, width, height, isVisible = true) {
+    console.log(`updateVideoPlayerPosition called for element: ${videoElementId}, x: ${x}, y: ${y}, width: ${width}, height: ${height}, visible: ${isVisible}`);
     const playerEntry = window.mutantActiveVideoPlayers[videoElementId];
 
     if (playerEntry && playerEntry.videoElement) {
@@ -325,10 +327,141 @@ function updateVideoPlayerPosition(videoElementId, x, y, width, height) {
         playerEntry.videoElement.style.top = y + 'px';
         playerEntry.videoElement.style.width = width + 'px';
         playerEntry.videoElement.style.height = height + 'px';
-        console.log(`Video player ${videoElementId} position updated.`);
+
+        // Control visibility and z-index based on tab state
+        if (isVisible) {
+            playerEntry.videoElement.style.display = 'block';
+            playerEntry.videoElement.style.zIndex = '1000';
+        } else {
+            playerEntry.videoElement.style.display = 'none';
+            playerEntry.videoElement.style.zIndex = '-1';
+        }
+
+        // Also handle duration overlay if it exists
+        const overlayId = `duration_overlay_${videoElementId}`;
+        const overlay = document.getElementById(overlayId);
+        if (overlay) {
+            if (isVisible) {
+                overlay.style.display = overlay.dataset.shouldShow === 'true' ? 'block' : 'none';
+                overlay.style.zIndex = '1001';
+            } else {
+                overlay.style.display = 'none';
+                overlay.style.zIndex = '-1';
+            }
+        }
+
+        console.log(`Video player ${videoElementId} position and visibility updated.`);
     } else {
         console.warn(`No active player found for ID ${videoElementId} to update position.`);
     }
+}
+
+// Function to hide video player (for when tab becomes inactive)
+function hideVideoPlayer(videoElementId) {
+    console.log(`hideVideoPlayer called for element: ${videoElementId}`);
+    const playerEntry = window.mutantActiveVideoPlayers[videoElementId];
+
+    if (playerEntry && playerEntry.videoElement) {
+        playerEntry.videoElement.style.display = 'none';
+        playerEntry.videoElement.style.zIndex = '-1';
+
+        // Also hide duration overlay
+        const overlayId = `duration_overlay_${videoElementId}`;
+        const overlay = document.getElementById(overlayId);
+        if (overlay) {
+            overlay.style.display = 'none';
+            overlay.style.zIndex = '-1';
+        }
+
+        console.log(`Video player ${videoElementId} hidden.`);
+    } else {
+        console.warn(`No active player found for ID ${videoElementId} to hide.`);
+    }
+}
+
+// Function to show video player (for when tab becomes active)
+function showVideoPlayer(videoElementId) {
+    console.log(`showVideoPlayer called for element: ${videoElementId}`);
+    const playerEntry = window.mutantActiveVideoPlayers[videoElementId];
+
+    if (playerEntry && playerEntry.videoElement) {
+        playerEntry.videoElement.style.display = 'block';
+        playerEntry.videoElement.style.zIndex = '1000';
+
+        // Also show duration overlay if it should be visible
+        const overlayId = `duration_overlay_${videoElementId}`;
+        const overlay = document.getElementById(overlayId);
+        if (overlay && overlay.dataset.shouldShow === 'true') {
+            overlay.style.display = 'block';
+            overlay.style.zIndex = '1001';
+        }
+
+        console.log(`Video player ${videoElementId} shown.`);
+    } else {
+        console.warn(`No active player found for ID ${videoElementId} to show.`);
+    }
+}
+
+// Function to update z-index for all video players based on visibility
+function updateVideoPlayersZIndex(visiblePlayerIds) {
+    console.log(`updateVideoPlayersZIndex called with visible IDs: ${visiblePlayerIds}`);
+
+    // Parse the comma-separated list of visible player IDs
+    const visibleIds = visiblePlayerIds ? visiblePlayerIds.split(',').filter(id => id.trim() !== '') : [];
+    const visibleIdSet = new Set(visibleIds);
+
+    // Iterate through all video players and set appropriate z-index
+    for (const videoElementId in window.mutantActiveVideoPlayers) {
+        const playerEntry = window.mutantActiveVideoPlayers[videoElementId];
+        if (playerEntry && playerEntry.videoElement) {
+            if (visibleIdSet.has(videoElementId)) {
+                // Visible tab - high z-index
+                playerEntry.videoElement.style.zIndex = '1000';
+                playerEntry.videoElement.style.display = 'block';
+
+                // Also update overlay z-index
+                const overlayId = `duration_overlay_${videoElementId}`;
+                const overlay = document.getElementById(overlayId);
+                if (overlay && overlay.dataset.shouldShow === 'true') {
+                    overlay.style.zIndex = '1001';
+                    overlay.style.display = 'block';
+                }
+            } else {
+                // Hidden tab - low z-index (behind UI elements)
+                playerEntry.videoElement.style.zIndex = '-1';
+
+                // Also hide overlay
+                const overlayId = `duration_overlay_${videoElementId}`;
+                const overlay = document.getElementById(overlayId);
+                if (overlay) {
+                    overlay.style.zIndex = '-1';
+                }
+            }
+        }
+    }
+
+    console.log(`Updated z-index for ${Object.keys(window.mutantActiveVideoPlayers).length} video players, ${visibleIds.length} visible`);
+}
+
+// Function to hide all inactive video players
+function hideInactiveVideoPlayers(activePlayerIds) {
+    console.log(`hideInactiveVideoPlayers called with active IDs: ${activePlayerIds}`);
+
+    // Parse the comma-separated list of active player IDs
+    const activeIds = activePlayerIds ? activePlayerIds.split(',').filter(id => id.trim() !== '') : [];
+    const activeIdSet = new Set(activeIds);
+
+    // Iterate through all video players and hide those not in the active set
+    for (const videoElementId in window.mutantActiveVideoPlayers) {
+        if (!activeIdSet.has(videoElementId)) {
+            hideVideoPlayer(videoElementId);
+        } else {
+            // Ensure active players are visible
+            showVideoPlayer(videoElementId);
+        }
+    }
+
+    console.log(`Processed ${Object.keys(window.mutantActiveVideoPlayers).length} video players, ${activeIds.length} active`);
 }
 
 // Universal cleanup function for all player types

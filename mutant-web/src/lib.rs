@@ -1087,6 +1087,9 @@ impl eframe::App for MyApp {
 
         // Show notifications
         app::notifications::show_notifications(ctx);
+
+        // Update video player z-index based on which tabs are currently visible
+        app::fs::viewer_tab::update_video_player_z_index();
     }
 }
 
