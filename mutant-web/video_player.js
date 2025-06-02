@@ -324,29 +324,37 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
 
         currentBlobUrl = newBlobUrl;
 
-        // Update video source if this is the first time or if video has ended/errored
-        if (!hasStartedPlayback || videoElement.ended || videoElement.error) {
-            console.log(`Updating video source with ${(totalSize / (1024 * 1024)).toFixed(1)}MB of data`);
+        console.log(`Updating video source with ${(totalSize / (1024 * 1024)).toFixed(1)}MB of data`);
 
-            // Store current time to resume from same position
-            const currentTime = videoElement.currentTime || 0;
+        // Store current time and playing state to resume from same position
+        const currentTime = videoElement.currentTime || 0;
+        const wasPlaying = !videoElement.paused;
 
-            // Update source
-            videoElement.src = newBlobUrl;
+        // Update source
+        videoElement.src = newBlobUrl;
 
+        // Set up one-time event listener to resume playback
+        const resumePlayback = () => {
             // Resume from previous position
             if (currentTime > 0) {
                 videoElement.currentTime = currentTime;
             }
 
-            // Start playback if not already started
-            if (!hasStartedPlayback) {
-                hasStartedPlayback = true;
+            // Resume playing if it was playing before
+            if (wasPlaying || !hasStartedPlayback) {
+                if (!hasStartedPlayback) {
+                    hasStartedPlayback = true;
+                }
                 videoElement.play().catch(e => {
                     console.log(`Autoplay prevented for ${videoElementId}, user will need to click play:`, e);
                 });
             }
-        }
+
+            // Remove the event listener
+            videoElement.removeEventListener('loadeddata', resumePlayback);
+        };
+
+        videoElement.addEventListener('loadeddata', resumePlayback);
     }
 
     function createFinalBlob() {
