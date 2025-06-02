@@ -6,18 +6,28 @@ if (!window.mutantActiveVideoPlayers) {
 // Detect video format from filename
 function getVideoFormat(filename) {
     const extension = filename.split('.').pop().toLowerCase();
+
+    // Native browser-supported formats
     switch (extension) {
         case 'mp4':
         case 'm4v':
-            return 'mp4';
+        case 'webm':
+        case 'ogg':
+            return 'mp4'; // Use native HTML5 video player
         case 'ts':
         case 'mts':
         case 'm2ts':
-            return 'mpegts';
+            return 'mpegts'; // Use mpegts.js for transport streams
         case 'flv':
-            return 'flv';
+            return 'flv'; // Use mpegts.js for FLV
+        // All other formats (mkv, avi, mov, wmv, etc.) will be transcoded to MP4 by the server
+        case 'mkv':
+        case 'avi':
+        case 'mov':
+        case 'wmv':
+        case '3gp':
         default:
-            return 'mp4'; // Default to MP4
+            return 'mp4'; // Server will transcode to MP4, use native player
     }
 }
 

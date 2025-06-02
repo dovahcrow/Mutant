@@ -10,6 +10,7 @@ mod import_export;
 mod key_management;
 mod video_stream;
 mod http_video;
+mod transcoding;
 
 // Public exports
 pub use websocket::handle_ws;

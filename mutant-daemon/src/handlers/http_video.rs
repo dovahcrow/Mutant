@@ -1,8 +1,10 @@
 use std::sync::Arc;
 use warp::{Reply, Rejection, http::StatusCode};
 use mutant_lib::{MutAnt, storage::ScratchpadAddress};
+use futures_util::StreamExt;
+use super::transcoding::{needs_transcoding, get_transcoded_mime_type, TranscodedVideoStream};
 
-/// Handle HTTP video requests with range support for true progressive streaming
+/// Handle HTTP video requests with range support and transcoding for unsupported formats
 pub async fn handle_http_video(
     filename: String,
     range_header: Option<String>,
@@ -25,8 +27,89 @@ pub async fn handle_http_video(
         }
     };
 
+    log::info!("Retrieved video data for {}: {} bytes", filename, video_data.len());
+
+    // Check if transcoding is needed
+    if needs_transcoding(&filename) {
+        log::info!("Video format requires transcoding: {}", filename);
+        return handle_transcoded_video(filename, range_header, video_data).await;
+    }
+
+    // Handle native browser-supported formats with range support
+    handle_native_video(filename, range_header, video_data)
+}
+
+/// Handle transcoded video streaming (no range support for transcoded content)
+async fn handle_transcoded_video(
+    filename: String,
+    range_header: Option<String>,
+    video_data: Vec<u8>,
+) -> Result<warp::reply::Response, Rejection> {
+    // Range requests are not supported for transcoded content
+    if range_header.is_some() {
+        log::warn!("Range requests not supported for transcoded video: {}", filename);
+        return Ok(warp::reply::with_status(
+            "Range requests not supported for transcoded content",
+            StatusCode::RANGE_NOT_SATISFIABLE,
+        ).into_response());
+    }
+
+    log::info!("Starting transcoding for video: {}", filename);
+
+    // Create transcoded video stream
+    let transcoded_stream = match TranscodedVideoStream::new(video_data).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            log::error!("Failed to start transcoding for {}: {}", filename, e);
+            return Ok(warp::reply::with_status(
+                format!("Transcoding failed: {}", e),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ).into_response());
+        }
+    };
+
+    // Collect all transcoded data
+    let mut transcoded_data = Vec::new();
+    let mut stream = Box::pin(transcoded_stream);
+
+    while let Some(chunk_result) = stream.next().await {
+        match chunk_result {
+            Ok(chunk) => transcoded_data.extend_from_slice(&chunk),
+            Err(e) => {
+                log::error!("Transcoding error for {}: {}", filename, e);
+                return Ok(warp::reply::with_status(
+                    format!("Transcoding error: {}", e),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                ).into_response());
+            }
+        }
+    }
+
+    let transcoded_size = transcoded_data.len();
+    log::info!("Transcoding completed for {}: {} bytes", filename, transcoded_size);
+
+    // Build response
+    let mut response = warp::reply::Response::new(transcoded_data.into());
+
+    // Set content type for transcoded MP4
+    response.headers_mut().insert("content-type", get_transcoded_mime_type().parse().unwrap());
+    response.headers_mut().insert("content-length", transcoded_size.to_string().parse().unwrap());
+
+    // CORS headers
+    response.headers_mut().insert("access-control-allow-origin", "*".parse().unwrap());
+    response.headers_mut().insert("access-control-allow-methods", "GET, HEAD, OPTIONS".parse().unwrap());
+
+    *response.status_mut() = StatusCode::OK;
+    Ok(response)
+}
+
+/// Handle native browser-supported video formats with range support
+fn handle_native_video(
+    filename: String,
+    range_header: Option<String>,
+    video_data: Vec<u8>,
+) -> Result<warp::reply::Response, Rejection> {
     let total_size = video_data.len();
-    log::info!("Retrieved video data for {}: {} bytes", filename, total_size);
 
     // Parse range header if present
     let has_range = range_header.is_some();
@@ -46,7 +129,7 @@ pub async fn handle_http_video(
     }
 
     let content_length = end - start + 1;
-    let chunk = video_data[start..=end].to_vec(); // Clone the chunk to avoid lifetime issues
+    let chunk = video_data[start..=end].to_vec();
 
     log::info!("Serving range {}-{}/{} ({} bytes) for {}", start, end, total_size, content_length, filename);
 
@@ -71,7 +154,7 @@ pub async fn handle_http_video(
 
     // Enable range requests
     response.headers_mut().insert("accept-ranges", "bytes".parse().unwrap());
-    
+
     // CORS headers for web access
     response.headers_mut().insert("access-control-allow-origin", "*".parse().unwrap());
     response.headers_mut().insert("access-control-allow-methods", "GET, HEAD, OPTIONS".parse().unwrap());
