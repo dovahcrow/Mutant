@@ -263,7 +263,8 @@ async fn fetch_pads_data(
     // If streaming is enabled, we'll use a different approach to process pads
     if stream_data {
         debug!("fetch_pads_data: Using streaming mode");
-        return fetch_pads_data_streaming(network, pads, public, get_callback).await;
+        // Use immediate streaming (true) for better video streaming performance
+        return fetch_pads_data_streaming(network, pads, public, get_callback, true).await;
     }
 
     // 1. Create Task Processor (directly)
@@ -380,16 +381,24 @@ async fn fetch_pads_data(
 }
 
 /// Fetches pads and streams them back via the callback as they arrive.
-/// This version doesn't collect all data in memory but sends it chunk by chunk.
+/// This version uses concurrent downloads and can stream results either in order or immediately.
+///
+/// # Arguments
+/// * `stream_immediately` - If true, streams pads as soon as they arrive (out of order).
+///                         If false, buffers and streams pads in order.
 async fn fetch_pads_data_streaming(
     network: Arc<Network>,
     pads: Vec<PadInfo>,
     public: bool,
     get_callback: Option<GetCallback>,
+    stream_immediately: bool,
 ) -> Result<Vec<u8>, Error> {
+    use std::collections::BTreeMap;
+    use tokio::sync::mpsc;
+
     let total_pads_to_fetch = pads.len();
     debug!(
-        "fetch_pads_data_streaming: Starting to fetch {} pads, public={}",
+        "fetch_pads_data_streaming: Starting to fetch {} pads concurrently, public={}",
         total_pads_to_fetch, public
     );
 
@@ -401,82 +410,173 @@ async fn fetch_pads_data_streaming(
         return Ok(Vec::new());
     }
 
-    // Create a client for fetching
-    let client = network
-        .get_client(crate::network::client::Config::Get)
-        .await
-        .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
+    // Create a channel for receiving results as they arrive
+    let (result_tx, mut result_rx) = mpsc::unbounded_channel::<(usize, Vec<u8>)>();
 
-    // Sort pads by chunk_index to ensure we process them in order
-    let mut sorted_pads = pads;
-    sorted_pads.sort_by_key(|pad| pad.chunk_index);
-
-    // Keep track of total data size for the final result
+    // Buffer for out-of-order results
+    let mut result_buffer: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
+    let mut next_expected_chunk = 0usize;
+    let mut completed_count = 0;
     let mut total_data_size = 0;
 
-    // Process each pad sequentially
-    for pad in sorted_pads {
-        let mut retries_left = 20;
-        let owned_key;
-        let secret_key_ref = if public {
-            None
-        } else {
-            owned_key = pad.secret_key();
-            Some(&owned_key)
-        };
+    // Also collect data for final return (ordered by chunk_index)
+    let mut final_data_buffer: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
 
-        // Try to fetch the pad with retries
-        loop {
-            match network.get(&client, &pad.address, secret_key_ref).await {
-                Ok(get_result) => {
-                    let checksum_match = pad.checksum == PadInfo::checksum(&get_result.data);
-                    let counter_match = pad.last_known_counter == get_result.counter;
-                    let size_match = pad.size == get_result.data.len();
+    // Spawn concurrent tasks to fetch pads
+    let mut task_handles = Vec::new();
+    for pad in pads {
+        let network_clone = network.clone();
+        let result_tx_clone = result_tx.clone();
+        let get_callback_clone = get_callback.clone();
 
-                    if checksum_match && counter_match && size_match {
-                        // Update total size
-                        total_data_size += get_result.data.len();
+        let task_handle = tokio::spawn(async move {
+            let mut retries_left = 20;
+            let owned_key;
+            let secret_key_ref = if public {
+                None
+            } else {
+                owned_key = pad.secret_key();
+                Some(&owned_key)
+            };
 
-                        // Send regular PadFetched event for progress tracking
-                        invoke_get_callback(&get_callback, GetEvent::PadFetched)
+            // Get a client for this task
+            let client = network_clone
+                .get_client(crate::network::client::Config::Get)
+                .await
+                .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
+
+            // Try to fetch the pad with retries
+            loop {
+                match network_clone.get(&client, &pad.address, secret_key_ref).await {
+                    Ok(get_result) => {
+                        let checksum_match = pad.checksum == PadInfo::checksum(&get_result.data);
+                        let counter_match = pad.last_known_counter == get_result.counter;
+                        let size_match = pad.size == get_result.data.len();
+
+                        if checksum_match && counter_match && size_match {
+                            // Send regular PadFetched event for progress tracking
+                            invoke_get_callback(&get_callback_clone, GetEvent::PadFetched)
+                                .await
+                                .map_err(|e| Error::Internal(format!("Callback error: {}", e)))?;
+
+                            // Send the result via channel
+                            if let Err(_) = result_tx_clone.send((pad.chunk_index, get_result.data)) {
+                                return Err(Error::Internal("Result channel closed".to_string()));
+                            }
+
+                            return Ok(());
+                        }
+                    }
+                    Err(_) => {
+                        // Error handling - continue to retry
+                    }
+                }
+
+                retries_left -= 1;
+
+                warn!(
+                    "GET failed for pad {} (chunk {}). Retries left: {}",
+                    pad.address, pad.chunk_index, retries_left
+                );
+
+                if retries_left <= 0 {
+                    return Err(Error::Internal(format!(
+                        "GET failed for pad {} (chunk {}) after {} retries",
+                        pad.address, pad.chunk_index, 20
+                    )));
+                }
+
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        });
+
+        task_handles.push(task_handle);
+    }
+
+    // Drop the original sender so the channel closes when all tasks complete
+    drop(result_tx);
+
+    // Process results as they arrive, maintaining order
+    loop {
+        tokio::select! {
+            // Receive results from workers
+            result = result_rx.recv() => {
+                match result {
+                    Some((chunk_index, data)) => {
+                        debug!("fetch_pads_data_streaming: Received chunk {} ({} bytes)", chunk_index, data.len());
+
+                        if stream_immediately {
+                            // Stream immediately without waiting for order
+                            debug!("fetch_pads_data_streaming: Streaming chunk {} immediately ({} bytes)",
+                                   chunk_index, data.len());
+
+                            total_data_size += data.len();
+
+                            // Store data for final return (always store for final assembly)
+                            final_data_buffer.insert(chunk_index, data.clone());
+
+                            // Send the data via the callback immediately
+                            invoke_get_callback(
+                                &get_callback,
+                                GetEvent::PadData {
+                                    chunk_index,
+                                    data,
+                                },
+                            )
                             .await
                             .map_err(|e| Error::Internal(format!("Callback error: {}", e)))?;
 
-                        // Send the data via the callback
-                        invoke_get_callback(
-                            &get_callback,
-                            GetEvent::PadData {
-                                chunk_index: pad.chunk_index,
-                                data: get_result.data,
-                            },
-                        )
-                        .await
-                        .map_err(|e| Error::Internal(format!("Callback error: {}", e)))?;
+                            completed_count += 1;
+                        } else {
+                            // Add to buffer for ordered streaming
+                            result_buffer.insert(chunk_index, data);
 
-                        // Break out of the retry loop
+                            // Try to drain consecutive results from buffer
+                            while let Some(chunk_data) = result_buffer.remove(&next_expected_chunk) {
+                                debug!("fetch_pads_data_streaming: Streaming chunk {} in order ({} bytes)",
+                                       next_expected_chunk, chunk_data.len());
+
+                                total_data_size += chunk_data.len();
+
+                                // Store data for final return (always store for final assembly)
+                                final_data_buffer.insert(next_expected_chunk, chunk_data.clone());
+
+                                // Send the data via the callback
+                                invoke_get_callback(
+                                    &get_callback,
+                                    GetEvent::PadData {
+                                        chunk_index: next_expected_chunk,
+                                        data: chunk_data,
+                                    },
+                                )
+                                .await
+                                .map_err(|e| Error::Internal(format!("Callback error: {}", e)))?;
+
+                                next_expected_chunk += 1;
+                                completed_count += 1;
+                            }
+                        }
+
+                        // Check if we've completed all chunks
+                        if completed_count >= total_pads_to_fetch {
+                            break;
+                        }
+                    }
+                    None => {
+                        // Channel closed, no more results
+                        debug!("fetch_pads_data_streaming: Result channel closed");
                         break;
                     }
                 }
-                Err(_) => {
-                    // Error handling
-                }
             }
+        }
+    }
 
-            retries_left -= 1;
-
-            warn!(
-                "GET failed for pad {} (chunk {}). Retries left: {}",
-                pad.address, pad.chunk_index, retries_left
-            );
-
-            if retries_left <= 0 {
-                return Err(Error::Internal(format!(
-                    "GET failed for pad {} (chunk {}) after {} retries",
-                    pad.address, pad.chunk_index, 20
-                )));
-            }
-
-            tokio::time::sleep(Duration::from_secs(1)).await;
+    // Wait for all tasks to complete
+    for handle in task_handles {
+        if let Err(e) = handle.await {
+            error!("fetch_pads_data_streaming: Task failed: {:?}", e);
+            return Err(Error::Internal(format!("Task join error: {:?}", e)));
         }
     }
 
@@ -485,11 +585,19 @@ async fn fetch_pads_data_streaming(
         .await
         .unwrap();
 
-    // Return an empty Vec since we've already streamed all the data
-    // The total_data_size is just for reporting purposes
-    debug!("fetch_pads_data_streaming: Streamed total data size: {}", total_data_size);
+    debug!("fetch_pads_data_streaming: Completed streaming {} chunks, total data size: {}",
+           completed_count, total_data_size);
 
-    // We still return the size so the caller knows how much data was processed
-    // but we don't actually collect it all in memory
-    Ok(Vec::new())
+    // Assemble the final data in correct order for return
+    let mut final_data = Vec::with_capacity(total_data_size);
+    for chunk_index in 0..total_pads_to_fetch {
+        if let Some(chunk_data) = final_data_buffer.remove(&chunk_index) {
+            final_data.extend_from_slice(&chunk_data);
+        } else {
+            return Err(Error::Internal(format!("Missing chunk {} in final assembly", chunk_index)));
+        }
+    }
+
+    debug!("fetch_pads_data_streaming: Assembled final data: {} bytes", final_data.len());
+    Ok(final_data)
 }

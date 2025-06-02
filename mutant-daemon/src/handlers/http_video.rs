@@ -174,15 +174,15 @@ fn handle_native_video(
     Ok(response)
 }
 
-/// Get video data from MutAnt storage
+/// Get video data from MutAnt storage with streaming enabled for faster initial response
 async fn get_video_data(
     mutant: &MutAnt,
     user_key: &str,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     log::info!("Attempting to get video data for key '{}'", user_key);
-    
-    // First try as a regular key
-    match mutant.get(user_key, None, false).await {
+
+    // First try as a regular key with streaming enabled for faster pad retrieval
+    match mutant.get(user_key, None, true).await {
         Ok(data) => {
             log::info!("Successfully retrieved video data as private key: {} ({} bytes)", user_key, data.len());
             Ok(data)
@@ -196,8 +196,8 @@ async fn get_video_data(
                     // Parse the hex address to ScratchpadAddress
                     match ScratchpadAddress::from_hex(&public_address_hex) {
                         Ok(address) => {
-                            // Fetch the public data
-                            match mutant.get_public(&address, None, false).await {
+                            // Fetch the public data with streaming enabled
+                            match mutant.get_public(&address, None, true).await {
                                 Ok(data) => {
                                     log::info!("Retrieved video data as public key: {} ({} bytes)", user_key, data.len());
                                     Ok(data)

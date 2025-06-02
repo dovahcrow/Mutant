@@ -52,7 +52,8 @@ function initVideoPlayer(videoElementId, websocketUrl, x, y, width, height) {
     // Choose appropriate player based on format
     switch (format) {
         case 'mp4':
-            return initMp4Player(videoElementId, websocketUrl, x, y, width, height);
+            // Use WebSocket streaming for MP4 to enable true streaming as pads arrive
+            return initMpegtsPlayer(videoElementId, websocketUrl, x, y, width, height);
         case 'mpegts':
         case 'flv':
             return initMpegtsPlayer(videoElementId, websocketUrl, x, y, width, height);
@@ -224,6 +225,8 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
         .catch(e => {
             console.log(`Failed to fetch duration header for ${videoElementId}:`, e);
         });
+
+
 
     // Set up video event listeners for HTTP streaming
     videoElement.addEventListener('loadstart', () => {
