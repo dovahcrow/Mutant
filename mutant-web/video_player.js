@@ -52,8 +52,7 @@ function initVideoPlayer(videoElementId, websocketUrl, x, y, width, height) {
     // Choose appropriate player based on format
     switch (format) {
         case 'mp4':
-            // Use WebSocket streaming for MP4 with MediaSource Extensions
-            return initWebSocketMp4Player(videoElementId, websocketUrl, x, y, width, height);
+            return initMp4Player(videoElementId, websocketUrl, x, y, width, height);
         case 'mpegts':
         case 'flv':
             return initMpegtsPlayer(videoElementId, websocketUrl, x, y, width, height);
@@ -131,152 +130,6 @@ function initMpegtsPlayer(videoElementId, websocketUrl, x, y, width, height) {
         type: 'mpegts'
     };
     console.log(`MPEG-TS player initialized and stored for ${videoElementId}`);
-}
-
-// WebSocket MP4 player using MediaSource Extensions for true streaming
-function initWebSocketMp4Player(videoElementId, websocketUrl, x, y, width, height) {
-    console.log(`initWebSocketMp4Player called for element: ${videoElementId}, url: ${websocketUrl}`);
-    console.log(`Positioning - x: ${x}, y: ${y}, width: ${width}, height: ${height}`);
-
-    // Check if MediaSource is supported
-    if (!window.MediaSource) {
-        console.error('MediaSource Extensions not supported in this browser.');
-        // Fallback to HTTP streaming
-        return initMp4Player(videoElementId, websocketUrl, x, y, width, height);
-    }
-
-    // If a player for this ID already exists, clean it up first
-    if (window.mutantActiveVideoPlayers[videoElementId]) {
-        console.warn(`Player for ${videoElementId} already exists. Cleaning up old one.`);
-        cleanupVideoPlayer(videoElementId);
-    }
-
-    // Create the video element
-    let videoElement = document.createElement('video');
-    videoElement.id = videoElementId;
-    videoElement.setAttribute('controls', 'true');
-
-    // Style the video element for absolute positioning
-    videoElement.style.position = 'absolute';
-    videoElement.style.left = x + 'px';
-    videoElement.style.top = y + 'px';
-    videoElement.style.width = width + 'px';
-    videoElement.style.height = height + 'px';
-    videoElement.style.backgroundColor = '#000';
-    videoElement.style.border = '2px solid #00ff00'; // Green border for WebSocket MP4
-    videoElement.style.zIndex = '1000';
-
-    // Append to the document body
-    document.body.appendChild(videoElement);
-
-    // Create MediaSource
-    const mediaSource = new MediaSource();
-    let sourceBuffer = null;
-    let websocket = null;
-    let isSourceOpen = false;
-
-    // Set up MediaSource
-    videoElement.src = URL.createObjectURL(mediaSource);
-
-    mediaSource.addEventListener('sourceopen', () => {
-        console.log(`MediaSource opened for ${videoElementId}`);
-        isSourceOpen = true;
-
-        try {
-            // Create source buffer for MP4
-            sourceBuffer = mediaSource.addSourceBuffer('video/mp4; codecs="avc1.42E01E, mp4a.40.2"');
-
-            sourceBuffer.addEventListener('updateend', () => {
-                console.log(`SourceBuffer update completed for ${videoElementId}`);
-            });
-
-            sourceBuffer.addEventListener('error', (e) => {
-                console.error(`SourceBuffer error for ${videoElementId}:`, e);
-            });
-
-            // Start WebSocket connection
-            startWebSocketConnection();
-
-        } catch (e) {
-            console.error(`Failed to create SourceBuffer for ${videoElementId}:`, e);
-        }
-    });
-
-    function startWebSocketConnection() {
-        console.log(`Starting WebSocket connection to: ${websocketUrl}`);
-        websocket = new WebSocket(websocketUrl);
-        websocket.binaryType = 'arraybuffer';
-
-        websocket.onopen = () => {
-            console.log(`WebSocket connected for ${videoElementId}`);
-        };
-
-        websocket.onmessage = (event) => {
-            if (event.data instanceof ArrayBuffer && sourceBuffer && !sourceBuffer.updating) {
-                try {
-                    console.log(`Received ${event.data.byteLength} bytes for ${videoElementId}`);
-                    sourceBuffer.appendBuffer(event.data);
-
-                    // Try to start playback when we have enough data
-                    if (videoElement.readyState >= 2 && videoElement.paused) {
-                        videoElement.play().catch(e => {
-                            console.log(`Autoplay prevented for ${videoElementId}:`, e);
-                        });
-                    }
-                } catch (e) {
-                    console.error(`Failed to append buffer for ${videoElementId}:`, e);
-                }
-            }
-        };
-
-        websocket.onclose = () => {
-            console.log(`WebSocket closed for ${videoElementId}`);
-            // End the stream
-            if (mediaSource.readyState === 'open') {
-                try {
-                    mediaSource.endOfStream();
-                } catch (e) {
-                    console.error(`Failed to end stream for ${videoElementId}:`, e);
-                }
-            }
-        };
-
-        websocket.onerror = (error) => {
-            console.error(`WebSocket error for ${videoElementId}:`, error);
-        };
-    }
-
-    // Set up video event listeners
-    videoElement.addEventListener('loadstart', () => {
-        console.log(`Video load started for ${videoElementId}`);
-    });
-
-    videoElement.addEventListener('loadedmetadata', () => {
-        console.log(`Video metadata loaded for ${videoElementId}. Duration: ${videoElement.duration}s`);
-    });
-
-    videoElement.addEventListener('canplay', () => {
-        console.log(`Video can start playing for ${videoElementId}`);
-    });
-
-    videoElement.addEventListener('playing', () => {
-        console.log(`Video started playing for ${videoElementId}`);
-    });
-
-    videoElement.addEventListener('error', (e) => {
-        console.error(`Video error for ${videoElementId}:`, e);
-        console.error('Video error details:', videoElement.error);
-    });
-
-    // Store the player info for cleanup
-    window.mutantActiveVideoPlayers[videoElementId] = {
-        videoElement: videoElement,
-        mediaSource: mediaSource,
-        websocket: websocket,
-        type: 'websocket-mp4'
-    };
-
-    console.log(`WebSocket MP4 player initialized for ${videoElementId}`);
 }
 
 // MP4 player using HTTP streaming for true progressive playback
@@ -627,25 +480,6 @@ function cleanupVideoPlayer(videoElementId) {
                 playerEntry.player.detachMediaElement();
                 playerEntry.player.destroy();
                 console.log(`MPEG-TS player for ${videoElementId} destroyed.`);
-            } else if (playerEntry.type === 'websocket-mp4') {
-                // Cleanup WebSocket MP4 player
-                if (playerEntry.videoElement) {
-                    playerEntry.videoElement.pause();
-                    playerEntry.videoElement.src = '';
-                }
-                // Close WebSocket connection
-                if (playerEntry.websocket) {
-                    playerEntry.websocket.close();
-                }
-                // Clean up MediaSource
-                if (playerEntry.mediaSource && playerEntry.mediaSource.readyState === 'open') {
-                    try {
-                        playerEntry.mediaSource.endOfStream();
-                    } catch (e) {
-                        console.warn(`Failed to end MediaSource for ${videoElementId}:`, e);
-                    }
-                }
-                console.log(`WebSocket MP4 player for ${videoElementId} destroyed.`);
             } else if (playerEntry.type === 'mp4-http') {
                 // Cleanup HTTP MP4 player
                 if (playerEntry.videoElement) {

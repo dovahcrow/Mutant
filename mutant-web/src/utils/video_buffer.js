@@ -46,7 +46,7 @@ export async function initVideoBuffer(videoId, mimeType) {
             mediaSource.addEventListener('error', reject);
         });
         
-        console.log(`initVideoBuffer: created buffer ${videoId} for ${mimeType}`);
+        
         return { bufferId: videoId, objectUrl: objectUrl, error: null };
     } catch (err) {
         console.error("initVideoBuffer Error:", err);
@@ -96,7 +96,7 @@ export async function appendVideoChunk(videoId, chunk, isLast = false) {
             buffer.isEnded = true;
         }
         
-        console.log(`appendVideoChunk: appended ${chunk.length} bytes to ${videoId}, total: ${buffer.loadedSize}`);
+        
         return { error: null };
     } catch (err) {
         console.error(`appendVideoChunk Error for ID ${videoId}:`, err);
@@ -134,7 +134,7 @@ export function setVideoTotalSize(videoId, totalSize) {
     const buffer = window.mutantVideoBuffers[videoId];
     if (buffer) {
         buffer.totalSize = totalSize;
-        console.log(`setVideoTotalSize: set total size ${totalSize} for ${videoId}`);
+        
     }
 }
 
@@ -163,7 +163,7 @@ export function cleanupVideoBuffer(videoId) {
         // Remove from storage
         delete window.mutantVideoBuffers[videoId];
         
-        console.log(`cleanupVideoBuffer: cleaned up buffer ${videoId}`);
+        
         return { error: null };
     } catch (err) {
         console.error(`cleanupVideoBuffer Error for ID ${videoId}:`, err);
@@ -181,12 +181,12 @@ export function cleanupVideoElements(keyPattern) {
         const videos = document.querySelectorAll('video');
         const cleanedIds = [];
 
-        console.log(`cleanupVideoElements: Looking for videos matching pattern: ${keyPattern}`);
-        console.log(`cleanupVideoElements: Found ${videos.length} video elements in DOM`);
+        
+        
 
         videos.forEach(video => {
             const videoId = video.id;
-            console.log(`cleanupVideoElements: Checking video element with ID: ${videoId}`);
+            
 
             // Match both old format (video_key) and new format (video_hash)
             // Also clean up any video that doesn't have an ID (orphaned videos)
@@ -195,7 +195,7 @@ export function cleanupVideoElements(keyPattern) {
                 videoId.startsWith('video_');
 
             if (shouldCleanup) {
-                console.log(`cleanupVideoElements: Cleaning up video element: ${videoId || 'no-id'}`);
+                
 
                 // Pause and clear the video
                 try {
@@ -225,9 +225,9 @@ export function cleanupVideoElements(keyPattern) {
         });
 
         if (cleanedIds.length > 0) {
-            console.log(`cleanupVideoElements: cleaned up ${cleanedIds.length} video elements:`, cleanedIds);
+            
         } else {
-            console.log(`cleanupVideoElements: No video elements found to clean up for pattern: ${keyPattern}`);
+            
         }
 
         return { error: null, cleanedCount: cleanedIds.length };

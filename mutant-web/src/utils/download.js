@@ -7,7 +7,7 @@ export async function initSaveFile(fileName) {
         const writable = await handle.createWritable();
         const writerId = "writer_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9);
         window.mutantDownloadWriters[writerId] = writable.getWriter();
-        console.log(`initSaveFile: created writerId ${writerId} for ${fileName}`);
+        
         return { writerId: writerId, error: null };
     } catch (err) {
         console.error("initSaveFile Error:", err);
@@ -39,7 +39,7 @@ export async function closeFile(writerId) {
     try {
         await writer.close();
         delete window.mutantDownloadWriters[writerId];
-        console.log(`closeFile: closed and deleted writerId ${writerId}`);
+        
         return { error: null };
     } catch (err) {
         console.error(`closeFile Error for ID ${writerId}:`, err);
@@ -56,7 +56,7 @@ export async function abortFile(writerId, reason) {
     try {
         await writer.abort(reason);
         delete window.mutantDownloadWriters[writerId];
-        console.log(`abortFile: aborted and deleted writerId ${writerId} for reason: ${reason}`);
+        
         return { error: null };
     } catch (err) {
         console.error(`abortFile Error for ID ${writerId}:`, err);

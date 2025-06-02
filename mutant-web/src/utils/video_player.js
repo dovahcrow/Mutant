@@ -1,12 +1,12 @@
-console.log("video_player.js loaded and executing");
+
 
 // mutant-web/video_player.js
 
 window.mutantActiveVideoPlayers = window.mutantActiveVideoPlayers || {};
 
 function initMpegtsPlayer(videoElementId, websocketUrl, x, y, width, height) {
-    console.log(`initMpegtsPlayer called for element: ${videoElementId}, url: ${websocketUrl}`);
-    console.log(`Positioning - x: ${x}, y: ${y}, width: ${width}, height: ${height}`);
+    
+    
 
     if (typeof mpegts === 'undefined') {
         console.error('mpegts.js is not loaded.');
@@ -60,19 +60,19 @@ function initMpegtsPlayer(videoElementId, websocketUrl, x, y, width, height) {
     });
 
     player.on(mpegts.Events.LOADING_COMPLETE, () => {
-        console.log(`mpegts.js: Loading complete for ${videoElementId}`);
+        
     });
 
     player.on(mpegts.Events.RECOVERED_EARLY_EOF, () => {
-        console.log(`mpegts.js: Recovered from early EOF for ${videoElementId}`);
+        
     });
 
     player.on(mpegts.Events.METADATA_ARRIVED, (metadata) => {
-        console.log(`mpegts.js: Metadata arrived for ${videoElementId}`, metadata);
+        
     });
 
     player.on(mpegts.Events.STATISTICS_INFO, (stats) => {
-        // console.log(`mpegts.js: Stats for ${videoElementId}`, stats);
+        // 
     });
 
 
@@ -89,11 +89,11 @@ function initMpegtsPlayer(videoElementId, websocketUrl, x, y, width, height) {
         player: player,
         videoElement: videoElement
     };
-    console.log(`Player initialized and stored for ${videoElementId}`);
+    
 }
 
 function cleanupMpegtsPlayer(videoElementId) {
-    console.log(`cleanupMpegtsPlayer called for element: ${videoElementId}`);
+    
     const playerEntry = window.mutantActiveVideoPlayers[videoElementId];
 
     if (playerEntry) {
@@ -102,25 +102,25 @@ function cleanupMpegtsPlayer(videoElementId) {
             playerEntry.player.unload(); // Stop loading data
             playerEntry.player.detachMediaElement();
             playerEntry.player.destroy(); // Release resources
-            console.log(`Player for ${videoElementId} destroyed.`);
+            
         } catch (e) {
             console.error(`Error during mpegts.js player cleanup for ${videoElementId}:`, e);
         }
 
         if (playerEntry.videoElement && playerEntry.videoElement.parentNode) {
             playerEntry.videoElement.parentNode.removeChild(playerEntry.videoElement);
-            console.log(`Video element ${videoElementId} removed from DOM.`);
+            
         }
 
         delete window.mutantActiveVideoPlayers[videoElementId];
-        console.log(`Player entry for ${videoElementId} removed.`);
+        
     } else {
         console.warn(`No active player found for ID ${videoElementId} to cleanup.`);
         // Fallback: try to remove element from DOM if it exists
         const element = document.getElementById(videoElementId);
         if (element && element.parentNode) {
             element.parentNode.removeChild(element);
-            console.log(`Fallback: Video element ${videoElementId} removed from DOM.`);
+            
         }
     }
 }
