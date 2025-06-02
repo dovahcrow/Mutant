@@ -33,15 +33,15 @@ function getVideoFormat(filename) {
 
 // Main function to initialize appropriate video player based on format
 function initVideoPlayer(videoElementId, websocketUrl, x, y, width, height) {
-    console.log(`initVideoPlayer called for element: ${videoElementId}, url: ${websocketUrl}`);
-    console.log(`Positioning - x: ${x}, y: ${y}, width: ${width}, height: ${height}`);
+    
+    
 
     // Extract filename from WebSocket URL to detect format
     const urlParts = websocketUrl.split('/');
     const filename = urlParts[urlParts.length - 1];
     const format = getVideoFormat(filename);
 
-    console.log(`Detected video format: ${format} for file: ${filename}`);
+    
 
     // If a player for this ID already exists, clean it up first
     if (window.mutantActiveVideoPlayers[videoElementId]) {
@@ -64,8 +64,8 @@ function initVideoPlayer(videoElementId, websocketUrl, x, y, width, height) {
 
 // MPEG-TS player using mpegts.js
 function initMpegtsPlayer(videoElementId, websocketUrl, x, y, width, height) {
-    console.log(`initMpegtsPlayer called for element: ${videoElementId}, url: ${websocketUrl}`);
-    console.log(`Positioning - x: ${x}, y: ${y}, width: ${width}, height: ${height}`);
+    
+    
 
     if (typeof mpegts === 'undefined') {
         console.error('mpegts.js is not loaded.');
@@ -113,7 +113,7 @@ function initMpegtsPlayer(videoElementId, websocketUrl, x, y, width, height) {
     });
 
     player.on(mpegts.Events.LOADING_COMPLETE, () => {
-        console.log(`mpegts.js: Loading complete for ${videoElementId}`);
+        
     });
 
     try {
@@ -129,13 +129,13 @@ function initMpegtsPlayer(videoElementId, websocketUrl, x, y, width, height) {
         videoElement: videoElement,
         type: 'mpegts'
     };
-    console.log(`MPEG-TS player initialized and stored for ${videoElementId}`);
+    
 }
 
 // MP4 player using HTTP streaming for true progressive playback
 function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
-    console.log(`initMp4Player called for element: ${videoElementId}, url: ${websocketUrl}`);
-    console.log(`Positioning - x: ${x}, y: ${y}, width: ${width}, height: ${height}`);
+    
+    
 
     // Create the video element
     let videoElement = document.createElement('video');
@@ -174,11 +174,11 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
     document.body.appendChild(videoElement);
     document.body.appendChild(durationOverlay);
 
-    console.log(`Video element created and positioned at (${x}, ${y}) with size ${width}x${height}`);
+    
 
     // Convert WebSocket URL to HTTP URL for direct streaming
     const httpUrl = websocketUrl.replace('ws://', 'http://').replace('/video_stream/', '/video/');
-    console.log(`Using HTTP streaming URL: ${httpUrl}`);
+    
 
     // Set the video source directly - this enables true HTTP streaming with range requests
     videoElement.src = httpUrl;
@@ -189,7 +189,7 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
             const durationHeader = response.headers.get('x-video-duration');
             if (durationHeader) {
                 const duration = parseFloat(durationHeader);
-                console.log(`Got duration from server header: ${duration} seconds for ${videoElementId}`);
+                
                 // Store the duration for use when metadata loads
                 videoElement.dataset.serverDuration = duration.toString();
 
@@ -218,28 +218,28 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
                 // Store the interval for cleanup
                 videoElement.dataset.overlayUpdateInterval = overlayUpdateInterval;
 
-                console.log(`Custom duration overlay enabled for transcoded video: ${duration}s for ${videoElementId}`);
+                
             }
         })
         .catch(e => {
-            console.log(`Failed to fetch duration header for ${videoElementId}:`, e);
+            
         });
 
 
 
     // Set up video event listeners for HTTP streaming
     videoElement.addEventListener('loadstart', () => {
-        console.log(`Video load started for ${videoElementId}`);
+        
     });
 
     videoElement.addEventListener('loadedmetadata', () => {
-        console.log(`Video metadata loaded for ${videoElementId}. Duration: ${videoElement.duration}s`);
+        
 
         // If we have a server duration, always use it for transcoded content
         const serverDuration = videoElement.dataset.serverDuration;
         if (serverDuration) {
             const duration = parseFloat(serverDuration);
-            console.log(`Using server duration ${duration}s for transcoded content ${videoElementId}`);
+            
             videoElement.dataset.effectiveDuration = duration.toString();
 
             // Override the duration property to return our server duration
@@ -250,28 +250,28 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
                 configurable: true
             });
 
-            console.log(`Duration override applied: ${videoElement.duration}s for ${videoElementId}`);
+            
         }
     });
 
     videoElement.addEventListener('loadeddata', () => {
-        console.log(`Video data loaded for ${videoElementId}`);
+        
     });
 
     videoElement.addEventListener('canplay', () => {
-        console.log(`Video can start playing for ${videoElementId}`);
+        
         // Auto-play when ready (if allowed by browser)
         videoElement.play().catch(e => {
-            console.log(`Autoplay prevented for ${videoElementId}, user will need to click play:`, e);
+            
         });
     });
 
     videoElement.addEventListener('playing', () => {
-        console.log(`Video started playing for ${videoElementId}`);
+        
     });
 
     videoElement.addEventListener('waiting', () => {
-        console.log(`Video is buffering for ${videoElementId}`);
+        
     });
 
     videoElement.addEventListener('progress', () => {
@@ -282,7 +282,7 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
 
             if (duration > 0) {
                 const percent = (bufferedEnd / duration * 100).toFixed(1);
-                console.log(`Video buffered: ${percent}% (${bufferedEnd.toFixed(1)}s / ${duration.toFixed(1)}s) for ${videoElementId}`);
+                
             }
         }
     });
@@ -303,7 +303,7 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
         const serverDuration = videoElement.dataset.serverDuration;
         if (serverDuration && videoElement.duration !== parseFloat(serverDuration)) {
             const duration = parseFloat(serverDuration);
-            console.log(`Re-applying duration override: ${duration}s for ${videoElementId}`);
+            
             Object.defineProperty(videoElement, 'duration', {
                 get: function() {
                     return duration;
@@ -316,12 +316,12 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
     // Store the interval for cleanup
     window.mutantActiveVideoPlayers[videoElementId].durationCheckInterval = durationCheckInterval;
 
-    console.log(`HTTP streaming MP4 player initialized for ${videoElementId}`);
+    
 }
 
 // Function to update video player position and visibility
 function updateVideoPlayerPosition(videoElementId, x, y, width, height, isVisible = true) {
-    console.log(`updateVideoPlayerPosition called for element: ${videoElementId}, x: ${x}, y: ${y}, width: ${width}, height: ${height}, visible: ${isVisible}`);
+    
     const playerEntry = window.mutantActiveVideoPlayers[videoElementId];
 
     if (playerEntry && playerEntry.videoElement) {
@@ -352,7 +352,7 @@ function updateVideoPlayerPosition(videoElementId, x, y, width, height, isVisibl
             }
         }
 
-        console.log(`Video player ${videoElementId} position and visibility updated.`);
+        
     } else {
         console.warn(`No active player found for ID ${videoElementId} to update position.`);
     }
@@ -360,7 +360,7 @@ function updateVideoPlayerPosition(videoElementId, x, y, width, height, isVisibl
 
 // Function to hide video player (for when tab becomes inactive)
 function hideVideoPlayer(videoElementId) {
-    console.log(`hideVideoPlayer called for element: ${videoElementId}`);
+    
     const playerEntry = window.mutantActiveVideoPlayers[videoElementId];
 
     if (playerEntry && playerEntry.videoElement) {
@@ -375,7 +375,7 @@ function hideVideoPlayer(videoElementId) {
             overlay.style.zIndex = '-1';
         }
 
-        console.log(`Video player ${videoElementId} hidden.`);
+        
     } else {
         console.warn(`No active player found for ID ${videoElementId} to hide.`);
     }
@@ -383,7 +383,7 @@ function hideVideoPlayer(videoElementId) {
 
 // Function to show video player (for when tab becomes active)
 function showVideoPlayer(videoElementId) {
-    console.log(`showVideoPlayer called for element: ${videoElementId}`);
+    
     const playerEntry = window.mutantActiveVideoPlayers[videoElementId];
 
     if (playerEntry && playerEntry.videoElement) {
@@ -398,7 +398,7 @@ function showVideoPlayer(videoElementId) {
             overlay.style.zIndex = '1001';
         }
 
-        console.log(`Video player ${videoElementId} shown.`);
+        
     } else {
         console.warn(`No active player found for ID ${videoElementId} to show.`);
     }
@@ -406,7 +406,7 @@ function showVideoPlayer(videoElementId) {
 
 // Function to update z-index for all video players based on visibility
 function updateVideoPlayersZIndex(visiblePlayerIds) {
-    console.log(`updateVideoPlayersZIndex called with visible IDs: ${visiblePlayerIds}`);
+    
 
     // Parse the comma-separated list of visible player IDs
     const visibleIds = visiblePlayerIds ? visiblePlayerIds.split(',').filter(id => id.trim() !== '') : [];
@@ -442,12 +442,12 @@ function updateVideoPlayersZIndex(visiblePlayerIds) {
         }
     }
 
-    console.log(`Updated z-index for ${Object.keys(window.mutantActiveVideoPlayers).length} video players, ${visibleIds.length} visible`);
+    
 }
 
 // Function to hide all inactive video players
 function hideInactiveVideoPlayers(activePlayerIds) {
-    console.log(`hideInactiveVideoPlayers called with active IDs: ${activePlayerIds}`);
+    
 
     // Parse the comma-separated list of active player IDs
     const activeIds = activePlayerIds ? activePlayerIds.split(',').filter(id => id.trim() !== '') : [];
@@ -463,12 +463,12 @@ function hideInactiveVideoPlayers(activePlayerIds) {
         }
     }
 
-    console.log(`Processed ${Object.keys(window.mutantActiveVideoPlayers).length} video players, ${activeIds.length} active`);
+    
 }
 
 // Universal cleanup function for all player types
 function cleanupVideoPlayer(videoElementId) {
-    console.log(`cleanupVideoPlayer called for element: ${videoElementId}`);
+    
     const playerEntry = window.mutantActiveVideoPlayers[videoElementId];
 
     if (playerEntry) {
@@ -479,7 +479,7 @@ function cleanupVideoPlayer(videoElementId) {
                 playerEntry.player.unload();
                 playerEntry.player.detachMediaElement();
                 playerEntry.player.destroy();
-                console.log(`MPEG-TS player for ${videoElementId} destroyed.`);
+                
             } else if (playerEntry.type === 'mp4-http') {
                 // Cleanup HTTP MP4 player
                 if (playerEntry.videoElement) {
@@ -500,7 +500,7 @@ function cleanupVideoPlayer(videoElementId) {
                 if (overlay && overlay.parentNode) {
                     overlay.parentNode.removeChild(overlay);
                 }
-                console.log(`HTTP MP4 player for ${videoElementId} destroyed.`);
+                
             }
         } catch (e) {
             console.error(`Error during player cleanup for ${videoElementId}:`, e);
@@ -509,18 +509,18 @@ function cleanupVideoPlayer(videoElementId) {
         // Remove video element from DOM
         if (playerEntry.videoElement && playerEntry.videoElement.parentNode) {
             playerEntry.videoElement.parentNode.removeChild(playerEntry.videoElement);
-            console.log(`Video element ${videoElementId} removed from DOM.`);
+            
         }
 
         delete window.mutantActiveVideoPlayers[videoElementId];
-        console.log(`Player entry for ${videoElementId} removed.`);
+        
     } else {
         console.warn(`No active player found for ID ${videoElementId} to cleanup.`);
         // Fallback: try to remove element from DOM if it exists
         const element = document.getElementById(videoElementId);
         if (element && element.parentNode) {
             element.parentNode.removeChild(element);
-            console.log(`Fallback: Video element ${videoElementId} removed from DOM.`);
+            
         }
     }
 }
