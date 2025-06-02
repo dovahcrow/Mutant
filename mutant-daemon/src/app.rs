@@ -231,9 +231,13 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     log::info!("Configuring WebSocket with max_message_size={} bytes, max_frame_size={} bytes",
                max_message_size, max_frame_size);
 
+    // Clone mutant for use in multiple routes
+    let mutant_for_ws = mutant.clone();
+    let mutant_for_video = mutant.clone();
+
     let ws_route = warp::path("ws")
         .and(warp::ws())
-        .and(warp::any().map(move || mutant.clone()))
+        .and(warp::any().map(move || mutant_for_ws.clone()))
         .and(warp::any().map(move || tasks.clone()))
         .and(warp::any().map(move || active_keys.clone()))
         .map(
@@ -242,6 +246,19 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
                 ws.max_message_size(max_message_size)
                   .max_frame_size(max_frame_size)
                   .on_upgrade(move |socket| handlers::handle_ws(socket, mutant_instance, task_map, active_keys_map))
+            },
+        );
+
+    // Add video streaming endpoint
+    let video_stream_route = warp::path("video_stream")
+        .and(warp::path::param::<String>()) // filename parameter
+        .and(warp::ws())
+        .and(warp::any().map(move || mutant_for_video.clone()))
+        .map(
+            move |filename: String, ws: warp::ws::Ws, mutant_instance: Arc<MutAnt>| {
+                ws.max_message_size(max_message_size)
+                  .max_frame_size(max_frame_size)
+                  .on_upgrade(move |socket| handlers::handle_video_stream(socket, mutant_instance, filename))
             },
         );
 
@@ -277,8 +294,11 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
 
     };
 
+    // Combine routes
+    let routes = ws_route.or(video_stream_route);
+
     // Start the server with graceful shutdown
-    let (_, server) = warp::serve(ws_route).bind_with_graceful_shutdown(addr, shutdown_signal);
+    let (_, server) = warp::serve(routes).bind_with_graceful_shutdown(addr, shutdown_signal);
 
     log::info!("Starting server task...");
     // Await the server task. The lock file will be released when the process exits.

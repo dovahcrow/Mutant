@@ -307,7 +307,21 @@ pub mod bindings {
     use wasm_bindgen::prelude::*;
     #[wasm_bindgen]
     extern "C" {
-        #[wasm_bindgen(js_name = initMpegtsPlayer)] // JS function name matches JS side
+        #[wasm_bindgen(js_name = initVideoPlayer)] // Use the new universal video player
+        pub fn init_video_player(
+            video_element_id: String,
+            websocket_url: String,
+            x: f32,
+            y: f32,
+            width: f32,
+            height: f32
+        );
+
+        #[wasm_bindgen(js_name = cleanupVideoPlayer)]
+        pub fn cleanup_video_player(video_element_id: String);
+
+        // Keep legacy binding for backward compatibility
+        #[wasm_bindgen(js_name = initMpegtsPlayer)]
         pub fn init_mpegts_player(
             video_element_id: String,
             websocket_url: String,
@@ -322,7 +336,8 @@ pub mod bindings {
     }
 }
 
-/// Draw a video player using mpegts.js
+/// Draw a video player using the appropriate technology based on video format
+/// (mpegts.js for MPEG-TS/FLV, MediaSource Extensions for MP4)
 pub fn draw_video_player(ui: &mut Ui, video_ws_url: &str, file_key: &str) {
     if video_ws_url.is_empty() {
         ui.colored_label(MutantColors::ERROR, "Video URL is missing.");
@@ -349,13 +364,12 @@ pub fn draw_video_player(ui: &mut Ui, video_ws_url: &str, file_key: &str) {
 
     if !is_initialized {
         log::info!(
-            "Calling JS: initMpegtsPlayer('{}', '{}', x: {}, y: {}, w: {}, h: {})",
+            "Calling JS: initVideoPlayer('{}', '{}', x: {}, y: {}, w: {}, h: {})",
             video_element_id, video_ws_url, rect.min.x, rect.min.y, rect.width(), rect.height()
         );
-        // Call the JavaScript function to initialize the mpegts.js player.
-        // The JS function is responsible for creating/finding the video element with `video_element_id`
-        // and setting up the mpegts.js player.
-        bindings::init_mpegts_player(
+        // Call the JavaScript function to initialize the appropriate video player.
+        // The JS function will detect the video format and choose the right player.
+        bindings::init_video_player(
             video_element_id.clone(),
             video_ws_url.to_string(),
             rect.min.x,

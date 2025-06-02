@@ -308,6 +308,7 @@ lazy_static::lazy_static! {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct StreamingPutData {
     user_key: String,
     filename: Option<String>,
