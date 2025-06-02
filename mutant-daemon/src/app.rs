@@ -249,7 +249,7 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
             },
         );
 
-    // Add video streaming endpoint
+    // Add video streaming endpoint (WebSocket)
     let video_stream_route = warp::path("video_stream")
         .and(warp::path::param::<String>()) // filename parameter
         .and(warp::ws())
@@ -261,6 +261,15 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
                   .on_upgrade(move |socket| handlers::handle_video_stream(socket, mutant_instance, filename))
             },
         );
+
+    // Add HTTP video endpoint for range requests (true streaming)
+    let mutant_for_http_video = mutant.clone();
+    let video_http_route = warp::path("video")
+        .and(warp::path::param::<String>()) // filename parameter
+        .and(warp::get())
+        .and(warp::header::optional::<String>("range"))
+        .and(warp::any().map(move || mutant_for_http_video.clone()))
+        .and_then(handlers::handle_http_video);
 
     // Parse the bind address from options
     let addr: SocketAddr = options.bind_address.parse()
@@ -295,7 +304,7 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     };
 
     // Combine routes
-    let routes = ws_route.or(video_stream_route);
+    let routes = ws_route.or(video_stream_route).or(video_http_route);
 
     // Start the server with graceful shutdown
     let (_, server) = warp::serve(routes).bind_with_graceful_shutdown(addr, shutdown_signal);
