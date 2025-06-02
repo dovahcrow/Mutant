@@ -4,13 +4,13 @@ use tokio::process::{Child, Command as TokioCommand};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use futures_util::Stream;
-use std::time::Duration;
 
 /// Supported video formats that browsers can play natively
 const BROWSER_SUPPORTED_FORMATS: &[&str] = &["mp4", "webm", "ogg"];
 
 /// Video formats that need transcoding
-const TRANSCODE_FORMATS: &[&str] = &["mkv", "avi", "mov", "flv", "wmv", "m4v", "3gp", "ts", "mts", "m2ts"];
+/// Note: MKV is excluded because it already works perfectly with direct streaming
+const TRANSCODE_FORMATS: &[&str] = &["mp4", "m4v", "webm", "ogg", "avi", "mov", "flv", "wmv", "3gp"];
 
 /// Check if a video format needs transcoding based on file extension
 pub fn needs_transcoding(filename: &str) -> bool {
@@ -21,6 +21,11 @@ pub fn needs_transcoding(filename: &str) -> bool {
 /// Get the appropriate MIME type for transcoded video
 pub fn get_transcoded_mime_type() -> &'static str {
     "video/mp4" // We'll transcode to fragmented MP4 for streaming compatibility
+}
+
+/// Get the appropriate MIME type for MPEG-TS transcoded video
+pub fn get_mpegts_mime_type() -> &'static str {
+    "video/mp2t" // MPEG-TS format for WebSocket streaming
 }
 
 /// Streaming transcoder that converts video formats to MP4 on-the-fly
@@ -129,6 +134,101 @@ impl Drop for StreamingTranscoder {
         // Kill the FFmpeg process when the transcoder is dropped
         if let Err(e) = self.child.start_kill() {
             log::warn!("Failed to kill FFmpeg process: {}", e);
+        }
+    }
+}
+
+/// MPEG-TS streaming transcoder for WebSocket streaming
+pub struct MpegTsTranscoder {
+    child: Child,
+    stdout: tokio::process::ChildStdout,
+}
+
+impl MpegTsTranscoder {
+    /// Create a new MPEG-TS streaming transcoder for WebSocket streaming
+    pub async fn new(video_data: Vec<u8>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        log::info!("Starting FFmpeg MPEG-TS transcoding process for {} bytes of video data", video_data.len());
+
+        // Create FFmpeg command for transcoding to MPEG-TS format
+        let mut cmd = TokioCommand::new("ffmpeg");
+        let args = vec![
+            "-i", "pipe:0",           // Input from stdin (auto-detect format)
+            "-c:v", "libx264",        // Video codec: H.264
+            "-c:a", "aac",            // Audio codec: AAC
+            "-preset", "ultrafast",   // Fastest encoding for real-time
+            "-tune", "zerolatency",   // Optimize for low latency
+            "-f", "mpegts",           // Output format: MPEG-TS
+            "-y",                     // Overwrite output without asking
+            "pipe:1"                  // Output to stdout
+        ];
+
+        cmd.args(&args);
+
+        cmd.stdin(Stdio::piped())
+           .stdout(Stdio::piped())
+           .stderr(Stdio::piped()); // Capture stderr for debugging
+
+        let mut child = cmd.spawn()
+            .map_err(|e| format!("Failed to spawn FFmpeg MPEG-TS process: {}", e))?;
+
+        // Write input data to FFmpeg stdin in a separate task
+        if let Some(mut stdin) = child.stdin.take() {
+            let data = video_data.clone();
+            tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+                log::debug!("Writing {} bytes to FFmpeg MPEG-TS stdin", data.len());
+                if let Err(e) = stdin.write_all(&data).await {
+                    log::error!("Failed to write video data to FFmpeg MPEG-TS stdin: {}", e);
+                } else {
+                    log::debug!("Successfully wrote all data to FFmpeg MPEG-TS stdin");
+                }
+                if let Err(e) = stdin.shutdown().await {
+                    log::error!("Failed to close FFmpeg MPEG-TS stdin: {}", e);
+                } else {
+                    log::debug!("Successfully closed FFmpeg MPEG-TS stdin");
+                }
+            });
+        }
+
+        // Capture stderr for debugging
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(async move {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let reader = BufReader::new(stderr);
+                let mut lines = reader.lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    log::debug!("FFmpeg MPEG-TS stderr: {}", line);
+                }
+            });
+        }
+
+        let stdout = child.stdout.take()
+            .ok_or("Failed to capture FFmpeg MPEG-TS stdout")?;
+
+        log::info!("FFmpeg MPEG-TS transcoding process started successfully");
+
+        Ok(MpegTsTranscoder {
+            child,
+            stdout,
+        })
+    }
+}
+
+impl AsyncRead for MpegTsTranscoder {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stdout).poll_read(cx, buf)
+    }
+}
+
+impl Drop for MpegTsTranscoder {
+    fn drop(&mut self) {
+        // Kill the FFmpeg process when the transcoder is dropped
+        if let Err(e) = self.child.start_kill() {
+            log::warn!("Failed to kill FFmpeg MPEG-TS process: {}", e);
         }
     }
 }

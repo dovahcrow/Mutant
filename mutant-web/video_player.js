@@ -7,27 +7,25 @@ if (!window.mutantActiveVideoPlayers) {
 function getVideoFormat(filename) {
     const extension = filename.split('.').pop().toLowerCase();
 
-    // Native browser-supported formats
+    // Format detection for unified WebSocket streaming
     switch (extension) {
         case 'mp4':
         case 'm4v':
         case 'webm':
         case 'ogg':
-            return 'mp4'; // Use native HTML5 video player
-        case 'ts':
-        case 'mts':
-        case 'm2ts':
-            return 'mpegts'; // Use mpegts.js for transport streams
-        case 'flv':
-            return 'flv'; // Use mpegts.js for FLV
-        // All other formats (mkv, avi, mov, wmv, etc.) will be transcoded to MP4 by the server
-        case 'mkv':
         case 'avi':
         case 'mov':
         case 'wmv':
         case '3gp':
+            return 'mpegts'; // These formats use WebSocket streaming with transcoding
+        case 'mkv':
+        case 'ts':
+        case 'mts':
+        case 'm2ts':
+        case 'flv':
+            return 'mpegts'; // These formats use direct WebSocket streaming (no transcoding)
         default:
-            return 'mp4'; // Server will transcode to MP4, use native player
+            return 'mpegts'; // Default to WebSocket streaming
     }
 }
 
@@ -49,12 +47,9 @@ function initVideoPlayer(videoElementId, websocketUrl, x, y, width, height) {
         cleanupVideoPlayer(videoElementId);
     }
 
-    // Choose appropriate player based on format
+    // All formats now use MPEG-TS player via WebSocket streaming
     switch (format) {
-        case 'mp4':
-            return initMp4Player(videoElementId, websocketUrl, x, y, width, height);
         case 'mpegts':
-        case 'flv':
             return initMpegtsPlayer(videoElementId, websocketUrl, x, y, width, height);
         default:
             console.error(`Unsupported video format: ${format} for file: ${filename}`);
