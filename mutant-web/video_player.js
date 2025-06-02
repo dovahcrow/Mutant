@@ -13,17 +13,17 @@ function getVideoFormat(filename) {
         case 'm4v':
         case 'webm':
         case 'ogg':
+        case 'mkv':
         case 'avi':
         case 'mov':
         case 'wmv':
         case '3gp':
-            return 'mpegts'; // These formats use WebSocket streaming with transcoding
-        case 'mkv':
+        case 'flv':
+            return 'mpegts'; // These formats use WebSocket streaming with MPEG-TS transcoding
         case 'ts':
         case 'mts':
         case 'm2ts':
-        case 'flv':
-            return 'mpegts'; // These formats use direct WebSocket streaming (no transcoding)
+            return 'mpegts'; // These formats use direct WebSocket streaming (native MPEG-TS)
         default:
             return 'mpegts'; // Default to WebSocket streaming
     }

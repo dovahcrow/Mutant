@@ -8,9 +8,9 @@ use futures_util::Stream;
 /// Supported video formats that browsers can play natively
 const BROWSER_SUPPORTED_FORMATS: &[&str] = &["mp4", "webm", "ogg"];
 
-/// Video formats that need transcoding
-/// Note: MKV is excluded because it already works perfectly with direct streaming
-const TRANSCODE_FORMATS: &[&str] = &["mp4", "m4v", "webm", "ogg", "avi", "mov", "flv", "wmv", "3gp"];
+/// Video formats that need transcoding to MPEG-TS for WebSocket streaming
+/// All formats except native MPEG-TS streams need transcoding for mpegts.js compatibility
+const TRANSCODE_FORMATS: &[&str] = &["mp4", "m4v", "webm", "ogg", "mkv", "avi", "mov", "flv", "wmv", "3gp"];
 
 /// Check if a video format needs transcoding based on file extension
 pub fn needs_transcoding(filename: &str) -> bool {
@@ -153,10 +153,17 @@ impl MpegTsTranscoder {
         let mut cmd = TokioCommand::new("ffmpeg");
         let args = vec![
             "-i", "pipe:0",           // Input from stdin (auto-detect format)
-            "-c:v", "libx264",        // Video codec: H.264
+            "-c:v", "libx264",        // Video codec: H.264 (force re-encoding)
+            "-profile:v", "baseline", // H.264 baseline profile for maximum compatibility
+            "-level", "3.0",          // H.264 level 3.0 for broad browser support
+            "-pix_fmt", "yuv420p",    // Pixel format for maximum compatibility
             "-c:a", "aac",            // Audio codec: AAC
+            "-ar", "44100",           // Audio sample rate
+            "-ac", "2",               // Audio channels (stereo)
             "-preset", "ultrafast",   // Fastest encoding for real-time
             "-tune", "zerolatency",   // Optimize for low latency
+            "-avoid_negative_ts", "make_zero", // Ensure timestamps start at zero
+            "-fflags", "+genpts",     // Generate presentation timestamps
             "-f", "mpegts",           // Output format: MPEG-TS
             "-y",                     // Overwrite output without asking
             "pipe:1"                  // Output to stdout
@@ -197,7 +204,11 @@ impl MpegTsTranscoder {
                 let reader = BufReader::new(stderr);
                 let mut lines = reader.lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    log::debug!("FFmpeg MPEG-TS stderr: {}", line);
+                    if line.contains("error") || line.contains("Error") || line.contains("failed") || line.contains("Failed") {
+                        log::error!("FFmpeg MPEG-TS stderr: {}", line);
+                    } else {
+                        log::debug!("FFmpeg MPEG-TS stderr: {}", line);
+                    }
                 }
             });
         }
