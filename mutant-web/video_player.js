@@ -179,9 +179,145 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
     let pendingChunks = [];
     let hasStartedPlayback = false;
 
-    // Try progressive streaming with MediaSource Extensions
-    console.log(`Attempting progressive streaming with MediaSource Extensions`);
-    initProgressivePlayer();
+    // Use single-blob approach for MP4 files to avoid flickering
+    console.log(`Using single-blob approach for MP4 playback`);
+    initSingleBlobPlayer();
+
+    function initSingleBlobPlayer() {
+        // Start WebSocket immediately
+        startWebSocket();
+
+        // Set up video element event listeners
+        videoElement.addEventListener('loadstart', () => {
+            console.log(`Video loadstart event for ${videoElementId}`);
+        });
+
+        videoElement.addEventListener('loadedmetadata', () => {
+            console.log(`Video metadata loaded for ${videoElementId}, duration: ${videoElement.duration}`);
+        });
+
+        videoElement.addEventListener('canplay', () => {
+            console.log(`Video can start playing for ${videoElementId}`);
+            if (!hasStartedPlayback) {
+                hasStartedPlayback = true;
+                // Try to start playback automatically
+                videoElement.play().catch(e => {
+                    console.log(`Autoplay prevented for ${videoElementId}, user will need to click play:`, e);
+                });
+            }
+        });
+
+        videoElement.addEventListener('waiting', () => {
+            console.log(`Video is waiting for more data for ${videoElementId}`);
+        });
+
+        videoElement.addEventListener('playing', () => {
+            console.log(`Video started playing for ${videoElementId}`);
+        });
+
+        videoElement.addEventListener('error', (e) => {
+            console.error(`Video error for ${videoElementId}:`, e);
+            console.error('Video error details:', videoElement.error);
+        });
+
+        console.log(`Single blob player initialized for ${videoElementId}`);
+    }
+
+    function initHttpStreamingPlayer() {
+        // Convert WebSocket URL to HTTP streaming URL
+        const httpUrl = websocketUrl.replace('ws://', 'http://').replace('/video_stream/', '/stream/');
+        console.log(`Using HTTP streaming URL: ${httpUrl}`);
+
+        // Set the video source directly to the HTTP streaming endpoint
+        videoElement.src = httpUrl;
+
+        // Set up video element event listeners
+        videoElement.addEventListener('loadstart', () => {
+            console.log(`Video loadstart event for ${videoElementId}`);
+        });
+
+        videoElement.addEventListener('loadedmetadata', () => {
+            console.log(`Video metadata loaded for ${videoElementId}, duration: ${videoElement.duration}`);
+        });
+
+        videoElement.addEventListener('canplay', () => {
+            console.log(`Video can start playing for ${videoElementId}`);
+            if (!hasStartedPlayback) {
+                hasStartedPlayback = true;
+                // Try to start playback automatically
+                videoElement.play().catch(e => {
+                    console.log(`Autoplay prevented for ${videoElementId}, user will need to click play:`, e);
+                });
+            }
+        });
+
+        videoElement.addEventListener('waiting', () => {
+            console.log(`Video is waiting for more data for ${videoElementId}`);
+        });
+
+        videoElement.addEventListener('playing', () => {
+            console.log(`Video started playing for ${videoElementId}`);
+        });
+
+        videoElement.addEventListener('progress', () => {
+            if (videoElement.buffered.length > 0) {
+                const bufferedEnd = videoElement.buffered.end(videoElement.buffered.length - 1);
+                const duration = videoElement.duration;
+                if (duration > 0) {
+                    const percent = (bufferedEnd / duration) * 100;
+                    console.log(`Video buffered: ${percent.toFixed(1)}% (${bufferedEnd.toFixed(1)}s / ${duration.toFixed(1)}s)`);
+                }
+            }
+        });
+
+        videoElement.addEventListener('error', (e) => {
+            console.error(`Video error for ${videoElementId}:`, e);
+            console.error('Video error details:', videoElement.error);
+            // Fallback to WebSocket approach
+            console.log(`HTTP streaming failed, falling back to WebSocket approach`);
+            initProgressiveBlobPlayer();
+        });
+
+        console.log(`HTTP streaming player initialized for ${videoElementId}`);
+    }
+
+    function initProgressiveBlobPlayer() {
+        // Start WebSocket immediately
+        startWebSocket();
+
+        // Set up video element for progressive playback
+        videoElement.addEventListener('loadstart', () => {
+            console.log(`Video loadstart event for ${videoElementId}`);
+        });
+
+        videoElement.addEventListener('loadedmetadata', () => {
+            console.log(`Video metadata loaded for ${videoElementId}, duration: ${videoElement.duration}`);
+        });
+
+        videoElement.addEventListener('canplay', () => {
+            console.log(`Video can start playing for ${videoElementId}`);
+            if (!hasStartedPlayback) {
+                hasStartedPlayback = true;
+                // Try to start playback automatically
+                videoElement.play().catch(e => {
+                    console.log(`Autoplay prevented for ${videoElementId}, user will need to click play:`, e);
+                });
+            }
+        });
+
+        videoElement.addEventListener('waiting', () => {
+            console.log(`Video is waiting for more data for ${videoElementId}`);
+        });
+
+        videoElement.addEventListener('playing', () => {
+            console.log(`Video started playing for ${videoElementId}`);
+        });
+
+        videoElement.addEventListener('error', (e) => {
+            console.error(`Video error for ${videoElementId}:`, e);
+            console.error('Video error details:', videoElement.error);
+        });
+    }
 
     function initProgressivePlayer() {
         if (!window.MediaSource) {
@@ -354,8 +490,8 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
     }
 
     function initBlobPlayer() {
-        // This is the original blob-based approach
-        startWebSocket();
+        // Legacy function - redirect to progressive blob player
+        initProgressiveBlobPlayer();
     }
 
     function startWebSocket() {
@@ -371,35 +507,26 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
             if (event.data instanceof ArrayBuffer) {
                 const chunk = new Uint8Array(event.data);
 
-                // Always store the chunk for fallback
+                // Always store the chunk
                 chunks.push(chunk);
                 totalSize += chunk.length;
-
-                // Try progressive streaming first
-                if (mediaSource && sourceBuffer && isSourceBufferReady) {
-                    if (sourceBuffer.updating) {
-                        pendingChunks.push(chunk);
-                    } else {
-                        try {
-                            sourceBuffer.appendBuffer(chunk);
-                        } catch (e) {
-                            console.warn(`Failed to append chunk, will continue with blob approach:`, e);
-                            // Don't fallback immediately, just continue collecting chunks
-                        }
-                    }
-                }
 
                 // Log progress every 10MB or so
                 if (chunks.length % 40 === 0) {
                     console.log(`Downloaded ${totalSize} bytes (${chunks.length} chunks) for ${videoElementId}`);
                 }
 
-                // Update video element with loading indicator
+                // Update video element with loading indicator on first chunk
                 if (chunks.length === 1) {
-                    // First chunk received, show that we're loading
                     videoElement.style.background = 'linear-gradient(45deg, #333 25%, transparent 25%), linear-gradient(-45deg, #333 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #333 75%), linear-gradient(-45deg, transparent 75%, #333 75%)';
                     videoElement.style.backgroundSize = '20px 20px';
                     videoElement.style.backgroundPosition = '0 0, 0 10px, 10px -10px, -10px 0px';
+                }
+
+                // Create the blob once we have a reasonable buffer (about 10MB)
+                // This should be enough for the video to start playing and have some buffer
+                if (chunks.length === 40 && !hasStartedPlayback) {
+                    createInitialBlob();
                 }
             }
         };
@@ -408,32 +535,8 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
             console.log(`WebSocket closed for MP4 player: ${videoElementId}`);
             console.log(`Total chunks received: ${chunks.length}, total size: ${totalSize} bytes`);
 
-            // If we're using MediaSource, signal end of stream
-            if (mediaSource && sourceBuffer && isSourceBufferReady) {
-                try {
-                    if (mediaSource.readyState === 'open') {
-                        // Wait for any pending updates to complete
-                        if (sourceBuffer.updating) {
-                            sourceBuffer.addEventListener('updateend', () => {
-                                if (mediaSource.readyState === 'open') {
-                                    mediaSource.endOfStream();
-                                    console.log(`MediaSource stream ended for ${videoElementId}`);
-                                }
-                            }, { once: true });
-                        } else {
-                            mediaSource.endOfStream();
-                            console.log(`MediaSource stream ended for ${videoElementId}`);
-                        }
-                    }
-                } catch (e) {
-                    console.warn(`Failed to end MediaSource stream:`, e);
-                    // Fallback to blob approach
-                    createBlobVideo();
-                }
-            } else {
-                // Create blob video from all received chunks
-                createBlobVideo();
-            }
+            // Final blob update with all chunks
+            createFinalBlob();
         };
 
         websocket.onerror = (error) => {
@@ -441,9 +544,11 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
         };
     }
 
-    function updateBlobVideo() {
-        // Progressive blob update - recreate blob with current chunks
-        if (chunks.length === 0) return;
+    function createInitialBlob() {
+        // Create initial blob with current chunks to start playback
+        if (chunks.length === 0 || hasStartedPlayback) return;
+
+        console.log(`Creating initial blob with ${chunks.length} chunks for early playback`);
 
         // Combine all chunks into a single Uint8Array
         const combinedData = new Uint8Array(totalSize);
@@ -458,23 +563,29 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
         const blob = new Blob([combinedData], { type: 'video/mp4' });
         const blobUrl = URL.createObjectURL(blob);
 
-        // Clean up previous blob URL
-        if (window.mutantActiveVideoPlayers[videoElementId]?.blobUrl) {
-            URL.revokeObjectURL(window.mutantActiveVideoPlayers[videoElementId].blobUrl);
-        }
-
-        // Set the video source to the new blob URL
+        // Set the video source to the blob URL (only once!)
         videoElement.src = blobUrl;
+        hasStartedPlayback = true;
 
         // Store the blob URL for cleanup
         if (window.mutantActiveVideoPlayers[videoElementId]) {
             window.mutantActiveVideoPlayers[videoElementId].blobUrl = blobUrl;
         }
 
-        console.log(`Updated blob video with ${chunks.length} chunks, ${totalSize} bytes`);
+        console.log(`Initial blob created with ${totalSize} bytes, video should start playing soon`);
     }
 
-    function createBlobVideo() {
+    function updateProgressiveBlob() {
+        // Legacy function - no longer used to avoid flickering
+        console.log(`updateProgressiveBlob called but skipped to avoid flickering`);
+    }
+
+    function updateBlobVideo() {
+        // Legacy function - redirect to progressive version
+        updateProgressiveBlob();
+    }
+
+    function createFinalBlob() {
         console.log(`Creating final blob video from ${chunks.length} chunks`);
 
         // Clear loading indicator
@@ -482,20 +593,15 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
         videoElement.style.backgroundSize = '';
         videoElement.style.backgroundPosition = '';
 
-        updateBlobVideo();
+        // Final update with all chunks
+        updateProgressiveBlob();
 
-        // Add event listeners
-        videoElement.addEventListener('loadeddata', () => {
-            console.log(`Video loaded for ${videoElementId}, ready to play`);
-            console.log(`Video element dimensions: ${videoElement.videoWidth}x${videoElement.videoHeight}`);
-            console.log(`Video element position: ${videoElement.style.left}, ${videoElement.style.top}`);
-            console.log(`Video element visible:`, videoElement.offsetWidth > 0 && videoElement.offsetHeight > 0);
-        });
+        console.log(`Final video ready for ${videoElementId}`);
+    }
 
-        videoElement.addEventListener('error', (e) => {
-            console.error(`Video error for ${videoElementId}:`, e);
-            console.error('Video error details:', videoElement.error);
-        });
+    function createBlobVideo() {
+        // Legacy function - redirect to final blob
+        createFinalBlob();
     }
 
     window.mutantActiveVideoPlayers[videoElementId] = {
