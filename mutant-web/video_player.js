@@ -153,8 +153,25 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
     videoElement.style.border = '2px solid #ff8c00';
     videoElement.style.zIndex = '1000';
 
+    // Create a custom duration overlay for transcoded videos
+    const durationOverlay = document.createElement('div');
+    durationOverlay.id = `duration_overlay_${videoElementId}`;
+    durationOverlay.style.position = 'absolute';
+    durationOverlay.style.right = '10px';
+    durationOverlay.style.bottom = '40px';
+    durationOverlay.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+    durationOverlay.style.color = 'white';
+    durationOverlay.style.padding = '4px 8px';
+    durationOverlay.style.borderRadius = '4px';
+    durationOverlay.style.fontSize = '14px';
+    durationOverlay.style.fontFamily = 'monospace';
+    durationOverlay.style.zIndex = '1001';
+    durationOverlay.style.pointerEvents = 'none';
+    durationOverlay.style.display = 'none'; // Hidden initially
+
     // Append to the document body
     document.body.appendChild(videoElement);
+    document.body.appendChild(durationOverlay);
 
     console.log(`Video element created and positioned at (${x}, ${y}) with size ${width}x${height}`);
 
@@ -174,6 +191,32 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
                 console.log(`Got duration from server header: ${duration} seconds for ${videoElementId}`);
                 // Store the duration for use when metadata loads
                 videoElement.dataset.serverDuration = duration.toString();
+
+                // Show the custom duration overlay for transcoded content
+                durationOverlay.style.display = 'block';
+
+                // Function to format seconds to MM:SS
+                function formatTime(seconds) {
+                    const mins = Math.floor(seconds / 60);
+                    const secs = Math.floor(seconds % 60);
+                    return `${mins}:${secs.toString().padStart(2, '0')}`;
+                }
+
+                // Function to update the overlay
+                function updateDurationOverlay() {
+                    const currentTime = videoElement.currentTime || 0;
+                    const totalTime = duration;
+                    durationOverlay.textContent = `${formatTime(currentTime)} / ${formatTime(totalTime)}`;
+                }
+
+                // Update overlay immediately and set up interval
+                updateDurationOverlay();
+                const overlayUpdateInterval = setInterval(updateDurationOverlay, 100);
+
+                // Store the interval for cleanup
+                videoElement.dataset.overlayUpdateInterval = overlayUpdateInterval;
+
+                console.log(`Custom duration overlay enabled for transcoded video: ${duration}s for ${videoElementId}`);
             }
         })
         .catch(e => {
@@ -188,13 +231,22 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
     videoElement.addEventListener('loadedmetadata', () => {
         console.log(`Video metadata loaded for ${videoElementId}. Duration: ${videoElement.duration}s`);
 
-        // If we have a server duration and the video duration is not set or incorrect, use server duration
+        // If we have a server duration, always use it for transcoded content
         const serverDuration = videoElement.dataset.serverDuration;
-        if (serverDuration && (!videoElement.duration || videoElement.duration === Infinity || isNaN(videoElement.duration))) {
+        if (serverDuration) {
             const duration = parseFloat(serverDuration);
-            console.log(`Using server duration ${duration}s instead of video duration ${videoElement.duration}s for ${videoElementId}`);
-            // Note: We can't directly set videoElement.duration, but we can use it in our progress calculations
+            console.log(`Using server duration ${duration}s for transcoded content ${videoElementId}`);
             videoElement.dataset.effectiveDuration = duration.toString();
+
+            // Override the duration property to return our server duration
+            Object.defineProperty(videoElement, 'duration', {
+                get: function() {
+                    return duration;
+                },
+                configurable: true
+            });
+
+            console.log(`Duration override applied: ${videoElement.duration}s for ${videoElementId}`);
         }
     });
 
@@ -241,7 +293,25 @@ function initMp4Player(videoElementId, websocketUrl, x, y, width, height) {
         videoElement: videoElement,
         type: 'mp4-http'
     };
-    
+
+    // Set up a periodic check to maintain duration override for transcoded content
+    const durationCheckInterval = setInterval(() => {
+        const serverDuration = videoElement.dataset.serverDuration;
+        if (serverDuration && videoElement.duration !== parseFloat(serverDuration)) {
+            const duration = parseFloat(serverDuration);
+            console.log(`Re-applying duration override: ${duration}s for ${videoElementId}`);
+            Object.defineProperty(videoElement, 'duration', {
+                get: function() {
+                    return duration;
+                },
+                configurable: true
+            });
+        }
+    }, 1000); // Check every second
+
+    // Store the interval for cleanup
+    window.mutantActiveVideoPlayers[videoElementId].durationCheckInterval = durationCheckInterval;
+
     console.log(`HTTP streaming MP4 player initialized for ${videoElementId}`);
 }
 
@@ -264,6 +334,20 @@ function cleanupVideoPlayer(videoElementId) {
                 if (playerEntry.videoElement) {
                     playerEntry.videoElement.pause();
                     playerEntry.videoElement.src = '';
+                }
+                // Clear duration check interval
+                if (playerEntry.durationCheckInterval) {
+                    clearInterval(playerEntry.durationCheckInterval);
+                }
+                // Clear overlay update interval
+                if (playerEntry.videoElement && playerEntry.videoElement.dataset.overlayUpdateInterval) {
+                    clearInterval(parseInt(playerEntry.videoElement.dataset.overlayUpdateInterval));
+                }
+                // Remove duration overlay
+                const overlayId = `duration_overlay_${videoElementId}`;
+                const overlay = document.getElementById(overlayId);
+                if (overlay && overlay.parentNode) {
+                    overlay.parentNode.removeChild(overlay);
                 }
                 console.log(`HTTP MP4 player for ${videoElementId} destroyed.`);
             }
