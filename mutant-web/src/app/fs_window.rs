@@ -485,8 +485,10 @@ impl FsWindow {
         // Rebuild if:
         // 1. The tree is empty (first time or reset)
         // 2. The number of keys has changed (new keys added or removed)
+        // 3. The key paths have changed (files moved between folders)
         let needs_rebuild = self.root.children.is_empty() ||
-                           self.count_tree_files(&self.root) != current_key_count;
+                           self.count_tree_files(&self.root) != current_key_count ||
+                           self.tree_keys_have_changed(&keys);
 
         if needs_rebuild {
             log::info!("Rebuilding file tree with {} keys", current_key_count);
@@ -533,6 +535,36 @@ impl FsWindow {
         }
 
         count
+    }
+
+    /// Check if the key paths in the tree have changed compared to the current key cache
+    fn tree_keys_have_changed(&self, current_keys: &[KeyDetails]) -> bool {
+        // Collect all key paths from the current tree
+        let mut tree_keys = std::collections::HashSet::new();
+        self.collect_tree_keys(&self.root, &mut tree_keys);
+
+        // Collect all key paths from the current cache
+        let cache_keys: std::collections::HashSet<String> = current_keys.iter()
+            .map(|k| k.key.clone())
+            .collect();
+
+        // If the sets are different, the tree needs to be rebuilt
+        tree_keys != cache_keys
+    }
+
+    /// Recursively collect all key paths from the tree
+    fn collect_tree_keys(&self, node: &crate::app::fs::tree::TreeNode, keys: &mut std::collections::HashSet<String>) {
+        // If this is a file node, add its key to the set
+        if !node.is_dir() {
+            if let Some(key_details) = &node.key_details {
+                keys.insert(key_details.key.clone());
+            }
+        }
+
+        // Recursively collect keys from all children
+        for (_, child) in &node.children {
+            self.collect_tree_keys(child, keys);
+        }
     }
 
     /// Draw the tree UI
@@ -726,6 +758,9 @@ impl FsWindow {
                 // Draw refresh button manually
                 let button_response = ui.allocate_rect(button_rect, egui::Sense::click());
                 if button_response.clicked() {
+                    // Force a tree rebuild by clearing the current tree
+                    self.root = crate::app::fs::tree::TreeNode::new_dir("root");
+
                     // Trigger a refresh of the file list
                     let ctx = crate::app::context::context();
                     wasm_bindgen_futures::spawn_local(async move {
