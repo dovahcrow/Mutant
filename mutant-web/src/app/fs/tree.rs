@@ -22,6 +22,8 @@ pub struct DragDropState {
     pub is_dragging: bool,
     /// Potential drop target path
     pub drop_target: Option<String>,
+    /// Track if we've started a potential drag but haven't moved enough yet
+    pub drag_candidate: Option<(String, bool, egui::Pos2)>, // (path, is_directory, start_pos)
 }
 
 /// Result of a drag and drop operation
@@ -227,69 +229,94 @@ impl TreeNode {
                 let header_response = &header_result.header_response;
                 let header_rect = header_response.rect;
 
-                // Create an invisible draggable area over the header
-                let drag_response = ui.allocate_rect(header_rect, egui::Sense::drag());
-
-                // Add visual feedback if this directory is being dragged
-                if let Some((dragged_path, is_dir)) = &drag_state.dragged_item {
-                    if *is_dir && dragged_path == &self.path {
-                        ui.painter().rect_filled(
-                            header_rect,
-                            4.0,
-                            egui::Color32::from_rgba_premultiplied(255, 140, 0, 60) // Orange with transparency
-                        );
+                // Check for drag initiation using global input state (without creating overlays)
+                if !drag_state.is_dragging && drag_state.drag_candidate.is_none() {
+                    // Check if mouse was pressed down on this header
+                    if ui.ctx().input(|i| i.pointer.primary_pressed()) {
+                        if let Some(pointer_pos) = ui.ctx().pointer_latest_pos() {
+                            if header_rect.contains(pointer_pos) {
+                                drag_state.drag_candidate = Some((self.path.clone(), true, pointer_pos));
+                                log::info!("Started tracking potential drag for directory: {}", self.path);
+                            }
+                        }
                     }
                 }
 
-                // Handle directory drag events
-                if drag_response.drag_started() {
-                    drag_state.dragged_item = Some((self.path.clone(), true)); // true = is a directory
-                    drag_state.is_dragging = true;
-                    log::info!("Started dragging directory: {}", self.path);
-                }
-
-                if drag_response.dragged() {
-                    drag_state.drag_pos = Some(drag_response.interact_pointer_pos().unwrap_or_default());
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-                }
-
-                if drag_response.drag_stopped() {
-                    log::info!("Drag stopped for directory: {}", self.path);
-                    if let Some((dragged_path, _)) = &drag_state.dragged_item {
-                        log::info!("Dragged directory: {}", dragged_path);
-                        if let Some(drop_target) = &drag_state.drop_target {
-                            log::info!("Drop target: {}", drop_target);
-                            // Calculate the new path for the move operation
-                            let new_path = if drop_target == "/" {
-                                // Moving to root - just use the directory name
-                                self.name.clone()
-                            } else {
-                                // Moving to a subdirectory
-                                format!("{}/{}", drop_target, self.name)
-                            };
-
-                            if dragged_path != &new_path {
-                                drag_drop_result = DragDropResult::Move(dragged_path.clone(), new_path.clone());
-                                log::info!("Directory drop: moving '{}' to '{}'", dragged_path, new_path);
-                            } else {
-                                log::info!("Same path, no move needed: {} == {}", dragged_path, new_path);
+                // Check for drag movement if we have a candidate
+                if let Some((candidate_path, is_dir, start_pos)) = &drag_state.drag_candidate {
+                    if candidate_path == &self.path && *is_dir {
+                        if ui.ctx().input(|i| i.pointer.primary_down()) {
+                            if let Some(current_pos) = ui.ctx().pointer_latest_pos() {
+                                let distance = (current_pos - *start_pos).length();
+                                if distance > 5.0 && !drag_state.is_dragging {
+                                    // We've moved enough, start the actual drag
+                                    drag_state.dragged_item = Some((self.path.clone(), true));
+                                    drag_state.is_dragging = true;
+                                    drag_state.drag_candidate = None; // Clear the candidate
+                                    log::info!("Started dragging directory: {}", self.path);
+                                }
                             }
                         } else {
-                            log::info!("No drop target set");
+                            // Mouse was released without dragging - clear candidate
+                            drag_state.drag_candidate = None;
                         }
-                    } else {
-                        log::info!("No dragged directory");
                     }
-
-                    // Reset drag state
-                    drag_state.dragged_item = None;
-                    drag_state.is_dragging = false;
-                    drag_state.drop_target = None;
-                    drag_state.drag_pos = None;
                 }
 
-                // Handle directory expansion (only if not dragging and header was clicked)
-                self.expanded = (header_response.clicked() && !drag_state.is_dragging) || self.expanded;
+                // Handle ongoing drag operations
+                if drag_state.is_dragging {
+                    if let Some((dragged_path, is_dir)) = &drag_state.dragged_item {
+                        if *is_dir && dragged_path == &self.path {
+                            // Add visual feedback if this directory is being dragged
+                            ui.painter().rect_filled(
+                                header_rect,
+                                4.0,
+                                egui::Color32::from_rgba_premultiplied(255, 140, 0, 60) // Orange with transparency
+                            );
+
+                            // Update drag position
+                            if let Some(pointer_pos) = ui.ctx().pointer_latest_pos() {
+                                drag_state.drag_pos = Some(pointer_pos);
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                            }
+
+                            // Check for drag release
+                            if !ui.ctx().input(|i| i.pointer.primary_down()) {
+                                log::info!("Drag stopped for directory: {}", self.path);
+                                if let Some(drop_target) = &drag_state.drop_target {
+                                    log::info!("Drop target: {}", drop_target);
+                                    // Calculate the new path for the move operation
+                                    let new_path = if drop_target == "/" {
+                                        // Moving to root - just use the directory name
+                                        self.name.clone()
+                                    } else {
+                                        // Moving to a subdirectory
+                                        format!("{}/{}", drop_target, self.name)
+                                    };
+
+                                    if dragged_path != &new_path {
+                                        drag_drop_result = DragDropResult::Move(dragged_path.clone(), new_path.clone());
+                                        log::info!("Directory drop: moving '{}' to '{}'", dragged_path, new_path);
+                                    } else {
+                                        log::info!("Same path, no move needed: {} == {}", dragged_path, new_path);
+                                    }
+                                } else {
+                                    log::info!("No drop target set");
+                                }
+
+                                // Reset all drag state
+                                drag_state.dragged_item = None;
+                                drag_state.is_dragging = false;
+                                drag_state.drop_target = None;
+                                drag_state.drag_pos = None;
+                                drag_state.drag_candidate = None;
+                            }
+                        }
+                    }
+                }
+
+                // Handle directory expansion (this will work normally since we're not intercepting clicks)
+                self.expanded = header_response.clicked() || self.expanded;
 
 
 
@@ -326,10 +353,10 @@ impl TreeNode {
                 // Create file display text with icon
                 // We'll draw the text manually for better control over fade effects
 
-                // Make the file node clickable and draggable for viewing with proper layout
+                // Make the file node clickable for viewing
                 let row_response = ui.allocate_response(
                     egui::Vec2::new(ui.available_width(), 20.0),
-                    egui::Sense::click_and_drag()
+                    egui::Sense::click()
                 );
 
                 let row_rect = row_response.rect;
@@ -390,55 +417,87 @@ impl TreeNode {
                 );
                 ui.painter().with_clip_rect(text_clip_rect).galley(filename_pos, filename_galley, filename_color);
 
-                // Handle drag and drop for files
-                if row_response.drag_started() {
-                    drag_state.dragged_item = Some((self.path.clone(), false)); // false = not a directory
-                    drag_state.is_dragging = true;
-                    log::info!("Started dragging file: {}", self.path);
+                // Check for drag initiation using global input state (without creating overlays)
+                if !drag_state.is_dragging && drag_state.drag_candidate.is_none() {
+                    // Check if mouse was pressed down on this row
+                    if ui.ctx().input(|i| i.pointer.primary_pressed()) {
+                        if let Some(pointer_pos) = ui.ctx().pointer_latest_pos() {
+                            if row_rect.contains(pointer_pos) {
+                                drag_state.drag_candidate = Some((self.path.clone(), false, pointer_pos));
+                                log::info!("Started tracking potential drag for file: {}", self.path);
+                            }
+                        }
+                    }
                 }
 
-                if row_response.dragged() {
-                    drag_state.drag_pos = Some(row_response.interact_pointer_pos().unwrap_or_default());
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-                }
-
-                if row_response.drag_stopped() {
-                    log::info!("Drag stopped for file: {}", self.path);
-                    if let Some((dragged_path, _)) = &drag_state.dragged_item {
-                        log::info!("Dragged item: {}", dragged_path);
-                        if let Some(drop_target) = &drag_state.drop_target {
-                            log::info!("Drop target: {}", drop_target);
-                            // Calculate the new path for the move operation
-                            let new_path = if drop_target == "/" {
-                                // Moving to root - just use the filename
-                                self.name.clone()
-                            } else {
-                                // Moving to a subdirectory
-                                format!("{}/{}", drop_target, self.name)
-                            };
-
-                            if dragged_path != &new_path {
-                                drag_drop_result = DragDropResult::Move(dragged_path.clone(), new_path.clone());
-                                log::info!("File drop: moving '{}' to '{}'", dragged_path, new_path);
-                            } else {
-                                log::info!("Same path, no move needed: {} == {}", dragged_path, new_path);
+                // Check for drag movement if we have a candidate
+                if let Some((candidate_path, is_dir, start_pos)) = &drag_state.drag_candidate {
+                    if candidate_path == &self.path && !*is_dir {
+                        if ui.ctx().input(|i| i.pointer.primary_down()) {
+                            if let Some(current_pos) = ui.ctx().pointer_latest_pos() {
+                                let distance = (current_pos - *start_pos).length();
+                                if distance > 5.0 && !drag_state.is_dragging {
+                                    // We've moved enough, start the actual drag
+                                    drag_state.dragged_item = Some((self.path.clone(), false));
+                                    drag_state.is_dragging = true;
+                                    drag_state.drag_candidate = None; // Clear the candidate
+                                    log::info!("Started dragging file: {}", self.path);
+                                }
                             }
                         } else {
-                            log::info!("No drop target set");
+                            // Mouse was released without dragging - clear candidate
+                            drag_state.drag_candidate = None;
                         }
-                    } else {
-                        log::info!("No dragged item");
                     }
-
-                    // Reset drag state
-                    drag_state.dragged_item = None;
-                    drag_state.is_dragging = false;
-                    drag_state.drop_target = None;
-                    drag_state.drag_pos = None;
                 }
 
-                // Handle click on the entire row (only if not dragging)
-                if row_response.clicked() && !drag_state.is_dragging {
+                // Handle ongoing drag operations
+                if drag_state.is_dragging {
+                    if let Some((dragged_path, is_dir)) = &drag_state.dragged_item {
+                        if !*is_dir && dragged_path == &self.path {
+                            // Update drag position
+                            if let Some(pointer_pos) = ui.ctx().pointer_latest_pos() {
+                                drag_state.drag_pos = Some(pointer_pos);
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                            }
+
+                            // Check for drag release
+                            if !ui.ctx().input(|i| i.pointer.primary_down()) {
+                                log::info!("Drag stopped for file: {}", self.path);
+                                if let Some(drop_target) = &drag_state.drop_target {
+                                    log::info!("Drop target: {}", drop_target);
+                                    // Calculate the new path for the move operation
+                                    let new_path = if drop_target == "/" {
+                                        // Moving to root - just use the filename
+                                        self.name.clone()
+                                    } else {
+                                        // Moving to a subdirectory
+                                        format!("{}/{}", drop_target, self.name)
+                                    };
+
+                                    if dragged_path != &new_path {
+                                        drag_drop_result = DragDropResult::Move(dragged_path.clone(), new_path.clone());
+                                        log::info!("File drop: moving '{}' to '{}'", dragged_path, new_path);
+                                    } else {
+                                        log::info!("Same path, no move needed: {} == {}", dragged_path, new_path);
+                                    }
+                                } else {
+                                    log::info!("No drop target set");
+                                }
+
+                                // Reset all drag state
+                                drag_state.dragged_item = None;
+                                drag_state.is_dragging = false;
+                                drag_state.drop_target = None;
+                                drag_state.drag_pos = None;
+                                drag_state.drag_candidate = None;
+                            }
+                        }
+                    }
+                }
+
+                // Handle click on the entire row (this will work normally since we're not intercepting clicks)
+                if row_response.clicked() {
                     view_clicked_details = Some(details.clone());
                 }
 
