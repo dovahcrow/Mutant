@@ -17,8 +17,10 @@ use tokio::signal;
 pub static PUBLIC_ONLY_MODE: OnceCell<bool> = OnceCell::const_new();
 
 /// Helper function to initialize MutAnt based on network choice and private key
-async fn init_mutant(network_choice: NetworkChoice, private_key: Option<String>) -> Result<(MutAnt, bool), Error> {
+/// Returns (MutAnt instance, is_public_only, actual_private_key_used)
+async fn init_mutant(network_choice: NetworkChoice, private_key: Option<String>) -> Result<(MutAnt, bool, Option<String>), Error> {
     let mut is_public_only = private_key.is_none();
+    let mut actual_private_key = private_key.clone();
 
     let mutant = match (network_choice, private_key) {
         // Full access with private key
@@ -28,11 +30,12 @@ async fn init_mutant(network_choice: NetworkChoice, private_key: Option<String>)
 
             // Use the new testnet mode that creates a random wallet and transfers funds
             match MutAnt::init_testnet().await {
-                Ok((mutant, public_address)) => {
+                Ok((mutant, public_address, new_private_key)) => {
                     log::info!("🔑 NEW TESTNET WALLET CREATED");
                     log::info!("📍 Public Address: {}", public_address);
-                    log::info!("💰 Transferred 10% of master wallet funds to new wallet");
+                    log::info!("💰 Transferred funds to new wallet");
                     log::info!("🚀 Using new wallet for all operations");
+                    actual_private_key = Some(new_private_key);
                     Ok(mutant)
                 }
                 Err(e) => {
@@ -61,7 +64,7 @@ async fn init_mutant(network_choice: NetworkChoice, private_key: Option<String>)
         }
     }.map_err(Error::MutAnt)?;
 
-    Ok((mutant, is_public_only))
+    Ok((mutant, is_public_only, actual_private_key))
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -216,7 +219,7 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     };
 
     // Initialize MutAnt with the appropriate mode
-    let (mutant, is_public_only) = init_mutant(network_choice, private_key.clone()).await?;
+    let (mutant, is_public_only, actual_private_key) = init_mutant(network_choice, private_key.clone()).await?;
     let mutant = Arc::new(mutant);
 
     // Set the public-only mode flag
@@ -228,7 +231,7 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     // Initialize Colony Manager for search and indexing
     match mutant.get_wallet().await {
         Ok(wallet) => {
-            if let Err(e) = crate::handlers::colony::init_colony_manager(wallet, network_choice, private_key.clone()).await {
+            if let Err(e) = crate::handlers::colony::init_colony_manager(wallet, network_choice, actual_private_key.clone()).await {
                 log::warn!("Failed to initialize colony manager: {}. Search functionality will be unavailable.", e);
             } else {
                 log::info!("Colony manager initialized successfully.");

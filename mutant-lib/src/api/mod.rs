@@ -69,8 +69,8 @@ impl MutAnt {
     }
 
     /// Initialize MutAnt for testnet mode with a new random wallet and fund transfer
-    /// Returns (MutAnt instance, new wallet public address)
-    pub async fn init_testnet() -> Result<(Self, String), Error> {
+    /// Returns (MutAnt instance, new wallet public address, new private key)
+    pub async fn init_testnet() -> Result<(Self, String, String), Error> {
         use crate::network::wallet::create_testnet_wallet_with_transfer;
         use crate::network::DEV_TESTNET_PRIVATE_KEY_HEX;
 
@@ -83,7 +83,7 @@ impl MutAnt {
         // Initialize MutAnt with the new wallet
         let mutant = Self::init_all_with_wallet(new_wallet, &new_private_key_hex, NetworkChoice::Devnet).await?;
 
-        Ok((mutant, new_public_address))
+        Ok((mutant, new_public_address, new_private_key_hex))
     }
 
     pub async fn put(

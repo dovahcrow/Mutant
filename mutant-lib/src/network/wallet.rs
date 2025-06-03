@@ -53,12 +53,27 @@ pub async fn create_testnet_wallet_with_transfer(
         _ => return Err(NetworkError::InvalidKeyInput("Testnet wallet creation only supported for Devnet".to_string())),
     };
 
-    // Create a new random wallet
-    let new_wallet = Wallet::new_with_random_wallet(network.clone());
+    // Generate a new random private key for testnet use
+    use rand::RngCore;
+    let mut rng = rand::thread_rng();
+    let mut private_key_bytes = [0u8; 32];
+    rng.fill_bytes(&mut private_key_bytes);
+
+    // Ensure the private key is valid (not zero)
+    while private_key_bytes.iter().all(|&b| b == 0) {
+        rng.fill_bytes(&mut private_key_bytes);
+    }
+
+    let new_private_key_hex = format!("0x{}", hex::encode(private_key_bytes));
+    info!("Generated new random private key for testnet");
+
+    // Create a wallet from this private key
+    let new_wallet = Wallet::new_from_private_key(network.clone(), &new_private_key_hex)
+        .map_err(|e| NetworkError::WalletError(format!("Failed to create wallet from generated private key: {}", e)))?;
     let new_address = new_wallet.address();
     let new_address_hex = format!("0x{:x}", new_address);
 
-    info!("Created new random wallet with address: {}", new_address_hex);
+    info!("Created new wallet with address: {}", new_address_hex);
 
     // Create master wallet for transfers
     let master_wallet = Wallet::new_from_private_key(network, master_private_key_hex)
@@ -111,15 +126,6 @@ pub async fn create_testnet_wallet_with_transfer(
     } else {
         warn!("Master wallet has no gas tokens to transfer or transfer amount is zero");
     }
-
-    // Since Autonomi's Wallet::new_with_random_wallet doesn't expose the private key,
-    // we'll generate a new deterministic private key for our internal use
-    // This is only used for the SecretKey creation, not for the actual wallet operations
-    let mut hasher = Sha256::new();
-    hasher.update(new_address.to_string().as_bytes());
-    hasher.update(b"mutant_testnet_secretkey");
-    let hash_result = hasher.finalize();
-    let new_private_key_hex = format!("0x{}", hex::encode(hash_result));
 
     info!("Generated testnet wallet with public address: {}", new_address_hex);
 
