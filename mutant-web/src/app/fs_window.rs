@@ -42,6 +42,9 @@ pub struct FsWindow {
     /// Unique identifier for this window instance to avoid widget ID conflicts
     #[serde(skip)]
     window_id: String,
+    /// Pending delete confirmation dialog
+    #[serde(skip)]
+    pending_delete: Option<KeyDetails>,
     /// Unique dock area ID for the internal dock area within this FsWindow
     #[serde(skip)]
     dock_area_id: String,
@@ -56,6 +59,7 @@ impl Default for FsWindow {
             internal_dock: egui_dock::DockState::new(vec![]),
             active_downloads: Arc::new(Mutex::new(Vec::new())),
             window_id: uuid::Uuid::new_v4().to_string(),
+            pending_delete: None,
             dock_area_id: generate_unique_dock_area_id(),
         }
     }
@@ -152,6 +156,9 @@ impl Window for FsWindow {
                     .show_inside(ui, &mut tab_viewer);
             }
         });
+
+        // Draw delete confirmation modal if needed
+        self.draw_delete_confirmation_modal(ui);
 
         // // Draw Active Downloads UI
         // ui.separator(); // Visually separate from file viewer
@@ -737,10 +744,12 @@ impl FsWindow {
 
     /// Handle delete request with confirmation
     fn handle_delete_request(&mut self, details: KeyDetails) {
-        // For now, we'll delete immediately without confirmation
-        // In a production app, you might want to show a confirmation dialog
-        let key = details.key.clone();
+        // Store the details for the confirmation dialog
+        self.pending_delete = Some(details);
+    }
 
+    /// Perform the actual delete operation
+    fn perform_delete(&mut self, key: String) {
         // Spawn async task to delete the file
         wasm_bindgen_futures::spawn_local(async move {
             let ctx = crate::app::context::context();
@@ -756,6 +765,117 @@ impl FsWindow {
                 }
             }
         });
+    }
+
+    /// Draw the delete confirmation modal dialog
+    fn draw_delete_confirmation_modal(&mut self, ui: &mut egui::Ui) {
+        if let Some(ref details) = self.pending_delete.clone() {
+            let modal_id = egui::Id::new("delete_confirmation_modal");
+
+            egui::Window::new("Confirm Delete")
+                .id(modal_id)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .fixed_size(egui::Vec2::new(400.0, 180.0))
+                .show(ui.ctx(), |ui| {
+                    // Apply MutAnt theme styling
+                    ui.style_mut().visuals.window_fill = super::theme::MutantColors::BACKGROUND_DARK;
+                    ui.style_mut().visuals.panel_fill = super::theme::MutantColors::BACKGROUND_DARK;
+
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(20.0);
+
+                        // Warning icon and title
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("⚠")
+                                    .size(24.0)
+                                    .color(super::theme::MutantColors::WARNING)
+                            );
+                            ui.add_space(8.0);
+                            ui.label(
+                                egui::RichText::new("Delete File")
+                                    .size(18.0)
+                                    .color(super::theme::MutantColors::TEXT_PRIMARY)
+                            );
+                        });
+
+                        ui.add_space(15.0);
+
+                        // File name with subtle background
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("Are you sure you want to delete:")
+                                    .size(14.0)
+                                    .color(super::theme::MutantColors::TEXT_SECONDARY)
+                            );
+                        });
+
+                        ui.add_space(8.0);
+
+                        // File name in a subtle frame
+                        egui::Frame::new()
+                            .fill(super::theme::MutantColors::BACKGROUND_MEDIUM)
+                            .corner_radius(4.0)
+                            .inner_margin(8.0)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(&details.key)
+                                        .size(13.0)
+                                        .color(super::theme::MutantColors::TEXT_PRIMARY)
+                                        .monospace()
+                                );
+                            });
+
+                        ui.add_space(8.0);
+
+                        ui.label(
+                            egui::RichText::new("This action cannot be undone.")
+                                .size(12.0)
+                                .color(super::theme::MutantColors::TEXT_MUTED)
+                                .italics()
+                        );
+
+                        ui.add_space(20.0);
+
+                        // Buttons
+                        ui.horizontal(|ui| {
+                            // Cancel button (left)
+                            if ui.add_sized(
+                                [120.0, 32.0],
+                                egui::Button::new(
+                                    egui::RichText::new("Cancel")
+                                        .size(14.0)
+                                        .color(super::theme::MutantColors::TEXT_PRIMARY)
+                                )
+                                .fill(super::theme::MutantColors::BACKGROUND_MEDIUM)
+                                .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_LIGHT))
+                            ).clicked() {
+                                self.pending_delete = None;
+                            }
+
+                            ui.add_space(20.0);
+
+                            // Delete button (right) - red/danger styling
+                            if ui.add_sized(
+                                [120.0, 32.0],
+                                egui::Button::new(
+                                    egui::RichText::new("Delete")
+                                        .size(14.0)
+                                        .color(egui::Color32::WHITE)
+                                )
+                                .fill(egui::Color32::from_rgb(180, 40, 40))
+                                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(200, 60, 60)))
+                            ).clicked() {
+                                let key = details.key.clone();
+                                self.pending_delete = None;
+                                self.perform_delete(key);
+                            }
+                        });
+                    });
+                });
+        }
     }
 
 

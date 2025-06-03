@@ -309,7 +309,7 @@ impl TreeNode {
 
                 // Draw the red 'x' icon at the exact text baseline
                 let delete_galley = ui.painter().layout_no_wrap(
-                    "✕".to_string(),
+                    "✖".to_string(),
                     egui::FontId::new(12.0, egui::FontFamily::Proportional),
                     egui::Color32::from_rgb(220, 50, 50) // Red color for delete
                 );
