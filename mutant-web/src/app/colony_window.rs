@@ -239,92 +239,95 @@ impl Window for ColonyWindow {
 
             ui.separator();
 
-            // Two-column layout
-            ui.horizontal(|ui| {
-                // Left column - Contacts management
-                ui.vertical(|ui| {
-                    ui.set_min_width(300.0);
-                    ui.set_max_width(300.0);
-                    
-                    ui.heading("Contacts");
-                    
-                    // Add new contact section
-                    ui.group(|ui| {
-                        ui.label("Add New Contact:");
-                        
-                        ui.horizontal(|ui| {
-                            ui.label("Pod Address:");
-                            ui.text_edit_singleline(&mut self.new_contact_address);
-                        });
-                        
-                        ui.horizontal(|ui| {
-                            ui.label("Name (optional):");
-                            ui.text_edit_singleline(&mut self.new_contact_name);
-                        });
-                        
-                        ui.horizontal(|ui| {
-                            if ui.button("Add Contact").clicked() {
-                                self.add_contact();
-                            }
-                            
-                            if ui.button("Clear").clicked() {
-                                self.new_contact_address.clear();
-                                self.new_contact_name.clear();
-                            }
-                        });
-                    });
+            // Two-column layout using SidePanel for better space management
+            egui::SidePanel::left("colony_contacts_panel")
+                .resizable(true)
+                .min_width(280.0)
+                .default_width(320.0)
+                .max_width(450.0)
+                .show_separator_line(true)
+                .show_inside(ui, |ui| {
+                    // Left column - Contacts management
+                    ui.vertical(|ui| {
+                        ui.heading("Contacts");
 
-                    ui.separator();
+                        // Add new contact section
+                        ui.group(|ui| {
+                            ui.label("Add New Contact:");
 
-                    // Contacts list
-                    ui.label(format!("Contacts ({})", self.contacts.len()));
+                            ui.horizontal(|ui| {
+                                ui.label("Pod Address:");
+                                ui.text_edit_singleline(&mut self.new_contact_address);
+                            });
 
-                    ui.push_id("contacts_scroll", |ui| {
-                        egui::ScrollArea::vertical()
-                            .max_height(400.0)
-                            .show(ui, |ui| {
-                                for (index, contact) in self.contacts.iter().enumerate() {
-                                    ui.group(|ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.vertical(|ui| {
-                                                if let Some(name) = &contact.name {
-                                                    ui.label(
-                                                        egui::RichText::new(name)
-                                                            .strong()
-                                                            .color(super::theme::MutantColors::ACCENT_ORANGE)
-                                                    );
-                                                }
-                                                ui.label(
-                                                    egui::RichText::new(&contact.pod_address)
-                                                        .size(10.0)
-                                                        .color(super::theme::MutantColors::TEXT_MUTED)
-                                                );
-                                                if let Some(last_synced) = &contact.last_synced {
-                                                    ui.label(
-                                                        egui::RichText::new(format!("Last synced: {}", last_synced))
-                                                            .size(9.0)
-                                                            .color(super::theme::MutantColors::TEXT_MUTED)
-                                                    );
-                                                }
-                                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Name (optional):");
+                                ui.text_edit_singleline(&mut self.new_contact_name);
+                            });
 
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if ui.button("🗑").clicked() {
-                                                    // Mark for removal (we'll handle this after the loop)
-                                                    // For now, just log it
-                                                    log::info!("Remove contact at index {}", index);
-                                                }
-                                            });
-                                        });
-                                    });
+                            ui.horizontal(|ui| {
+                                if ui.button("Add Contact").clicked() {
+                                    self.add_contact();
+                                }
+
+                                if ui.button("Clear").clicked() {
+                                    self.new_contact_address.clear();
+                                    self.new_contact_name.clear();
                                 }
                             });
+                        });
+
+                        ui.separator();
+
+                        // Contacts list
+                        ui.label(format!("Contacts ({})", self.contacts.len()));
+
+                        ui.push_id("contacts_scroll", |ui| {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false; 2])
+                                .show(ui, |ui| {
+                                    for (index, contact) in self.contacts.iter().enumerate() {
+                                        ui.group(|ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.vertical(|ui| {
+                                                    if let Some(name) = &contact.name {
+                                                        ui.label(
+                                                            egui::RichText::new(name)
+                                                                .strong()
+                                                                .color(super::theme::MutantColors::ACCENT_ORANGE)
+                                                        );
+                                                    }
+                                                    ui.label(
+                                                        egui::RichText::new(&contact.pod_address)
+                                                            .size(10.0)
+                                                            .color(super::theme::MutantColors::TEXT_MUTED)
+                                                    );
+                                                    if let Some(last_synced) = &contact.last_synced {
+                                                        ui.label(
+                                                            egui::RichText::new(format!("Last synced: {}", last_synced))
+                                                                .size(9.0)
+                                                                .color(super::theme::MutantColors::TEXT_MUTED)
+                                                        );
+                                                    }
+                                                });
+
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    if ui.button("🗑").clicked() {
+                                                        // Mark for removal (we'll handle this after the loop)
+                                                        // For now, just log it
+                                                        log::info!("Remove contact at index {}", index);
+                                                    }
+                                                });
+                                            });
+                                        });
+                                    }
+                                });
+                        });
                     });
                 });
 
-                ui.separator();
-
-                // Right column - Content discovery
+            // Right column - Content discovery (takes remaining space)
+            egui::CentralPanel::default().show_inside(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         ui.heading("Available Content");
@@ -362,6 +365,7 @@ impl Window for ColonyWindow {
 
                     ui.push_id("content_scroll", |ui| {
                         egui::ScrollArea::vertical()
+                            .auto_shrink([false; 2])
                             .show(ui, |ui| {
                                 for content in &self.content_list {
                                     ui.group(|ui| {
