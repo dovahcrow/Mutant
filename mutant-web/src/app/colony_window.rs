@@ -708,17 +708,23 @@ impl ColonyWindow {
             public_address: Some(address.to_string()),
         };
 
-        // Add the tab to the main fs window's internal dock system
-        if let Some(fs_window_ref) = crate::app::fs::global::get_main_fs_window() {
-            let mut fs_window = fs_window_ref.write().unwrap();
+        // Defer the tab addition to avoid deadlock since we're running inside the fs window
+        let address_clone = address.to_string();
+        wasm_bindgen_futures::spawn_local(async move {
+            // Now safely add the tab to the main fs window's internal dock system
+            if let Some(fs_window_ref) = crate::app::fs::global::get_main_fs_window() {
+                if let Ok(mut fs_window) = fs_window_ref.try_write() {
+                    // Use the fs window's existing add_file_tab method which handles everything
+                    fs_window.add_file_tab(key_details);
 
-            // Use the fs window's existing add_file_tab method which handles everything
-            fs_window.add_file_tab(key_details);
-
-            log::info!("Colony: Successfully requested file viewer tab addition to fs window for: {}", address);
-        } else {
-            log::warn!("Colony: Main FsWindow reference not available for adding file viewer tab");
-        }
+                    log::info!("Colony: Successfully requested file viewer tab addition to fs window for: {}", address_clone);
+                } else {
+                    log::warn!("Colony: Could not acquire write lock on fs window (may be busy)");
+                }
+            } else {
+                log::warn!("Colony: Main FsWindow reference not available for adding file viewer tab");
+            }
+        });
     }
 
     /// Format file size for display
