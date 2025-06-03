@@ -819,7 +819,8 @@ pub(crate) async fn handle_get(
         // Check if the key exists first for private keys
         let get_result = if req.public {
             log::info!("DAEMON: GET task {} - Executing public get operation", task_id);
-            // TODO: Fix public key handling if necessary, ScratchpadAddress requires valid hex
+
+            // First try to parse as direct hex address
             match ScratchpadAddress::from_hex(&user_key) {
                 Ok(address) => {
                     log::info!("DAEMON: GET task {} - Valid public address format, calling get_public", task_id);
@@ -830,12 +831,36 @@ pub(crate) async fn handle_get(
                     }
                     result
                 },
-                Err(hex_err) => {
-                    // Wrap the underlying lib error in DaemonError::LibError
-                    let error_msg = format!("Invalid public key hex format for '{}': {}", user_key, hex_err);
-                    log::error!("DAEMON: GET task {} - {}", task_id, error_msg);
-                    let lib_err = mutant_lib::error::Error::Internal(error_msg);
-                    Err(lib_err)
+                Err(_hex_err) => {
+                    // Not a direct hex address, try to get the public index address for this user key
+                    log::info!("DAEMON: GET task {} - Not a hex address, trying to get public index address for key '{}'", task_id, user_key);
+                    match mutant.get_public_index_address(&user_key).await {
+                        Ok(public_address_hex) => {
+                            log::info!("DAEMON: GET task {} - Got public address for key '{}': {}", task_id, user_key, public_address_hex);
+                            // Parse the hex address to ScratchpadAddress
+                            match ScratchpadAddress::from_hex(&public_address_hex) {
+                                Ok(address) => {
+                                    log::info!("DAEMON: GET task {} - Calling get_public with resolved address", task_id);
+                                    let result = mutant.get_public(&address, Some(callback), stream_data).await;
+                                    match &result {
+                                        Ok(_) => log::info!("DAEMON: GET task {} - get_public operation succeeded", task_id),
+                                        Err(e) => log::error!("DAEMON: GET task {} - get_public operation failed: {}", task_id, e),
+                                    }
+                                    result
+                                }
+                                Err(parse_err) => {
+                                    let error_msg = format!("Failed to parse public address '{}' for key '{}': {}", public_address_hex, user_key, parse_err);
+                                    log::error!("DAEMON: GET task {} - {}", task_id, error_msg);
+                                    Err(mutant_lib::error::Error::Internal(error_msg))
+                                }
+                            }
+                        }
+                        Err(index_err) => {
+                            let error_msg = format!("Failed to get public index address for key '{}': {}", user_key, index_err);
+                            log::error!("DAEMON: GET task {} - {}", task_id, error_msg);
+                            Err(mutant_lib::error::Error::Internal(error_msg))
+                        }
+                    }
                 }
             }
         } else {
