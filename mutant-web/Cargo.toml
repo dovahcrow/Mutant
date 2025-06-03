@@ -28,6 +28,7 @@ console_error_panic_hook = "0.1.7"
 #egui_dock = { git = "https://github.com/Adanos020/egui_dock.git", branch = "release-0.15" , features = ["serde"] }
 egui_dock = { version = "0.16.0", features = ["serde"] }
 egui-toast = "0.17.0"
+egui_dnd = "0.12.0"
 wasm-logger = "0.2.0"
 console_log = "1.0"
 log = "0.4.22"

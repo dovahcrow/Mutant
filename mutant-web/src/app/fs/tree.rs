@@ -11,6 +11,28 @@ fn humanize_size(size: u64) -> String {
     format_size(size, BINARY)
 }
 
+/// Drag and drop state for the filesystem tree
+#[derive(Clone, Debug, Default)]
+pub struct DragDropState {
+    /// Currently dragged item (path and whether it's a directory)
+    pub dragged_item: Option<(String, bool)>, // (path, is_directory)
+    /// Current drag position for visual feedback
+    pub drag_pos: Option<egui::Pos2>,
+    /// Whether we're currently in a drag operation
+    pub is_dragging: bool,
+    /// Potential drop target path
+    pub drop_target: Option<String>,
+}
+
+/// Result of a drag and drop operation
+#[derive(Clone, Debug)]
+pub enum DragDropResult {
+    /// No drag and drop operation occurred
+    None,
+    /// A move operation should be performed (old_path, new_path)
+    Move(String, String),
+}
+
 /// A node in the filesystem tree
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TreeNode {
@@ -91,8 +113,8 @@ impl TreeNode {
     }
 
     /// Draw this node and its children
-    /// Returns (view_clicked_details, download_clicked_details, delete_clicked_details)
-    pub fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize, selected_path: Option<&str>, window_id: &str) -> (Option<KeyDetails>, Option<KeyDetails>, Option<KeyDetails>) {
+    /// Returns (view_clicked_details, download_clicked_details, delete_clicked_details, drag_drop_result)
+    pub fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize, selected_path: Option<&str>, window_id: &str, drag_state: &mut DragDropState) -> (Option<KeyDetails>, Option<KeyDetails>, Option<KeyDetails>, DragDropResult) {
         // Extremely compact indentation for maximum space efficiency
         let indent_per_level = 1.5;  // Reduced from 3.0 to 1.5
         let total_indent = indent_per_level * (indent_level as f32);
@@ -100,6 +122,7 @@ impl TreeNode {
         let mut view_clicked_details = None;
         let mut download_clicked_details = None;
         let mut delete_clicked_details = None;
+        let mut drag_drop_result = DragDropResult::None;
 
         // Add subtle vertical spacing between items
         if indent_level > 0 {
@@ -134,11 +157,37 @@ impl TreeNode {
                     .id_salt(format!("mutant_fs_{}dir_{}", window_id, self.path))
                     .default_open(self.expanded);
 
+                // We'll handle drop target detection in the show() callback
+
                 let mut child_view_details = None;
                 let mut child_download_details = None;
                 let mut child_delete_details = None;
+                let mut child_drag_drop_result = DragDropResult::None;
 
-                self.expanded = header.show(ui, |ui| {
+                let header_result = header.show(ui, |ui| {
+                    // Check if this directory is a drop target
+                    if drag_state.is_dragging {
+                        let available_rect = ui.available_rect_before_wrap();
+                        let pointer_pos = ui.ctx().pointer_latest_pos();
+                        log::info!("Directory {} - checking drop target, pointer: {:?}, rect: {:?}", self.path, pointer_pos, available_rect);
+
+                        if let Some(pos) = pointer_pos {
+                            if available_rect.contains(pos) {
+                                log::info!("Setting drop target to directory: {}", self.path);
+                                drag_state.drop_target = Some(self.path.clone());
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::Copy);
+
+                                // Visual feedback for drop target
+                                ui.painter().rect_stroke(
+                                    available_rect,
+                                    4.0,
+                                    egui::Stroke::new(2.0, theme::MutantColors::ACCENT_ORANGE),
+                                    egui::epaint::StrokeKind::Outside
+                                );
+                            }
+                        }
+                    }
+
                     // Sort children: directories first, then files
                     let mut sorted_children: Vec<_> = self.children.iter_mut().collect();
                     sorted_children.sort_by(|(_, a), (_, b)| {
@@ -151,7 +200,7 @@ impl TreeNode {
 
                     // Draw the sorted children with exactly one more level of indentation
                     for (_, child) in sorted_children {
-                        let (view_details, down_details, delete_details) = child.ui(ui, indent_level + 1, selected_path, window_id);
+                        let (view_details, down_details, delete_details, child_drag_result) = child.ui(ui, indent_level + 1, selected_path, window_id, drag_state);
                         if view_details.is_some() {
                             child_view_details = view_details;
                         }
@@ -161,8 +210,13 @@ impl TreeNode {
                         if delete_details.is_some() {
                             child_delete_details = delete_details;
                         }
+                        if !matches!(child_drag_result, DragDropResult::None) {
+                            child_drag_drop_result = child_drag_result;
+                        }
                     }
-                }).header_response.clicked() || self.expanded;
+                });
+
+                self.expanded = header_result.header_response.clicked() || self.expanded;
 
                 // Propagate click from children
                 if child_view_details.is_some() {
@@ -173,6 +227,9 @@ impl TreeNode {
                 }
                 if child_delete_details.is_some() {
                     delete_clicked_details = child_delete_details;
+                }
+                if !matches!(child_drag_drop_result, DragDropResult::None) {
+                    drag_drop_result = child_drag_drop_result;
                 }
             } else {
                 // File node - add extra space to align with folder names (accounting for arrow)
@@ -194,10 +251,10 @@ impl TreeNode {
                 // Create file display text with icon
                 // We'll draw the text manually for better control over fade effects
 
-                // Make the file node clickable for viewing with proper layout
+                // Make the file node clickable and draggable for viewing with proper layout
                 let row_response = ui.allocate_response(
                     egui::Vec2::new(ui.available_width(), 20.0),
-                    egui::Sense::click()
+                    egui::Sense::click_and_drag()
                 );
 
                 let row_rect = row_response.rect;
@@ -209,6 +266,17 @@ impl TreeNode {
                         4.0,
                         theme::MutantColors::SELECTION
                     );
+                }
+
+                // Add visual feedback if this item is being dragged
+                if let Some((dragged_path, _)) = &drag_state.dragged_item {
+                    if dragged_path == &self.path {
+                        ui.painter().rect_filled(
+                            row_rect,
+                            4.0,
+                            egui::Color32::from_rgba_premultiplied(255, 140, 0, 60) // Orange with transparency
+                        );
+                    }
                 }
 
                 // Calculate metadata width and positioning
@@ -247,12 +315,59 @@ impl TreeNode {
                 );
                 ui.painter().with_clip_rect(text_clip_rect).galley(filename_pos, filename_galley, filename_color);
 
-                // Handle click on the entire row
-                if row_response.clicked() {
+                // Handle drag and drop for files
+                if row_response.drag_started() {
+                    drag_state.dragged_item = Some((self.path.clone(), false)); // false = not a directory
+                    drag_state.is_dragging = true;
+                    log::info!("Started dragging file: {}", self.path);
+                }
+
+                if row_response.dragged() {
+                    drag_state.drag_pos = Some(row_response.interact_pointer_pos().unwrap_or_default());
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                }
+
+                if row_response.drag_stopped() {
+                    log::info!("Drag stopped for file: {}", self.path);
+                    if let Some((dragged_path, _)) = &drag_state.dragged_item {
+                        log::info!("Dragged item: {}", dragged_path);
+                        if let Some(drop_target) = &drag_state.drop_target {
+                            log::info!("Drop target: {}", drop_target);
+                            // Calculate the new path for the move operation
+                            let new_path = if drop_target == "/" {
+                                // Moving to root - just use the filename
+                                self.name.clone()
+                            } else {
+                                // Moving to a subdirectory
+                                format!("{}/{}", drop_target, self.name)
+                            };
+
+                            if dragged_path != &new_path {
+                                drag_drop_result = DragDropResult::Move(dragged_path.clone(), new_path.clone());
+                                log::info!("File drop: moving '{}' to '{}'", dragged_path, new_path);
+                            } else {
+                                log::info!("Same path, no move needed: {} == {}", dragged_path, new_path);
+                            }
+                        } else {
+                            log::info!("No drop target set");
+                        }
+                    } else {
+                        log::info!("No dragged item");
+                    }
+
+                    // Reset drag state
+                    drag_state.dragged_item = None;
+                    drag_state.is_dragging = false;
+                    drag_state.drop_target = None;
+                    drag_state.drag_pos = None;
+                }
+
+                // Handle click on the entire row (only if not dragging)
+                if row_response.clicked() && !drag_state.is_dragging {
                     view_clicked_details = Some(details.clone());
                 }
 
-                if row_response.hovered() {
+                if row_response.hovered() && !drag_state.is_dragging {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
 
@@ -353,7 +468,7 @@ impl TreeNode {
             }
         });
 
-        (view_clicked_details, download_clicked_details, delete_clicked_details)
+        (view_clicked_details, download_clicked_details, delete_clicked_details, drag_drop_result)
     }
 
     /// Get appropriate icon and color for file based on extension

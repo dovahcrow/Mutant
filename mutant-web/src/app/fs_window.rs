@@ -48,6 +48,9 @@ pub struct FsWindow {
     /// Unique dock area ID for the internal dock area within this FsWindow
     #[serde(skip)]
     dock_area_id: String,
+    /// Drag and drop state for the filesystem tree
+    #[serde(skip)]
+    drag_state: crate::app::fs::tree::DragDropState,
 }
 
 impl Default for FsWindow {
@@ -61,6 +64,7 @@ impl Default for FsWindow {
             window_id: uuid::Uuid::new_v4().to_string(),
             pending_delete: None,
             dock_area_id: generate_unique_dock_area_id(),
+            drag_state: crate::app::fs::tree::DragDropState::default(),
         }
     }
 }
@@ -608,6 +612,7 @@ impl FsWindow {
                 let mut view_details_clicked: Option<KeyDetails> = None;
                 let mut download_details_clicked: Option<KeyDetails> = None;
                 let mut delete_details_clicked: Option<KeyDetails> = None;
+                let mut drag_drop_result = crate::app::fs::tree::DragDropResult::None;
 
                 // Draw the root folder '/' as a proper collapsible folder
                 let mut root_expanded = !self.root.children.is_empty(); // Default to expanded if there are children
@@ -642,7 +647,32 @@ impl FsWindow {
                         .id_salt(format!("mutant_fs_root_{}", self.window_id))
                         .default_open(root_expanded);
 
-                    root_expanded = header.show(ui, |ui| {
+                    // We'll handle drop target detection in the show() callback
+
+                    let header_result = header.show(ui, |ui| {
+                        // Check if root directory is a drop target
+                        if self.drag_state.is_dragging {
+                            let available_rect = ui.available_rect_before_wrap();
+                            let pointer_pos = ui.ctx().pointer_latest_pos();
+                            log::info!("Root directory - checking drop target, pointer: {:?}, rect: {:?}", pointer_pos, available_rect);
+
+                            if let Some(pos) = pointer_pos {
+                                if available_rect.contains(pos) {
+                                    log::info!("Setting drop target to root directory");
+                                    self.drag_state.drop_target = Some("/".to_string());
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::Copy);
+
+                                    // Visual feedback for drop target
+                                    ui.painter().rect_stroke(
+                                        available_rect,
+                                        4.0,
+                                        egui::Stroke::new(2.0, super::theme::MutantColors::ACCENT_ORANGE),
+                                        egui::epaint::StrokeKind::Outside
+                                    );
+                                }
+                            }
+                        }
+
                         // Sort children: directories first, then files
                         let mut sorted_children: Vec<_> = self.root.children.iter_mut().collect();
                         sorted_children.sort_by(|(_, a), (_, b)| {
@@ -655,7 +685,7 @@ impl FsWindow {
 
                         // Draw the sorted children with indentation level 1 (since they are children of the root '/')
                         for (_, child) in sorted_children {
-                            let (view_details, download_details, delete_details) = child.ui(ui, 1, selected_path_ref, &self.window_id);
+                            let (view_details, download_details, delete_details, child_drag_result) = child.ui(ui, 1, selected_path_ref, &self.window_id, &mut self.drag_state);
                             if view_details.is_some() {
                                 view_details_clicked = view_details;
                             }
@@ -665,8 +695,13 @@ impl FsWindow {
                             if delete_details.is_some() {
                                 delete_details_clicked = delete_details;
                             }
+                            if !matches!(child_drag_result, crate::app::fs::tree::DragDropResult::None) {
+                                drag_drop_result = child_drag_result;
+                            }
                         }
-                    }).header_response.clicked() || root_expanded;
+                    });
+
+                    root_expanded = header_result.header_response.clicked() || root_expanded;
                 });
 
                 // Draw refresh button at the same position as file download buttons
@@ -709,7 +744,7 @@ impl FsWindow {
                 // Add some bottom padding
                 ui.add_space(8.0);
 
-                (view_details_clicked, download_details_clicked, delete_details_clicked)
+                (view_details_clicked, download_details_clicked, delete_details_clicked, drag_drop_result)
             });
 
 
@@ -740,6 +775,11 @@ impl FsWindow {
             // Show confirmation dialog and delete the file
             self.handle_delete_request(details);
         }
+
+        // Handle drag and drop operations
+        if let crate::app::fs::tree::DragDropResult::Move(old_path, new_path) = scroll_response.inner.3 {
+            self.handle_move_operation(old_path, new_path);
+        }
     }
 
     /// Handle delete request with confirmation
@@ -761,6 +801,27 @@ impl FsWindow {
                 }
                 Err(e) => {
                     log::error!("Failed to delete key {}: {}", key, e);
+                    // You could show an error notification here
+                }
+            }
+        });
+    }
+
+    /// Handle move operation from drag and drop
+    fn handle_move_operation(&mut self, old_path: String, new_path: String) {
+        log::info!("Moving '{}' to '{}'", old_path, new_path);
+
+        // Spawn async task to perform the move operation
+        wasm_bindgen_futures::spawn_local(async move {
+            let ctx = crate::app::context::context();
+            match ctx.mv(&old_path, &new_path).await {
+                Ok(_) => {
+                    log::info!("Successfully moved '{}' to '{}'", old_path, new_path);
+                    // Refresh the file list to update the UI
+                    let _ = ctx.list_keys().await;
+                }
+                Err(e) => {
+                    log::error!("Failed to move '{}' to '{}': {}", old_path, new_path, e);
                     // You could show an error notification here
                 }
             }
