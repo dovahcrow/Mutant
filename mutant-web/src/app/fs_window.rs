@@ -197,7 +197,7 @@ impl FsWindow {
     // find_tab methods removed - use WindowSystem methods directly
 
     /// Add a new tab for a file - adds to the internal dock system
-    fn add_file_tab(&mut self, file_details: KeyDetails) {
+    pub fn add_file_tab(&mut self, file_details: KeyDetails) {
         log::info!("FsWindow: Creating new file viewer tab for: {}", file_details.key);
 
         // Check if a tab for this file already exists in the internal dock

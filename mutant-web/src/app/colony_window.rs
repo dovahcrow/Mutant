@@ -708,10 +708,17 @@ impl ColonyWindow {
             public_address: Some(address.to_string()),
         };
 
-        // Open a new file viewer tab for this content
-        crate::app::window_system::new_file_viewer_tab(
-            crate::app::fs::viewer_tab::FileViewerTab::new(key_details)
-        );
+        // Add the tab to the main fs window's internal dock system
+        if let Some(fs_window_ref) = crate::app::fs::global::get_main_fs_window() {
+            let mut fs_window = fs_window_ref.write().unwrap();
+
+            // Use the fs window's existing add_file_tab method which handles everything
+            fs_window.add_file_tab(key_details);
+
+            log::info!("Colony: Successfully requested file viewer tab addition to fs window for: {}", address);
+        } else {
+            log::warn!("Colony: Main FsWindow reference not available for adding file viewer tab");
+        }
     }
 
     /// Format file size for display
