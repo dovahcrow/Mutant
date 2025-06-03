@@ -2,7 +2,7 @@ use std::{collections::{BTreeMap, HashMap}, sync::{Arc, Mutex, RwLock}};
 
 use lazy_static::lazy_static;
 use log::error;
-use mutant_protocol::{KeyDetails, StatsResponse, StorageMode, TaskListEntry, TaskId, TaskProgress, SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse};
+use mutant_protocol::{KeyDetails, StatsResponse, StorageMode, TaskListEntry, TaskId, TaskProgress, SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse, GetUserContactResponse};
 use tokio::sync::mpsc;
 
 
@@ -583,5 +583,10 @@ impl Context {
     /// Sync all contact pods to get the latest content
     pub async fn sync_contacts(&self) -> Result<SyncContactsResponse, String> {
         client_manager::sync_contacts().await
+    }
+
+    /// Get the user's own contact information that can be shared with friends
+    pub async fn get_user_contact(&self) -> Result<GetUserContactResponse, String> {
+        client_manager::get_user_contact().await
     }
 }

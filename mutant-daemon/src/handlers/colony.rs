@@ -8,7 +8,7 @@ use mutant_protocol::{
     ErrorResponse, Response, SearchRequest, SearchResponse, IndexContentRequest,
     IndexContentResponse, GetMetadataRequest, GetMetadataResponse, AddContactRequest,
     AddContactResponse, ListContentRequest, ListContentResponse, SyncContactsRequest,
-    SyncContactsResponse
+    SyncContactsResponse, GetUserContactRequest, GetUserContactResponse
 };
 
 use super::common::UpdateSender;
@@ -270,6 +270,50 @@ pub async fn handle_sync_contacts(
             log::error!("Sync contacts request failed: {}", e);
             let error_response = Response::Error(ErrorResponse {
                 error: format!("Sync contacts failed: {}", e),
+                original_request: Some(_original_request_str.to_string()),
+            });
+
+            if let Err(send_err) = update_tx.send(error_response) {
+                log::error!("Failed to send error response: {}", send_err);
+            }
+
+            Err(e)
+        }
+    }
+}
+
+/// Handle get user contact requests
+///
+/// Returns the user's own contact information (wallet address or pod address) that can be shared with friends.
+pub async fn handle_get_user_contact(
+    _req: GetUserContactRequest,
+    update_tx: UpdateSender,
+    _original_request_str: &str,
+) -> Result<(), DaemonError> {
+    log::debug!("Handling get user contact request");
+
+    let colony_manager = get_colony_manager().await?;
+
+    match colony_manager.get_user_contact_info().await {
+        Ok((contact_address, contact_type, display_name)) => {
+            let response = Response::GetUserContact(GetUserContactResponse {
+                contact_address,
+                contact_type,
+                display_name,
+            });
+
+            if let Err(e) = update_tx.send(response) {
+                log::error!("Failed to send get user contact response: {}", e);
+                return Err(DaemonError::Internal(format!("Failed to send get user contact response: {}", e)));
+            }
+
+            log::debug!("Get user contact request completed successfully");
+            Ok(())
+        }
+        Err(e) => {
+            log::error!("Get user contact request failed: {}", e);
+            let error_response = Response::Error(ErrorResponse {
+                error: format!("Get user contact failed: {}", e),
                 original_request: Some(_original_request_str.to_string()),
             });
 

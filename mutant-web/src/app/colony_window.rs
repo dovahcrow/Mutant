@@ -1,6 +1,13 @@
 use serde::{Deserialize, Serialize};
 use eframe::egui;
 use crate::app::{Window, context::context};
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+
+// Global state for storing user contact info responses
+lazy_static::lazy_static! {
+    static ref USER_CONTACT_RESPONSES: Arc<Mutex<HashMap<String, UserContactInfo>>> = Arc::new(Mutex::new(HashMap::new()));
+}
 
 /// The Colony window for managing contacts and discovering content
 #[derive(Clone, Serialize, Deserialize)]
@@ -19,6 +26,14 @@ pub struct ColonyWindow {
     is_syncing: bool,
     #[serde(skip)]
     last_sync_status: Option<String>,
+    /// User's own contact information
+    #[serde(skip)]
+    user_contact_info: Option<UserContactInfo>,
+    #[serde(skip)]
+    is_loading_user_contact: bool,
+    /// Flag to trigger contact info reload
+    #[serde(skip)]
+    should_load_contact_info: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -26,6 +41,13 @@ pub struct Contact {
     pub pod_address: String,
     pub name: Option<String>,
     pub last_synced: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct UserContactInfo {
+    pub contact_address: String,
+    pub contact_type: String,
+    pub display_name: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -48,6 +70,9 @@ impl Default for ColonyWindow {
             new_contact_name: String::new(),
             is_syncing: false,
             last_sync_status: None,
+            user_contact_info: None,
+            is_loading_user_contact: false,
+            should_load_contact_info: true,
         }
     }
 }
@@ -58,6 +83,33 @@ impl Window for ColonyWindow {
     }
 
     fn draw(&mut self, ui: &mut egui::Ui) {
+        // Auto-load user contact info on first draw if not already loaded/loading
+        if self.should_load_contact_info && !self.is_loading_user_contact {
+            self.load_user_contact_info();
+            self.should_load_contact_info = false;
+        }
+
+        // Check for completed user contact info response
+        if self.is_loading_user_contact {
+            if let Ok(responses) = USER_CONTACT_RESPONSES.lock() {
+                if let Some(contact_info) = responses.get("user_contact") {
+                    self.user_contact_info = Some(contact_info.clone());
+                    self.is_loading_user_contact = false;
+                    // Remove the response from the global state
+                    drop(responses);
+                    if let Ok(mut responses) = USER_CONTACT_RESPONSES.lock() {
+                        responses.remove("user_contact");
+                    }
+                } else if responses.contains_key("user_contact_error") {
+                    // Handle error case
+                    self.is_loading_user_contact = false;
+                    drop(responses);
+                    if let Ok(mut responses) = USER_CONTACT_RESPONSES.lock() {
+                        responses.remove("user_contact_error");
+                    }
+                }
+            }
+        }
         // Use a vertical layout for the main content
         ui.vertical(|ui| {
             // Header section
@@ -75,6 +127,76 @@ impl Window for ColonyWindow {
                         self.sync_all_contacts();
                     }
                 });
+            });
+
+            ui.separator();
+
+            // User's own contact information section
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Your Contact Address")
+                            .strong()
+                            .color(super::theme::MutantColors::ACCENT_ORANGE)
+                    );
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("🔄 Refresh").clicked() {
+                            self.user_contact_info = None;
+                            self.is_loading_user_contact = false;
+                            self.should_load_contact_info = true;
+                        }
+                    });
+                });
+
+                if self.is_loading_user_contact {
+                    ui.label("Loading your contact information...");
+                } else if let Some(user_info) = &self.user_contact_info {
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(
+                                egui::RichText::new("Share this address with friends so they can add you as a contact:")
+                                    .size(11.0)
+                                    .color(super::theme::MutantColors::TEXT_SECONDARY)
+                            );
+
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(&user_info.contact_address)
+                                        .strong()
+                                        .color(super::theme::MutantColors::ACCENT_BLUE)
+                                );
+
+                                if ui.button("📋 Copy").clicked() {
+                                    ui.ctx().copy_text(user_info.contact_address.clone());
+                                }
+                            });
+
+                            if let Some(display_name) = &user_info.display_name {
+                                ui.label(
+                                    egui::RichText::new(format!("Display: {}", display_name))
+                                        .size(10.0)
+                                        .color(super::theme::MutantColors::TEXT_MUTED)
+                                );
+                            }
+
+                            ui.label(
+                                egui::RichText::new(format!("Type: {}", user_info.contact_type))
+                                    .size(10.0)
+                                    .color(super::theme::MutantColors::TEXT_MUTED)
+                            );
+                        });
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.label("Click 'Refresh' to load your contact information");
+                        if ui.button("Load Now").clicked() {
+                            self.user_contact_info = None;
+                            self.is_loading_user_contact = false;
+                            self.should_load_contact_info = true;
+                        }
+                    });
+                }
             });
 
             ui.separator();
@@ -365,5 +487,47 @@ impl ColonyWindow {
         log::info!("Downloading content from address: {}", address);
         // TODO: Implement download functionality
         // This would likely use the existing get functionality with the public address
+    }
+
+    /// Load the user's own contact information
+    fn load_user_contact_info(&mut self) {
+        if self.is_loading_user_contact {
+            return;
+        }
+
+        self.is_loading_user_contact = true;
+        self.user_contact_info = None;
+
+        let ctx = context();
+        wasm_bindgen_futures::spawn_local(async move {
+            match ctx.get_user_contact().await {
+                Ok(response) => {
+                    log::info!("Got user contact info: address={}, type={}, display_name={:?}",
+                              response.contact_address, response.contact_type, response.display_name);
+
+                    // Store the response in global state for the UI to pick up
+                    let user_info = UserContactInfo {
+                        contact_address: response.contact_address,
+                        contact_type: response.contact_type,
+                        display_name: response.display_name,
+                    };
+
+                    if let Ok(mut responses) = USER_CONTACT_RESPONSES.lock() {
+                        responses.insert("user_contact".to_string(), user_info);
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to get user contact info: {:?}", e);
+                    // Clear loading state on error by storing an empty response
+                    if let Ok(mut responses) = USER_CONTACT_RESPONSES.lock() {
+                        responses.insert("user_contact_error".to_string(), UserContactInfo {
+                            contact_address: "Error loading contact info".to_string(),
+                            contact_type: "error".to_string(),
+                            display_name: None,
+                        });
+                    }
+                }
+            }
+        });
     }
 }

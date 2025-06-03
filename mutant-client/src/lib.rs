@@ -15,7 +15,7 @@ use mutant_protocol::{
     StatsResponse, StorageMode, SyncResult, Task, TaskId, TaskListEntry, TaskProgress,
     TaskResult, TaskStatus, TaskStoppedResponse, TaskType, PutRequest, PutDataRequest,
     // Colony integration types
-    SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse,
+    SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse, GetUserContactResponse, GetUserContactRequest,
 };
 
 pub mod error;
@@ -49,6 +49,7 @@ pub enum PendingRequestKey {
     AddContact,
     ListContent,
     SyncContacts,
+    GetUserContact,
 }
 
 // Enum to hold the different sender types for the pending requests map
@@ -75,6 +76,7 @@ pub enum PendingSender {
     AddContact(oneshot::Sender<Result<AddContactResponse, ClientError>>),
     ListContent(oneshot::Sender<Result<ListContentResponse, ClientError>>),
     SyncContacts(oneshot::Sender<Result<SyncContactsResponse, ClientError>>),
+    GetUserContact(oneshot::Sender<Result<GetUserContactResponse, ClientError>>),
 }
 
 // The new map type for pending requests
@@ -589,6 +591,11 @@ impl MutantClient {
     /// Sync all contact pods to get the latest content
     pub async fn sync_contacts(&mut self) -> Result<SyncContactsResponse, ClientError> {
         direct_request!(self, SyncContacts, SyncContactsRequest {})
+    }
+
+    /// Get the user's own contact information that can be shared with friends
+    pub async fn get_user_contact(&mut self) -> Result<GetUserContactResponse, ClientError> {
+        direct_request!(self, GetUserContact, GetUserContactRequest)
     }
 
     pub async fn import(&mut self, file_path: &str) -> Result<ImportResult, ClientError> {

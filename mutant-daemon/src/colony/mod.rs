@@ -459,6 +459,32 @@ impl ColonyManager {
         Ok(pod_count)
     }
 
+    /// Get the user's own contact information that can be shared with friends
+    pub async fn get_user_contact_info(&self) -> Result<(String, String, Option<String>), DaemonError> {
+        if !self.initialized {
+            return Err(DaemonError::ColonyError("Colony manager not initialized".to_string()));
+        }
+
+        log::debug!("Getting user contact information");
+
+        // Get the wallet address as the primary contact method
+        let wallet_address = self.wallet.address().to_string();
+        let contact_type = "wallet".to_string();
+
+        // For display name, we could use the wallet address truncated or a user-friendly name
+        // For now, let's use a truncated version of the wallet address
+        let display_name = if wallet_address.len() > 16 {
+            Some(format!("{}...{}", &wallet_address[0..8], &wallet_address[wallet_address.len()-8..]))
+        } else {
+            Some(wallet_address.clone())
+        };
+
+        log::debug!("User contact info: address={}, type={}, display_name={:?}",
+                   wallet_address, contact_type, display_name);
+
+        Ok((wallet_address, contact_type, display_name))
+    }
+
     /// Refresh the local cache from the network
     /// 
     /// This downloads new pods and updates the local graph database.

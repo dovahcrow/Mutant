@@ -3,7 +3,7 @@ use futures::{channel::oneshot, StreamExt};
 use lazy_static::lazy_static;
 use log::{error, info, warn};
 use mutant_client::MutantClient;
-use mutant_protocol::{KeyDetails, StatsResponse, Task, TaskId, TaskListEntry, TaskProgress, SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse};
+use mutant_protocol::{KeyDetails, StatsResponse, Task, TaskId, TaskListEntry, TaskProgress, SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse, GetUserContactResponse};
 use tokio::sync::mpsc;
 use wasm_bindgen_futures::spawn_local;
 
@@ -54,6 +54,7 @@ enum ClientCommand {
     AddContact(String, Option<String>, oneshot::Sender<Result<AddContactResponse, String>>),
     ListContent(oneshot::Sender<Result<ListContentResponse, String>>),
     SyncContacts(oneshot::Sender<Result<SyncContactsResponse, String>>),
+    GetUserContact(oneshot::Sender<Result<GetUserContactResponse, String>>),
 }
 
 // Singleton channel to the client manager
@@ -576,6 +577,31 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                         }
                     }
                 }
+                ClientCommand::GetUserContact(sender) => {
+                    if let Err(e) = ensure_connected(&mut client, &mut connected).await {
+                        if !sender.is_canceled() {
+                            let _ = sender.send(Err(e));
+                        }
+                        continue;
+                    }
+
+                    match client.get_user_contact().await {
+                        Ok(response) => {
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Ok(response));
+                            }
+                        }
+                        Err(e) => {
+                            if e.to_string().contains("connection") || e.to_string().contains("websocket") {
+                                connected = false;
+                                warn!("Connection lost during get user contact, will reconnect on next request");
+                            }
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Err(format!("Failed to get user contact: {:?}", e)));
+                            }
+                        }
+                    }
+                }
                 ClientCommand::StartGetStream(name, is_public, sender) => {
                     info!("Processing StartGetStream command for key: {}", name);
 
@@ -1015,6 +1041,31 @@ pub async fn sync_contacts() -> Result<SyncContactsResponse, String> {
         },
         Err(e) => {
             error!("Failed to send sync contacts command: {:?}", e);
+            Err(format!("Failed to send command: {:?}", e))
+        }
+    }
+}
+
+pub async fn get_user_contact() -> Result<GetUserContactResponse, String> {
+    info!("Starting get user contact request");
+
+    let (tx, rx) = oneshot::channel();
+    match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::GetUserContact(tx)) {
+        Ok(_) => {
+            info!("GetUserContact command sent to client manager");
+            match rx.await {
+                Ok(result) => {
+                    info!("Received get user contact response from client manager");
+                    result
+                },
+                Err(e) => {
+                    error!("Failed to receive get user contact response: {:?}", e);
+                    Err(format!("Failed to receive response: {:?}", e))
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to send get user contact command: {:?}", e);
             Err(format!("Failed to send command: {:?}", e))
         }
     }

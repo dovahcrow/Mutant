@@ -5,7 +5,7 @@ use mutant_protocol::{
     TaskResult, TaskResultResponse, TaskStatus, TaskStoppedResponse, TaskType,
     TaskUpdateResponse,
     // Colony integration responses
-    SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse,
+    SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse, GetUserContactResponse,
 };
 
 use crate::{
@@ -271,6 +271,11 @@ impl MutantClient {
                 {
                     error!("Error occurred during sync contacts request: {}", error);
                     let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(PendingSender::GetUserContact(sender)) =
+                    requests.remove(&PendingRequestKey::GetUserContact)
+                {
+                    error!("Error occurred during get user contact request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
                 } else {
                     warn!("Received server error, but no matching pending request found.");
                 }
@@ -435,6 +440,19 @@ impl MutantClient {
                     }
                 } else {
                     warn!("Received SyncContacts response but no SyncContacts request was pending");
+                }
+            }
+            Response::GetUserContact(get_user_contact_response) => {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::GetUserContact);
+                if let Some(PendingSender::GetUserContact(sender)) = pending_sender {
+                    if sender.send(Ok(get_user_contact_response)).is_err() {
+                        warn!("Failed to send GetUserContact response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received GetUserContact response but no GetUserContact request was pending");
                 }
             }
             // Other colony responses that don't have direct client methods yet

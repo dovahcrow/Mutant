@@ -435,6 +435,7 @@ pub enum Request {
     AddContact(AddContactRequest),
     ListContent(ListContentRequest),
     SyncContacts(SyncContactsRequest),
+    GetUserContact(GetUserContactRequest),
 }
 
 // --- Outgoing Responses ---
@@ -672,6 +673,18 @@ pub struct SyncContactsResponse {
     pub synced_count: usize,
 }
 
+/// Request to get user's own contact information
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetUserContactRequest;
+
+/// Response containing user's contact information
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetUserContactResponse {
+    pub contact_address: String,
+    pub contact_type: String, // "wallet" or "pod"
+    pub display_name: Option<String>,
+}
+
 /// Response containing a chunk of data from a get operation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetDataResponse {
@@ -732,6 +745,7 @@ pub enum Response {
     AddContact(AddContactResponse),
     ListContent(ListContentResponse),
     SyncContacts(SyncContactsResponse),
+    GetUserContact(GetUserContactResponse),
 }
 
 // Helper moved to where Response is used (client/server)
