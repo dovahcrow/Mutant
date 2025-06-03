@@ -33,6 +33,8 @@ pub enum DragDropResult {
     None,
     /// A move operation should be performed (old_path, new_path)
     Move(String, String),
+    /// A directory move operation should be performed (old_directory_path, new_directory_path)
+    MoveDirectory(String, String),
 }
 
 /// A node in the filesystem tree
@@ -295,8 +297,8 @@ impl TreeNode {
                                     };
 
                                     if dragged_path != &new_path {
-                                        drag_drop_result = DragDropResult::Move(dragged_path.clone(), new_path.clone());
-                                        log::info!("Directory drop: moving '{}' to '{}'", dragged_path, new_path);
+                                        drag_drop_result = DragDropResult::MoveDirectory(dragged_path.clone(), new_path.clone());
+                                        log::info!("Directory drop: moving directory '{}' to '{}'", dragged_path, new_path);
                                     } else {
                                         log::info!("Same path, no move needed: {} == {}", dragged_path, new_path);
                                     }

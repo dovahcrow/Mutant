@@ -821,8 +821,16 @@ impl FsWindow {
         }
 
         // Handle drag and drop operations
-        if let crate::app::fs::tree::DragDropResult::Move(old_path, new_path) = scroll_response.inner.3 {
-            self.handle_move_operation(old_path, new_path);
+        match scroll_response.inner.3 {
+            crate::app::fs::tree::DragDropResult::Move(old_path, new_path) => {
+                self.handle_move_operation(old_path, new_path);
+            }
+            crate::app::fs::tree::DragDropResult::MoveDirectory(old_dir_path, new_dir_path) => {
+                self.handle_directory_move_operation(old_dir_path, new_dir_path);
+            }
+            crate::app::fs::tree::DragDropResult::None => {
+                // No operation
+            }
         }
 
         // Draw dragged item preview
@@ -877,6 +885,96 @@ impl FsWindow {
                 }
             }
         });
+    }
+
+    /// Handle directory move operation from drag and drop
+    /// This recursively moves all files and subdirectories within the directory to the new location
+    fn handle_directory_move_operation(&mut self, old_dir_path: String, new_dir_path: String) {
+        log::info!("Moving directory '{}' to '{}' (recursive)", old_dir_path, new_dir_path);
+
+        // Get all keys to find files in the directory and its subdirectories
+        let keys = self.keys.read().unwrap().clone();
+
+        // Find all files that are within the directory being moved (including subdirectories)
+        let files_to_move: Vec<_> = keys.iter()
+            .filter(|key| {
+                let key_path = &key.key;
+                // Check if this file is in the directory we're moving or any of its subdirectories
+                self.is_file_in_directory(key_path, &old_dir_path)
+            })
+            .cloned()
+            .collect();
+
+        if files_to_move.is_empty() {
+            log::info!("No files found in directory '{}' to move", old_dir_path);
+            return;
+        }
+
+        log::info!("Found {} files to move from directory '{}' (including subdirectories)", files_to_move.len(), old_dir_path);
+
+        // Spawn async task to move all files
+        wasm_bindgen_futures::spawn_local(async move {
+            let ctx = crate::app::context::context();
+            let mut success_count = 0;
+            let mut error_count = 0;
+
+            for file in files_to_move {
+                let old_file_path = &file.key;
+
+                // Calculate the new file path by replacing the directory prefix
+                let new_file_path = Self::calculate_new_file_path(old_file_path, &old_dir_path, &new_dir_path);
+
+                log::info!("Moving file '{}' to '{}'", old_file_path, new_file_path);
+
+                match ctx.mv(old_file_path, &new_file_path).await {
+                    Ok(_) => {
+                        log::info!("Successfully moved file '{}' to '{}'", old_file_path, new_file_path);
+                        success_count += 1;
+                    }
+                    Err(e) => {
+                        log::error!("Failed to move file '{}' to '{}': {}", old_file_path, new_file_path, e);
+                        error_count += 1;
+                    }
+                }
+            }
+
+            log::info!("Directory move completed: {} successful, {} failed", success_count, error_count);
+
+            // Refresh the file list to update the UI
+            let _ = ctx.list_keys().await;
+        });
+    }
+
+    /// Check if a file path is within a directory (including subdirectories)
+    fn is_file_in_directory(&self, file_path: &str, dir_path: &str) -> bool {
+        // Handle exact match (file with same name as directory)
+        if file_path == dir_path {
+            return true;
+        }
+
+        // Handle files within the directory or its subdirectories
+        if file_path.starts_with(&format!("{}/", dir_path)) {
+            return true;
+        }
+
+        false
+    }
+
+    /// Calculate the new file path when moving from old_dir_path to new_dir_path
+    fn calculate_new_file_path(old_file_path: &str, old_dir_path: &str, new_dir_path: &str) -> String {
+        if old_file_path == old_dir_path {
+            // This is a file with the exact directory name
+            new_dir_path.to_string()
+        } else if old_file_path.starts_with(&format!("{}/", old_dir_path)) {
+            // This is a file inside the directory or its subdirectories
+            // Replace the old directory prefix with the new one, preserving the relative path
+            let relative_path = &old_file_path[old_dir_path.len() + 1..];
+            format!("{}/{}", new_dir_path, relative_path)
+        } else {
+            // This shouldn't happen based on our filtering, but handle it gracefully
+            log::warn!("Unexpected file path '{}' when moving directory '{}' to '{}'", old_file_path, old_dir_path, new_dir_path);
+            old_file_path.to_string()
+        }
     }
 
     /// Draw a preview of the item being dragged
