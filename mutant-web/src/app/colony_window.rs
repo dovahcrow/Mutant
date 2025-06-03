@@ -240,46 +240,48 @@ impl Window for ColonyWindow {
 
                     // Contacts list
                     ui.label(format!("Contacts ({})", self.contacts.len()));
-                    
-                    egui::ScrollArea::vertical()
-                        .max_height(400.0)
-                        .show(ui, |ui| {
-                            for (index, contact) in self.contacts.iter().enumerate() {
-                                ui.group(|ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.vertical(|ui| {
-                                            if let Some(name) = &contact.name {
+
+                    ui.push_id("contacts_scroll", |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(400.0)
+                            .show(ui, |ui| {
+                                for (index, contact) in self.contacts.iter().enumerate() {
+                                    ui.group(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.vertical(|ui| {
+                                                if let Some(name) = &contact.name {
+                                                    ui.label(
+                                                        egui::RichText::new(name)
+                                                            .strong()
+                                                            .color(super::theme::MutantColors::ACCENT_ORANGE)
+                                                    );
+                                                }
                                                 ui.label(
-                                                    egui::RichText::new(name)
-                                                        .strong()
-                                                        .color(super::theme::MutantColors::ACCENT_ORANGE)
-                                                );
-                                            }
-                                            ui.label(
-                                                egui::RichText::new(&contact.pod_address)
-                                                    .size(10.0)
-                                                    .color(super::theme::MutantColors::TEXT_MUTED)
-                                            );
-                                            if let Some(last_synced) = &contact.last_synced {
-                                                ui.label(
-                                                    egui::RichText::new(format!("Last synced: {}", last_synced))
-                                                        .size(9.0)
+                                                    egui::RichText::new(&contact.pod_address)
+                                                        .size(10.0)
                                                         .color(super::theme::MutantColors::TEXT_MUTED)
                                                 );
-                                            }
-                                        });
-                                        
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            if ui.button("🗑").clicked() {
-                                                // Mark for removal (we'll handle this after the loop)
-                                                // For now, just log it
-                                                log::info!("Remove contact at index {}", index);
-                                            }
+                                                if let Some(last_synced) = &contact.last_synced {
+                                                    ui.label(
+                                                        egui::RichText::new(format!("Last synced: {}", last_synced))
+                                                            .size(9.0)
+                                                            .color(super::theme::MutantColors::TEXT_MUTED)
+                                                    );
+                                                }
+                                            });
+
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                if ui.button("🗑").clicked() {
+                                                    // Mark for removal (we'll handle this after the loop)
+                                                    // For now, just log it
+                                                    log::info!("Remove contact at index {}", index);
+                                                }
+                                            });
                                         });
                                     });
-                                });
-                            }
-                        });
+                                }
+                            });
+                    });
                 });
 
                 ui.separator();
@@ -305,59 +307,61 @@ impl Window for ColonyWindow {
 
                     // Content list
                     ui.label(format!("Content Items ({})", self.content_list.len()));
-                    
-                    egui::ScrollArea::vertical()
-                        .show(ui, |ui| {
-                            for content in &self.content_list {
-                                ui.group(|ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.vertical(|ui| {
-                                            ui.label(
-                                                egui::RichText::new(&content.title)
-                                                    .strong()
-                                                    .color(super::theme::MutantColors::ACCENT_BLUE)
-                                            );
-                                            
-                                            if let Some(description) = &content.description {
+
+                    ui.push_id("content_scroll", |ui| {
+                        egui::ScrollArea::vertical()
+                            .show(ui, |ui| {
+                                for content in &self.content_list {
+                                    ui.group(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.vertical(|ui| {
                                                 ui.label(
-                                                    egui::RichText::new(description)
-                                                        .size(11.0)
-                                                        .color(super::theme::MutantColors::TEXT_SECONDARY)
+                                                    egui::RichText::new(&content.title)
+                                                        .strong()
+                                                        .color(super::theme::MutantColors::ACCENT_BLUE)
                                                 );
-                                            }
-                                            
-                                            ui.horizontal(|ui| {
-                                                ui.label(
-                                                    egui::RichText::new(&content.content_type)
-                                                        .size(10.0)
-                                                        .color(super::theme::MutantColors::ACCENT_GREEN)
-                                                );
-                                                
-                                                ui.label(
-                                                    egui::RichText::new(format!("from: {}", content.source_contact))
-                                                        .size(10.0)
-                                                        .color(super::theme::MutantColors::TEXT_MUTED)
-                                                );
-                                                
-                                                if let Some(size) = content.size {
+
+                                                if let Some(description) = &content.description {
                                                     ui.label(
-                                                        egui::RichText::new(format!("({} bytes)", size))
+                                                        egui::RichText::new(description)
+                                                            .size(11.0)
+                                                            .color(super::theme::MutantColors::TEXT_SECONDARY)
+                                                    );
+                                                }
+
+                                                ui.horizontal(|ui| {
+                                                    ui.label(
+                                                        egui::RichText::new(&content.content_type)
+                                                            .size(10.0)
+                                                            .color(super::theme::MutantColors::ACCENT_GREEN)
+                                                    );
+
+                                                    ui.label(
+                                                        egui::RichText::new(format!("from: {}", content.source_contact))
                                                             .size(10.0)
                                                             .color(super::theme::MutantColors::TEXT_MUTED)
                                                     );
+
+                                                    if let Some(size) = content.size {
+                                                        ui.label(
+                                                            egui::RichText::new(format!("({} bytes)", size))
+                                                                .size(10.0)
+                                                                .color(super::theme::MutantColors::TEXT_MUTED)
+                                                        );
+                                                    }
+                                                });
+                                            });
+
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                if ui.button("📥 Download").clicked() {
+                                                    self.download_content(&content.address);
                                                 }
                                             });
                                         });
-                                        
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            if ui.button("📥 Download").clicked() {
-                                                self.download_content(&content.address);
-                                            }
-                                        });
                                     });
-                                });
-                            }
-                        });
+                                }
+                            });
+                    });
                 });
             });
 
