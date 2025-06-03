@@ -65,6 +65,7 @@ pub struct ContentItem {
     pub address: String,
     pub source_contact: String,
     pub size: Option<u64>,
+    pub date_created: Option<String>,
 }
 
 impl Default for ColonyWindow {
@@ -388,14 +389,22 @@ impl Window for ColonyWindow {
                                                     );
 
                                                     ui.label(
-                                                        egui::RichText::new(format!("from: {}", content.source_contact))
+                                                        egui::RichText::new(format!("by: {}", content.source_contact))
                                                             .size(10.0)
                                                             .color(super::theme::MutantColors::TEXT_MUTED)
                                                     );
 
                                                     if let Some(size) = content.size {
                                                         ui.label(
-                                                            egui::RichText::new(format!("({} bytes)", size))
+                                                            egui::RichText::new(Self::format_file_size(size))
+                                                                .size(10.0)
+                                                                .color(super::theme::MutantColors::TEXT_MUTED)
+                                                        );
+                                                    }
+
+                                                    if let Some(date) = &content.date_created {
+                                                        ui.label(
+                                                            egui::RichText::new(Self::format_date(date))
                                                                 .size(10.0)
                                                                 .color(super::theme::MutantColors::TEXT_MUTED)
                                                         );
@@ -563,13 +572,13 @@ impl ColonyWindow {
     fn parse_content_response(content: serde_json::Value) -> Vec<ContentItem> {
         let mut content_items = Vec::new();
 
-        // Handle different response formats
+        // Handle error responses
         if let Some(error) = content.get("error") {
             log::warn!("Search returned error: {}", error);
             return content_items;
         }
 
-        // Try colonylib response format first (sparql_results -> results -> bindings)
+        // Only handle SPARQL results format (sparql_results -> results -> bindings)
         if let Some(sparql_results) = content.get("sparql_results") {
             if let Some(results) = sparql_results.get("results") {
                 if let Some(bindings) = results.get("bindings") {
@@ -579,31 +588,8 @@ impl ColonyWindow {
                     }
                 }
             }
-        }
-        // Try direct SPARQL results format (results -> bindings)
-        else if let Some(results) = content.get("results") {
-            if let Some(bindings) = results.get("bindings") {
-                if let Some(bindings_array) = bindings.as_array() {
-                    log::info!("Found {} direct SPARQL bindings to parse", bindings_array.len());
-                    content_items.extend(Self::parse_sparql_bindings(bindings_array));
-                }
-            }
-        }
-        // Try text search results format (array of results)
-        else if let Some(results_array) = content.as_array() {
-            for result in results_array {
-                if let Some(content_item) = Self::parse_text_search_result(result) {
-                    content_items.push(content_item);
-                }
-            }
-        }
-        // Try direct object format
-        else if content.is_object() {
-            if let Some(content_item) = Self::parse_text_search_result(&content) {
-                content_items.push(content_item);
-            }
         } else {
-            log::warn!("Unexpected content response format: {:?}", content);
+            log::warn!("Expected SPARQL results format but got: {:?}", content);
         }
 
         log::info!("Parsed {} content items from response", content_items.len());
@@ -632,17 +618,21 @@ impl ColonyWindow {
         let mut content_items = Vec::new();
 
         for (subject_uri, properties) in subjects {
-            // Extract the address from the subject URI
-            let address = if subject_uri.starts_with("ant://") {
-                subject_uri.replace("ant://", "")
-            } else {
-                subject_uri.clone()
-            };
+            // Extract the address from the subject URI or url property
+            let address = properties.get("http://schema.org/url")
+                .or_else(|| properties.get("schema:url"))
+                .cloned()
+                .unwrap_or_else(|| {
+                    if subject_uri.starts_with("ant://") {
+                        subject_uri.replace("ant://", "")
+                    } else {
+                        subject_uri.clone()
+                    }
+                });
 
-            // Try to extract meaningful information from the properties
+            // Extract Schema.org properties (try both formats: with and without schema: prefix)
             let title = properties.get("http://schema.org/name")
-                .or_else(|| properties.get("name"))
-                .or_else(|| properties.get("title"))
+                .or_else(|| properties.get("schema:name"))
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| {
                     // If no name, create a title from the address
@@ -654,23 +644,26 @@ impl ColonyWindow {
                 });
 
             let description = properties.get("http://schema.org/description")
-                .or_else(|| properties.get("description"))
+                .or_else(|| properties.get("schema:description"))
                 .map(|s| s.to_string());
 
             let content_type = properties.get("http://schema.org/type")
-                .or_else(|| properties.get("type"))
+                .or_else(|| properties.get("@type"))
                 .map(|s| Self::format_content_type(s))
                 .unwrap_or_else(|| "Content".to_string());
 
             let source_contact = properties.get("http://schema.org/author")
-                .or_else(|| properties.get("owner"))
-                .or_else(|| properties.get("creator"))
+                .or_else(|| properties.get("schema:author"))
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
 
             let size = properties.get("http://schema.org/contentSize")
-                .or_else(|| properties.get("size"))
+                .or_else(|| properties.get("schema:contentSize"))
                 .and_then(|s| s.parse::<u64>().ok());
+
+            let date_created = properties.get("http://schema.org/dateCreated")
+                .or_else(|| properties.get("schema:dateCreated"))
+                .map(|s| s.to_string());
 
             content_items.push(ContentItem {
                 title,
@@ -679,6 +672,7 @@ impl ColonyWindow {
                 address,
                 source_contact,
                 size,
+                date_created,
             });
         }
 
@@ -686,77 +680,7 @@ impl ColonyWindow {
         content_items
     }
 
-    /// Parse a single SPARQL binding into a ContentItem (legacy method)
-    fn parse_sparql_binding(binding: &serde_json::Value) -> Option<ContentItem> {
-        // Extract values from SPARQL binding format
-        let subject = binding.get("subject")?.get("value")?.as_str()?;
-        let name = binding.get("name")?.get("value")?.as_str().unwrap_or("Untitled");
-        let description = binding.get("description")?.get("value")?.as_str();
-        let content_type = binding.get("type")?.get("value")?.as_str().unwrap_or("Unknown");
-        let owner = binding.get("owner")?.get("value")?.as_str().unwrap_or("Unknown");
-        let size = binding.get("contentSize")?.get("value")?.as_str()
-            .and_then(|s| s.parse::<u64>().ok());
 
-        // Extract the address from the subject URI or use the subject itself
-        let address = if subject.starts_with("http") {
-            // If it's a URI, try to extract the address part
-            subject.split('/').last().unwrap_or(subject).to_string()
-        } else {
-            subject.to_string()
-        };
-
-        Some(ContentItem {
-            title: name.to_string(),
-            description: description.map(|s| s.to_string()),
-            content_type: Self::format_content_type(content_type),
-            address,
-            source_contact: owner.to_string(),
-            size,
-        })
-    }
-
-    /// Parse a single text search result into a ContentItem
-    fn parse_text_search_result(result: &serde_json::Value) -> Option<ContentItem> {
-        // Text search results might have a different format
-        // Try to extract common fields that might be present
-        let title = result.get("name")
-            .or_else(|| result.get("title"))
-            .or_else(|| result.get("subject"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("Untitled");
-
-        let description = result.get("description")
-            .and_then(|v| v.as_str());
-
-        let content_type = result.get("type")
-            .or_else(|| result.get("content_type"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown");
-
-        let address = result.get("address")
-            .or_else(|| result.get("subject"))
-            .or_else(|| result.get("id"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown");
-
-        let source_contact = result.get("owner")
-            .or_else(|| result.get("source"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown");
-
-        let size = result.get("size")
-            .or_else(|| result.get("contentSize"))
-            .and_then(|v| v.as_u64());
-
-        Some(ContentItem {
-            title: title.to_string(),
-            description: description.map(|s| s.to_string()),
-            content_type: Self::format_content_type(content_type),
-            address: address.to_string(),
-            source_contact: source_contact.to_string(),
-            size,
-        })
-    }
 
     /// Format content type for display
     fn format_content_type(content_type: &str) -> String {
@@ -770,11 +694,60 @@ impl ColonyWindow {
         }
     }
 
-    /// Download content by address
+    /// Download content by address and open in new viewer tab
     fn download_content(&self, address: &str) {
         log::info!("Downloading content from address: {}", address);
-        // TODO: Implement download functionality
-        // This would likely use the existing get functionality with the public address
+
+        // Create a KeyDetails for the public address
+        let key_details = mutant_protocol::KeyDetails {
+            key: address.to_string(),
+            total_size: 0, // Unknown size for public content
+            pad_count: 0,  // Unknown pad count
+            confirmed_pads: 0, // Unknown confirmed pads
+            is_public: true,
+            public_address: Some(address.to_string()),
+        };
+
+        // Open a new file viewer tab for this content
+        crate::app::window_system::new_file_viewer_tab(
+            crate::app::fs::viewer_tab::FileViewerTab::new(key_details)
+        );
+    }
+
+    /// Format file size for display
+    fn format_file_size(size: u64) -> String {
+        const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+        let mut size_f = size as f64;
+        let mut unit_index = 0;
+
+        while size_f >= 1024.0 && unit_index < UNITS.len() - 1 {
+            size_f /= 1024.0;
+            unit_index += 1;
+        }
+
+        if unit_index == 0 {
+            format!("{} {}", size, UNITS[unit_index])
+        } else {
+            format!("{:.1} {}", size_f, UNITS[unit_index])
+        }
+    }
+
+    /// Format date for display
+    fn format_date(date_str: &str) -> String {
+        // Simple date formatting - extract date and time from ISO 8601 format
+        // Expected format: "2024-01-15T10:30:45.123Z" or similar
+        if let Some(t_pos) = date_str.find('T') {
+            let date_part = &date_str[..t_pos];
+            if let Some(colon_pos) = date_str[t_pos..].find(':') {
+                let time_part = &date_str[t_pos+1..t_pos+colon_pos+3]; // Get HH:MM
+                format!("{} {}", date_part, time_part)
+            } else {
+                date_part.to_string()
+            }
+        } else {
+            // Fallback to showing the raw string if parsing fails
+            date_str.to_string()
+        }
     }
 
     /// Load the user's own contact information

@@ -162,15 +162,18 @@ impl ColonyManager {
         // Determine content type based on file extension
         let (schema_type, encoding_format) = self.determine_content_type(file_name);
 
-        // Try a simpler format first to debug the issue
+        // Use proper Schema.org format with schema: prefix like the example
         serde_json::json!({
-            "name": file_name,
-            "type": schema_type,
-            "size": file_size,
-            "format": encoding_format,
-            "address": public_address,
-            "user": user_key,
-            "created": chrono::Utc::now().to_rfc3339()
+            "@context": {"schema": "http://schema.org/"},
+            "@type": schema_type,
+            "@id": format!("ant://{}", public_address),
+            "schema:name": file_name,
+            "schema:description": format!("File uploaded by {}", user_key),
+            "schema:contentSize": file_size,
+            "schema:encodingFormat": encoding_format,
+            "schema:author": user_key,
+            "schema:dateCreated": chrono::Utc::now().to_rfc3339(),
+            "schema:url": public_address
         })
     }
 
