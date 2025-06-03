@@ -516,6 +516,9 @@ impl FsWindow {
                 self.root.insert_key(&parts, key.clone(), "");
             }
 
+            // Expand all directories recursively by default
+            self.root.expand_all();
+
             log::info!("File tree rebuilt successfully");
         }
     }
@@ -646,10 +649,8 @@ impl FsWindow {
                 let mut delete_details_clicked: Option<KeyDetails> = None;
                 let mut drag_drop_result = crate::app::fs::tree::DragDropResult::None;
 
-                // Draw the root folder '/' as a proper collapsible folder
-                let mut root_expanded = !self.root.children.is_empty(); // Default to expanded if there are children
-
-                // Draw the root folder with refresh button positioned like a file's download button
+                // Draw the root folder '/' as an uncollapsible folder (always expanded)
+                // Draw the root folder with buttons positioned like a file's download button
                 let row_response = ui.allocate_response(
                     egui::Vec2::new(ui.available_width(), 20.0),
                     egui::Sense::click()
@@ -669,95 +670,90 @@ impl FsWindow {
                         egui::Stroke::new(1.0, line_color)
                     );
 
-                    // Root folder as collapsible header
-                    let icon = if root_expanded { "📂" } else { "📁" };
+                    // Root folder as static text (uncollapsible)
+                    let icon = "📂"; // Always open folder icon
                     let text = RichText::new(format!("{} /", icon))
                         .size(12.0)  // Match other folder sizes
                         .color(super::theme::MutantColors::ACCENT_ORANGE);  // Special distinguishing color for folders
 
-                    let header = egui::CollapsingHeader::new(text)
-                        .id_salt(format!("mutant_fs_root_{}", self.window_id))
-                        .default_open(root_expanded);
-
-                    // We'll handle drop target detection in the show() callback
-
-                    let header_result = header.show(ui, |ui| {
-                        // Check if root directory is a drop target
-                        if self.drag_state.is_dragging {
-                            // Create a larger drop zone that extends beyond just the text
-                            let available_rect = ui.available_rect_before_wrap();
-                            let expanded_rect = available_rect.expand2(egui::Vec2::new(20.0, 10.0)); // Make drop zone larger
-                            let pointer_pos = ui.ctx().pointer_latest_pos();
-
-                            if let Some(pos) = pointer_pos {
-                                if expanded_rect.contains(pos) {
-                                    log::info!("Setting drop target to root directory");
-                                    self.drag_state.drop_target = Some("/".to_string());
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::Copy);
-
-                                    // Enhanced visual feedback for drop target
-                                    // Draw a filled background
-                                    ui.painter().rect_filled(
-                                        expanded_rect,
-                                        6.0,
-                                        egui::Color32::from_rgba_premultiplied(255, 140, 0, 30) // Orange with transparency
-                                    );
-
-                                    // Draw a bright border
-                                    ui.painter().rect_stroke(
-                                        expanded_rect,
-                                        6.0,
-                                        egui::Stroke::new(3.0, super::theme::MutantColors::ACCENT_ORANGE),
-                                        egui::epaint::StrokeKind::Outside
-                                    );
-                                }
-                            }
-                        }
-
-                        // Sort children: directories first, then files
-                        let mut sorted_children: Vec<_> = self.root.children.iter_mut().collect();
-                        sorted_children.sort_by(|(_, a), (_, b)| {
-                            match (a.is_dir(), b.is_dir()) {
-                                (true, false) => std::cmp::Ordering::Less,    // Directories come before files
-                                (false, true) => std::cmp::Ordering::Greater, // Files come after directories
-                                _ => a.name.cmp(&b.name),                     // Sort alphabetically within each group
-                            }
-                        });
-
-                        // Draw the sorted children with indentation level 1 (since they are children of the root '/')
-                        for (_, child) in sorted_children {
-                            let (view_details, download_details, delete_details, child_drag_result) = child.ui(ui, 1, selected_path_ref, &self.window_id, &mut self.drag_state);
-                            if view_details.is_some() {
-                                view_details_clicked = view_details;
-                            }
-                            if download_details.is_some() {
-                                download_details_clicked = download_details;
-                            }
-                            if delete_details.is_some() {
-                                delete_details_clicked = delete_details;
-                            }
-                            if !matches!(child_drag_result, crate::app::fs::tree::DragDropResult::None) {
-                                drag_drop_result = child_drag_result;
-                            }
-                        }
-                    });
-
-                    root_expanded = header_result.header_response.clicked() || root_expanded;
+                    // Draw the root folder text
+                    ui.add_space(1.5); // Match indentation from tree.rs
+                    ui.label(text);
                 });
 
-                // Draw refresh button at the same position as file download buttons
+                // Check if root directory is a drop target
+                if self.drag_state.is_dragging {
+                    // Create a larger drop zone that extends beyond just the text
+                    let available_rect = ui.available_rect_before_wrap();
+                    let expanded_rect = available_rect.expand2(egui::Vec2::new(20.0, 10.0)); // Make drop zone larger
+                    let pointer_pos = ui.ctx().pointer_latest_pos();
+
+                    if let Some(pos) = pointer_pos {
+                        if expanded_rect.contains(pos) {
+                            log::info!("Setting drop target to root directory");
+                            self.drag_state.drop_target = Some("/".to_string());
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Copy);
+
+                            // Enhanced visual feedback for drop target
+                            // Draw a filled background
+                            ui.painter().rect_filled(
+                                expanded_rect,
+                                6.0,
+                                egui::Color32::from_rgba_premultiplied(255, 140, 0, 30) // Orange with transparency
+                            );
+
+                            // Draw a bright border
+                            ui.painter().rect_stroke(
+                                expanded_rect,
+                                6.0,
+                                egui::Stroke::new(3.0, super::theme::MutantColors::ACCENT_ORANGE),
+                                egui::epaint::StrokeKind::Outside
+                            );
+                        }
+                    }
+                }
+
+                // Sort children: directories first, then files
+                let mut sorted_children: Vec<_> = self.root.children.iter_mut().collect();
+                sorted_children.sort_by(|(_, a), (_, b)| {
+                    match (a.is_dir(), b.is_dir()) {
+                        (true, false) => std::cmp::Ordering::Less,    // Directories come before files
+                        (false, true) => std::cmp::Ordering::Greater, // Files come after directories
+                        _ => a.name.cmp(&b.name),                     // Sort alphabetically within each group
+                    }
+                });
+
+                // Draw the sorted children with indentation level 1 (since they are children of the root '/')
+                for (_, child) in sorted_children {
+                    let (view_details, download_details, delete_details, child_drag_result) = child.ui(ui, 1, selected_path_ref, &self.window_id, &mut self.drag_state);
+                    if view_details.is_some() {
+                        view_details_clicked = view_details;
+                    }
+                    if download_details.is_some() {
+                        download_details_clicked = download_details;
+                    }
+                    if delete_details.is_some() {
+                        delete_details_clicked = delete_details;
+                    }
+                    if !matches!(child_drag_result, crate::app::fs::tree::DragDropResult::None) {
+                        drag_drop_result = child_drag_result;
+                    }
+                }
+
+                // Draw buttons at the same position as file download buttons
                 let text_baseline_y = row_rect.top() + (row_rect.height() - 12.0) / 2.0;
                 let button_width = 20.0;
-                let current_x = row_rect.right() - 4.0; // Start with right padding
+                let mut current_x = row_rect.right() - 4.0; // Start with right padding
 
-                let button_rect = egui::Rect::from_min_size(
+                // Refresh button (rightmost)
+                let refresh_button_rect = egui::Rect::from_min_size(
                     egui::Pos2::new(current_x - button_width, text_baseline_y),
                     egui::Vec2::new(button_width, 12.0)
                 );
 
                 // Draw refresh button manually
-                let button_response = ui.allocate_rect(button_rect, egui::Sense::click());
-                if button_response.clicked() {
+                let refresh_button_response = ui.allocate_rect(refresh_button_rect, egui::Sense::click());
+                if refresh_button_response.clicked() {
                     // Force a tree rebuild by clearing the current tree
                     self.root = crate::app::fs::tree::TreeNode::new_dir("root");
 
@@ -767,7 +763,7 @@ impl FsWindow {
                         let _ = ctx.list_keys().await;
                     });
                 }
-                if button_response.hovered() {
+                if refresh_button_response.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
 
@@ -780,6 +776,47 @@ impl FsWindow {
                 ui.painter().galley(
                     egui::Pos2::new(current_x - button_width / 2.0 - refresh_galley.rect.width() / 2.0, text_baseline_y),
                     refresh_galley,
+                    super::theme::MutantColors::TEXT_MUTED
+                );
+
+                current_x -= button_width + 4.0; // Move left for expand/collapse button
+
+                // Expand/Collapse all button (to the left of refresh button)
+                let expand_button_rect = egui::Rect::from_min_size(
+                    egui::Pos2::new(current_x - button_width, text_baseline_y),
+                    egui::Vec2::new(button_width, 12.0)
+                );
+
+                // Draw expand/collapse button manually
+                let expand_button_response = ui.allocate_rect(expand_button_rect, egui::Sense::click());
+                if expand_button_response.clicked() {
+                    // Check if any directories are expanded to determine action
+                    if self.root.has_expanded_dirs() {
+                        // Some directories are expanded, so collapse all
+                        self.root.collapse_all();
+                    } else {
+                        // All directories are collapsed, so expand all
+                        self.root.expand_all();
+                    }
+                }
+                if expand_button_response.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+
+                // Draw the expand/collapse icon based on current state
+                let expand_icon = if self.root.has_expanded_dirs() {
+                    "⊟" // Collapse all icon (minus in box)
+                } else {
+                    "⊞" // Expand all icon (plus in box)
+                };
+                let expand_galley = ui.painter().layout_no_wrap(
+                    expand_icon.to_string(),
+                    egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                    super::theme::MutantColors::TEXT_MUTED
+                );
+                ui.painter().galley(
+                    egui::Pos2::new(current_x - button_width / 2.0 - expand_galley.rect.width() / 2.0, text_baseline_y),
+                    expand_galley,
                     super::theme::MutantColors::TEXT_MUTED
                 );
 

@@ -660,4 +660,37 @@ impl TreeNode {
             ("📄", theme::MutantColors::TEXT_MUTED)
         }
     }
+
+    /// Expand all directories recursively
+    pub fn expand_all(&mut self) {
+        if self.is_dir() {
+            self.expanded = true;
+            for (_, child) in &mut self.children {
+                child.expand_all();
+            }
+        }
+    }
+
+    /// Collapse all directories recursively
+    pub fn collapse_all(&mut self) {
+        if self.is_dir() {
+            self.expanded = false;
+            for (_, child) in &mut self.children {
+                child.collapse_all();
+            }
+        }
+    }
+
+    /// Check if any directory is expanded (used to determine expand/collapse all button state)
+    pub fn has_expanded_dirs(&self) -> bool {
+        if self.is_dir() && self.expanded {
+            return true;
+        }
+        for (_, child) in &self.children {
+            if child.has_expanded_dirs() {
+                return true;
+            }
+        }
+        false
+    }
 }
