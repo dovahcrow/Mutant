@@ -61,7 +61,7 @@ impl ColonyManager {
             }
             None => {
                 log::warn!("No private key provided, using default testnet master key for colony");
-                DEV_TESTNET_PRIVATE_KEY_HEX.to_string()
+                panic!("LOL");
             }
         };
 
@@ -403,7 +403,13 @@ impl ColonyManager {
         ).await
         .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod manager: {}", e)))?;
 
-        // Download and sync the contact's pod using refresh_ref
+        // First, try to add the pod as a reference using add_pod_ref
+        pod_manager.add_pod_ref("contact", pod_address)
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to add pod reference: {}", e)))?;
+
+        log::debug!("Added pod reference: {} at depth 1", pod_address);
+
+        // Now download and sync the contact's pod using refresh_ref
         pod_manager.refresh_ref(1).await
             .map_err(|e| DaemonError::ColonyError(format!("Failed to sync contact pod: {}", e)))?;
 

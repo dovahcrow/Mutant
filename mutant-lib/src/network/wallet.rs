@@ -54,17 +54,8 @@ pub async fn create_testnet_wallet_with_transfer(
     };
 
     // Generate a new random private key for testnet use
-    use rand::RngCore;
-    let mut rng = rand::thread_rng();
-    let mut private_key_bytes = [0u8; 32];
-    rng.fill_bytes(&mut private_key_bytes);
-
-    // Ensure the private key is valid (not zero)
-    while private_key_bytes.iter().all(|&b| b == 0) {
-        rng.fill_bytes(&mut private_key_bytes);
-    }
-
-    let new_private_key_hex = format!("0x{}", hex::encode(private_key_bytes));
+    // This ensures the key is valid for secp256k1 and unique each time
+    let new_private_key_hex = derive_testnet_private_key(master_private_key_hex)?;
     info!("Generated new random private key for testnet");
 
     // Create a wallet from this private key
@@ -130,4 +121,77 @@ pub async fn create_testnet_wallet_with_transfer(
     info!("Generated testnet wallet with public address: {}", new_address_hex);
 
     Ok((new_wallet, new_private_key_hex, new_address_hex))
+}
+
+/// Generates a new valid secp256k1 private key for testnet use
+/// This ensures the generated key is random but valid for EVM operations
+fn derive_testnet_private_key(_master_private_key_hex: &str) -> Result<String, NetworkError> {
+    use rand::RngCore;
+
+    // Generate random bytes and add timestamp for uniqueness
+    let mut rng = rand::thread_rng();
+    let mut random_bytes = [0u8; 24]; // 24 random bytes
+    rng.fill_bytes(&mut random_bytes);
+
+    // Add current timestamp for uniqueness on each call
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+
+    // Combine random bytes + timestamp for entropy
+    let mut hasher = Sha256::new();
+    hasher.update(&random_bytes);
+    hasher.update(&timestamp.to_le_bytes());
+    hasher.update(b"testnet_unique_key"); // Salt for domain separation
+    let derived_hash = hasher.finalize();
+
+    // secp256k1 curve order (n) - private key must be in range [1, n-1]
+    // n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+    let secp256k1_order = [
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
+        0xBA, 0xAE, 0xDC, 0xE6, 0xAF, 0x48, 0xA0, 0x3B,
+        0xBF, 0xD2, 0x5E, 0x8C, 0xD0, 0x36, 0x41, 0x41
+    ];
+
+    // Ensure the derived key is within valid range by taking modulo (n-1) and adding 1
+    let mut derived_key_bytes = derived_hash.to_vec();
+
+    // Simple modular reduction: if derived >= n, subtract n until < n
+    while is_greater_or_equal(&derived_key_bytes, &secp256k1_order) {
+        subtract_bytes(&mut derived_key_bytes, &secp256k1_order);
+    }
+
+    // Ensure key is not zero (must be >= 1)
+    if derived_key_bytes.iter().all(|&b| b == 0) {
+        derived_key_bytes[31] = 1; // Set to 1 if somehow zero
+    }
+
+    let derived_private_key_hex = format!("0x{}", hex::encode(derived_key_bytes));
+    info!("Successfully generated valid secp256k1 private key for testnet");
+
+    Ok(derived_private_key_hex)
+}
+
+/// Helper function to compare if a >= b for 32-byte arrays
+fn is_greater_or_equal(a: &[u8], b: &[u8]) -> bool {
+    for i in 0..32 {
+        if a[i] > b[i] {
+            return true;
+        } else if a[i] < b[i] {
+            return false;
+        }
+    }
+    true // Equal case
+}
+
+/// Helper function to subtract b from a (a = a - b) for 32-byte arrays
+fn subtract_bytes(a: &mut [u8], b: &[u8]) {
+    let mut borrow = 0u16;
+    for i in (0..32).rev() {
+        let temp = a[i] as u16 + 256 - b[i] as u16 - borrow;
+        a[i] = temp as u8;
+        borrow = if temp < 256 { 1 } else { 0 };
+    }
 }

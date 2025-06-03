@@ -61,6 +61,8 @@ pub enum Commands {
     Daemon {
         #[command(subcommand)]
         command: DaemonCommands,
+        #[arg(long, default_value = "/tmp/mutant-daemon.lock", help = "Path to the daemon lock file")]
+        lock_file: String,
     },
     #[command(about = "Synchronize local index cache with remote storage")]
     Sync {

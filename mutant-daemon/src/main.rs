@@ -19,6 +19,8 @@ struct Args {
     ignore_ctrl_c: bool,
     #[arg(long, default_value = "127.0.0.1:3030", help = "Address to bind the WebSocket server to")]
     bind: String,
+    #[arg(long, default_value = "/tmp/mutant-daemon.lock", help = "Path to the daemon lock file")]
+    lock_file: String,
 }
 
 #[tokio::main]
@@ -38,6 +40,7 @@ async fn main() -> Result<(), Error> {
         alphanet: args.alphanet,
         ignore_ctrl_c: args.ignore_ctrl_c,
         bind_address: args.bind,
+        lock_file_path: args.lock_file,
     };
 
     // Run the application

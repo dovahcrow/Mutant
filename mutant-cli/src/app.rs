@@ -66,8 +66,8 @@ pub async fn run() -> Result<()> {
         Commands::Tasks { command } => {
             commands::tasks::handle_tasks(command).await?;
         }
-        Commands::Daemon { command } => {
-            commands::daemon::handle_daemon(command).await?;
+        Commands::Daemon { command, lock_file } => {
+            commands::daemon::handle_daemon(command, lock_file).await?;
         }
         Commands::Sync {
             background,

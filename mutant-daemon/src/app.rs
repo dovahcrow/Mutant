@@ -25,10 +25,10 @@ async fn init_mutant(network_choice: NetworkChoice, private_key: Option<String>)
     let mutant = match (network_choice, private_key) {
         // Full access with private key
         (NetworkChoice::Devnet, _) => {
-            log::info!("Running in testnet mode - creating new random wallet");
+            log::info!("Running in testnet mode - generating new random wallet");
             is_public_only = false;
 
-            // Use the new testnet mode that creates a random wallet and transfers funds
+            // Use the new testnet mode that generates a valid wallet and transfers funds
             match MutAnt::init_testnet().await {
                 Ok((mutant, public_address, new_private_key)) => {
                     log::info!("🔑 NEW TESTNET WALLET CREATED");
@@ -154,23 +154,24 @@ pub struct AppOptions {
     pub alphanet: bool,
     pub ignore_ctrl_c: bool,
     pub bind_address: String,
+    pub lock_file_path: String,
 }
 
 pub async fn run(options: AppOptions) -> Result<(), Error> {
-    // check if the daemon is running by checking the /tmp/mutant-daemon.lock file
-    if std::fs::File::open("/tmp/mutant-daemon.lock").is_ok() {
+    // check if the daemon is running by checking the lock file
+    if std::fs::File::open(&options.lock_file_path).is_ok() {
         println!("Mutant Daemon is already running");
         return Ok(());
     }
 
     // Create the lock file. It will be held until the process exits.
     let _lock_file =
-        lockfile::Lockfile::create("/tmp/mutant-daemon.lock").map_err(Error::Lockfile)?;
+        lockfile::Lockfile::create(&options.lock_file_path).map_err(Error::Lockfile)?;
 
     // put the pid of the daemon in the lock file
     // Note: The lockfile crate typically manages this implicitly through the file lock.
     // Writing the PID might be redundant or could be handled differently.
-    std::fs::write("/tmp/mutant-daemon.lock", std::process::id().to_string())?;
+    std::fs::write(&options.lock_file_path, std::process::id().to_string())?;
 
     log::info!("Starting Mutant Daemon...");
 
