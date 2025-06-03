@@ -496,9 +496,9 @@ pub struct MvSuccessResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KeyDetails {
     pub key: String,
-    pub total_size: usize,
-    pub pad_count: usize,
-    pub confirmed_pads: usize,
+    pub total_size: u64,
+    pub pad_count: u64,
+    pub confirmed_pads: u64,
     pub is_public: bool,
     pub public_address: Option<String>, // hex representation
 }
@@ -544,7 +544,7 @@ pub struct SyncResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetResult {
     /// Total size of the retrieved data in bytes.
-    pub size: usize,
+    pub size: u64,
     /// Indicates if data was streamed back to the client.
     pub streamed: bool,
 }
@@ -678,9 +678,9 @@ pub struct GetDataResponse {
     /// The task ID associated with this data chunk.
     pub task_id: TaskId,
     /// The index of this chunk in the overall file.
-    pub chunk_index: usize,
+    pub chunk_index: u64,
     /// The total number of chunks in the file.
-    pub total_chunks: usize,
+    pub total_chunks: u64,
     /// The actual data for this chunk.
     pub data: Vec<u8>,
     /// Whether this is the last chunk of the file.

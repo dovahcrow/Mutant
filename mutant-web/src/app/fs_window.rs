@@ -293,7 +293,7 @@ impl FsWindow {
                         for (_, internal_tab) in fs_window.internal_dock.iter_all_tabs_mut() {
                             if let crate::app::fs::internal_tab::FsInternalTab::FileViewer(file_tab) = internal_tab {
                                 if file_tab.file.key == key_for_progress {
-                                    file_tab.downloaded_bytes = downloaded_bytes;
+                                    file_tab.downloaded_bytes = downloaded_bytes as u64;
                                     file_tab.total_bytes = total_file_size;
 
                                     // Calculate progress using the known total file size

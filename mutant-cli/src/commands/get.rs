@@ -137,7 +137,7 @@ pub async fn handle_get(
                     if public {
                         let history_entry = FetchHistoryEntry {
                             address: key,
-                            size: result.size,
+                            size: result.size as usize,
                             fetched_at: Utc::now(),
                         };
                         append_history_entry(history_entry);

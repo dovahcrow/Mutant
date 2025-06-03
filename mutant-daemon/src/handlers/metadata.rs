@@ -27,12 +27,12 @@ pub(crate) async fn handle_list_keys(
                 .into_iter()
                 .map(|(key, entry)| match entry {
                     IndexEntry::PrivateKey(pads) => {
-                        let total_size = pads.iter().map(|p| p.size).sum::<usize>();
-                        let pad_count = pads.len();
+                        let total_size = pads.iter().map(|p| p.size).sum::<usize>() as u64;
+                        let pad_count = pads.len() as u64;
                         let confirmed_pads = pads
                             .iter()
                             .filter(|p| p.status == PadStatus::Confirmed)
-                            .count();
+                            .count() as u64;
                         KeyDetails {
                             key,
                             total_size,
@@ -44,8 +44,8 @@ pub(crate) async fn handle_list_keys(
                     }
                     IndexEntry::PublicUpload(index_pad, pads) => {
                         let data_size = pads.iter().map(|p| p.size).sum::<usize>();
-                        let total_size = data_size + index_pad.size;
-                        let pad_count = pads.len() + 1; // +1 for index pad
+                        let total_size = (data_size + index_pad.size) as u64;
+                        let pad_count = (pads.len() + 1) as u64; // +1 for index pad
                         let confirmed_data_pads = pads
                             .iter()
                             .filter(|p| p.status == PadStatus::Confirmed)
@@ -55,7 +55,7 @@ pub(crate) async fn handle_list_keys(
                         } else {
                             0
                         };
-                        let confirmed_pads = confirmed_data_pads + index_pad_confirmed;
+                        let confirmed_pads = (confirmed_data_pads + index_pad_confirmed) as u64;
                         KeyDetails {
                             key,
                             total_size,

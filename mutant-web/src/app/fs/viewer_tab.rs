@@ -36,7 +36,7 @@ pub fn update_video_player_z_index() {
 }
 
 // Helper function to format file sizes (redefined locally)
-fn humanize_size(size: usize) -> String {
+fn humanize_size(size: u64) -> String {
     format_size(size, BINARY)
 }
 
@@ -72,10 +72,10 @@ pub struct FileViewerTab {
     pub loading_progress: f32, // 0.0 to 1.0
     /// Total bytes expected for the file
     #[serde(skip)]
-    pub total_bytes: Option<usize>,
+    pub total_bytes: Option<u64>,
     /// Bytes downloaded so far
     #[serde(skip)]
-    pub downloaded_bytes: usize,
+    pub downloaded_bytes: u64,
     /// Preferred dock area ID (for smart placement)
     #[serde(skip)]
     pub preferred_dock_area: Option<String>,

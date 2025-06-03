@@ -661,8 +661,8 @@ pub(crate) async fn handle_get(
 
                             if let Err(e) = tx.send(Response::GetData(GetDataResponse {
                                 task_id,
-                                chunk_index: *chunk_index * 1000 + sub_chunk_index, // Unique sub-chunk index
-                                total_chunks: total,
+                                chunk_index: (*chunk_index * 1000 + sub_chunk_index) as u64, // Unique sub-chunk index
+                                total_chunks: total as u64,
                                 data: sub_chunk.to_vec(),
                                 is_last: is_final_chunk,
                             })) {
@@ -897,7 +897,7 @@ pub(crate) async fn handle_get(
                             entry.task.status = TaskStatus::Completed;
                             entry.task.result =
                                 TaskResult::Result(TaskResultType::Get(GetResult {
-                                    size: data_bytes.len(),
+                                    size: data_bytes.len() as u64,
                                     streamed: stream_data,
                                 }));
                             entry.abort_handle = None; // Task finished, remove handle
