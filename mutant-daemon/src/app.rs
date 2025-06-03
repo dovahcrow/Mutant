@@ -23,9 +23,23 @@ async fn init_mutant(network_choice: NetworkChoice, private_key: Option<String>)
     let mutant = match (network_choice, private_key) {
         // Full access with private key
         (NetworkChoice::Devnet, _) => {
-            log::info!("Running in local mode");
+            log::info!("Running in testnet mode - creating new random wallet");
             is_public_only = false;
-            MutAnt::init_local().await
+
+            // Use the new testnet mode that creates a random wallet and transfers funds
+            match MutAnt::init_testnet().await {
+                Ok((mutant, public_address)) => {
+                    log::info!("🔑 NEW TESTNET WALLET CREATED");
+                    log::info!("📍 Public Address: {}", public_address);
+                    log::info!("💰 Transferred 10% of master wallet funds to new wallet");
+                    log::info!("🚀 Using new wallet for all operations");
+                    Ok(mutant)
+                }
+                Err(e) => {
+                    log::warn!("Failed to create testnet wallet: {}. Falling back to master key.", e);
+                    MutAnt::init_local().await
+                }
+            }
         }
         (NetworkChoice::Alphanet, Some(key)) => {
             log::info!("Running in alphanet mode");

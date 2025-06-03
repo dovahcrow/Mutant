@@ -2341,6 +2341,7 @@ dependencies = [
 [[package]]
 name = "colonylib"
 version = "0.1.0"
+source = "git+https://github.com/zettawatt/colonylib?branch=main#43ddce4adb925290d3096066ebdd48d860d21052"
 dependencies = [
  "autonomi",
  "bip39",

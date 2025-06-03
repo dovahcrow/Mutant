@@ -1,4 +1,3 @@
-use dialoguer;
 use std::{io, path::PathBuf};
 use thiserror::Error;
 use warp::reject::Reject;
@@ -39,7 +38,7 @@ pub enum Error {
     NoWalletsFound(PathBuf),
 
     #[error("Failed to get user wallet selection: {0}")]
-    UserSelectionFailed(dialoguer::Error),
+    UserSelectionFailed(String),
 
     #[error("No wallet configured or selected")]
     WalletNotSet,

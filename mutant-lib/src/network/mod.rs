@@ -7,6 +7,7 @@ pub mod wallet;
 use blsttc::SecretKey;
 use client::Config;
 pub use error::NetworkError;
+use sha2::{Digest, Sha256};
 
 use self::wallet::create_wallet;
 use crate::index::PadInfo;
@@ -85,6 +86,39 @@ impl Network {
         );
 
         let (wallet, secret_key) = create_wallet(private_key_hex, network_choice)?;
+
+        Ok(Self {
+            wallet,
+            network_choice,
+            secret_key,
+        })
+    }
+
+    /// Creates a new `AutonomiNetworkAdapter` instance from an existing wallet.
+    pub(crate) fn new_with_wallet(
+        wallet: Wallet,
+        private_key_hex: &str,
+        network_choice: NetworkChoice,
+    ) -> Result<Self, NetworkError> {
+        debug!(
+            "Creating AutonomiNetworkAdapter with existing wallet for network: {:?}",
+            network_choice
+        );
+
+        // Create secret key from private key for scratchpad operations
+        let hex_to_decode = private_key_hex
+            .strip_prefix("0x")
+            .unwrap_or(private_key_hex);
+        let pk_bytes = hex::decode(hex_to_decode)
+            .map_err(|e| NetworkError::InvalidKeyInput(format!("Invalid hex private key: {}", e)))?;
+
+        let mut hasher = Sha256::new();
+        hasher.update(&pk_bytes);
+        let hash_result = hasher.finalize();
+        let key_array: [u8; 32] = hash_result.into();
+        let secret_key = SecretKey::from_bytes(key_array).map_err(|e| {
+            NetworkError::InvalidKeyInput(format!("Failed to create SecretKey from HASH: {:?}", e))
+        })?;
 
         Ok(Self {
             wallet,

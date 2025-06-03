@@ -75,7 +75,7 @@ fn prompt_user_for_wallet(wallets: &[PathBuf]) -> Result<PathBuf, Error> {
         .items(&items)
         .default(0)
         .interact_opt()
-        .map_err(Error::UserSelectionFailed)?;
+        .map_err(|e| Error::UserSelectionFailed(e.to_string()))?;
 
     match selection {
         Some(index) => Ok(wallets[index].clone()),

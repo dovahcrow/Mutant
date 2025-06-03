@@ -36,6 +36,14 @@ impl MutAnt {
 
         Ok(Self { index, data })
     }
+
+    async fn init_all_with_wallet(wallet: Wallet, private_key_hex: &str, network_choice: NetworkChoice) -> Result<Self, Error> {
+        let network = Arc::new(Network::new_with_wallet(wallet, private_key_hex, network_choice)?);
+        let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
+        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone())));
+
+        Ok(Self { index, data })
+    }
     pub async fn init(private_key_hex: &str) -> Result<Self, Error> {
         Self::init_all(private_key_hex, NetworkChoice::Mainnet).await
     }
@@ -58,6 +66,24 @@ impl MutAnt {
 
     pub async fn init_public_alphanet() -> Result<Self, Error> {
         Self::init_all(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Alphanet).await
+    }
+
+    /// Initialize MutAnt for testnet mode with a new random wallet and fund transfer
+    /// Returns (MutAnt instance, new wallet public address)
+    pub async fn init_testnet() -> Result<(Self, String), Error> {
+        use crate::network::wallet::create_testnet_wallet_with_transfer;
+        use crate::network::DEV_TESTNET_PRIVATE_KEY_HEX;
+
+        // Create new random wallet and transfer funds from master
+        let (new_wallet, new_private_key_hex, new_public_address) =
+            create_testnet_wallet_with_transfer(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet)
+                .await
+                .map_err(|e| Error::Network(e))?;
+
+        // Initialize MutAnt with the new wallet
+        let mutant = Self::init_all_with_wallet(new_wallet, &new_private_key_hex, NetworkChoice::Devnet).await?;
+
+        Ok((mutant, new_public_address))
     }
 
     pub async fn put(

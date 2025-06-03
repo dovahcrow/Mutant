@@ -6,6 +6,9 @@ use autonomi::{Client, Wallet};
 use mutant_lib::config::NetworkChoice;
 use crate::error::Error as DaemonError;
 
+/// Default testnet private key used for development and testing
+const DEV_TESTNET_PRIVATE_KEY_HEX: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
 /// Colony integration manager for MutAnt daemon
 ///
 /// This module provides indexing and search capabilities for public content
@@ -57,8 +60,8 @@ impl ColonyManager {
                 }
             }
             None => {
-                log::warn!("No private key provided, using default test key for colony");
-                panic!("No private key provided, and no default test key available. Please provide a private key or set the COLONY_MNEMONIC environment variable.");
+                log::warn!("No private key provided, using default testnet master key for colony");
+                DEV_TESTNET_PRIVATE_KEY_HEX.to_string()
             }
         };
 
@@ -313,7 +316,7 @@ impl ColonyManager {
         // For now, create a new pod each time
         // In a real implementation, we'd store the user's pod address persistently
         log::info!("Creating new pod for user: {}", user_key);
-        let (pod_address, _scratchpad_address) = pod_manager.add_pod().await
+        let (pod_address, _scratchpad_address) = pod_manager.add_pod("main").await
             .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod: {}", e)))?;
 
         // Add basic metadata about the pod itself (simplified format)
