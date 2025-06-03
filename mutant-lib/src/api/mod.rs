@@ -98,6 +98,36 @@ impl MutAnt {
             .await
     }
 
+    /// Get data with immediate pad streaming for video playback.
+    /// Returns a receiver that immediately starts receiving pads as they arrive.
+    /// This is used specifically for video streaming where pads need to be forwarded immediately as they arrive.
+    pub async fn get_with_immediate_streaming(
+        &self,
+        user_key: &str,
+        get_callback: Option<GetCallback>,
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<(usize, Vec<u8>)>, Error> {
+        self.data
+            .read()
+            .await
+            .get_with_immediate_streaming(user_key, get_callback)
+            .await
+    }
+
+    /// Get public data with immediate pad streaming for video playback.
+    /// Returns a receiver that immediately starts receiving pads as they arrive.
+    /// This is used specifically for video streaming where pads need to be forwarded immediately as they arrive.
+    pub async fn get_public_with_immediate_streaming(
+        &self,
+        address: &ScratchpadAddress,
+        get_callback: Option<GetCallback>,
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<(usize, Vec<u8>)>, Error> {
+        self.data
+            .read()
+            .await
+            .get_public_with_immediate_streaming(address, get_callback)
+            .await
+    }
+
     pub async fn rm(&self, user_key: &str) -> Result<(), Error> {
         self.index.write().await.remove_key(user_key)?;
         Ok(())

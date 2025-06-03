@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use autonomi::ScratchpadAddress;
 use log::{debug, error, warn};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc};
 
 use super::{DATA_ENCODING_PUBLIC_DATA, DATA_ENCODING_PUBLIC_INDEX};
 
@@ -130,6 +130,138 @@ pub(super) async fn get(
     let pads_to_fetch = pads; // Use the vector directly
 
     fetch_pads_data(network, pads_to_fetch, is_public, callback, stream_data).await
+}
+
+/// Retrieves data with immediate pad streaming support.
+/// Returns the receiver immediately so caller can receive pads as they arrive.
+/// The data download happens in the background and the receiver gets pads immediately.
+pub(super) async fn get_with_immediate_streaming(
+    index: Arc<RwLock<MasterIndex>>,
+    network: Arc<Network>,
+    name: &str,
+    get_callback: Option<GetCallback>,
+) -> Result<mpsc::UnboundedReceiver<(usize, Vec<u8>)>, Error> {
+    if !index.read().await.is_finished(name) {
+        return Err(Error::Internal(format!(
+            "Key {} upload is not finished, cannot get data",
+            name
+        )));
+    }
+
+    let pads = index.read().await.get_pads(name);
+
+    if pads.is_empty() {
+        return Err(Error::Internal(format!("No pads found for key {}", name)));
+    }
+
+    let callback = get_callback.clone();
+    let is_public = index.read().await.is_public(name);
+    let total_chunks = pads.len();
+
+    invoke_get_callback(&callback, GetEvent::Starting { total_chunks })
+        .await
+        .unwrap();
+
+    // Create channel for immediate pad streaming
+    let (pad_tx, pad_rx) = mpsc::unbounded_channel::<(usize, Vec<u8>)>();
+
+    // Spawn background task to download and stream pads immediately
+    tokio::spawn(async move {
+        if let Err(e) = fetch_pads_data_with_immediate_streaming(
+            network,
+            pads,
+            is_public,
+            callback,
+            pad_tx
+        ).await {
+            error!("get_with_immediate_streaming: Background download failed: {}", e);
+        }
+    });
+
+    // Return receiver immediately so caller can start receiving pads
+    Ok(pad_rx)
+}
+
+/// Similar function for public addresses with immediate streaming
+pub(super) async fn get_public_with_immediate_streaming(
+    network: Arc<Network>,
+    address: &ScratchpadAddress,
+    get_callback: Option<GetCallback>,
+) -> Result<mpsc::UnboundedReceiver<(usize, Vec<u8>)>, Error> {
+    let client = network
+        .get_client(Config::Get)
+        .await
+        .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
+    let index_pad_data = network.get(&client, address, None).await?;
+    let callback = get_callback.clone();
+
+    debug!(
+        "get_public_with_immediate_streaming: Processing pad {} with data_encoding={}",
+        address, index_pad_data.data_encoding
+    );
+
+    // Create channel for immediate pad streaming
+    let (pad_tx, pad_rx) = mpsc::unbounded_channel::<(usize, Vec<u8>)>();
+
+    match index_pad_data.data_encoding {
+        DATA_ENCODING_PUBLIC_INDEX => {
+            debug!("get_public_with_immediate_streaming: Found PUBLIC_INDEX pad, deserializing index");
+            let index: Vec<PadInfo> = serde_cbor::from_slice(&index_pad_data.data)
+                .map_err(|e| Error::Internal(format!("Failed to decode public index: {}", e)))?;
+
+            debug!("get_public_with_immediate_streaming: Index contains {} data pads", index.len());
+
+            invoke_get_callback(
+                &callback,
+                GetEvent::Starting {
+                    total_chunks: index.len() + 1,
+                },
+            )
+            .await
+            .unwrap();
+
+            invoke_get_callback(&callback, GetEvent::PadFetched)
+                .await
+                .unwrap();
+
+            debug!("get_public_with_immediate_streaming: Fetching data pads with immediate streaming");
+
+            // Spawn background task to download and stream pads immediately
+            tokio::spawn(async move {
+                if let Err(e) = fetch_pads_data_with_immediate_streaming(network, index, true, callback, pad_tx).await {
+                    error!("get_public_with_immediate_streaming: Background download failed: {}", e);
+                }
+            });
+
+            Ok(pad_rx)
+        }
+        DATA_ENCODING_PUBLIC_DATA => {
+            debug!("get_public_with_immediate_streaming: Found PUBLIC_DATA pad, returning data directly");
+            invoke_get_callback(&callback, GetEvent::Starting { total_chunks: 1 })
+                .await
+                .unwrap();
+
+            // Spawn background task to send the single pad immediately
+            tokio::spawn(async move {
+                if let Err(_) = pad_tx.send((0, index_pad_data.data.clone())) {
+                    warn!("get_public_with_immediate_streaming: Failed to send pad data to channel");
+                }
+
+                invoke_get_callback(&callback, GetEvent::PadFetched)
+                    .await
+                    .unwrap();
+                invoke_get_callback(&callback, GetEvent::Complete)
+                    .await
+                    .unwrap();
+            });
+
+            Ok(pad_rx)
+        }
+        _ => Err(Error::Internal(format!(
+            "Unexpected data encoding {} found for public address {}",
+            index_pad_data.data_encoding, address
+        ))),
+    }
 }
 
 // Context for the GET AsyncTask - REMOVED (or simplified)
@@ -600,4 +732,171 @@ async fn fetch_pads_data_streaming(
 
     debug!("fetch_pads_data_streaming: Assembled final data: {} bytes", final_data.len());
     Ok(final_data)
+}
+
+/// Fetches pads with immediate streaming through a provided channel.
+/// This function forwards each pad immediately as it arrives, without waiting for completion.
+/// Used specifically for video streaming where immediate pad forwarding is required.
+async fn fetch_pads_data_with_immediate_streaming(
+    network: Arc<Network>,
+    pads: Vec<PadInfo>,
+    public: bool,
+    get_callback: Option<GetCallback>,
+    pad_sender: mpsc::UnboundedSender<(usize, Vec<u8>)>,
+) -> Result<(), Error> {
+    use std::collections::BTreeMap;
+
+    let total_pads_to_fetch = pads.len();
+    debug!(
+        "fetch_pads_data_with_immediate_streaming: Starting to fetch {} pads with immediate forwarding, public={}",
+        total_pads_to_fetch, public
+    );
+
+    if total_pads_to_fetch == 0 {
+        debug!("fetch_pads_data_with_immediate_streaming: No pads to fetch, returning empty data");
+        invoke_get_callback(&get_callback, GetEvent::Complete)
+            .await
+            .unwrap();
+        return Ok(());
+    }
+
+    // Create a channel for receiving results as they arrive
+    let (result_tx, mut result_rx) = mpsc::unbounded_channel::<(usize, Vec<u8>)>();
+
+    // Buffer for final data assembly (ordered by chunk_index)
+    let mut final_data_buffer: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
+    let mut completed_count = 0;
+    let mut total_data_size = 0;
+
+    // Spawn concurrent tasks to fetch pads
+    let mut task_handles = Vec::new();
+    for pad in pads {
+        let network_clone = network.clone();
+        let result_tx_clone = result_tx.clone();
+        let get_callback_clone = get_callback.clone();
+        let pad_sender_clone = pad_sender.clone();
+
+        let task_handle = tokio::spawn(async move {
+            let mut retries_left = 20;
+            let owned_key;
+            let secret_key_ref = if public {
+                None
+            } else {
+                owned_key = pad.secret_key();
+                Some(&owned_key)
+            };
+
+            // Get a client for this task
+            let client = network_clone
+                .get_client(crate::network::client::Config::Get)
+                .await
+                .map_err(|e| Error::Network(NetworkError::ClientAccessError(e.to_string())))?;
+
+            // Try to fetch the pad with retries
+            loop {
+                match network_clone.get(&client, &pad.address, secret_key_ref).await {
+                    Ok(get_result) => {
+                        let checksum_match = pad.checksum == PadInfo::checksum(&get_result.data);
+                        let counter_match = pad.last_known_counter == get_result.counter;
+                        let size_match = pad.size == get_result.data.len();
+
+                        if checksum_match && counter_match && size_match {
+                            // Send regular PadFetched event for progress tracking
+                            invoke_get_callback(&get_callback_clone, GetEvent::PadFetched)
+                                .await
+                                .map_err(|e| Error::Internal(format!("Callback error: {}", e)))?;
+
+                            // IMMEDIATELY forward the pad data through the streaming channel
+                            if let Err(_) = pad_sender_clone.send((pad.chunk_index, get_result.data.clone())) {
+                                warn!("fetch_pads_data_with_immediate_streaming: Failed to send pad {} to streaming channel", pad.chunk_index);
+                            } else {
+                                debug!("fetch_pads_data_with_immediate_streaming: Immediately forwarded pad {} ({} bytes)",
+                                       pad.chunk_index, get_result.data.len());
+                            }
+
+                            // Also send to result channel for final assembly
+                            if let Err(_) = result_tx_clone.send((pad.chunk_index, get_result.data)) {
+                                return Err(Error::Internal("Result channel closed".to_string()));
+                            }
+
+                            return Ok(());
+                        }
+                    }
+                    Err(_) => {
+                        // Error handling - continue to retry
+                    }
+                }
+
+                retries_left -= 1;
+
+                warn!(
+                    "GET failed for pad {} (chunk {}). Retries left: {}",
+                    pad.address, pad.chunk_index, retries_left
+                );
+
+                if retries_left <= 0 {
+                    return Err(Error::Internal(format!(
+                        "GET failed for pad {} (chunk {}) after {} retries",
+                        pad.address, pad.chunk_index, 20
+                    )));
+                }
+
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        });
+
+        task_handles.push(task_handle);
+    }
+
+    // Drop the original senders so the channels close when all tasks complete
+    drop(result_tx);
+    drop(pad_sender);
+
+    // Process results as they arrive for final assembly
+    loop {
+        tokio::select! {
+            result = result_rx.recv() => {
+                match result {
+                    Some((chunk_index, data)) => {
+                        debug!("fetch_pads_data_with_immediate_streaming: Received chunk {} for final assembly ({} bytes)",
+                               chunk_index, data.len());
+
+                        total_data_size += data.len();
+                        final_data_buffer.insert(chunk_index, data);
+                        completed_count += 1;
+
+                        // Check if we've completed all chunks
+                        if completed_count >= total_pads_to_fetch {
+                            break;
+                        }
+                    }
+                    None => {
+                        // Channel closed, no more results
+                        debug!("fetch_pads_data_with_immediate_streaming: Result channel closed");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Wait for all tasks to complete
+    for handle in task_handles {
+        if let Err(e) = handle.await {
+            error!("fetch_pads_data_with_immediate_streaming: Task failed: {:?}", e);
+            return Err(Error::Internal(format!("Task join error: {:?}", e)));
+        }
+    }
+
+    // Send completion event
+    invoke_get_callback(&get_callback, GetEvent::Complete)
+        .await
+        .unwrap();
+
+    debug!("fetch_pads_data_with_immediate_streaming: Completed streaming {} chunks, total data size: {}",
+           completed_count, total_data_size);
+
+    // We don't need to assemble final data since we're only streaming
+    debug!("fetch_pads_data_with_immediate_streaming: Immediate streaming completed successfully");
+    Ok(())
 }

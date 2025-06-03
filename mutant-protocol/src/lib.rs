@@ -687,6 +687,24 @@ pub struct GetDataResponse {
     pub is_last: bool,
 }
 
+/// Response containing a streaming pad chunk for immediate video playback.
+/// This is sent as soon as each pad is downloaded, without waiting for completion.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StreamingPadResponse {
+    /// The task ID associated with this streaming get operation.
+    pub task_id: TaskId,
+    /// The index of this pad in the overall file.
+    pub pad_index: usize,
+    /// The total number of pads expected (may be updated as more pads are discovered).
+    pub total_pads: usize,
+    /// The actual pad data.
+    pub data: Vec<u8>,
+    /// Whether this is the last pad of the file.
+    pub is_last: bool,
+    /// The key being streamed (for client identification).
+    pub key: String,
+}
+
 /// Represents all possible responses the daemon can send to the client.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
@@ -705,6 +723,8 @@ pub enum Response {
     Export(ExportResponse),
     /// A chunk of data from a get operation.
     GetData(GetDataResponse),
+    /// A streaming pad chunk from a get operation (for immediate video streaming).
+    StreamingPad(StreamingPadResponse),
     // Colony integration responses
     Search(SearchResponse),
     IndexContent(IndexContentResponse),

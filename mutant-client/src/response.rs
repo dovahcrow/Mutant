@@ -1,4 +1,4 @@
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 use mutant_protocol::{
     ErrorResponse, ExportResponse, ImportResponse, ListKeysResponse, MvSuccessResponse, Response,
     RmSuccessResponse, Task, TaskCreatedResponse, TaskListResponse, TaskProgress,
@@ -438,6 +438,23 @@ impl MutantClient {
                 }
             }
             // Other colony responses that don't have direct client methods yet
+            Response::StreamingPad(streaming_pad_response) => {
+                let task_id = streaming_pad_response.task_id;
+                info!("CLIENT: Received streaming pad for task {} (pad {}/{})",
+                      task_id,
+                      streaming_pad_response.pad_index + 1,
+                      streaming_pad_response.total_pads);
+
+                // Forward streaming pad data immediately to the data stream channel
+                if let Some((_, _, Some(data_stream_tx))) = task_channels.lock().unwrap().get(&task_id) {
+                    // Send the pad data to the client immediately
+                    if data_stream_tx.send(Ok(streaming_pad_response.data)).is_err() {
+                        warn!("CLIENT: Failed to send streaming pad data for task {} (receiver dropped)", task_id);
+                    }
+                } else {
+                    warn!("CLIENT: No data stream channel found for streaming pad task {}", task_id);
+                }
+            },
             Response::IndexContent(_) | Response::GetMetadata(_) => {
                 // These might be added later if needed
                 warn!("Received unsupported colony response");

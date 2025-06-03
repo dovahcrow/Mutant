@@ -718,6 +718,104 @@ pub(crate) async fn handle_get(
         log::info!("DAEMON: GET task {} - Preparing to execute get operation for key '{}', public={}, stream_data={}",
                  task_id, user_key, req.public, stream_data);
 
+        // For video files with streaming enabled, try immediate pad streaming for better performance
+        if stream_data && (user_key.ends_with(".mp4") || user_key.ends_with(".mkv") || user_key.ends_with(".avi") || user_key.ends_with(".webm")) {
+            log::info!("DAEMON: GET task {} - Detected video file, attempting immediate pad streaming for: {}", task_id, user_key);
+
+            let update_tx_for_streaming = update_tx.clone();
+            let task_id_for_streaming = task_id;
+            let user_key_for_streaming = user_key.clone();
+            let mutant_for_streaming = mutant.clone();
+            let req_public = req.public;
+
+            // Spawn immediate streaming task
+            tokio::spawn(async move {
+                let streaming_result = if req_public {
+                    // For public videos, try to get the public address and use immediate streaming
+                    match ScratchpadAddress::from_hex(&user_key_for_streaming) {
+                        Ok(address) => {
+                            match mutant_for_streaming.get_public_with_immediate_streaming(&address, None).await {
+                                Ok(mut pad_rx) => {
+                                    log::info!("DAEMON: GET task {} - Started immediate pad streaming for public video", task_id_for_streaming);
+
+                                    // Forward pads immediately as StreamingPad responses
+                                    while let Some((pad_index, pad_data)) = pad_rx.recv().await {
+                                        log::debug!("DAEMON: GET task {} - Forwarding pad {} ({} bytes) immediately",
+                                                   task_id_for_streaming, pad_index, pad_data.len());
+
+                                        let response = Response::StreamingPad(mutant_protocol::StreamingPadResponse {
+                                            task_id: task_id_for_streaming,
+                                            pad_index,
+                                            total_pads: 0, // We don't know the total yet
+                                            data: pad_data,
+                                            is_last: false, // We'll determine this later
+                                            key: user_key_for_streaming.clone(),
+                                        });
+
+                                        if let Err(e) = update_tx_for_streaming.send(response) {
+                                            log::error!("DAEMON: GET task {} - Failed to send streaming pad: {}", task_id_for_streaming, e);
+                                            break;
+                                        }
+                                    }
+
+                                    log::info!("DAEMON: GET task {} - Completed immediate pad streaming for public video", task_id_for_streaming);
+                                    Ok(())
+                                }
+                                Err(e) => {
+                                    log::warn!("DAEMON: GET task {} - Failed immediate streaming for public video, falling back to regular streaming: {}", task_id_for_streaming, e);
+                                    Err(e)
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("DAEMON: GET task {} - Invalid public address, falling back to regular streaming: {}", task_id_for_streaming, e);
+                            Err(mutant_lib::error::Error::Internal(format!("Invalid address: {}", e)))
+                        }
+                    }
+                } else {
+                    // For private videos, use immediate streaming
+                    match mutant_for_streaming.get_with_immediate_streaming(&user_key_for_streaming, None).await {
+                        Ok(mut pad_rx) => {
+                            log::info!("DAEMON: GET task {} - Started immediate pad streaming for private video", task_id_for_streaming);
+
+                            // Forward pads immediately as StreamingPad responses
+                            while let Some((pad_index, pad_data)) = pad_rx.recv().await {
+                                log::debug!("DAEMON: GET task {} - Forwarding pad {} ({} bytes) immediately",
+                                           task_id_for_streaming, pad_index, pad_data.len());
+
+                                let response = Response::StreamingPad(mutant_protocol::StreamingPadResponse {
+                                    task_id: task_id_for_streaming,
+                                    pad_index,
+                                    total_pads: 0, // We don't know the total yet
+                                    data: pad_data,
+                                    is_last: false, // We'll determine this later
+                                    key: user_key_for_streaming.clone(),
+                                });
+
+                                if let Err(e) = update_tx_for_streaming.send(response) {
+                                    log::error!("DAEMON: GET task {} - Failed to send streaming pad: {}", task_id_for_streaming, e);
+                                    break;
+                                }
+                            }
+
+                            log::info!("DAEMON: GET task {} - Completed immediate pad streaming for private video", task_id_for_streaming);
+                            Ok(())
+                        }
+                        Err(e) => {
+                            log::warn!("DAEMON: GET task {} - Failed immediate streaming for private video, falling back to regular streaming: {}", task_id_for_streaming, e);
+                            Err(e)
+                        }
+                    }
+                };
+
+                // Log the result of immediate streaming attempt
+                match streaming_result {
+                    Ok(_) => log::info!("DAEMON: GET task {} - Immediate streaming completed successfully", task_id_for_streaming),
+                    Err(e) => log::warn!("DAEMON: GET task {} - Immediate streaming failed: {}", task_id_for_streaming, e),
+                }
+            });
+        }
+
         // Check if the key exists first for private keys
         let get_result = if req.public {
             log::info!("DAEMON: GET task {} - Executing public get operation", task_id);

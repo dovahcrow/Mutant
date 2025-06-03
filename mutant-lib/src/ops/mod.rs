@@ -71,6 +71,35 @@ impl Data {
         get::get_public(self.network.clone(), address, get_callback, stream_data).await
     }
 
+    /// Get data with immediate pad streaming for video playback.
+    /// Returns a receiver that immediately starts receiving pads as they arrive.
+    pub async fn get_with_immediate_streaming(
+        &self,
+        user_key: &str,
+        get_callback: Option<GetCallback>,
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<(usize, Vec<u8>)>, Error> {
+        get::get_with_immediate_streaming(
+            self.index.clone(),
+            self.network.clone(),
+            user_key,
+            get_callback,
+        ).await
+    }
+
+    /// Get public data with immediate pad streaming for video playback.
+    /// Returns a receiver that immediately starts receiving pads as they arrive.
+    pub async fn get_public_with_immediate_streaming(
+        &self,
+        address: &ScratchpadAddress,
+        get_callback: Option<GetCallback>,
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<(usize, Vec<u8>)>, Error> {
+        get::get_public_with_immediate_streaming(
+            self.network.clone(),
+            address,
+            get_callback,
+        ).await
+    }
+
     pub async fn get(
         &self,
         name: &str,
