@@ -652,21 +652,30 @@ impl FsWindow {
                     let header_result = header.show(ui, |ui| {
                         // Check if root directory is a drop target
                         if self.drag_state.is_dragging {
+                            // Create a larger drop zone that extends beyond just the text
                             let available_rect = ui.available_rect_before_wrap();
+                            let expanded_rect = available_rect.expand2(egui::Vec2::new(20.0, 10.0)); // Make drop zone larger
                             let pointer_pos = ui.ctx().pointer_latest_pos();
-                            log::info!("Root directory - checking drop target, pointer: {:?}, rect: {:?}", pointer_pos, available_rect);
 
                             if let Some(pos) = pointer_pos {
-                                if available_rect.contains(pos) {
+                                if expanded_rect.contains(pos) {
                                     log::info!("Setting drop target to root directory");
                                     self.drag_state.drop_target = Some("/".to_string());
                                     ui.ctx().set_cursor_icon(egui::CursorIcon::Copy);
 
-                                    // Visual feedback for drop target
+                                    // Enhanced visual feedback for drop target
+                                    // Draw a filled background
+                                    ui.painter().rect_filled(
+                                        expanded_rect,
+                                        6.0,
+                                        egui::Color32::from_rgba_premultiplied(255, 140, 0, 30) // Orange with transparency
+                                    );
+
+                                    // Draw a bright border
                                     ui.painter().rect_stroke(
-                                        available_rect,
-                                        4.0,
-                                        egui::Stroke::new(2.0, super::theme::MutantColors::ACCENT_ORANGE),
+                                        expanded_rect,
+                                        6.0,
+                                        egui::Stroke::new(3.0, super::theme::MutantColors::ACCENT_ORANGE),
                                         egui::epaint::StrokeKind::Outside
                                     );
                                 }
@@ -780,6 +789,13 @@ impl FsWindow {
         if let crate::app::fs::tree::DragDropResult::Move(old_path, new_path) = scroll_response.inner.3 {
             self.handle_move_operation(old_path, new_path);
         }
+
+        // Draw dragged item preview
+        if let Some((dragged_path, is_dir)) = &self.drag_state.dragged_item {
+            if let Some(drag_pos) = self.drag_state.drag_pos {
+                self.draw_drag_preview(ui, dragged_path, *is_dir, drag_pos);
+            }
+        }
     }
 
     /// Handle delete request with confirmation
@@ -826,6 +842,52 @@ impl FsWindow {
                 }
             }
         });
+    }
+
+    /// Draw a preview of the item being dragged
+    fn draw_drag_preview(&self, ui: &mut egui::Ui, dragged_path: &str, is_dir: bool, drag_pos: egui::Pos2) {
+        // Extract just the filename from the path
+        let filename = dragged_path.split('/').last().unwrap_or(dragged_path);
+
+        // Create the preview text with appropriate icon
+        let icon = if is_dir { "📁" } else { "📄" };
+        let preview_text = format!("{} {}", icon, filename);
+
+        // Calculate text size
+        let font_id = egui::FontId::default();
+        let text_galley = ui.fonts(|f| f.layout_no_wrap(preview_text.clone(), font_id.clone(), super::theme::MutantColors::TEXT_PRIMARY));
+
+        // Create a semi-transparent background rect
+        let padding = egui::Vec2::new(8.0, 4.0);
+        let rect_size = text_galley.size() + padding * 2.0;
+        let rect = egui::Rect::from_min_size(
+            drag_pos + egui::Vec2::new(10.0, -rect_size.y / 2.0), // Offset slightly from cursor
+            rect_size
+        );
+
+        // Draw background
+        ui.painter().rect_filled(
+            rect,
+            4.0,
+            egui::Color32::from_rgba_premultiplied(40, 40, 40, 200) // Dark semi-transparent
+        );
+
+        // Draw border
+        ui.painter().rect_stroke(
+            rect,
+            4.0,
+            egui::Stroke::new(1.0, super::theme::MutantColors::ACCENT_ORANGE),
+            egui::epaint::StrokeKind::Outside
+        );
+
+        // Draw text
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            preview_text,
+            font_id,
+            super::theme::MutantColors::TEXT_PRIMARY
+        );
     }
 
     /// Draw the delete confirmation modal dialog

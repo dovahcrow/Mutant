@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use eframe::egui::{self, RichText};
+use eframe::egui;
 use mutant_protocol::KeyDetails;
 use serde::{Deserialize, Serialize};
 use crate::app::theme;
@@ -149,15 +149,13 @@ impl TreeNode {
             if self.is_dir() {
                 // Directory node - use collapsing header for proper tree behavior
                 let icon = if self.expanded { "📂" } else { "📁" };
-                let text = RichText::new(format!("{} {}/", icon, self.name))
+                let text = egui::RichText::new(format!("{} {}/", icon, self.name))
                     .size(12.0)  // Match file font size for consistency
                     .color(theme::MutantColors::ACCENT_ORANGE);  // Special distinguishing color for folders
 
                 let header = egui::CollapsingHeader::new(text)
                     .id_salt(format!("mutant_fs_{}dir_{}", window_id, self.path))
                     .default_open(self.expanded);
-
-                // We'll handle drop target detection in the show() callback
 
                 let mut child_view_details = None;
                 let mut child_download_details = None;
@@ -167,21 +165,30 @@ impl TreeNode {
                 let header_result = header.show(ui, |ui| {
                     // Check if this directory is a drop target
                     if drag_state.is_dragging {
+                        // Create a larger drop zone that extends beyond just the text
                         let available_rect = ui.available_rect_before_wrap();
+                        let expanded_rect = available_rect.expand2(egui::Vec2::new(20.0, 10.0)); // Make drop zone larger
                         let pointer_pos = ui.ctx().pointer_latest_pos();
-                        log::info!("Directory {} - checking drop target, pointer: {:?}, rect: {:?}", self.path, pointer_pos, available_rect);
 
                         if let Some(pos) = pointer_pos {
-                            if available_rect.contains(pos) {
+                            if expanded_rect.contains(pos) {
                                 log::info!("Setting drop target to directory: {}", self.path);
                                 drag_state.drop_target = Some(self.path.clone());
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::Copy);
 
-                                // Visual feedback for drop target
+                                // Enhanced visual feedback for drop target
+                                // Draw a filled background
+                                ui.painter().rect_filled(
+                                    expanded_rect,
+                                    6.0,
+                                    egui::Color32::from_rgba_premultiplied(255, 140, 0, 30) // Orange with transparency
+                                );
+
+                                // Draw a bright border
                                 ui.painter().rect_stroke(
-                                    available_rect,
-                                    4.0,
-                                    egui::Stroke::new(2.0, theme::MutantColors::ACCENT_ORANGE),
+                                    expanded_rect,
+                                    6.0,
+                                    egui::Stroke::new(3.0, theme::MutantColors::ACCENT_ORANGE),
                                     egui::epaint::StrokeKind::Outside
                                 );
                             }
@@ -216,7 +223,75 @@ impl TreeNode {
                     }
                 });
 
-                self.expanded = header_result.header_response.clicked() || self.expanded;
+                // Handle directory drag and drop by creating an invisible draggable overlay
+                let header_response = &header_result.header_response;
+                let header_rect = header_response.rect;
+
+                // Create an invisible draggable area over the header
+                let drag_response = ui.allocate_rect(header_rect, egui::Sense::drag());
+
+                // Add visual feedback if this directory is being dragged
+                if let Some((dragged_path, is_dir)) = &drag_state.dragged_item {
+                    if *is_dir && dragged_path == &self.path {
+                        ui.painter().rect_filled(
+                            header_rect,
+                            4.0,
+                            egui::Color32::from_rgba_premultiplied(255, 140, 0, 60) // Orange with transparency
+                        );
+                    }
+                }
+
+                // Handle directory drag events
+                if drag_response.drag_started() {
+                    drag_state.dragged_item = Some((self.path.clone(), true)); // true = is a directory
+                    drag_state.is_dragging = true;
+                    log::info!("Started dragging directory: {}", self.path);
+                }
+
+                if drag_response.dragged() {
+                    drag_state.drag_pos = Some(drag_response.interact_pointer_pos().unwrap_or_default());
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                }
+
+                if drag_response.drag_stopped() {
+                    log::info!("Drag stopped for directory: {}", self.path);
+                    if let Some((dragged_path, _)) = &drag_state.dragged_item {
+                        log::info!("Dragged directory: {}", dragged_path);
+                        if let Some(drop_target) = &drag_state.drop_target {
+                            log::info!("Drop target: {}", drop_target);
+                            // Calculate the new path for the move operation
+                            let new_path = if drop_target == "/" {
+                                // Moving to root - just use the directory name
+                                self.name.clone()
+                            } else {
+                                // Moving to a subdirectory
+                                format!("{}/{}", drop_target, self.name)
+                            };
+
+                            if dragged_path != &new_path {
+                                drag_drop_result = DragDropResult::Move(dragged_path.clone(), new_path.clone());
+                                log::info!("Directory drop: moving '{}' to '{}'", dragged_path, new_path);
+                            } else {
+                                log::info!("Same path, no move needed: {} == {}", dragged_path, new_path);
+                            }
+                        } else {
+                            log::info!("No drop target set");
+                        }
+                    } else {
+                        log::info!("No dragged directory");
+                    }
+
+                    // Reset drag state
+                    drag_state.dragged_item = None;
+                    drag_state.is_dragging = false;
+                    drag_state.drop_target = None;
+                    drag_state.drag_pos = None;
+                }
+
+                // Handle directory expansion (only if not dragging and header was clicked)
+                self.expanded = (header_response.clicked() && !drag_state.is_dragging) || self.expanded;
+
+
 
                 // Propagate click from children
                 if child_view_details.is_some() {
