@@ -172,13 +172,16 @@ impl TreeNode {
                 let header_result = header.show(ui, |ui| {
                     // Check if this directory is a drop target
                     if drag_state.is_dragging {
-                        // Create a larger drop zone that extends beyond just the text
-                        let available_rect = ui.available_rect_before_wrap();
-                        let expanded_rect = available_rect.expand2(egui::Vec2::new(20.0, 10.0)); // Make drop zone larger
+                        // Create a reasonable drop zone based on the current UI area
+                        let current_rect = ui.cursor();
+                        let drop_zone_rect = egui::Rect::from_min_size(
+                            current_rect.left_top(),
+                            egui::Vec2::new(ui.available_width().min(400.0), 25.0) // Constrained width and height
+                        );
                         let pointer_pos = ui.ctx().pointer_latest_pos();
 
                         if let Some(pos) = pointer_pos {
-                            if expanded_rect.contains(pos) {
+                            if drop_zone_rect.contains(pos) {
                                 log::info!("Setting drop target to directory: {}", self.path);
                                 drag_state.drop_target = Some(self.path.clone());
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::Copy);
@@ -186,14 +189,14 @@ impl TreeNode {
                                 // Enhanced visual feedback for drop target
                                 // Draw a filled background
                                 ui.painter().rect_filled(
-                                    expanded_rect,
+                                    drop_zone_rect,
                                     6.0,
                                     egui::Color32::from_rgba_premultiplied(255, 140, 0, 30) // Orange with transparency
                                 );
 
                                 // Draw a bright border
                                 ui.painter().rect_stroke(
-                                    expanded_rect,
+                                    drop_zone_rect,
                                     6.0,
                                     egui::Stroke::new(3.0, theme::MutantColors::ACCENT_ORANGE),
                                     egui::epaint::StrokeKind::Outside
