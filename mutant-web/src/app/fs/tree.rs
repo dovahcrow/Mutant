@@ -202,12 +202,12 @@ impl TreeNode {
                         }
                     }
 
-                    // Sort children: directories first, then files
+                    // Sort children: files first, then directories
                     let mut sorted_children: Vec<_> = self.children.iter_mut().collect();
                     sorted_children.sort_by(|(_, a), (_, b)| {
                         match (a.is_dir(), b.is_dir()) {
-                            (true, false) => std::cmp::Ordering::Less,    // Directories come before files
-                            (false, true) => std::cmp::Ordering::Greater, // Files come after directories
+                            (true, false) => std::cmp::Ordering::Greater, // Directories come after files
+                            (false, true) => std::cmp::Ordering::Less,    // Files come before directories
                             _ => a.name.cmp(&b.name),                     // Sort alphabetically within each group
                         }
                     });
