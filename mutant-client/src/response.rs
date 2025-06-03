@@ -362,6 +362,11 @@ impl MutantClient {
                 }
             },
             Response::TaskStopped(res) => handle_task_stopped(res, pending_requests.clone()),
+            // Colony integration responses - these are handled as direct responses, not tasks
+            Response::Search(_) | Response::IndexContent(_) | Response::GetMetadata(_) => {
+                // These responses are handled by the direct request mechanism
+                // No special processing needed here
+            },
         }
     }
 

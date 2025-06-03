@@ -11,6 +11,7 @@ mod key_management;
 mod video_stream;
 mod http_video;
 mod transcoding;
+pub mod colony;
 
 // Public exports
 pub use websocket::handle_ws;

@@ -428,6 +428,10 @@ pub enum Request {
     Import(ImportRequest),
     Export(ExportRequest),
     HealthCheck(HealthCheckRequest),
+    // Colony integration requests
+    Search(SearchRequest),
+    IndexContent(IndexContentRequest),
+    GetMetadata(GetMetadataRequest),
 }
 
 // --- Outgoing Responses ---
@@ -599,6 +603,41 @@ pub struct HealthCheckResult {
     pub nb_keys_recycled: usize,
 }
 
+// Colony integration request types
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SearchRequest {
+    pub query: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct IndexContentRequest {
+    pub user_key: String,
+    pub metadata: serde_json::Value,
+    pub public_address: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct GetMetadataRequest {
+    pub address: String,
+}
+
+// Colony integration response types
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SearchResponse {
+    pub results: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct IndexContentResponse {
+    pub success: bool,
+    pub pod_address: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct GetMetadataResponse {
+    pub metadata: serde_json::Value,
+}
+
 /// Response containing a chunk of data from a get operation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetDataResponse {
@@ -632,6 +671,10 @@ pub enum Response {
     Export(ExportResponse),
     /// A chunk of data from a get operation.
     GetData(GetDataResponse),
+    // Colony integration responses
+    Search(SearchResponse),
+    IndexContent(IndexContentResponse),
+    GetMetadata(GetMetadataResponse),
 }
 
 // Helper moved to where Response is used (client/server)

@@ -52,6 +52,9 @@ pub enum Error {
 
     #[error("Failed to join server task: {0}")]
     JoinError(#[from] tokio::task::JoinError),
+
+    #[error("Colony integration error: {0}")]
+    ColonyError(String),
 }
 
 // Implement warp::reject::Reject for DaemonError so we can use it in warp filters

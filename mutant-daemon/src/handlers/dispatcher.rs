@@ -12,6 +12,7 @@ use super::import_export::{handle_export, handle_import};
 use super::metadata::{handle_list_keys, handle_stats};
 use super::system_operations::{handle_health_check, handle_purge, handle_sync};
 use super::task_management::{handle_list_tasks, handle_query_task, handle_stop_task};
+use super::colony::{handle_search, handle_index_content, handle_get_metadata};
 
 pub(crate) async fn handle_request(
     request: Request,
@@ -44,6 +45,16 @@ pub(crate) async fn handle_request(
         }
         Request::StopTask(stop_task_req) => {
             handle_stop_task(stop_task_req, update_tx, tasks).await?
+        }
+        // Colony integration requests
+        Request::Search(search_req) => {
+            handle_search(search_req, update_tx, original_request_str).await?
+        }
+        Request::IndexContent(index_req) => {
+            handle_index_content(index_req, update_tx, original_request_str).await?
+        }
+        Request::GetMetadata(metadata_req) => {
+            handle_get_metadata(metadata_req, update_tx, original_request_str).await?
         }
     }
     Ok(())

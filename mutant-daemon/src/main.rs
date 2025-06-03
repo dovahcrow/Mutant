@@ -1,6 +1,7 @@
 use clap::Parser;
 
 mod app;
+mod colony;
 mod error;
 mod handlers;
 mod wallet;

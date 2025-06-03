@@ -211,6 +211,13 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     log::info!("MutAnt initialized successfully{}",
         if is_public_only { " in public-only mode" } else { "" });
 
+    // Initialize Colony Manager for search and indexing
+    if let Err(e) = crate::handlers::colony::init_colony_manager().await {
+        log::warn!("Failed to initialize colony manager: {}. Search functionality will be unavailable.", e);
+    } else {
+        log::info!("Colony manager initialized successfully.");
+    }
+
     // Initialize Task Management
     let tasks: TaskMap = Arc::new(RwLock::new(HashMap::new()));
     log::info!("Task manager initialized.");
