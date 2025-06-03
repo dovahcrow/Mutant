@@ -589,4 +589,17 @@ impl Context {
     pub async fn get_user_contact(&self) -> Result<GetUserContactResponse, String> {
         client_manager::get_user_contact().await
     }
+
+    /// Remove a key from the daemon
+    pub async fn rm(&self, user_key: &str) -> Result<(), String> {
+        let result = client_manager::rm(user_key).await;
+
+        // If successful, invalidate the keys cache to force a refresh
+        if result.is_ok() {
+            let mut cache = self.keys_cache.write().unwrap();
+            cache.clear(); // Clear cache to force refresh on next list_keys call
+        }
+
+        result
+    }
 }

@@ -33,6 +33,7 @@ enum ClientCommand {
     StopTask(TaskId, oneshot::Sender<Result<(), String>>),
     GetKey(String, String, oneshot::Sender<Result<(), String>>),
     Put(String, Vec<u8>, String, mutant_protocol::StorageMode, bool, bool, oneshot::Sender<Result<(TaskId, mpsc::UnboundedReceiver<Result<mutant_protocol::TaskProgress, String>>), String>>),
+    Rm(String, oneshot::Sender<Result<(), String>>), // user_key, response_sender
     StartGetStream(
         String, // name
         bool,   // is_public
@@ -472,6 +473,40 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                                 }
                             }
                     });
+                }
+                ClientCommand::Rm(user_key, sender) => {
+                    // Ensure we're connected
+                    if let Err(e) = ensure_connected(&mut client, &mut connected).await {
+                        // Only send if the receiver is still interested
+                        if !sender.is_canceled() {
+                            let _ = sender.send(Err(e));
+                        }
+                        continue;
+                    }
+
+                    // Execute the rm command
+                    match client.rm(&user_key).await {
+                        Ok(_) => {
+                            info!("Successfully removed key: {}", user_key);
+                            // Only send if the receiver is still interested
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Ok(()));
+                            }
+                        }
+                        Err(e) => {
+                            // Check if it's a connection error
+                            if e.to_string().contains("connection") || e.to_string().contains("websocket") {
+                                connected = false;
+                                warn!("Connection lost during rm operation, will reconnect on next request");
+                            }
+
+                            error!("Failed to remove key {}: {:?}", user_key, e);
+                            // Only send if the receiver is still interested
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Err(format!("Failed to remove key: {:?}", e)));
+                            }
+                        }
+                    }
                 }
                 ClientCommand::Shutdown => {
                     break;
@@ -923,6 +958,36 @@ pub async fn put(
         },
         Err(e) => {
             error!("Failed to send put command: {:?}", e);
+            Err(format!("Failed to send command: {:?}", e))
+        }
+    }
+}
+
+pub async fn rm(user_key: &str) -> Result<(), String> {
+    info!("Starting rm request for key {}", user_key);
+
+    // Create a oneshot channel for the response
+    let (tx, rx) = oneshot::channel();
+
+    // Send the command to the client manager
+    match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::Rm(user_key.to_string(), tx)) {
+        Ok(_) => {
+            info!("Rm command sent to client manager");
+
+            // Wait for the response
+            match rx.await {
+                Ok(result) => {
+                    info!("Received rm response from client manager");
+                    result
+                },
+                Err(e) => {
+                    error!("Failed to receive rm response: {:?}", e);
+                    Err(format!("Failed to receive response: {:?}", e))
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to send rm command: {:?}", e);
             Err(format!("Failed to send command: {:?}", e))
         }
     }

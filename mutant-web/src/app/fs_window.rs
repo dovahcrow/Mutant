@@ -600,6 +600,7 @@ impl FsWindow {
                 // Track clicked nodes to handle after the loop
                 let mut view_details_clicked: Option<KeyDetails> = None;
                 let mut download_details_clicked: Option<KeyDetails> = None;
+                let mut delete_details_clicked: Option<KeyDetails> = None;
 
                 // Draw the root folder '/' as a proper collapsible folder
                 let mut root_expanded = !self.root.children.is_empty(); // Default to expanded if there are children
@@ -647,12 +648,15 @@ impl FsWindow {
 
                         // Draw the sorted children with indentation level 1 (since they are children of the root '/')
                         for (_, child) in sorted_children {
-                            let (view_details, download_details) = child.ui(ui, 1, selected_path_ref, &self.window_id);
+                            let (view_details, download_details, delete_details) = child.ui(ui, 1, selected_path_ref, &self.window_id);
                             if view_details.is_some() {
                                 view_details_clicked = view_details;
                             }
                             if download_details.is_some() {
                                 download_details_clicked = download_details;
+                            }
+                            if delete_details.is_some() {
+                                delete_details_clicked = delete_details;
                             }
                         }
                     }).header_response.clicked() || root_expanded;
@@ -698,7 +702,7 @@ impl FsWindow {
                 // Add some bottom padding
                 ui.add_space(8.0);
 
-                (view_details_clicked, download_details_clicked)
+                (view_details_clicked, download_details_clicked, delete_details_clicked)
             });
 
 
@@ -723,6 +727,35 @@ impl FsWindow {
                 ui.ctx().clone(),
             );
         }
+
+        // Handle the delete click
+        if let Some(details) = scroll_response.inner.2 {
+            // Show confirmation dialog and delete the file
+            self.handle_delete_request(details);
+        }
+    }
+
+    /// Handle delete request with confirmation
+    fn handle_delete_request(&mut self, details: KeyDetails) {
+        // For now, we'll delete immediately without confirmation
+        // In a production app, you might want to show a confirmation dialog
+        let key = details.key.clone();
+
+        // Spawn async task to delete the file
+        wasm_bindgen_futures::spawn_local(async move {
+            let ctx = crate::app::context::context();
+            match ctx.rm(&key).await {
+                Ok(_) => {
+                    log::info!("Successfully deleted key: {}", key);
+                    // Refresh the file list to update the UI
+                    let _ = ctx.list_keys().await;
+                }
+                Err(e) => {
+                    log::error!("Failed to delete key {}: {}", key, e);
+                    // You could show an error notification here
+                }
+            }
+        });
     }
 
 

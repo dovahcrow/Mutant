@@ -91,14 +91,15 @@ impl TreeNode {
     }
 
     /// Draw this node and its children
-    /// Returns (view_clicked_details, download_clicked_details)
-    pub fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize, selected_path: Option<&str>, window_id: &str) -> (Option<KeyDetails>, Option<KeyDetails>) {
+    /// Returns (view_clicked_details, download_clicked_details, delete_clicked_details)
+    pub fn ui(&mut self, ui: &mut egui::Ui, indent_level: usize, selected_path: Option<&str>, window_id: &str) -> (Option<KeyDetails>, Option<KeyDetails>, Option<KeyDetails>) {
         // Extremely compact indentation for maximum space efficiency
         let indent_per_level = 1.5;  // Reduced from 3.0 to 1.5
         let total_indent = indent_per_level * (indent_level as f32);
 
         let mut view_clicked_details = None;
         let mut download_clicked_details = None;
+        let mut delete_clicked_details = None;
 
         // Add subtle vertical spacing between items
         if indent_level > 0 {
@@ -135,6 +136,7 @@ impl TreeNode {
 
                 let mut child_view_details = None;
                 let mut child_download_details = None;
+                let mut child_delete_details = None;
 
                 self.expanded = header.show(ui, |ui| {
                     // Sort children: directories first, then files
@@ -149,12 +151,15 @@ impl TreeNode {
 
                     // Draw the sorted children with exactly one more level of indentation
                     for (_, child) in sorted_children {
-                        let (view_details, down_details) = child.ui(ui, indent_level + 1, selected_path, window_id);
+                        let (view_details, down_details, delete_details) = child.ui(ui, indent_level + 1, selected_path, window_id);
                         if view_details.is_some() {
                             child_view_details = view_details;
                         }
                         if down_details.is_some() {
                             child_download_details = down_details;
+                        }
+                        if delete_details.is_some() {
+                            child_delete_details = delete_details;
                         }
                     }
                 }).header_response.clicked() || self.expanded;
@@ -165,6 +170,9 @@ impl TreeNode {
                 }
                 if child_download_details.is_some() {
                     download_clicked_details = child_download_details;
+                }
+                if child_delete_details.is_some() {
+                    delete_clicked_details = child_delete_details;
                 }
             } else {
                 // File node - add extra space to align with folder names (accounting for arrow)
@@ -282,6 +290,35 @@ impl TreeNode {
                     theme::MutantColors::ACCENT_GREEN
                 );
 
+                current_x -= button_width + 4.0; // Move left for delete button
+
+                // Delete button position (to the left of download button)
+                let delete_button_rect = egui::Rect::from_min_size(
+                    egui::Pos2::new(current_x - button_width, text_baseline_y),
+                    egui::Vec2::new(button_width, 12.0)
+                );
+
+                // Draw delete button manually
+                let delete_button_response = ui.allocate_rect(delete_button_rect, egui::Sense::click());
+                if delete_button_response.clicked() {
+                    delete_clicked_details = Some(details.clone());
+                }
+                if delete_button_response.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+
+                // Draw the red 'x' icon at the exact text baseline
+                let delete_galley = ui.painter().layout_no_wrap(
+                    "✕".to_string(),
+                    egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                    egui::Color32::from_rgb(220, 50, 50) // Red color for delete
+                );
+                ui.painter().galley(
+                    egui::Pos2::new(current_x - button_width / 2.0 - delete_galley.rect.width() / 2.0, text_baseline_y),
+                    delete_galley,
+                    egui::Color32::from_rgb(220, 50, 50)
+                );
+
                 current_x -= button_width + 8.0; // Move left for next element
 
                 // File size text
@@ -316,7 +353,7 @@ impl TreeNode {
             }
         });
 
-        (view_clicked_details, download_clicked_details)
+        (view_clicked_details, download_clicked_details, delete_clicked_details)
     }
 
     /// Get appropriate icon and color for file based on extension
