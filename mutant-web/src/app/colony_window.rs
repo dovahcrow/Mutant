@@ -7,6 +7,7 @@ use std::collections::HashMap;
 // Global state for storing user contact info responses
 lazy_static::lazy_static! {
     static ref USER_CONTACT_RESPONSES: Arc<Mutex<HashMap<String, UserContactInfo>>> = Arc::new(Mutex::new(HashMap::new()));
+    static ref CONTENT_LIST_RESPONSES: Arc<Mutex<HashMap<String, Vec<ContentItem>>>> = Arc::new(Mutex::new(HashMap::new()));
 }
 
 /// The Colony window for managing contacts and discovering content
@@ -34,6 +35,12 @@ pub struct ColonyWindow {
     /// Flag to trigger contact info reload
     #[serde(skip)]
     should_load_contact_info: bool,
+    /// Content list loading state
+    #[serde(skip)]
+    is_loading_content: bool,
+    /// Flag to trigger content list reload
+    #[serde(skip)]
+    should_load_content: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -73,6 +80,8 @@ impl Default for ColonyWindow {
             user_contact_info: None,
             is_loading_user_contact: false,
             should_load_contact_info: true,
+            is_loading_content: false,
+            should_load_content: true,
         }
     }
 }
@@ -87,6 +96,12 @@ impl Window for ColonyWindow {
         if self.should_load_contact_info && !self.is_loading_user_contact {
             self.load_user_contact_info();
             self.should_load_contact_info = false;
+        }
+
+        // Auto-load content list on first draw if not already loaded/loading
+        if self.should_load_content && !self.is_loading_content {
+            self.load_content_list();
+            self.should_load_content = false;
         }
 
         // Check for completed user contact info response
@@ -106,6 +121,28 @@ impl Window for ColonyWindow {
                     drop(responses);
                     if let Ok(mut responses) = USER_CONTACT_RESPONSES.lock() {
                         responses.remove("user_contact_error");
+                    }
+                }
+            }
+        }
+
+        // Check for completed content list response
+        if self.is_loading_content {
+            if let Ok(responses) = CONTENT_LIST_RESPONSES.lock() {
+                if let Some(content_list) = responses.get("content_list") {
+                    self.content_list = content_list.clone();
+                    self.is_loading_content = false;
+                    // Remove the response from the global state
+                    drop(responses);
+                    if let Ok(mut responses) = CONTENT_LIST_RESPONSES.lock() {
+                        responses.remove("content_list");
+                    }
+                } else if responses.contains_key("content_list_error") {
+                    // Handle error case
+                    self.is_loading_content = false;
+                    drop(responses);
+                    if let Ok(mut responses) = CONTENT_LIST_RESPONSES.lock() {
+                        responses.remove("content_list_error");
                     }
                 }
             }
@@ -288,8 +325,22 @@ impl Window for ColonyWindow {
 
                 // Right column - Content discovery
                 ui.vertical(|ui| {
-                    ui.heading("Available Content");
-                    
+                    ui.horizontal(|ui| {
+                        ui.heading("Available Content");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            // Refresh button
+                            let refresh_button = ui.add_enabled(
+                                !self.is_loading_content,
+                                egui::Button::new(if self.is_loading_content { "Loading..." } else { "🔄 Refresh" })
+                                    .fill(super::theme::MutantColors::ACCENT_BLUE)
+                            );
+
+                            if refresh_button.clicked() {
+                                self.load_content_list();
+                            }
+                        });
+                    });
+
                     // Search bar
                     ui.horizontal(|ui| {
                         ui.label("Search:");
@@ -299,7 +350,7 @@ impl Window for ColonyWindow {
                         }
                         if ui.button("Clear").clicked() {
                             self.search_query.clear();
-                            self.refresh_content_list();
+                            self.load_content_list();
                         }
                     });
 
@@ -470,20 +521,253 @@ impl ColonyWindow {
         });
     }
 
-    /// Refresh the content list
-    fn refresh_content_list(&mut self) {
+    /// Load the content list from the daemon
+    fn load_content_list(&mut self) {
+        if self.is_loading_content {
+            return;
+        }
+
+        self.is_loading_content = true;
+
         let ctx = context();
         wasm_bindgen_futures::spawn_local(async move {
             match ctx.list_content().await {
                 Ok(response) => {
-                    log::info!("Content list refreshed: {:?}", response.content);
-                    // TODO: Parse content and update UI
+                    log::info!("Content list loaded: {:?}", response.content);
+
+                    // Parse the SPARQL results into ContentItem structures
+                    let content_items = Self::parse_content_response(response.content);
+
+                    // Store the response in global state for the UI to pick up
+                    if let Ok(mut responses) = CONTENT_LIST_RESPONSES.lock() {
+                        responses.insert("content_list".to_string(), content_items);
+                    }
                 }
                 Err(e) => {
-                    log::error!("Failed to refresh content list: {:?}", e);
+                    log::error!("Failed to load content list: {:?}", e);
+                    // Store error state
+                    if let Ok(mut responses) = CONTENT_LIST_RESPONSES.lock() {
+                        responses.insert("content_list_error".to_string(), Vec::new());
+                    }
                 }
             }
         });
+    }
+
+    /// Refresh the content list (alias for load_content_list for backward compatibility)
+    fn refresh_content_list(&mut self) {
+        self.load_content_list();
+    }
+
+    /// Parse search query results into ContentItem structures
+    fn parse_content_response(content: serde_json::Value) -> Vec<ContentItem> {
+        let mut content_items = Vec::new();
+
+        // Handle different response formats
+        if let Some(error) = content.get("error") {
+            log::warn!("Search returned error: {}", error);
+            return content_items;
+        }
+
+        // Try colonylib response format first (sparql_results -> results -> bindings)
+        if let Some(sparql_results) = content.get("sparql_results") {
+            if let Some(results) = sparql_results.get("results") {
+                if let Some(bindings) = results.get("bindings") {
+                    if let Some(bindings_array) = bindings.as_array() {
+                        log::info!("Found {} SPARQL bindings to parse", bindings_array.len());
+                        content_items.extend(Self::parse_sparql_bindings(bindings_array));
+                    }
+                }
+            }
+        }
+        // Try direct SPARQL results format (results -> bindings)
+        else if let Some(results) = content.get("results") {
+            if let Some(bindings) = results.get("bindings") {
+                if let Some(bindings_array) = bindings.as_array() {
+                    log::info!("Found {} direct SPARQL bindings to parse", bindings_array.len());
+                    content_items.extend(Self::parse_sparql_bindings(bindings_array));
+                }
+            }
+        }
+        // Try text search results format (array of results)
+        else if let Some(results_array) = content.as_array() {
+            for result in results_array {
+                if let Some(content_item) = Self::parse_text_search_result(result) {
+                    content_items.push(content_item);
+                }
+            }
+        }
+        // Try direct object format
+        else if content.is_object() {
+            if let Some(content_item) = Self::parse_text_search_result(&content) {
+                content_items.push(content_item);
+            }
+        } else {
+            log::warn!("Unexpected content response format: {:?}", content);
+        }
+
+        log::info!("Parsed {} content items from response", content_items.len());
+        content_items
+    }
+
+    /// Parse multiple SPARQL bindings into ContentItem structures
+    fn parse_sparql_bindings(bindings_array: &[serde_json::Value]) -> Vec<ContentItem> {
+        use std::collections::HashMap;
+
+        // Group bindings by subject to reconstruct complete objects
+        let mut subjects: HashMap<String, HashMap<String, String>> = HashMap::new();
+
+        for binding in bindings_array {
+            if let (Some(subject), Some(predicate), Some(object)) = (
+                binding.get("subject").and_then(|s| s.get("value")).and_then(|v| v.as_str()),
+                binding.get("predicate").and_then(|p| p.get("value")).and_then(|v| v.as_str()),
+                binding.get("object").and_then(|o| o.get("value")).and_then(|v| v.as_str()),
+            ) {
+                subjects.entry(subject.to_string())
+                    .or_insert_with(HashMap::new)
+                    .insert(predicate.to_string(), object.to_string());
+            }
+        }
+
+        let mut content_items = Vec::new();
+
+        for (subject_uri, properties) in subjects {
+            // Extract the address from the subject URI
+            let address = if subject_uri.starts_with("ant://") {
+                subject_uri.replace("ant://", "")
+            } else {
+                subject_uri.clone()
+            };
+
+            // Try to extract meaningful information from the properties
+            let title = properties.get("http://schema.org/name")
+                .or_else(|| properties.get("name"))
+                .or_else(|| properties.get("title"))
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| {
+                    // If no name, create a title from the address
+                    if address.len() > 16 {
+                        format!("Content {}...{}", &address[0..8], &address[address.len()-8..])
+                    } else {
+                        format!("Content {}", address)
+                    }
+                });
+
+            let description = properties.get("http://schema.org/description")
+                .or_else(|| properties.get("description"))
+                .map(|s| s.to_string());
+
+            let content_type = properties.get("http://schema.org/type")
+                .or_else(|| properties.get("type"))
+                .map(|s| Self::format_content_type(s))
+                .unwrap_or_else(|| "Content".to_string());
+
+            let source_contact = properties.get("http://schema.org/author")
+                .or_else(|| properties.get("owner"))
+                .or_else(|| properties.get("creator"))
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "Unknown".to_string());
+
+            let size = properties.get("http://schema.org/contentSize")
+                .or_else(|| properties.get("size"))
+                .and_then(|s| s.parse::<u64>().ok());
+
+            content_items.push(ContentItem {
+                title,
+                description,
+                content_type,
+                address,
+                source_contact,
+                size,
+            });
+        }
+
+        log::info!("Converted {} subjects into content items", content_items.len());
+        content_items
+    }
+
+    /// Parse a single SPARQL binding into a ContentItem (legacy method)
+    fn parse_sparql_binding(binding: &serde_json::Value) -> Option<ContentItem> {
+        // Extract values from SPARQL binding format
+        let subject = binding.get("subject")?.get("value")?.as_str()?;
+        let name = binding.get("name")?.get("value")?.as_str().unwrap_or("Untitled");
+        let description = binding.get("description")?.get("value")?.as_str();
+        let content_type = binding.get("type")?.get("value")?.as_str().unwrap_or("Unknown");
+        let owner = binding.get("owner")?.get("value")?.as_str().unwrap_or("Unknown");
+        let size = binding.get("contentSize")?.get("value")?.as_str()
+            .and_then(|s| s.parse::<u64>().ok());
+
+        // Extract the address from the subject URI or use the subject itself
+        let address = if subject.starts_with("http") {
+            // If it's a URI, try to extract the address part
+            subject.split('/').last().unwrap_or(subject).to_string()
+        } else {
+            subject.to_string()
+        };
+
+        Some(ContentItem {
+            title: name.to_string(),
+            description: description.map(|s| s.to_string()),
+            content_type: Self::format_content_type(content_type),
+            address,
+            source_contact: owner.to_string(),
+            size,
+        })
+    }
+
+    /// Parse a single text search result into a ContentItem
+    fn parse_text_search_result(result: &serde_json::Value) -> Option<ContentItem> {
+        // Text search results might have a different format
+        // Try to extract common fields that might be present
+        let title = result.get("name")
+            .or_else(|| result.get("title"))
+            .or_else(|| result.get("subject"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("Untitled");
+
+        let description = result.get("description")
+            .and_then(|v| v.as_str());
+
+        let content_type = result.get("type")
+            .or_else(|| result.get("content_type"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
+
+        let address = result.get("address")
+            .or_else(|| result.get("subject"))
+            .or_else(|| result.get("id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
+
+        let source_contact = result.get("owner")
+            .or_else(|| result.get("source"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
+
+        let size = result.get("size")
+            .or_else(|| result.get("contentSize"))
+            .and_then(|v| v.as_u64());
+
+        Some(ContentItem {
+            title: title.to_string(),
+            description: description.map(|s| s.to_string()),
+            content_type: Self::format_content_type(content_type),
+            address: address.to_string(),
+            source_contact: source_contact.to_string(),
+            size,
+        })
+    }
+
+    /// Format content type for display
+    fn format_content_type(content_type: &str) -> String {
+        // Convert Schema.org URIs to readable format
+        if content_type.starts_with("http://schema.org/") {
+            content_type.replace("http://schema.org/", "")
+        } else if content_type.starts_with("https://schema.org/") {
+            content_type.replace("https://schema.org/", "")
+        } else {
+            content_type.to_string()
+        }
     }
 
     /// Download content by address

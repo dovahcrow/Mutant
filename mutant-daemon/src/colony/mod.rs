@@ -398,26 +398,12 @@ impl ColonyManager {
 
         log::debug!("Listing all content from synced pods");
 
-        // Search for all content across all pods
+        // Use a broad text search to get all content
+        // Since we want all content, we'll search for a very common term or use an empty search
         let search_query = serde_json::json!({
-            "type": "sparql",
-            "query": r#"
-                PREFIX schema: <http://schema.org/>
-                PREFIX mutant: <https://mutant.network/>
-
-                SELECT ?subject ?name ?description ?type ?dateCreated ?owner ?contentSize ?encodingFormat
-                WHERE {
-                    ?subject a ?type .
-                    OPTIONAL { ?subject schema:name ?name }
-                    OPTIONAL { ?subject schema:description ?description }
-                    OPTIONAL { ?subject schema:dateCreated ?dateCreated }
-                    OPTIONAL { ?subject mutant:owner ?owner }
-                    OPTIONAL { ?subject schema:contentSize ?contentSize }
-                    OPTIONAL { ?subject schema:encodingFormat ?encodingFormat }
-                    FILTER(?type != mutant:UserPod)
-                }
-                ORDER BY DESC(?dateCreated)
-            "#
+            "type": "text",
+            "text": "",
+            "limit": 1000
         });
 
         self.search(search_query).await
