@@ -72,22 +72,52 @@ pub async fn create_testnet_wallet_with_transfer(
 
     info!("Master wallet balances - Tokens: {}, Gas: {}", master_token_balance, master_gas_balance);
 
-    // For now, skip the actual transfers due to Uint256 complexity
-    // The important part is creating the new random wallet
-    // TODO: Implement proper token transfers once we figure out the Uint256 arithmetic
+    // For testnet, transfer a reasonable fixed amount instead of calculating exact percentages
+    // This avoids complex Uint256 arithmetic and is sufficient for testing
+    let transfer_tokens = if !master_token_balance.is_zero() {
+        // Transfer 1000 tokens (with 18 decimals = 1000 * 10^18)
+        let amount_str = "1000000000000000000000"; // 1000 * 10^18
+        amount_str.parse().unwrap_or(master_token_balance.saturating_sub(master_token_balance))
+    } else {
+        master_token_balance.saturating_sub(master_token_balance) // Zero
+    };
 
-    info!("Skipping token transfers for now - new wallet created successfully");
-    warn!("Token transfers not yet implemented due to Uint256 type complexity");
+    let transfer_gas = if !master_gas_balance.is_zero() {
+        // Transfer 1000 gas tokens (with 18 decimals = 1000 * 10^18)
+        let amount_str = "1000000000000000000000"; // 1000 * 10^18
+        amount_str.parse().unwrap_or(master_gas_balance.saturating_sub(master_gas_balance))
+    } else {
+        master_gas_balance.saturating_sub(master_gas_balance) // Zero
+    };
 
-    // Log the balances for reference
-    info!("Master wallet has {} tokens and {} gas tokens available", master_token_balance, master_gas_balance);
+    info!("Transferring fixed amounts - Tokens: {}, Gas: {}", transfer_tokens, transfer_gas);
 
-    // Get the private key from the new wallet (this is a bit tricky as Autonomi doesn't expose it directly)
-    // For now, we'll generate a deterministic private key based on the wallet address
-    // This is a workaround since Autonomi's Wallet::new_with_random_wallet doesn't expose the private key
+    // Transfer tokens (if balance > 0)
+    if !master_token_balance.is_zero() && !transfer_tokens.is_zero() {
+        match master_wallet.transfer_tokens(new_address, transfer_tokens).await {
+            Ok(tx_hash) => info!("Token transfer successful, tx hash: {:?}", tx_hash),
+            Err(e) => warn!("Token transfer failed: {}", e),
+        }
+    } else {
+        warn!("Master wallet has no tokens to transfer or transfer amount is zero");
+    }
+
+    // Transfer gas tokens (if balance > 0)
+    if !master_gas_balance.is_zero() && !transfer_gas.is_zero() {
+        match master_wallet.transfer_gas_tokens(new_address, transfer_gas).await {
+            Ok(tx_hash) => info!("Gas transfer successful, tx hash: {:?}", tx_hash),
+            Err(e) => warn!("Gas transfer failed: {}", e),
+        }
+    } else {
+        warn!("Master wallet has no gas tokens to transfer or transfer amount is zero");
+    }
+
+    // Since Autonomi's Wallet::new_with_random_wallet doesn't expose the private key,
+    // we'll generate a new deterministic private key for our internal use
+    // This is only used for the SecretKey creation, not for the actual wallet operations
     let mut hasher = Sha256::new();
-    hasher.update(new_address.0.as_slice());
-    hasher.update(b"mutant_testnet_key");
+    hasher.update(new_address.to_string().as_bytes());
+    hasher.update(b"mutant_testnet_secretkey");
     let hash_result = hasher.finalize();
     let new_private_key_hex = format!("0x{}", hex::encode(hash_result));
 
