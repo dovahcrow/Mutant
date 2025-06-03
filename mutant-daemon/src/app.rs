@@ -202,7 +202,7 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     };
 
     // Initialize MutAnt with the appropriate mode
-    let (mutant, is_public_only) = init_mutant(network_choice, private_key).await?;
+    let (mutant, is_public_only) = init_mutant(network_choice, private_key.clone()).await?;
     let mutant = Arc::new(mutant);
 
     // Set the public-only mode flag
@@ -214,7 +214,7 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     // Initialize Colony Manager for search and indexing
     match mutant.get_wallet().await {
         Ok(wallet) => {
-            if let Err(e) = crate::handlers::colony::init_colony_manager(wallet, network_choice).await {
+            if let Err(e) = crate::handlers::colony::init_colony_manager(wallet, network_choice, private_key.clone()).await {
                 log::warn!("Failed to initialize colony manager: {}. Search functionality will be unavailable.", e);
             } else {
                 log::info!("Colony manager initialized successfully.");

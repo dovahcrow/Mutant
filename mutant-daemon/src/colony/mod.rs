@@ -24,7 +24,7 @@ impl ColonyManager {
     ///
     /// This will create or load existing colony data from the standard data directory.
     /// The manager can operate in public-only mode for search operations.
-    pub async fn new(wallet: Wallet, network_choice: NetworkChoice) -> Result<Self, DaemonError> {
+    pub async fn new(wallet: Wallet, network_choice: NetworkChoice, private_key_hex: Option<String>) -> Result<Self, DaemonError> {
         // Initialize data store (creates directories if needed)
         let data_store = DataStore::create()
             .map_err(|e| DaemonError::ColonyError(format!("Failed to create data store: {}", e)))?;
@@ -38,16 +38,31 @@ impl ColonyManager {
             KeyStore::from_file(&mut file, "password")
                 .map_err(|e| DaemonError::ColonyError(format!("Failed to load key store: {}", e)))?
         } else {
-            log::info!("Creating new colony key store with default mnemonic");
-            // Use a default mnemonic for now - in production this should be configurable
-            let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-            KeyStore::from_mnemonic(mnemonic)
+            log::info!("Creating new colony key store from environment mnemonic");
+            // Get mnemonic from environment variable, fall back to default if not set
+            let mnemonic = std::env::var("COLONY_MNEMONIC").unwrap();
+            KeyStore::from_mnemonic(&mnemonic)
                 .map_err(|e| DaemonError::ColonyError(format!("Failed to create key store: {}", e)))?
         };
 
-        // Set the wallet key (using the same default private key as in the example)
-        const LOCAL_PRIVATE_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-        key_store.set_wallet_key(LOCAL_PRIVATE_KEY.to_string())
+        // Set the wallet key using the provided private key or fall back to default
+        let wallet_key = match private_key_hex {
+            Some(key) => {
+                log::info!("Using provided private key for colony wallet");
+                // Ensure the key has 0x prefix
+                if key.starts_with("0x") {
+                    key
+                } else {
+                    format!("0x{}", key)
+                }
+            }
+            None => {
+                log::warn!("No private key provided, using default test key for colony");
+                panic!("No private key provided, and no default test key available. Please provide a private key or set the COLONY_MNEMONIC environment variable.");
+            }
+        };
+
+        key_store.set_wallet_key(wallet_key)
             .map_err(|e| DaemonError::ColonyError(format!("Failed to set wallet key: {}", e)))?;
         
         // Initialize graph database
