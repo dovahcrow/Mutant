@@ -2,7 +2,7 @@ use std::{collections::{BTreeMap, HashMap}, sync::{Arc, Mutex, RwLock}};
 
 use lazy_static::lazy_static;
 use log::error;
-use mutant_protocol::{KeyDetails, StatsResponse, StorageMode, TaskListEntry, TaskId, TaskProgress};
+use mutant_protocol::{KeyDetails, StatsResponse, StorageMode, TaskListEntry, TaskId, TaskProgress, SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse};
 use tokio::sync::mpsc;
 
 
@@ -561,5 +561,27 @@ impl Context {
 
 
         });
+    }
+
+    // Colony integration methods
+
+    /// Search for content using SPARQL queries
+    pub async fn search(&self, query: serde_json::Value) -> Result<SearchResponse, String> {
+        client_manager::search(query).await
+    }
+
+    /// Add a contact pod address to sync with
+    pub async fn add_contact(&self, pod_address: &str, contact_name: Option<String>) -> Result<AddContactResponse, String> {
+        client_manager::add_contact(pod_address, contact_name).await
+    }
+
+    /// List all available content from synced pods
+    pub async fn list_content(&self) -> Result<ListContentResponse, String> {
+        client_manager::list_content().await
+    }
+
+    /// Sync all contact pods to get the latest content
+    pub async fn sync_contacts(&self) -> Result<SyncContactsResponse, String> {
+        client_manager::sync_contacts().await
     }
 }

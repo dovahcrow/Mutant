@@ -34,6 +34,7 @@ pub mod context;
 pub mod put;
 // mod tasks;
 pub mod window_system;
+pub mod colony_window;
 
 // Re-export the dynamic URL function
 pub use client_manager::default_ws_url as DEFAULT_WS_URL;
@@ -58,6 +59,7 @@ pub enum WindowType {
     Put(put::PutWindow),
     Fs(fs_window::FsWindow), // Updated path
     Stats(stats::StatsWindow),
+    Colony(colony_window::ColonyWindow),
     // Bases(bases::BasesWindow),
     // Base(base::BaseWindow),
     // Buildings(buildings::BuildingsWindow),
@@ -82,6 +84,7 @@ impl Window for WindowType {
             Self::Put(window) => window.name(),
             Self::Fs(window) => window.name(),
             Self::Stats(window) => window.name(),
+            Self::Colony(window) => window.name(),
             // Self::Bases(window) => window.name(),
             // Self::Base(window) => window.name(),
             // Self::Buildings(window) => window.name(),
@@ -106,6 +109,7 @@ impl Window for WindowType {
             Self::Put(window) => window.draw(ui),
             Self::Fs(window) => window.draw(ui),
             Self::Stats(window) => window.draw(ui),
+            Self::Colony(window) => window.draw(ui),
             // Self::Bases(window) => window.draw(ui),
             // Self::Base(window) => window.draw(ui),
             // Self::Buildings(window) => window.draw(ui),
@@ -148,6 +152,12 @@ impl From<fs_window::FsWindow> for WindowType {
 impl From<stats::StatsWindow> for WindowType {
     fn from(window: stats::StatsWindow) -> Self {
         Self::Stats(window)
+    }
+}
+
+impl From<colony_window::ColonyWindow> for WindowType {
+    fn from(window: colony_window::ColonyWindow) -> Self {
+        Self::Colony(window)
     }
 }
 

@@ -947,6 +947,7 @@ impl MyApp {
                     // Check window states before creating buttons
                     let upload_open = self.fs_window.read().unwrap().is_window_open("MutAnt Upload");
                     let stats_open = self.fs_window.read().unwrap().is_window_open("MutAnt Stats");
+                    let colony_open = self.fs_window.read().unwrap().is_window_open("Colony");
 
                     // Helper function to create a button with different styling when active
                     let menu_button = |ui: &mut egui::Ui, icon: &str, label: &str, hover: &str, is_active: bool| {
@@ -1005,6 +1006,10 @@ impl MyApp {
 
                     if menu_button(ui, "📊", "Stats", "Stats", stats_open).clicked() {
                         self.fs_window.write().unwrap().add_stats_tab();
+                    }
+
+                    if menu_button(ui, "🌐", "Colony", "Colony", colony_open).clicked() {
+                        self.fs_window.write().unwrap().add_colony_tab();
                     }
 
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {

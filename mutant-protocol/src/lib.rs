@@ -432,6 +432,9 @@ pub enum Request {
     Search(SearchRequest),
     IndexContent(IndexContentRequest),
     GetMetadata(GetMetadataRequest),
+    AddContact(AddContactRequest),
+    ListContent(ListContentRequest),
+    SyncContacts(SyncContactsRequest),
 }
 
 // --- Outgoing Responses ---
@@ -621,6 +624,22 @@ pub struct GetMetadataRequest {
     pub address: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AddContactRequest {
+    pub pod_address: String,
+    pub contact_name: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ListContentRequest {
+    // Empty for now - lists all content
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SyncContactsRequest {
+    // Empty for now - syncs all contacts
+}
+
 // Colony integration response types
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct SearchResponse {
@@ -636,6 +655,21 @@ pub struct IndexContentResponse {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct GetMetadataResponse {
     pub metadata: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AddContactResponse {
+    pub success: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ListContentResponse {
+    pub content: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SyncContactsResponse {
+    pub synced_count: usize,
 }
 
 /// Response containing a chunk of data from a get operation.
@@ -675,6 +709,9 @@ pub enum Response {
     Search(SearchResponse),
     IndexContent(IndexContentResponse),
     GetMetadata(GetMetadataResponse),
+    AddContact(AddContactResponse),
+    ListContent(ListContentResponse),
+    SyncContacts(SyncContactsResponse),
 }
 
 // Helper moved to where Response is used (client/server)

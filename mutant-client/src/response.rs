@@ -4,6 +4,8 @@ use mutant_protocol::{
     RmSuccessResponse, Task, TaskCreatedResponse, TaskListResponse, TaskProgress,
     TaskResult, TaskResultResponse, TaskStatus, TaskStoppedResponse, TaskType,
     TaskUpdateResponse,
+    // Colony integration responses
+    SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse,
 };
 
 use crate::{
@@ -248,7 +250,27 @@ impl MutantClient {
                     requests.remove(&PendingRequestKey::Export)
                 {
                     error!("Error occurred during export request: {}", error);
-                    let _ = sender.send(Err(ClientError::ServerError(error)));
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(PendingSender::Search(sender)) =
+                    requests.remove(&PendingRequestKey::Search)
+                {
+                    error!("Error occurred during search request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(PendingSender::AddContact(sender)) =
+                    requests.remove(&PendingRequestKey::AddContact)
+                {
+                    error!("Error occurred during add contact request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(PendingSender::ListContent(sender)) =
+                    requests.remove(&PendingRequestKey::ListContent)
+                {
+                    error!("Error occurred during list content request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(PendingSender::SyncContacts(sender)) =
+                    requests.remove(&PendingRequestKey::SyncContacts)
+                {
+                    error!("Error occurred during sync contacts request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
                 } else {
                     warn!("Received server error, but no matching pending request found.");
                 }
@@ -362,10 +384,63 @@ impl MutantClient {
                 }
             },
             Response::TaskStopped(res) => handle_task_stopped(res, pending_requests.clone()),
-            // Colony integration responses - these are handled as direct responses, not tasks
-            Response::Search(_) | Response::IndexContent(_) | Response::GetMetadata(_) => {
-                // These responses are handled by the direct request mechanism
-                // No special processing needed here
+            // Colony integration responses
+            Response::Search(search_response) => {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::Search);
+                if let Some(PendingSender::Search(sender)) = pending_sender {
+                    if sender.send(Ok(search_response)).is_err() {
+                        warn!("Failed to send Search response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received Search response but no Search request was pending");
+                }
+            }
+            Response::AddContact(add_contact_response) => {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::AddContact);
+                if let Some(PendingSender::AddContact(sender)) = pending_sender {
+                    if sender.send(Ok(add_contact_response)).is_err() {
+                        warn!("Failed to send AddContact response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received AddContact response but no AddContact request was pending");
+                }
+            }
+            Response::ListContent(list_content_response) => {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::ListContent);
+                if let Some(PendingSender::ListContent(sender)) = pending_sender {
+                    if sender.send(Ok(list_content_response)).is_err() {
+                        warn!("Failed to send ListContent response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received ListContent response but no ListContent request was pending");
+                }
+            }
+            Response::SyncContacts(sync_contacts_response) => {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::SyncContacts);
+                if let Some(PendingSender::SyncContacts(sender)) = pending_sender {
+                    if sender.send(Ok(sync_contacts_response)).is_err() {
+                        warn!("Failed to send SyncContacts response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received SyncContacts response but no SyncContacts request was pending");
+                }
+            }
+            // Other colony responses that don't have direct client methods yet
+            Response::IndexContent(_) | Response::GetMetadata(_) => {
+                // These might be added later if needed
+                warn!("Received unsupported colony response");
             },
         }
     }

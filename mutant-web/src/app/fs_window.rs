@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::app::components::multimedia;
 use crate::app::Window;
 use crate::app::window_system::generate_unique_dock_area_id;
-use crate::app::{put::PutWindow, stats::StatsWindow};
+use crate::app::{put::PutWindow, stats::StatsWindow, colony_window::ColonyWindow};
 
 // Direct imports for moved types are no longer needed if always fully qualified.
 // Example: use crate::app::fs::tree::TreeNode; // No longer needed if using full path
@@ -422,12 +422,42 @@ impl FsWindow {
         }
     }
 
+    /// Add a new Colony window tab to the internal dock system
+    pub fn add_colony_tab(&mut self) {
+        log::info!("FsWindow: Creating new Colony window tab");
+
+        // Check if a Colony tab already exists
+        let tab_exists = self.internal_dock.iter_all_tabs().any(|(_, existing_tab)| {
+            matches!(existing_tab, crate::app::fs::internal_tab::FsInternalTab::Colony(_))
+        });
+
+        if !tab_exists {
+            // Create a new Colony window
+            let colony_window = ColonyWindow::default();
+            let tab = crate::app::fs::internal_tab::FsInternalTab::Colony(colony_window);
+
+            // Add to the internal dock system
+            if self.internal_dock.iter_all_tabs().next().is_none() {
+                // If the dock is empty, create a new surface
+                self.internal_dock = egui_dock::DockState::new(vec![tab]);
+            } else {
+                // Add to the existing surface
+                self.internal_dock.main_surface_mut().push_to_focused_leaf(tab);
+            }
+
+            log::info!("FsWindow: Successfully added Colony tab to internal dock");
+        } else {
+            log::info!("FsWindow: Colony tab already exists in internal dock");
+        }
+    }
+
     /// Check if a specific window type is currently open in the internal dock
     pub fn is_window_open(&self, window_name: &str) -> bool {
         self.internal_dock.iter_all_tabs().any(|(_, tab)| {
             match tab {
                 crate::app::fs::internal_tab::FsInternalTab::Put(_) => window_name == "MutAnt Upload",
                 crate::app::fs::internal_tab::FsInternalTab::Stats(_) => window_name == "MutAnt Stats",
+                crate::app::fs::internal_tab::FsInternalTab::Colony(_) => window_name == "Colony",
                 crate::app::fs::internal_tab::FsInternalTab::FileViewer(_) => false, // File viewers don't count for menu highlighting
             }
         })

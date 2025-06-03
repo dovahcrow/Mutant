@@ -5,6 +5,7 @@ use crate::app::fs::viewer_tab::FileViewerTab;
 use crate::app::Window;
 use crate::app::put::PutWindow;
 use crate::app::stats::StatsWindow;
+use crate::app::colony_window::ColonyWindow;
 use crate::app::theme;
 use crate::app::fs::tree::TreeNode;
 use log;
@@ -15,6 +16,7 @@ pub enum FsInternalTab {
     FileViewer(FileViewerTab),
     Put(PutWindow),
     Stats(StatsWindow),
+    Colony(ColonyWindow),
 }
 
 impl FsInternalTab {
@@ -29,6 +31,7 @@ impl FsInternalTab {
             }
             Self::Put(window) => window.name(),
             Self::Stats(window) => window.name(),
+            Self::Colony(window) => window.name(),
         }
     }
 
@@ -37,6 +40,7 @@ impl FsInternalTab {
             Self::FileViewer(tab) => tab.draw(ui),
             Self::Put(window) => window.draw(ui),
             Self::Stats(window) => window.draw(ui),
+            Self::Colony(window) => window.draw(ui),
         }
     }
 }
@@ -66,6 +70,7 @@ impl egui_dock::TabViewer for FsInternalTabViewer {
             }
             FsInternalTab::Put(_) => egui::RichText::new("📤 Upload").size(12.0).into(),
             FsInternalTab::Stats(_) => egui::RichText::new("📊 Stats").size(12.0).into(),
+            FsInternalTab::Colony(_) => egui::RichText::new("🌐 Colony").size(12.0).into(),
         }
     }
 

@@ -14,6 +14,8 @@ use mutant_protocol::{
     ExportResult, HealthCheckResult, ImportResult, KeyDetails, PurgeResult, PutSource, Request,
     StatsResponse, StorageMode, SyncResult, Task, TaskId, TaskListEntry, TaskProgress,
     TaskResult, TaskStatus, TaskStoppedResponse, TaskType, PutRequest, PutDataRequest,
+    // Colony integration types
+    SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse,
 };
 
 pub mod error;
@@ -42,6 +44,11 @@ pub enum PendingRequestKey {
     Export,
     HealthCheck,
     StopTask,
+    // Colony integration
+    Search,
+    AddContact,
+    ListContent,
+    SyncContacts,
 }
 
 // Enum to hold the different sender types for the pending requests map
@@ -63,6 +70,11 @@ pub enum PendingSender {
     Export(oneshot::Sender<Result<ExportResult, ClientError>>),
     HealthCheck(oneshot::Sender<Result<HealthCheckResult, ClientError>>),
     StopTask(oneshot::Sender<Result<TaskStoppedResponse, ClientError>>),
+    // Colony integration
+    Search(oneshot::Sender<Result<SearchResponse, ClientError>>),
+    AddContact(oneshot::Sender<Result<AddContactResponse, ClientError>>),
+    ListContent(oneshot::Sender<Result<ListContentResponse, ClientError>>),
+    SyncContacts(oneshot::Sender<Result<SyncContactsResponse, ClientError>>),
 }
 
 // The new map type for pending requests
@@ -552,6 +564,31 @@ impl MutantClient {
 
     pub async fn get_stats(&mut self) -> Result<StatsResponse, ClientError> {
         direct_request!(self, Stats, StatsRequest {})
+    }
+
+    // Colony integration methods
+
+    /// Search for content using SPARQL queries
+    pub async fn search(&mut self, query: serde_json::Value) -> Result<SearchResponse, ClientError> {
+        direct_request!(self, Search, SearchRequest { query })
+    }
+
+    /// Add a contact pod address to sync with
+    pub async fn add_contact(&mut self, pod_address: &str, contact_name: Option<String>) -> Result<AddContactResponse, ClientError> {
+        direct_request!(self, AddContact, AddContactRequest {
+            pod_address: pod_address.to_string(),
+            contact_name,
+        })
+    }
+
+    /// List all available content from synced pods
+    pub async fn list_content(&mut self) -> Result<ListContentResponse, ClientError> {
+        direct_request!(self, ListContent, ListContentRequest {})
+    }
+
+    /// Sync all contact pods to get the latest content
+    pub async fn sync_contacts(&mut self) -> Result<SyncContactsResponse, ClientError> {
+        direct_request!(self, SyncContacts, SyncContactsRequest {})
     }
 
     pub async fn import(&mut self, file_path: &str) -> Result<ImportResult, ClientError> {

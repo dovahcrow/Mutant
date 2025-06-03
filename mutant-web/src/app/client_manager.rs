@@ -3,7 +3,7 @@ use futures::{channel::oneshot, StreamExt};
 use lazy_static::lazy_static;
 use log::{error, info, warn};
 use mutant_client::MutantClient;
-use mutant_protocol::{KeyDetails, StatsResponse, Task, TaskId, TaskListEntry, TaskProgress};
+use mutant_protocol::{KeyDetails, StatsResponse, Task, TaskId, TaskListEntry, TaskProgress, SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse};
 use tokio::sync::mpsc;
 use wasm_bindgen_futures::spawn_local;
 
@@ -49,6 +49,11 @@ enum ClientCommand {
     ),
     Reconnect,
     Shutdown,
+    // Colony integration commands
+    Search(serde_json::Value, oneshot::Sender<Result<SearchResponse, String>>),
+    AddContact(String, Option<String>, oneshot::Sender<Result<AddContactResponse, String>>),
+    ListContent(oneshot::Sender<Result<ListContentResponse, String>>),
+    SyncContacts(oneshot::Sender<Result<SyncContactsResponse, String>>),
 }
 
 // Singleton channel to the client manager
@@ -470,6 +475,107 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                 ClientCommand::Shutdown => {
                     break;
                 }
+                // Colony integration command handlers
+                ClientCommand::Search(query, sender) => {
+                    if let Err(e) = ensure_connected(&mut client, &mut connected).await {
+                        if !sender.is_canceled() {
+                            let _ = sender.send(Err(e));
+                        }
+                        continue;
+                    }
+
+                    match client.search(query).await {
+                        Ok(response) => {
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Ok(response));
+                            }
+                        }
+                        Err(e) => {
+                            if e.to_string().contains("connection") || e.to_string().contains("websocket") {
+                                connected = false;
+                                warn!("Connection lost during search, will reconnect on next request");
+                            }
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Err(format!("Failed to search: {:?}", e)));
+                            }
+                        }
+                    }
+                }
+                ClientCommand::AddContact(pod_address, contact_name, sender) => {
+                    if let Err(e) = ensure_connected(&mut client, &mut connected).await {
+                        if !sender.is_canceled() {
+                            let _ = sender.send(Err(e));
+                        }
+                        continue;
+                    }
+
+                    match client.add_contact(&pod_address, contact_name).await {
+                        Ok(response) => {
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Ok(response));
+                            }
+                        }
+                        Err(e) => {
+                            if e.to_string().contains("connection") || e.to_string().contains("websocket") {
+                                connected = false;
+                                warn!("Connection lost during add contact, will reconnect on next request");
+                            }
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Err(format!("Failed to add contact: {:?}", e)));
+                            }
+                        }
+                    }
+                }
+                ClientCommand::ListContent(sender) => {
+                    if let Err(e) = ensure_connected(&mut client, &mut connected).await {
+                        if !sender.is_canceled() {
+                            let _ = sender.send(Err(e));
+                        }
+                        continue;
+                    }
+
+                    match client.list_content().await {
+                        Ok(response) => {
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Ok(response));
+                            }
+                        }
+                        Err(e) => {
+                            if e.to_string().contains("connection") || e.to_string().contains("websocket") {
+                                connected = false;
+                                warn!("Connection lost during list content, will reconnect on next request");
+                            }
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Err(format!("Failed to list content: {:?}", e)));
+                            }
+                        }
+                    }
+                }
+                ClientCommand::SyncContacts(sender) => {
+                    if let Err(e) = ensure_connected(&mut client, &mut connected).await {
+                        if !sender.is_canceled() {
+                            let _ = sender.send(Err(e));
+                        }
+                        continue;
+                    }
+
+                    match client.sync_contacts().await {
+                        Ok(response) => {
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Ok(response));
+                            }
+                        }
+                        Err(e) => {
+                            if e.to_string().contains("connection") || e.to_string().contains("websocket") {
+                                connected = false;
+                                warn!("Connection lost during sync contacts, will reconnect on next request");
+                            }
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Err(format!("Failed to sync contacts: {:?}", e)));
+                            }
+                        }
+                    }
+                }
                 ClientCommand::StartGetStream(name, is_public, sender) => {
                     info!("Processing StartGetStream command for key: {}", name);
 
@@ -808,6 +914,108 @@ pub async fn reconnect() -> Result<(), String> {
         Err(e) => {
             error!("Failed to send reconnect command: {:?}", e);
             Err(format!("Failed to send reconnect command: {:?}", e))
+        }
+    }
+}
+
+// Colony integration public API functions
+
+pub async fn search(query: serde_json::Value) -> Result<SearchResponse, String> {
+    info!("Starting search request");
+
+    let (tx, rx) = oneshot::channel();
+    match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::Search(query, tx)) {
+        Ok(_) => {
+            info!("Search command sent to client manager");
+            match rx.await {
+                Ok(result) => {
+                    info!("Received search response from client manager");
+                    result
+                },
+                Err(e) => {
+                    error!("Failed to receive search response: {:?}", e);
+                    Err(format!("Failed to receive response: {:?}", e))
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to send search command: {:?}", e);
+            Err(format!("Failed to send command: {:?}", e))
+        }
+    }
+}
+
+pub async fn add_contact(pod_address: &str, contact_name: Option<String>) -> Result<AddContactResponse, String> {
+    info!("Starting add contact request");
+
+    let (tx, rx) = oneshot::channel();
+    match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::AddContact(pod_address.to_string(), contact_name, tx)) {
+        Ok(_) => {
+            info!("AddContact command sent to client manager");
+            match rx.await {
+                Ok(result) => {
+                    info!("Received add contact response from client manager");
+                    result
+                },
+                Err(e) => {
+                    error!("Failed to receive add contact response: {:?}", e);
+                    Err(format!("Failed to receive response: {:?}", e))
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to send add contact command: {:?}", e);
+            Err(format!("Failed to send command: {:?}", e))
+        }
+    }
+}
+
+pub async fn list_content() -> Result<ListContentResponse, String> {
+    info!("Starting list content request");
+
+    let (tx, rx) = oneshot::channel();
+    match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::ListContent(tx)) {
+        Ok(_) => {
+            info!("ListContent command sent to client manager");
+            match rx.await {
+                Ok(result) => {
+                    info!("Received list content response from client manager");
+                    result
+                },
+                Err(e) => {
+                    error!("Failed to receive list content response: {:?}", e);
+                    Err(format!("Failed to receive response: {:?}", e))
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to send list content command: {:?}", e);
+            Err(format!("Failed to send command: {:?}", e))
+        }
+    }
+}
+
+pub async fn sync_contacts() -> Result<SyncContactsResponse, String> {
+    info!("Starting sync contacts request");
+
+    let (tx, rx) = oneshot::channel();
+    match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::SyncContacts(tx)) {
+        Ok(_) => {
+            info!("SyncContacts command sent to client manager");
+            match rx.await {
+                Ok(result) => {
+                    info!("Received sync contacts response from client manager");
+                    result
+                },
+                Err(e) => {
+                    error!("Failed to receive sync contacts response: {:?}", e);
+                    Err(format!("Failed to receive response: {:?}", e))
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to send sync contacts command: {:?}", e);
+            Err(format!("Failed to send command: {:?}", e))
         }
     }
 }

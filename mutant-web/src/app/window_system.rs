@@ -5,7 +5,7 @@ use egui_dock::{DockArea, DockState};
 use futures::{SinkExt, StreamExt};
 use lazy_static::lazy_static;
 
-use super::{put::PutWindow, fs_window::FsWindow, fs::viewer_tab::FileViewerTab, stats::StatsWindow, Window, WindowType, theme::MutantColors};
+use super::{put::PutWindow, fs_window::FsWindow, fs::viewer_tab::FileViewerTab, stats::StatsWindow, colony_window::ColonyWindow, Window, WindowType, theme::MutantColors};
 
 /// Unified tab type that can hold any kind of tab in the dock system
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -13,6 +13,7 @@ pub enum UnifiedTab {
     Put(PutWindow),
     Fs(FsWindow),
     Stats(StatsWindow),
+    Colony(ColonyWindow),
     FileViewer(FileViewerTab),
 }
 
@@ -22,6 +23,7 @@ impl UnifiedTab {
             UnifiedTab::Put(w) => w.name(),
             UnifiedTab::Fs(w) => w.name(),
             UnifiedTab::Stats(w) => w.name(),
+            UnifiedTab::Colony(w) => w.name(),
             UnifiedTab::FileViewer(tab) => tab.file.key.clone(),
         }
     }
@@ -31,6 +33,7 @@ impl UnifiedTab {
             UnifiedTab::Put(w) => w.draw(ui),
             UnifiedTab::Fs(w) => w.draw(ui), // Still use regular draw for now
             UnifiedTab::Stats(w) => w.draw(ui),
+            UnifiedTab::Colony(w) => w.draw(ui),
             UnifiedTab::FileViewer(tab) => tab.draw(ui),
         }
     }
@@ -45,6 +48,7 @@ impl From<WindowType> for UnifiedTab {
             WindowType::Put(w) => UnifiedTab::Put(w),
             WindowType::Fs(w) => UnifiedTab::Fs(w),
             WindowType::Stats(w) => UnifiedTab::Stats(w),
+            WindowType::Colony(w) => UnifiedTab::Colony(w),
         }
     }
 }
@@ -134,6 +138,7 @@ impl egui_dock::TabViewer for UnifiedTabViewer {
             UnifiedTab::Put(_) => ("📤 ", tab.name()),
             UnifiedTab::Fs(_) => ("📁 ", tab.name()),
             UnifiedTab::Stats(_) => ("📊 ", tab.name()),
+            UnifiedTab::Colony(_) => ("🌐 ", tab.name()),
             UnifiedTab::FileViewer(file_tab) => {
                 // Get the file name from the path
                 let file_name = std::path::Path::new(&file_tab.file.key)
@@ -280,6 +285,7 @@ impl WindowSystem {
         match window_type {
             WindowType::Fs(_) => [300.0, 600.0],
             WindowType::Stats(_) => [500.0, 600.0],
+            WindowType::Colony(_) => [800.0, 600.0], // Wider for two-column layout
             // WindowType::Overview(_) => [300.0, 600.0],
             // WindowType::Ships(_) => [300.0, 600.0],
             // WindowType::Bases(_) => [600.0, 400.0],
@@ -425,6 +431,10 @@ impl WindowSystem {
 
                     if menu_button(ui, "📊", "Stats", is_window_open("MutAnt Stats")).clicked() {
                         new_window(StatsWindow::new());
+                    }
+
+                    if menu_button(ui, "🌐", "Colony", is_window_open("Colony")).clicked() {
+                        new_window(ColonyWindow::default());
                     }
 
                     // if menu_button(ui, "🚀", "Ships", is_window_open("Ships")).clicked() {
