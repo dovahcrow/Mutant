@@ -372,7 +372,8 @@ impl TreeNode {
 
                 // Add visual feedback if this item is being dragged
                 if let Some((dragged_path, _)) = &drag_state.dragged_item {
-                    if dragged_path == &self.path {
+                    let file_key = &details.key;
+                    if dragged_path == file_key {
                         ui.painter().rect_filled(
                             row_rect,
                             4.0,
@@ -423,8 +424,10 @@ impl TreeNode {
                     if ui.ctx().input(|i| i.pointer.primary_pressed()) {
                         if let Some(pointer_pos) = ui.ctx().pointer_latest_pos() {
                             if row_rect.contains(pointer_pos) {
-                                drag_state.drag_candidate = Some((self.path.clone(), false, pointer_pos));
-                                log::info!("Started tracking potential drag for file: {}", self.path);
+                                // Use the actual key from key_details for files, not the tree path
+                                let file_key = &details.key;
+                                drag_state.drag_candidate = Some((file_key.clone(), false, pointer_pos));
+                                log::info!("Started tracking potential drag for file: {}", file_key);
                             }
                         }
                     }
@@ -432,16 +435,17 @@ impl TreeNode {
 
                 // Check for drag movement if we have a candidate
                 if let Some((candidate_path, is_dir, start_pos)) = &drag_state.drag_candidate {
-                    if candidate_path == &self.path && !*is_dir {
+                    let file_key = &details.key;
+                    if candidate_path == file_key && !*is_dir {
                         if ui.ctx().input(|i| i.pointer.primary_down()) {
                             if let Some(current_pos) = ui.ctx().pointer_latest_pos() {
                                 let distance = (current_pos - *start_pos).length();
                                 if distance > 5.0 && !drag_state.is_dragging {
                                     // We've moved enough, start the actual drag
-                                    drag_state.dragged_item = Some((self.path.clone(), false));
+                                    drag_state.dragged_item = Some((file_key.clone(), false));
                                     drag_state.is_dragging = true;
                                     drag_state.drag_candidate = None; // Clear the candidate
-                                    log::info!("Started dragging file: {}", self.path);
+                                    log::info!("Started dragging file: {}", file_key);
                                 }
                             }
                         } else {
@@ -454,7 +458,8 @@ impl TreeNode {
                 // Handle ongoing drag operations
                 if drag_state.is_dragging {
                     if let Some((dragged_path, is_dir)) = &drag_state.dragged_item {
-                        if !*is_dir && dragged_path == &self.path {
+                        let file_key = &details.key;
+                        if !*is_dir && dragged_path == file_key {
                             // Update drag position
                             if let Some(pointer_pos) = ui.ctx().pointer_latest_pos() {
                                 drag_state.drag_pos = Some(pointer_pos);
@@ -463,7 +468,7 @@ impl TreeNode {
 
                             // Check for drag release
                             if !ui.ctx().input(|i| i.pointer.primary_down()) {
-                                log::info!("Drag stopped for file: {}", self.path);
+                                log::info!("Drag stopped for file: {}", file_key);
                                 if let Some(drop_target) = &drag_state.drop_target {
                                     log::info!("Drop target: {}", drop_target);
                                     // Calculate the new path for the move operation
