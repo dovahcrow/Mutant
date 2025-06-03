@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use tokio::sync::OnceCell;
+use mutant_lib::config::NetworkChoice;
 
 use crate::error::Error as DaemonError;
 use crate::colony::ColonyManager;
@@ -16,8 +17,8 @@ use super::common::UpdateSender;
 static COLONY_MANAGER: OnceCell<Arc<ColonyManager>> = OnceCell::const_new();
 
 /// Initialize the global colony manager
-pub async fn init_colony_manager() -> Result<(), DaemonError> {
-    let manager = ColonyManager::new().await?;
+pub async fn init_colony_manager(wallet: autonomi::Wallet, network_choice: NetworkChoice) -> Result<(), DaemonError> {
+    let manager = ColonyManager::new(wallet, network_choice).await?;
     COLONY_MANAGER.set(Arc::new(manager))
         .map_err(|_| DaemonError::ColonyError("Colony manager already initialized".to_string()))?;
     
@@ -26,7 +27,7 @@ pub async fn init_colony_manager() -> Result<(), DaemonError> {
 }
 
 /// Get the global colony manager instance
-async fn get_colony_manager() -> Result<Arc<ColonyManager>, DaemonError> {
+pub async fn get_colony_manager() -> Result<Arc<ColonyManager>, DaemonError> {
     COLONY_MANAGER.get()
         .ok_or_else(|| DaemonError::ColonyError("Colony manager not initialized".to_string()))
         .map(|manager| manager.clone())

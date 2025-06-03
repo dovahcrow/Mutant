@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use autonomi::ScratchpadAddress;
+use autonomi::{ScratchpadAddress, Wallet};
 use tokio::sync::RwLock;
 
 use crate::{
@@ -215,6 +215,14 @@ impl MutAnt {
         sync_callback: Option<SyncCallback>,
     ) -> Result<SyncResult, Error> {
         self.data.read().await.sync(force, sync_callback).await
+    }
+
+    /// Get the wallet from the network adapter
+    ///
+    /// This method provides access to the underlying Autonomi wallet for operations
+    /// that require direct wallet access, such as Colony integration.
+    pub async fn get_wallet(&self) -> Result<Wallet, Error> {
+        self.data.read().await.get_wallet().await
     }
 }
 

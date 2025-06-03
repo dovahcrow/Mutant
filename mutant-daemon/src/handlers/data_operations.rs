@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use crate::error::Error as DaemonError;
 use super::{TaskEntry, TaskMap, ActiveKeysMap, try_register_key, release_key, is_public_only_mode, PUBLIC_ONLY_ERROR_MSG};
+use super::colony::get_colony_manager;
 use mutant_lib::storage::ScratchpadAddress;
 use mutant_lib::MutAnt;
 use mutant_protocol::{
@@ -14,6 +15,32 @@ use mutant_protocol::{
 };
 
 use super::common::UpdateSender;
+
+/// Helper function to auto-index public uploads to colony
+async fn auto_index_public_upload(
+    user_key: &str,
+    filename: Option<String>,
+    file_size: u64,
+    public_address: &str,
+) {
+    // Try to get the colony manager and auto-index the upload
+    // This is a best-effort operation that shouldn't fail the upload
+    match get_colony_manager().await {
+        Ok(colony_manager) => {
+            if let Err(e) = colony_manager.auto_index_public_upload(
+                user_key,
+                filename,
+                file_size,
+                public_address.to_string(),
+            ).await {
+                log::warn!("Failed to auto-index public upload for key {}: {}", user_key, e);
+            }
+        }
+        Err(e) => {
+            log::debug!("Colony manager not available for auto-indexing: {}", e);
+        }
+    }
+}
 
 pub(crate) async fn handle_put(
     req: PutRequest,
@@ -162,6 +189,9 @@ pub(crate) async fn handle_put(
 
         log::info!("Starting PUT task: task_id={}, user_key={}, source={}", task_id, user_key, source_info);
 
+        // Store file size for colony indexing before moving data_to_put
+        let file_size = data_to_put.len() as u64;
+
         // Update status in TaskMap
         {
             let mut tasks_guard = tasks.write().await;
@@ -238,10 +268,35 @@ pub(crate) async fn handle_put(
 
                             entry.task.status = TaskStatus::Completed;
                             entry.task.result = TaskResult::Result(TaskResultType::Put(PutResult {
-                                public_address,
+                                public_address: public_address.clone(),
                             }));
                             entry.abort_handle = None; // Task finished, remove handle
                             log::info!("PUT task completed successfully: task_id={}, user_key={}, source={}", task_id, user_key, source_info);
+
+                            // Auto-index public uploads to colony
+                            if req_public {
+                                if let Some(ref addr) = public_address {
+                                    // Extract filename from source info
+                                    let filename = if source_info.starts_with("file:") {
+                                        std::path::Path::new(&source_info[5..])
+                                            .file_name()
+                                            .and_then(|name| name.to_str())
+                                            .map(|s| s.to_string())
+                                    } else if source_info.starts_with("bytes:") {
+                                        Some(source_info[6..].to_string())
+                                    } else {
+                                        None
+                                    };
+
+                                    // Spawn auto-indexing task (don't block the response)
+                                    let user_key_clone = user_key.clone();
+                                    let addr_clone = addr.clone();
+                                    tokio::spawn(async move {
+                                        auto_index_public_upload(&user_key_clone, filename, file_size, &addr_clone).await;
+                                    });
+                                }
+                            }
+
                             Some(Response::TaskResult(TaskResultResponse {
                                 task_id,
                                 status: TaskStatus::Completed,
@@ -381,6 +436,7 @@ pub(crate) async fn handle_put_data(
             let mode = put_data.mode.clone();
             let public = put_data.public;
             let no_verify = put_data.no_verify;
+            let filename = put_data.filename.clone(); // Extract filename for colony indexing
 
             // Update task status to InProgress
             {
@@ -433,6 +489,9 @@ pub(crate) async fn handle_put_data(
             tokio::spawn(async move {
                 log::info!("DAEMON: Starting PUT operation for streaming task {}", task_id);
 
+                // Store file size for colony indexing before moving complete_data_arc
+                let file_size = complete_data_arc.len() as u64;
+
                 // Call put with the callback
                 let result = mutant_clone
                     .put(
@@ -469,10 +528,24 @@ pub(crate) async fn handle_put_data(
 
                                     entry.task.status = TaskStatus::Completed;
                                     entry.task.result = TaskResult::Result(TaskResultType::Put(PutResult {
-                                        public_address,
+                                        public_address: public_address.clone(),
                                     }));
                                     entry.abort_handle = None; // Task finished, remove handle
                                     log::info!("PUT streaming task completed successfully: task_id={}, user_key={}", task_id, user_key);
+
+                                    // Auto-index public uploads to colony
+                                    if public {
+                                        if let Some(ref addr) = public_address {
+                                            // Spawn auto-indexing task (don't block the response)
+                                            let user_key_clone = user_key.clone();
+                                            let addr_clone = addr.clone();
+                                            let filename_clone = filename.clone();
+                                            tokio::spawn(async move {
+                                                auto_index_public_upload(&user_key_clone, filename_clone, file_size, &addr_clone).await;
+                                            });
+                                        }
+                                    }
+
                                     Some(Response::TaskResult(TaskResultResponse {
                                         task_id,
                                         status: TaskStatus::Completed,

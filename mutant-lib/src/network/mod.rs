@@ -140,6 +140,10 @@ impl Network {
     pub fn network_choice(&self) -> NetworkChoice {
         self.network_choice
     }
+
+    pub fn wallet(&self) -> &Wallet {
+        &self.wallet
+    }
 }
 
 #[cfg(test)]

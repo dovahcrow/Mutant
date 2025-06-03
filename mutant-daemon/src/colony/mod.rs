@@ -2,37 +2,40 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use colonylib::{KeyStore, DataStore, Graph, PodManager};
 use serde_json::Value;
-use autonomi::{Client, Network, Wallet};
+use autonomi::{Client, Wallet};
+use mutant_lib::config::NetworkChoice;
 use crate::error::Error as DaemonError;
 
 /// Colony integration manager for MutAnt daemon
-/// 
+///
 /// This module provides indexing and search capabilities for public content
 /// stored on the Autonomi network using ColonyLib's RDF-based metadata system.
 pub struct ColonyManager {
     key_store: Arc<RwLock<KeyStore>>,
     data_store: Arc<RwLock<DataStore>>,
     graph: Arc<RwLock<Graph>>,
+    wallet: Wallet,
+    network_choice: NetworkChoice,
     initialized: bool,
 }
 
 impl ColonyManager {
     /// Initialize the colony manager with default configuration
-    /// 
+    ///
     /// This will create or load existing colony data from the standard data directory.
     /// The manager can operate in public-only mode for search operations.
-    pub async fn new() -> Result<Self, DaemonError> {
+    pub async fn new(wallet: Wallet, network_choice: NetworkChoice) -> Result<Self, DaemonError> {
         // Initialize data store (creates directories if needed)
         let data_store = DataStore::create()
             .map_err(|e| DaemonError::ColonyError(format!("Failed to create data store: {}", e)))?;
         
         // Initialize or load key store
         let key_store_path = data_store.get_keystore_path();
-        let key_store = if key_store_path.exists() {
+        let mut key_store = if key_store_path.exists() {
             log::info!("Loading existing colony key store");
             let mut file = std::fs::File::open(&key_store_path)
                 .map_err(|e| DaemonError::ColonyError(format!("Failed to open key store: {}", e)))?;
-            KeyStore::from_file(&mut file, "mutant_colony_default")
+            KeyStore::from_file(&mut file, "password")
                 .map_err(|e| DaemonError::ColonyError(format!("Failed to load key store: {}", e)))?
         } else {
             log::info!("Creating new colony key store with default mnemonic");
@@ -41,6 +44,11 @@ impl ColonyManager {
             KeyStore::from_mnemonic(mnemonic)
                 .map_err(|e| DaemonError::ColonyError(format!("Failed to create key store: {}", e)))?
         };
+
+        // Set the wallet key (using the same default private key as in the example)
+        const LOCAL_PRIVATE_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        key_store.set_wallet_key(LOCAL_PRIVATE_KEY.to_string())
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to set wallet key: {}", e)))?;
         
         // Initialize graph database
         let graph_path = data_store.get_graph_path();
@@ -51,10 +59,28 @@ impl ColonyManager {
             key_store: Arc::new(RwLock::new(key_store)),
             data_store: Arc::new(RwLock::new(data_store)),
             graph: Arc::new(RwLock::new(graph)),
+            wallet,
+            network_choice,
             initialized: true,
         })
     }
-    
+
+    /// Get a client configured for the correct network
+    async fn get_client(&self) -> Result<Client, DaemonError> {
+        match self.network_choice {
+            NetworkChoice::Mainnet => Client::init().await
+                .map_err(|e| DaemonError::ColonyError(format!("Failed to initialize mainnet client: {}", e))),
+            NetworkChoice::Devnet => Client::init_local().await
+                .map_err(|e| DaemonError::ColonyError(format!("Failed to initialize devnet client: {}", e))),
+            NetworkChoice::Alphanet => {
+                // For alphanet, we need to use init_with_config with specific configuration
+                // For now, fall back to mainnet init - this should be improved
+                Client::init().await
+                    .map_err(|e| DaemonError::ColonyError(format!("Failed to initialize alphanet client: {}", e)))
+            }
+        }
+    }
+
     /// Search for content using SPARQL queries
     /// 
     /// This method accepts various query formats:
@@ -70,12 +96,7 @@ impl ColonyManager {
         log::debug!("Colony search request: {}", query);
         
         // For search operations, we need a temporary PodManager
-        // In public-only mode, we don't need a wallet
-        let client = Client::init().await
-            .map_err(|e| DaemonError::ColonyError(format!("Failed to initialize Autonomi client: {}", e)))?;
-        
-        // Create a dummy wallet for the PodManager interface (not used in search)
-        let dummy_wallet = create_dummy_wallet()?;
+        let client = self.get_client().await?;
 
         // Get locks and hold them for the duration of the operation
         let mut data_store = self.data_store.write().await;
@@ -84,7 +105,7 @@ impl ColonyManager {
 
         let mut pod_manager = PodManager::new(
             client,
-            &dummy_wallet,
+            &self.wallet,
             &mut *data_store,
             &mut *key_store,
             &mut *graph,
@@ -98,6 +119,116 @@ impl ColonyManager {
         Ok(results)
     }
     
+    /// Auto-generate metadata for a public upload and add it to the user's pod
+    ///
+    /// This is called automatically when a public file is uploaded successfully.
+    /// It generates appropriate Schema.org metadata based on the file information.
+    pub async fn auto_index_public_upload(
+        &self,
+        user_key: &str,
+        filename: Option<String>,
+        file_size: u64,
+        public_address: String,
+    ) -> Result<(), DaemonError> {
+        if !self.initialized {
+            log::warn!("Colony manager not initialized, skipping auto-indexing for key: {}", user_key);
+            return Ok(()); // Don't fail the upload if colony isn't available
+        }
+
+        log::info!("Auto-indexing public upload: key={}, filename={:?}, size={}, public_address={}",
+                   user_key, filename, file_size, public_address);
+
+        // Generate metadata based on file information
+        let metadata = self.generate_file_metadata(user_key, filename.as_deref(), file_size, &public_address);
+
+        // Use existing index_content method
+        match self.index_content(user_key, metadata, Some(public_address)).await {
+            Ok(_) => {
+                log::info!("Successfully auto-indexed public upload for key: {}", user_key);
+                Ok(())
+            }
+            Err(e) => {
+                log::error!("Failed to auto-index public upload for key {}: {}", user_key, e);
+                // Don't fail the upload if colony indexing fails
+                Ok(())
+            }
+        }
+    }
+
+    /// Generate Schema.org metadata for a file upload
+    fn generate_file_metadata(&self, user_key: &str, filename: Option<&str>, file_size: u64, public_address: &str) -> Value {
+        let file_name = filename.unwrap_or(user_key);
+
+        // Determine content type based on file extension
+        let (schema_type, encoding_format) = self.determine_content_type(file_name);
+
+        // Try a simpler format first to debug the issue
+        serde_json::json!({
+            "name": file_name,
+            "type": schema_type,
+            "size": file_size,
+            "format": encoding_format,
+            "address": public_address,
+            "user": user_key,
+            "created": chrono::Utc::now().to_rfc3339()
+        })
+    }
+
+    /// Determine Schema.org content type and encoding format based on filename
+    fn determine_content_type(&self, filename: &str) -> (&'static str, &'static str) {
+        let extension = std::path::Path::new(filename)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        match extension.as_str() {
+            // Video formats
+            "mp4" => ("schema:VideoObject", "video/mp4"),
+            "avi" => ("schema:VideoObject", "video/avi"),
+            "mkv" => ("schema:VideoObject", "video/mkv"),
+            "mov" => ("schema:VideoObject", "video/mov"),
+            "wmv" => ("schema:VideoObject", "video/wmv"),
+            "flv" => ("schema:VideoObject", "video/flv"),
+            "webm" => ("schema:VideoObject", "video/webm"),
+
+            // Audio formats
+            "mp3" => ("schema:AudioObject", "audio/mp3"),
+            "wav" => ("schema:AudioObject", "audio/wav"),
+            "flac" => ("schema:AudioObject", "audio/flac"),
+            "aac" => ("schema:AudioObject", "audio/aac"),
+            "ogg" => ("schema:AudioObject", "audio/ogg"),
+            "m4a" => ("schema:AudioObject", "audio/m4a"),
+
+            // Image formats
+            "jpg" | "jpeg" => ("schema:ImageObject", "image/jpeg"),
+            "png" => ("schema:ImageObject", "image/png"),
+            "gif" => ("schema:ImageObject", "image/gif"),
+            "bmp" => ("schema:ImageObject", "image/bmp"),
+            "svg" => ("schema:ImageObject", "image/svg+xml"),
+            "webp" => ("schema:ImageObject", "image/webp"),
+
+            // Document formats
+            "pdf" => ("schema:DigitalDocument", "application/pdf"),
+            "doc" | "docx" => ("schema:DigitalDocument", "application/msword"),
+            "txt" => ("schema:TextDigitalDocument", "text/plain"),
+            "html" | "htm" => ("schema:WebPage", "text/html"),
+            "json" => ("schema:Dataset", "application/json"),
+            "xml" => ("schema:Dataset", "application/xml"),
+            "csv" => ("schema:Dataset", "text/csv"),
+
+            // Archive formats
+            "zip" => ("schema:DataDownload", "application/zip"),
+            "rar" => ("schema:DataDownload", "application/rar"),
+            "7z" => ("schema:DataDownload", "application/7z"),
+            "tar" => ("schema:DataDownload", "application/tar"),
+            "gz" => ("schema:DataDownload", "application/gzip"),
+
+            // Default for unknown types
+            _ => ("schema:MediaObject", "application/octet-stream")
+        }
+    }
+
     /// Index content by creating metadata pods
     ///
     /// This creates a new pod containing RDF metadata about the specified content.
@@ -115,10 +246,7 @@ impl ColonyManager {
         log::info!("Indexing content: key={}, public_address={:?}", user_key, public_address);
 
         // Initialize client for pod operations
-        let client = Client::init().await
-            .map_err(|e| DaemonError::ColonyError(format!("Failed to initialize Autonomi client: {}", e)))?;
-
-        let dummy_wallet = create_dummy_wallet()?;
+        let client = self.get_client().await?;
 
         // Get locks and hold them for the duration of the operation
         let mut data_store = self.data_store.write().await;
@@ -127,7 +255,7 @@ impl ColonyManager {
 
         let mut pod_manager = PodManager::new(
             client,
-            &dummy_wallet,
+            &self.wallet,
             &mut *data_store,
             &mut *key_store,
             &mut *graph,
@@ -138,12 +266,17 @@ impl ColonyManager {
         let user_pod_address = self.get_or_create_user_pod(&mut pod_manager, user_key).await?;
 
         // Add the content metadata to the user's pod
-        let subject_id = public_address.unwrap_or_else(|| format!("mutant:{}", user_key));
+        let subject_id = public_address.unwrap_or_else(|| format!("file_{}", user_key.replace(".", "_")));
         let metadata_str = serde_json::to_string(&metadata)
             .map_err(|e| DaemonError::ColonyError(format!("Failed to serialize metadata: {}", e)))?;
 
+        log::debug!("Generated metadata JSON: {}", metadata_str);
+        log::debug!("Subject ID: {}", subject_id);
+        log::debug!("User pod address: {}", user_pod_address);
+
         pod_manager.put_subject_data(&user_pod_address, &subject_id, &metadata_str).await
-            .map_err(|e| DaemonError::ColonyError(format!("Failed to add metadata to pod: {}", e)))?;
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to add metadata to pod (pod_address: {}, subject_id: {}, metadata_len: {}): {}",
+                user_pod_address, subject_id, metadata_str.len(), e)))?;
 
         // Upload the updated pod to the network
         pod_manager.upload_all().await
@@ -165,22 +298,25 @@ impl ColonyManager {
         let (pod_address, _scratchpad_address) = pod_manager.add_pod().await
             .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod: {}", e)))?;
 
-        // Add basic metadata about the pod itself
+        // Add basic metadata about the pod itself (simplified format)
         let pod_metadata = serde_json::json!({
-            "@context": {"schema": "http://schema.org/", "mutant": "https://mutant.network/"},
-            "@type": "mutant:UserPod",
-            "@id": format!("mutant:pod:{}", pod_address),
-            "schema:name": format!("Content Pod for {}", user_key),
-            "schema:description": format!("Metadata pod containing all public content for user {}", user_key),
-            "mutant:owner": user_key,
-            "schema:dateCreated": chrono::Utc::now().to_rfc3339()
+            "type": "UserPod",
+            "name": format!("Content Pod for {}", user_key),
+            "description": format!("Metadata pod containing all public content for user {}", user_key),
+            "owner": user_key,
+            "created": chrono::Utc::now().to_rfc3339()
         });
 
         let pod_metadata_str = serde_json::to_string(&pod_metadata)
             .map_err(|e| DaemonError::ColonyError(format!("Failed to serialize pod metadata: {}", e)))?;
 
-        pod_manager.put_subject_data(&pod_address, &format!("mutant:pod:{}", pod_address), &pod_metadata_str).await
-            .map_err(|e| DaemonError::ColonyError(format!("Failed to add pod metadata: {}", e)))?;
+        let pod_subject_id = format!("pod_{}", pod_address);
+        log::debug!("Adding pod metadata: pod_address={}, subject_id={}, metadata_len={}",
+                   pod_address, pod_subject_id, pod_metadata_str.len());
+
+        pod_manager.put_subject_data(&pod_address, &pod_subject_id, &pod_metadata_str).await
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to add pod metadata (pod_address: {}, subject_id: {}, metadata_len: {}): {}",
+                pod_address, pod_subject_id, pod_metadata_str.len(), e)))?;
 
         Ok(pod_address)
     }
@@ -196,10 +332,7 @@ impl ColonyManager {
         log::debug!("Getting metadata for address: {}", address);
         
         // For metadata retrieval, we need a temporary PodManager
-        let client = Client::init().await
-            .map_err(|e| DaemonError::ColonyError(format!("Failed to initialize Autonomi client: {}", e)))?;
-        
-        let dummy_wallet = create_dummy_wallet()?;
+        let client = self.get_client().await?;
 
         // Get locks and hold them for the duration of the operation
         let mut data_store = self.data_store.write().await;
@@ -208,7 +341,7 @@ impl ColonyManager {
 
         let mut pod_manager = PodManager::new(
             client,
-            &dummy_wallet,
+            &self.wallet,
             &mut *data_store,
             &mut *key_store,
             &mut *graph,
@@ -233,10 +366,7 @@ impl ColonyManager {
         log::info!("Adding contact pod: {} (name: {:?})", pod_address, contact_name);
 
         // Initialize client for pod operations
-        let client = Client::init().await
-            .map_err(|e| DaemonError::ColonyError(format!("Failed to initialize Autonomi client: {}", e)))?;
-
-        let dummy_wallet = create_dummy_wallet()?;
+        let client = self.get_client().await?;
 
         // Get locks and hold them for the duration of the operation
         let mut data_store = self.data_store.write().await;
@@ -245,7 +375,7 @@ impl ColonyManager {
 
         let mut pod_manager = PodManager::new(
             client,
-            &dummy_wallet,
+            &self.wallet,
             &mut *data_store,
             &mut *key_store,
             &mut *graph,
@@ -302,10 +432,7 @@ impl ColonyManager {
         log::info!("Syncing all contact pods");
 
         // Initialize client for pod operations
-        let client = Client::init().await
-            .map_err(|e| DaemonError::ColonyError(format!("Failed to initialize Autonomi client: {}", e)))?;
-
-        let dummy_wallet = create_dummy_wallet()?;
+        let client = self.get_client().await?;
 
         // Get locks and hold them for the duration of the operation
         let mut data_store = self.data_store.write().await;
@@ -314,7 +441,7 @@ impl ColonyManager {
 
         let mut pod_manager = PodManager::new(
             client,
-            &dummy_wallet,
+            &self.wallet,
             &mut *data_store,
             &mut *key_store,
             &mut *graph,
@@ -365,20 +492,7 @@ impl ColonyManager {
     }
 }
 
-/// Create a dummy wallet for PodManager interface
-/// This is needed because PodManager requires a wallet reference, but for search operations
-/// we don't actually need wallet functionality
-fn create_dummy_wallet() -> Result<Wallet, DaemonError> {
-    // Use a dummy private key - this won't be used for actual transactions in public-only mode
-    let dummy_key = "0x0000000000000000000000000000000000000000000000000000000000000001";
-    
-    // We need to get the EVM network, but in public-only mode we might not have access
-    // For now, we'll use a placeholder - this needs to be improved
-    let evm_network = Network::ArbitrumOne; // Placeholder
 
-    Wallet::new_from_private_key(evm_network, dummy_key)
-        .map_err(|e| DaemonError::ColonyError(format!("Failed to create dummy wallet: {}", e)))
-}
 
 impl Drop for ColonyManager {
     fn drop(&mut self) {

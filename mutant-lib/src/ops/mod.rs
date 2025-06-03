@@ -152,6 +152,11 @@ impl Data {
         )
         .await
     }
+
+    /// Get the wallet from the network adapter
+    pub async fn get_wallet(&self) -> Result<autonomi::Wallet, Error> {
+        Ok(self.network.wallet().clone())
+    }
 }
 
 // fn derive_master_index_info(

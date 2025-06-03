@@ -212,10 +212,17 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
         if is_public_only { " in public-only mode" } else { "" });
 
     // Initialize Colony Manager for search and indexing
-    if let Err(e) = crate::handlers::colony::init_colony_manager().await {
-        log::warn!("Failed to initialize colony manager: {}. Search functionality will be unavailable.", e);
-    } else {
-        log::info!("Colony manager initialized successfully.");
+    match mutant.get_wallet().await {
+        Ok(wallet) => {
+            if let Err(e) = crate::handlers::colony::init_colony_manager(wallet, network_choice).await {
+                log::warn!("Failed to initialize colony manager: {}. Search functionality will be unavailable.", e);
+            } else {
+                log::info!("Colony manager initialized successfully.");
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to get wallet for colony manager: {}. Search functionality will be unavailable.", e);
+        }
     }
 
     // Initialize Task Management
