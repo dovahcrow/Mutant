@@ -157,8 +157,11 @@ impl TreeNode {
                     .size(12.0)  // Match file font size for consistency
                     .color(theme::MutantColors::ACCENT_ORANGE);  // Special distinguishing color for folders
 
+                // Create a unique ID for this header that includes the expanded state
+                // This forces egui to reset its internal state when we change expansion programmatically
+                let header_id = format!("mutant_fs_{}dir_{}_{}", window_id, self.path, self.expanded);
                 let header = egui::CollapsingHeader::new(text)
-                    .id_salt(format!("mutant_fs_{}dir_{}", window_id, self.path))
+                    .id_salt(header_id)
                     .default_open(self.expanded);
 
                 let mut child_view_details = None;
@@ -317,8 +320,11 @@ impl TreeNode {
                     }
                 }
 
-                // Handle directory expansion (this will work normally since we're not intercepting clicks)
-                self.expanded = header_response.clicked() || self.expanded;
+                // Handle directory expansion - only sync with egui's state if user clicked
+                // Don't override programmatic changes from expand_all/collapse_all
+                if header_response.clicked() {
+                    self.expanded = header_result.openness > 0.0;
+                }
 
 
 
