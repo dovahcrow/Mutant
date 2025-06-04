@@ -1009,25 +1009,34 @@ impl MyApp {
                 .fill(app::theme::MutantColors::BACKGROUND_MEDIUM)
                 .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_DARK)))
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add_space(15.0);
+                // Split the header into two independent sections
+                let full_rect = ui.available_rect_before_wrap();
 
-                    // Left side - MutAnt title and connection status
-                    ui.label(
-                        egui::RichText::new("MutAnt")
-                            .size(16.0)
-                            .strong()
-                            .color(app::theme::MutantColors::ACCENT_ORANGE)
-                    );
+                // Left section for logo and connection status
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(full_rect), |ui| {
+                    ui.horizontal_centered(|ui| {
+                        ui.add_space(15.0);
 
-                    ui.separator();
+                        // Left side - MutAnt title and connection status (vertically centered)
+                        ui.label(
+                            egui::RichText::new("MutAnt")
+                                .size(16.0)
+                                .strong()
+                                .color(app::theme::MutantColors::ACCENT_ORANGE)
+                        );
 
-                    ui.label(
-                        egui::RichText::new("Connected")
-                            .size(14.0)
-                            .color(app::theme::MutantColors::SUCCESS)
-                    );
+                        ui.separator();
 
+                        ui.label(
+                            egui::RichText::new("Connected")
+                                .size(14.0)
+                                .color(app::theme::MutantColors::SUCCESS)
+                        );
+                    });
+                });
+
+                // Right section for wallet balances and public key (independent positioning)
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(full_rect), |ui| {
                     // Get data first
                     let ctx = app::context::context();
                     let wallet_balance_cache = ctx.get_wallet_balance_cache();
@@ -1035,109 +1044,97 @@ impl MyApp {
                     let daemon_status_cache = ctx.get_daemon_status_cache();
                     let status_option = daemon_status_cache.read().unwrap().as_ref().cloned();
 
-                    // Use allocate_ui_with_layout to position elements on the right
-                    let available_rect = ui.available_rect_before_wrap();
+                    // Use horizontal layout and push everything to the right
+                    ui.horizontal(|ui| {
+                        // Add expanding space to push content to the right
+                        ui.add_space(ui.available_width() - 300.0); // Reserve 300px for right content
 
-                    // Calculate the width needed for the right-side elements
-                    let right_content_width = 300.0; // Adjust as needed
-                    let (left_rect, _right_rect) = available_rect.split_left_right_at_x(available_rect.right() - right_content_width);
-
-                    // Allocate the left space (this creates the expanding space)
-                    ui.allocate_rect(left_rect, egui::Sense::hover());
-
-                    // Now use the right space for public key and wallet balances
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(right_content_width, available_rect.height()),
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            // Small margin from right edge
-                            ui.add_space(10.0);
-
-                            // Wallet balances (rightmost, stacked vertically)
-                            if let Some(balance) = balance_option {
-                                // Format the balance values
-                                let token_balance = self.format_balance(&balance.token_balance);
-                                let gas_balance = self.format_balance(&balance.gas_balance);
-
-                                // Stack wallet balances vertically
-                                ui.vertical(|ui| {
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(
-                                            egui::RichText::new(format!("{} ANT", token_balance))
-                                                .size(10.0)
-                                                .color(app::theme::MutantColors::ACCENT_BLUE)
-                                        );
-                                    });
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(
-                                            egui::RichText::new(format!("{} ETH", gas_balance))
-                                                .size(10.0)
-                                                .color(app::theme::MutantColors::ACCENT_GREEN)
-                                        );
-                                    });
-                                });
-                            } else {
-                                // Show loading indicator
-                                ui.vertical(|ui| {
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(
-                                            egui::RichText::new("Loading... ANT")
-                                                .size(10.0)
-                                                .color(app::theme::MutantColors::TEXT_SECONDARY)
-                                        );
-                                    });
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(
-                                            egui::RichText::new("Loading... ETH")
-                                                .size(10.0)
-                                                .color(app::theme::MutantColors::TEXT_SECONDARY)
-                                        );
-                                    });
-                                });
-                            }
-
-                            ui.add_space(20.0); // Space between wallet balances and public key
-
-                            // Public key display (to the left of wallet balances)
-                            if let Some(status) = status_option {
-                                if status.is_public_only {
-                                    ui.label(
-                                        egui::RichText::new("🔑 Public-Mode")
-                                            .size(10.0)
-                                            .color(app::theme::MutantColors::ACCENT_ORANGE)
-                                    );
-                                } else if let Some(public_key) = &status.public_key {
-                                    // Truncate the public key for display (show first 8 and last 4 characters)
-                                    let display_key = if public_key.len() > 12 {
-                                        format!("{}...{}", &public_key[0..8], &public_key[public_key.len()-4..])
-                                    } else {
-                                        public_key.clone()
-                                    };
-
-                                    ui.label(
-                                        egui::RichText::new(format!("🔑 {}", display_key))
-                                            .size(10.0)
-                                            .color(app::theme::MutantColors::ACCENT_ORANGE)
-                                    );
-                                } else {
-                                    ui.label(
-                                        egui::RichText::new("🔑 Wallet-Mode")
-                                            .size(10.0)
-                                            .color(app::theme::MutantColors::ACCENT_ORANGE)
-                                    );
-                                }
-                            } else {
-                                // Show loading indicator
+                        // Public key display (to the left of wallet balances)
+                        if let Some(status) = status_option {
+                            if status.is_public_only {
                                 ui.label(
-                                    egui::RichText::new("🔑 Loading...")
+                                    egui::RichText::new("🔑 Public-Mode")
                                         .size(10.0)
-                                        .color(app::theme::MutantColors::TEXT_SECONDARY)
+                                        .color(app::theme::MutantColors::ACCENT_ORANGE)
+                                );
+                            } else if let Some(public_key) = &status.public_key {
+                                // Truncate the public key for display (show first 8 and last 4 characters)
+                                let display_key = if public_key.len() > 12 {
+                                    format!("{}...{}", &public_key[0..8], &public_key[public_key.len()-4..])
+                                } else {
+                                    public_key.clone()
+                                };
+
+                                ui.label(
+                                    egui::RichText::new(format!("🔑 {}", display_key))
+                                        .size(10.0)
+                                        .color(app::theme::MutantColors::ACCENT_ORANGE)
+                                );
+                            } else {
+                                ui.label(
+                                    egui::RichText::new("🔑 Wallet-Mode")
+                                        .size(10.0)
+                                        .color(app::theme::MutantColors::ACCENT_ORANGE)
                                 );
                             }
+                        } else {
+                            // Show loading indicator
+                            ui.label(
+                                egui::RichText::new("🔑 Loading...")
+                                    .size(10.0)
+                                    .color(app::theme::MutantColors::TEXT_SECONDARY)
+                            );
                         }
-                    );
+
+                        ui.add_space(20.0); // Space between public key and wallet balances
+
+                        // Wallet balances (rightmost, stacked vertically)
+                        if let Some(balance) = balance_option {
+                            // Format the balance values
+                            let token_balance = self.format_balance(&balance.token_balance);
+                            let gas_balance = self.format_balance(&balance.gas_balance);
+
+                            // Stack wallet balances vertically with right alignment
+                            ui.vertical(|ui| {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("{} ANT", token_balance))
+                                            .size(10.0)
+                                            .color(app::theme::MutantColors::ACCENT_BLUE)
+                                    );
+                                });
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("{} ETH", gas_balance))
+                                            .size(10.0)
+                                            .color(app::theme::MutantColors::ACCENT_GREEN)
+                                    );
+                                });
+                            });
+                        } else {
+                            // Show loading indicator
+                            ui.vertical(|ui| {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(
+                                        egui::RichText::new("Loading... ANT")
+                                            .size(10.0)
+                                            .color(app::theme::MutantColors::TEXT_SECONDARY)
+                                    );
+                                });
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(
+                                        egui::RichText::new("Loading... ETH")
+                                            .size(10.0)
+                                            .color(app::theme::MutantColors::TEXT_SECONDARY)
+                                    );
+                                });
+                            });
+                        }
+
+                        ui.add_space(10.0); // Small margin from right edge
+                    });
                 });
             });
     }
