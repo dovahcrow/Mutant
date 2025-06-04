@@ -1003,8 +1003,8 @@ impl MyApp {
                                 let token_balance = self.format_balance(&balance.token_balance);
                                 let gas_balance = self.format_balance(&balance.gas_balance);
 
-                                // Stack wallet balances vertically on the right
-                                ui.vertical(|ui| {
+                                // Stack wallet balances vertically on the right, centered
+                                ui.vertical_centered(|ui| {
                                     ui.label(
                                         egui::RichText::new(format!("💰 {} ANT", token_balance))
                                             .size(10.0)
@@ -1019,7 +1019,7 @@ impl MyApp {
                                 });
                             } else {
                                 // Show loading indicator
-                                ui.vertical(|ui| {
+                                ui.vertical_centered(|ui| {
                                     ui.label(
                                         egui::RichText::new("💰 Loading...")
                                             .size(10.0)
