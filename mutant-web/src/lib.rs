@@ -962,59 +962,67 @@ impl MyApp {
                 .fill(app::theme::MutantColors::BACKGROUND_MEDIUM)
                 .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_DARK)))
             .show(ctx, |ui| {
-                // Center the entire horizontal layout vertically within the 40px header
-                ui.centered_and_justified(|ui| {
-                    ui.horizontal(|ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(15.0);
+
+                    // Left side - MutAnt title and connection status
+                    ui.label(
+                        egui::RichText::new("MutAnt")
+                            .size(16.0)
+                            .strong()
+                            .color(app::theme::MutantColors::ACCENT_ORANGE)
+                    );
+
+                    ui.separator();
+
+                    ui.label(
+                        egui::RichText::new("Connected")
+                            .size(14.0)
+                            .color(app::theme::MutantColors::SUCCESS)
+                    );
+
+                    // Push wallet balances to the right side
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(15.0);
 
-                        // MutAnt title
-                        ui.label(
-                            egui::RichText::new("MutAnt")
-                                .size(16.0)
-                                .strong()
-                                .color(app::theme::MutantColors::ACCENT_ORANGE)
-                        );
-
-                        ui.separator();
-
-                        // Connection status
-                        ui.label(
-                            egui::RichText::new("Connected")
-                                .size(14.0)
-                                .color(app::theme::MutantColors::SUCCESS)
-                        );
-
-                        // Add wallet balance display
+                        // Get wallet balance data
                         let ctx = app::context::context();
                         let wallet_balance_cache = ctx.get_wallet_balance_cache();
                         let balance_option = wallet_balance_cache.read().unwrap().as_ref().cloned();
 
                         if let Some(balance) = balance_option {
-                            ui.separator();
-
-                            // Format the balance values (assuming they're in wei, convert to readable format)
+                            // Format the balance values
                             let token_balance = self.format_balance(&balance.token_balance);
                             let gas_balance = self.format_balance(&balance.gas_balance);
 
-                            ui.label(
-                                egui::RichText::new(format!("💰 {} ANT", token_balance))
-                                    .size(12.0)
-                                    .color(app::theme::MutantColors::ACCENT_BLUE)
-                            );
+                            // Stack wallet balances vertically on the right
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    egui::RichText::new(format!("💰 {} ANT", token_balance))
+                                        .size(10.0)
+                                        .color(app::theme::MutantColors::ACCENT_BLUE)
+                                );
 
-                            ui.label(
-                                egui::RichText::new(format!("⛽ {} ETH", gas_balance))
-                                    .size(12.0)
-                                    .color(app::theme::MutantColors::ACCENT_GREEN)
-                            );
+                                ui.label(
+                                    egui::RichText::new(format!("⛽ {} ETH", gas_balance))
+                                        .size(10.0)
+                                        .color(app::theme::MutantColors::ACCENT_GREEN)
+                                );
+                            });
                         } else {
-                            // Show a placeholder or loading indicator
-                            ui.separator();
-                            ui.label(
-                                egui::RichText::new("💰 Loading...")
-                                    .size(12.0)
-                                    .color(app::theme::MutantColors::TEXT_SECONDARY)
-                            );
+                            // Show loading indicator
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    egui::RichText::new("💰 Loading...")
+                                        .size(10.0)
+                                        .color(app::theme::MutantColors::TEXT_SECONDARY)
+                                );
+                                ui.label(
+                                    egui::RichText::new("⛽ Loading...")
+                                        .size(10.0)
+                                        .color(app::theme::MutantColors::TEXT_SECONDARY)
+                                );
+                            });
                         }
                     });
                 });
