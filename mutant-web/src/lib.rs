@@ -1038,46 +1038,53 @@ impl MyApp {
                     // Now use the right space for public key and wallet balances
                     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(right_rect), |ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.add_space(10.0); // Exactly 10px from the right border
-
                             // Get wallet balance data
                             let ctx = app::context::context();
                             let wallet_balance_cache = ctx.get_wallet_balance_cache();
                             let balance_option = wallet_balance_cache.read().unwrap().as_ref().cloned();
 
-                            // Wallet balances (rightmost, aligned to right border)
+                            // Wallet balances (rightmost, aligned to right border with right-aligned text)
                             if let Some(balance) = balance_option {
                                 // Format the balance values
                                 let token_balance = self.format_balance(&balance.token_balance);
                                 let gas_balance = self.format_balance(&balance.gas_balance);
 
-                                // Stack wallet balances vertically, but in a compact way
+                                // Stack wallet balances vertically with right alignment
                                 ui.vertical(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("💰 {} ANT", token_balance))
-                                            .size(10.0)
-                                            .color(app::theme::MutantColors::ACCENT_BLUE)
-                                    );
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(
+                                            egui::RichText::new(format!("💰 {} ANT", token_balance))
+                                                .size(10.0)
+                                                .color(app::theme::MutantColors::ACCENT_BLUE)
+                                        );
+                                    });
 
-                                    ui.label(
-                                        egui::RichText::new(format!("⛽ {} ETH", gas_balance))
-                                            .size(10.0)
-                                            .color(app::theme::MutantColors::ACCENT_GREEN)
-                                    );
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(
+                                            egui::RichText::new(format!("⛽ {} ETH", gas_balance))
+                                                .size(10.0)
+                                                .color(app::theme::MutantColors::ACCENT_GREEN)
+                                        );
+                                    });
                                 });
                             } else {
-                                // Show loading indicator
+                                // Show loading indicator with right alignment
                                 ui.vertical(|ui| {
-                                    ui.label(
-                                        egui::RichText::new("💰 Loading...")
-                                            .size(10.0)
-                                            .color(app::theme::MutantColors::TEXT_SECONDARY)
-                                    );
-                                    ui.label(
-                                        egui::RichText::new("⛽ Loading...")
-                                            .size(10.0)
-                                            .color(app::theme::MutantColors::TEXT_SECONDARY)
-                                    );
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(
+                                            egui::RichText::new("💰 Loading...")
+                                                .size(10.0)
+                                                .color(app::theme::MutantColors::TEXT_SECONDARY)
+                                        );
+                                    });
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(
+                                            egui::RichText::new("⛽ Loading...")
+                                                .size(10.0)
+                                                .color(app::theme::MutantColors::TEXT_SECONDARY)
+                                        );
+                                    });
                                 });
                             }
 
