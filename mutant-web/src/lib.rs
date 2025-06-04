@@ -1009,7 +1009,7 @@ impl MyApp {
                 .fill(app::theme::MutantColors::BACKGROUND_MEDIUM)
                 .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_DARK)))
             .show(ctx, |ui| {
-                ui.horizontal_centered(|ui| {
+                ui.horizontal(|ui| {
                     ui.add_space(15.0);
 
                     // Left side - MutAnt title and connection status
@@ -1028,32 +1028,42 @@ impl MyApp {
                             .color(app::theme::MutantColors::SUCCESS)
                     );
 
-                    // Use allocate_ui_with_layout to properly position wallet balances and public key on the right
+                    // Get data first
+                    let ctx = app::context::context();
+                    let wallet_balance_cache = ctx.get_wallet_balance_cache();
+                    let balance_option = wallet_balance_cache.read().unwrap().as_ref().cloned();
+                    let daemon_status_cache = ctx.get_daemon_status_cache();
+                    let status_option = daemon_status_cache.read().unwrap().as_ref().cloned();
+
+                    // Use allocate_ui_with_layout to position elements on the right
                     let available_rect = ui.available_rect_before_wrap();
-                    let (left_rect, right_rect) = available_rect.split_left_right_at_x(available_rect.right() - 450.0); // Reserve 450px for public key and wallet balances
+
+                    // Calculate the width needed for the right-side elements
+                    let right_content_width = 300.0; // Adjust as needed
+                    let (left_rect, _right_rect) = available_rect.split_left_right_at_x(available_rect.right() - right_content_width);
 
                     // Allocate the left space (this creates the expanding space)
                     ui.allocate_rect(left_rect, egui::Sense::hover());
 
                     // Now use the right space for public key and wallet balances
-                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(right_rect), |ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            // Get wallet balance data
-                            let ctx = app::context::context();
-                            let wallet_balance_cache = ctx.get_wallet_balance_cache();
-                            let balance_option = wallet_balance_cache.read().unwrap().as_ref().cloned();
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(right_content_width, available_rect.height()),
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            // Small margin from right edge
+                            ui.add_space(10.0);
 
-                            // Wallet balances (rightmost, aligned to right border with right-aligned text)
+                            // Wallet balances (rightmost, stacked vertically)
                             if let Some(balance) = balance_option {
                                 // Format the balance values
                                 let token_balance = self.format_balance(&balance.token_balance);
                                 let gas_balance = self.format_balance(&balance.gas_balance);
 
-                                // Stack wallet balances vertically with right alignment
+                                // Stack wallet balances vertically
                                 ui.vertical(|ui| {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(
-                                            egui::RichText::new(format!("💰 {} ANT", token_balance))
+                                            egui::RichText::new(format!("{} ANT", token_balance))
                                                 .size(10.0)
                                                 .color(app::theme::MutantColors::ACCENT_BLUE)
                                         );
@@ -1061,18 +1071,18 @@ impl MyApp {
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(
-                                            egui::RichText::new(format!("⛽ {} ETH", gas_balance))
+                                            egui::RichText::new(format!("{} ETH", gas_balance))
                                                 .size(10.0)
                                                 .color(app::theme::MutantColors::ACCENT_GREEN)
                                         );
                                     });
                                 });
                             } else {
-                                // Show loading indicator with right alignment
+                                // Show loading indicator
                                 ui.vertical(|ui| {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(
-                                            egui::RichText::new("💰 Loading...")
+                                            egui::RichText::new("Loading... ANT")
                                                 .size(10.0)
                                                 .color(app::theme::MutantColors::TEXT_SECONDARY)
                                         );
@@ -1080,7 +1090,7 @@ impl MyApp {
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(
-                                            egui::RichText::new("⛽ Loading...")
+                                            egui::RichText::new("Loading... ETH")
                                                 .size(10.0)
                                                 .color(app::theme::MutantColors::TEXT_SECONDARY)
                                         );
@@ -1088,11 +1098,7 @@ impl MyApp {
                                 });
                             }
 
-                            ui.add_space(10.0); // 10px space between wallet balances and public key
-
-                            // Get daemon status data and show public key
-                            let daemon_status_cache = ctx.get_daemon_status_cache();
-                            let status_option = daemon_status_cache.read().unwrap().as_ref().cloned();
+                            ui.add_space(20.0); // Space between wallet balances and public key
 
                             // Public key display (to the left of wallet balances)
                             if let Some(status) = status_option {
@@ -1130,8 +1136,8 @@ impl MyApp {
                                         .color(app::theme::MutantColors::TEXT_SECONDARY)
                                 );
                             }
-                        });
-                    });
+                        }
+                    );
                 });
             });
     }
