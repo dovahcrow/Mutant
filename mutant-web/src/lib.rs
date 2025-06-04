@@ -962,7 +962,7 @@ impl MyApp {
                 .fill(app::theme::MutantColors::BACKGROUND_MEDIUM)
                 .stroke(egui::Stroke::new(1.0, app::theme::MutantColors::BORDER_DARK)))
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_centered(|ui| {
                     ui.add_space(15.0);
 
                     // Left side - MutAnt title and connection status
