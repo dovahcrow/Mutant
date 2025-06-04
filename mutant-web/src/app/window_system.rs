@@ -78,18 +78,15 @@ lazy_static::lazy_static! {
         = RwLock::new(None);
 }
 
-fn new_window_tx() -> futures::channel::mpsc::Sender<WindowType> {
-    let guard = NEW_WINDOW_TX.read().unwrap();
-    match guard.as_ref() {
-        Some(x) => x.clone(),
-        None => panic!("Game not initialized"),
-    }
+fn new_window_tx() -> Option<futures::channel::mpsc::Sender<WindowType>> {
+    NEW_WINDOW_TX.read().unwrap().clone()
 }
 
 pub fn new_window<T: Into<WindowType> + 'static>(window: T) {
     wasm_bindgen_futures::spawn_local(async move {
-        let mut tx = new_window_tx();
-        tx.send(window.into()).await.unwrap();
+        if let Some(mut tx) = new_window_tx() {
+            let _ = tx.send(window.into()).await;
+        }
     });
 }
 

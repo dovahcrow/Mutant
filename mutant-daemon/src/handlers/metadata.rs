@@ -5,10 +5,11 @@ use mutant_lib::storage::{IndexEntry, PadStatus};
 use mutant_lib::MutAnt;
 use mutant_protocol::{
     ErrorResponse, KeyDetails, ListKeysRequest, ListKeysResponse, Response, StatsRequest,
-    StatsResponse, WalletBalanceRequest, WalletBalanceResponse,
+    StatsResponse, WalletBalanceRequest, WalletBalanceResponse, DaemonStatusRequest, DaemonStatusResponse,
 };
 
 use super::common::UpdateSender;
+use super::is_public_only_mode;
 
 pub(crate) async fn handle_list_keys(
     _req: ListKeysRequest,
@@ -169,6 +170,53 @@ pub(crate) async fn handle_wallet_balance(
             })
         }
     };
+
+    update_tx
+        .send(response)
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    Ok(())
+}
+
+pub(crate) async fn handle_daemon_status(
+    _req: DaemonStatusRequest,
+    update_tx: UpdateSender,
+    mutant: Arc<MutAnt>,
+) -> Result<(), DaemonError> {
+    log::debug!("Handling DaemonStatus request");
+
+    let is_public_only = is_public_only_mode();
+
+    // Get the public key if available
+    let public_key = if is_public_only {
+        None
+    } else {
+        // Try to get the public key from the wallet
+        match mutant.get_wallet().await {
+            Ok(wallet) => {
+                let public_key_hex = format!("{:x}", wallet.address());
+                Some(public_key_hex)
+            }
+            Err(e) => {
+                log::warn!("Failed to get wallet for public key: {}", e);
+                None
+            }
+        }
+    };
+
+    // Determine network (this is a simplified approach - in a real implementation
+    // you might want to store this information during initialization)
+    let network = if is_public_only {
+        "Public-Only".to_string()
+    } else {
+        "Mainnet".to_string() // Default assumption
+    };
+
+    let response = Response::DaemonStatus(DaemonStatusResponse {
+        public_key,
+        is_public_only,
+        network,
+    });
 
     update_tx
         .send(response)

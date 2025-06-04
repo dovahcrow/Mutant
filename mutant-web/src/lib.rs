@@ -1,4 +1,4 @@
-
+// #![feature(mapped_lock_guards)] // Commented out for stable Rust
 
 use std::{collections::HashMap, sync::{Arc, RwLock}};
 
@@ -48,6 +48,7 @@ pub enum ClientRequest {
     ListTasks,
     GetStats,
     GetWalletBalance,
+    GetDaemonStatus,
     PutStreamingInit {
         key_name: String,
         total_size: u64,
@@ -76,6 +77,7 @@ pub enum ClientResponse {
     ListTasks(Result<Vec<mutant_protocol::TaskListEntry>, String>),
     GetStats(Result<mutant_protocol::StatsResponse, String>),
     GetWalletBalance(Result<mutant_protocol::WalletBalanceResponse, String>),
+    GetDaemonStatus(Result<mutant_protocol::DaemonStatusResponse, String>),
     PutStreamingInit(Result<(mutant_protocol::TaskId, mutant_client::ProgressReceiver), String>),
     PutStreamingChunk(Result<(), String>),
 }
@@ -192,6 +194,13 @@ impl Client {
                         let response_name = "get_wallet_balance".to_string();
                         if let Some(tx) = responses.write().unwrap().remove(&response_name) {
                             let _ = tx.send(ClientResponse::GetWalletBalance(result));
+                        }
+                    }
+                    ClientRequest::GetDaemonStatus => {
+                        let result = this.get_daemon_status().await;
+                        let response_name = "get_daemon_status".to_string();
+                        if let Some(tx) = responses.write().unwrap().remove(&response_name) {
+                            let _ = tx.send(ClientResponse::GetDaemonStatus(result));
                         }
                     }
                     ClientRequest::PutStreamingInit { key_name, total_size, filename, storage_mode, public, no_verify, response_name } => {
@@ -483,6 +492,10 @@ impl Client {
         self.client.get_wallet_balance().await.map_err(|e| format!("{:?}", e))
     }
 
+    pub async fn get_daemon_status(&mut self) -> Result<mutant_protocol::DaemonStatusResponse, String> {
+        self.client.get_daemon_status().await.map_err(|e| format!("{:?}", e))
+    }
+
     // This method is no longer needed - we use the proper mutant-client streaming methods
 
     // Helper method to send a simple request (like PutData) that doesn't expect a response
@@ -721,6 +734,28 @@ impl ClientSender {
         }).map_err(|e| format!("{:?}", e))?
     }
 
+    pub async fn get_daemon_status(&self) -> Result<mutant_protocol::DaemonStatusResponse, String> {
+        let response_name = "get_daemon_status".to_string();
+
+        if self.responses.read().unwrap().contains_key(&response_name) {
+            error!("GetDaemonStatus request already pending");
+            return Err("GetDaemonStatus request already pending".to_string());
+        }
+
+        let (tx, rx) = oneshot::channel();
+        self.responses.write().unwrap().insert(response_name, tx);
+
+        let _ = self.tx.unbounded_send(ClientRequest::GetDaemonStatus);
+
+        rx.await.map(|result| {
+            match result {
+                ClientResponse::GetDaemonStatus(Ok(result)) => Ok(result),
+                ClientResponse::GetDaemonStatus(Err(e)) => Err(e),
+                _ => Err("Unexpected response".to_string()),
+            }
+        }).map_err(|e| format!("{:?}", e))?
+    }
+
     // Streaming put methods - now using proper mutant-client methods
     pub async fn put_streaming_init(
         &self,
@@ -936,21 +971,33 @@ impl Default for MyApp {
 impl MyApp {
     /// Draw the header bar at the top of the screen
     fn draw_header(&mut self, ctx: &egui::Context) {
-        // Check if we need to fetch wallet balance (every ~1800 frames, roughly 30 seconds at 60fps)
+        // Check if we need to fetch wallet balance and daemon status (every ~1800 frames, roughly 30 seconds at 60fps)
         self.balance_fetch_counter += 1;
-        let should_fetch_balance = self.balance_fetch_counter == 1 || self.balance_fetch_counter % 1800 == 0;
+        let should_fetch_data = self.balance_fetch_counter == 1 || self.balance_fetch_counter % 1800 == 0;
 
-        if should_fetch_balance {
+        if should_fetch_data {
             let ctx_clone = app::context::context();
 
             spawn_local(async move {
-                log::info!("Fetching wallet balance...");
+                log::info!("Fetching wallet balance and daemon status...");
+
+                // Fetch wallet balance
                 match ctx_clone.get_wallet_balance().await {
                     Some(balance) => {
                         log::info!("Wallet balance fetched successfully: tokens={}, gas={}", balance.token_balance, balance.gas_balance);
                     }
                     None => {
                         log::warn!("Failed to fetch wallet balance");
+                    }
+                }
+
+                // Fetch daemon status
+                match ctx_clone.get_daemon_status().await {
+                    Some(status) => {
+                        log::info!("Daemon status fetched successfully: public_key={:?}, is_public_only={}", status.public_key, status.is_public_only);
+                    }
+                    None => {
+                        log::warn!("Failed to fetch daemon status");
                     }
                 }
             });
@@ -981,14 +1028,14 @@ impl MyApp {
                             .color(app::theme::MutantColors::SUCCESS)
                     );
 
-                    // Use allocate_ui_with_layout to properly position wallet balances on the right
+                    // Use allocate_ui_with_layout to properly position wallet balances and public key on the right
                     let available_rect = ui.available_rect_before_wrap();
-                    let (left_rect, right_rect) = available_rect.split_left_right_at_x(available_rect.right() - 200.0); // Reserve 200px for wallet balances
+                    let (left_rect, right_rect) = available_rect.split_left_right_at_x(available_rect.right() - 350.0); // Reserve 350px for public key and wallet balances
 
                     // Allocate the left space (this creates the expanding space)
                     ui.allocate_rect(left_rect, egui::Sense::hover());
 
-                    // Now use the right space for wallet balances
+                    // Now use the right space for public key and wallet balances
                     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(right_rect), |ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.add_space(10.0); // Exactly 10px from the right border
@@ -1032,6 +1079,50 @@ impl MyApp {
                                     );
                                 });
                             }
+
+                            ui.add_space(15.0); // Space between wallet balances and public key
+
+                            // Get daemon status data and show public key
+                            let daemon_status_cache = ctx.get_daemon_status_cache();
+                            let status_option = daemon_status_cache.read().unwrap().as_ref().cloned();
+
+                            ui.vertical_centered(|ui| {
+                                if let Some(status) = status_option {
+                                    if status.is_public_only {
+                                        ui.label(
+                                            egui::RichText::new("🔑 Public-Mode")
+                                                .size(10.0)
+                                                .color(app::theme::MutantColors::ACCENT_ORANGE)
+                                        );
+                                    } else if let Some(public_key) = &status.public_key {
+                                        // Truncate the public key for display (show first 8 and last 4 characters)
+                                        let display_key = if public_key.len() > 12 {
+                                            format!("{}...{}", &public_key[0..8], &public_key[public_key.len()-4..])
+                                        } else {
+                                            public_key.clone()
+                                        };
+
+                                        ui.label(
+                                            egui::RichText::new(format!("🔑 {}", display_key))
+                                                .size(10.0)
+                                                .color(app::theme::MutantColors::ACCENT_ORANGE)
+                                        );
+                                    } else {
+                                        ui.label(
+                                            egui::RichText::new("🔑 Wallet-Mode")
+                                                .size(10.0)
+                                                .color(app::theme::MutantColors::ACCENT_ORANGE)
+                                        );
+                                    }
+                                } else {
+                                    // Show loading indicator
+                                    ui.label(
+                                        egui::RichText::new("🔑 Loading...")
+                                            .size(10.0)
+                                            .color(app::theme::MutantColors::TEXT_SECONDARY)
+                                    );
+                                }
+                            });
                         });
                     });
                 });

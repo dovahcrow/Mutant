@@ -429,6 +429,7 @@ pub enum Request {
     Export(ExportRequest),
     HealthCheck(HealthCheckRequest),
     WalletBalance(WalletBalanceRequest),
+    DaemonStatus(DaemonStatusRequest),
     // Colony integration requests
     Search(SearchRequest),
     IndexContent(IndexContentRequest),
@@ -531,6 +532,17 @@ pub struct WalletBalanceRequest {}
 pub struct WalletBalanceResponse {
     pub token_balance: String,
     pub gas_balance: String,
+}
+
+// Daemon status request/response
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct DaemonStatusRequest {}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct DaemonStatusResponse {
+    pub public_key: Option<String>,
+    pub is_public_only: bool,
+    pub network: String,
 }
 // End of added structs
 
@@ -744,6 +756,7 @@ pub enum Response {
     ListKeys(ListKeysResponse),
     Stats(StatsResponse),
     WalletBalance(WalletBalanceResponse),
+    DaemonStatus(DaemonStatusResponse),
     Import(ImportResponse),
     Export(ExportResponse),
     /// A chunk of data from a get operation.
