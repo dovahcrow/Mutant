@@ -1100,7 +1100,7 @@ impl MyApp {
                                     ui.label(
                                         egui::RichText::new(format!("{} ANT", token_balance))
                                             .size(10.0)
-                                            .color(app::theme::MutantColors::ACCENT_BLUE)
+                                            .color(egui::Color32::from_rgb(255, 120, 120)) // Slightly whitened red
                                     );
                                 });
 
@@ -1108,7 +1108,7 @@ impl MyApp {
                                     ui.label(
                                         egui::RichText::new(format!("{} ETH", gas_balance))
                                             .size(10.0)
-                                            .color(app::theme::MutantColors::ACCENT_GREEN)
+                                            .color(app::theme::MutantColors::ACCENT_BLUE)
                                     );
                                 });
                             });
