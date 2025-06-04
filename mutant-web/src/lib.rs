@@ -1040,12 +1040,54 @@ impl MyApp {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.add_space(10.0); // Exactly 10px from the right border
 
-                            // Get daemon status data and show public key
+                            // Get wallet balance data
                             let ctx = app::context::context();
+                            let wallet_balance_cache = ctx.get_wallet_balance_cache();
+                            let balance_option = wallet_balance_cache.read().unwrap().as_ref().cloned();
+
+                            // Wallet balances (rightmost, aligned to right border)
+                            if let Some(balance) = balance_option {
+                                // Format the balance values
+                                let token_balance = self.format_balance(&balance.token_balance);
+                                let gas_balance = self.format_balance(&balance.gas_balance);
+
+                                // Stack wallet balances vertically, but in a compact way
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("💰 {} ANT", token_balance))
+                                            .size(10.0)
+                                            .color(app::theme::MutantColors::ACCENT_BLUE)
+                                    );
+
+                                    ui.label(
+                                        egui::RichText::new(format!("⛽ {} ETH", gas_balance))
+                                            .size(10.0)
+                                            .color(app::theme::MutantColors::ACCENT_GREEN)
+                                    );
+                                });
+                            } else {
+                                // Show loading indicator
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("💰 Loading...")
+                                            .size(10.0)
+                                            .color(app::theme::MutantColors::TEXT_SECONDARY)
+                                    );
+                                    ui.label(
+                                        egui::RichText::new("⛽ Loading...")
+                                            .size(10.0)
+                                            .color(app::theme::MutantColors::TEXT_SECONDARY)
+                                    );
+                                });
+                            }
+
+                            ui.add_space(10.0); // 10px space between wallet balances and public key
+
+                            // Get daemon status data and show public key
                             let daemon_status_cache = ctx.get_daemon_status_cache();
                             let status_option = daemon_status_cache.read().unwrap().as_ref().cloned();
 
-                            // Public key display (rightmost)
+                            // Public key display (to the left of wallet balances)
                             if let Some(status) = status_option {
                                 if status.is_public_only {
                                     ui.label(
@@ -1080,48 +1122,6 @@ impl MyApp {
                                         .size(10.0)
                                         .color(app::theme::MutantColors::TEXT_SECONDARY)
                                 );
-                            }
-
-                            ui.add_space(15.0); // Space between public key and wallet balances
-
-                            // Get wallet balance data
-                            let wallet_balance_cache = ctx.get_wallet_balance_cache();
-                            let balance_option = wallet_balance_cache.read().unwrap().as_ref().cloned();
-
-                            // Wallet balances (to the left of public key)
-                            if let Some(balance) = balance_option {
-                                // Format the balance values
-                                let token_balance = self.format_balance(&balance.token_balance);
-                                let gas_balance = self.format_balance(&balance.gas_balance);
-
-                                // Stack wallet balances vertically, but in a compact way
-                                ui.vertical(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("💰 {} ANT", token_balance))
-                                            .size(10.0)
-                                            .color(app::theme::MutantColors::ACCENT_BLUE)
-                                    );
-
-                                    ui.label(
-                                        egui::RichText::new(format!("⛽ {} ETH", gas_balance))
-                                            .size(10.0)
-                                            .color(app::theme::MutantColors::ACCENT_GREEN)
-                                    );
-                                });
-                            } else {
-                                // Show loading indicator
-                                ui.vertical(|ui| {
-                                    ui.label(
-                                        egui::RichText::new("💰 Loading...")
-                                            .size(10.0)
-                                            .color(app::theme::MutantColors::TEXT_SECONDARY)
-                                    );
-                                    ui.label(
-                                        egui::RichText::new("⛽ Loading...")
-                                            .size(10.0)
-                                            .color(app::theme::MutantColors::TEXT_SECONDARY)
-                                    );
-                                });
                             }
                         });
                     });
