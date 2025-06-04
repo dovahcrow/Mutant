@@ -47,6 +47,7 @@ pub enum ClientRequest {
     ListKeys,
     ListTasks,
     GetStats,
+    GetWalletBalance,
     PutStreamingInit {
         key_name: String,
         total_size: u64,
@@ -74,6 +75,7 @@ pub enum ClientResponse {
     ListKeys(Result<Vec<mutant_protocol::KeyDetails>, String>),
     ListTasks(Result<Vec<mutant_protocol::TaskListEntry>, String>),
     GetStats(Result<mutant_protocol::StatsResponse, String>),
+    GetWalletBalance(Result<mutant_protocol::WalletBalanceResponse, String>),
     PutStreamingInit(Result<(mutant_protocol::TaskId, mutant_client::ProgressReceiver), String>),
     PutStreamingChunk(Result<(), String>),
 }
@@ -183,6 +185,13 @@ impl Client {
                         let response_name = "get_stats".to_string();
                         if let Some(tx) = responses.write().unwrap().remove(&response_name) {
                             let _ = tx.send(ClientResponse::GetStats(result));
+                        }
+                    }
+                    ClientRequest::GetWalletBalance => {
+                        let result = this.get_wallet_balance().await;
+                        let response_name = "get_wallet_balance".to_string();
+                        if let Some(tx) = responses.write().unwrap().remove(&response_name) {
+                            let _ = tx.send(ClientResponse::GetWalletBalance(result));
                         }
                     }
                     ClientRequest::PutStreamingInit { key_name, total_size, filename, storage_mode, public, no_verify, response_name } => {
@@ -470,6 +479,10 @@ impl Client {
         self.client.get_stats().await.map_err(|e| format!("{:?}", e))
     }
 
+    pub async fn get_wallet_balance(&mut self) -> Result<mutant_protocol::WalletBalanceResponse, String> {
+        self.client.get_wallet_balance().await.map_err(|e| format!("{:?}", e))
+    }
+
     // This method is no longer needed - we use the proper mutant-client streaming methods
 
     // Helper method to send a simple request (like PutData) that doesn't expect a response
@@ -686,6 +699,28 @@ impl ClientSender {
         }).map_err(|e| format!("{:?}", e))?
     }
 
+    pub async fn get_wallet_balance(&self) -> Result<mutant_protocol::WalletBalanceResponse, String> {
+        let response_name = "get_wallet_balance".to_string();
+
+        if self.responses.read().unwrap().contains_key(&response_name) {
+            error!("GetWalletBalance request already pending");
+            return Err("GetWalletBalance request already pending".to_string());
+        }
+
+        let (tx, rx) = oneshot::channel();
+        self.responses.write().unwrap().insert(response_name, tx);
+
+        let _ = self.tx.unbounded_send(ClientRequest::GetWalletBalance);
+
+        rx.await.map(|result| {
+            match result {
+                ClientResponse::GetWalletBalance(Ok(result)) => Ok(result),
+                ClientResponse::GetWalletBalance(Err(e)) => Err(e),
+                _ => Err("Unexpected response".to_string()),
+            }
+        }).map_err(|e| format!("{:?}", e))?
+    }
+
     // Streaming put methods - now using proper mutant-client methods
     pub async fn put_streaming_init(
         &self,
@@ -880,6 +915,7 @@ use wasm_bindgen_futures::spawn_local;
 struct MyApp {
     fs_window: Arc<RwLock<FsWindow>>,
     sidebar_expanded: bool,
+    balance_fetch_counter: u32,
 }
 
 impl Default for MyApp {
@@ -892,6 +928,7 @@ impl Default for MyApp {
         Self {
             fs_window,
             sidebar_expanded: false,
+            balance_fetch_counter: 0,
         }
     }
 }
@@ -899,6 +936,26 @@ impl Default for MyApp {
 impl MyApp {
     /// Draw the header bar at the top of the screen
     fn draw_header(&mut self, ctx: &egui::Context) {
+        // Check if we need to fetch wallet balance (every ~1800 frames, roughly 30 seconds at 60fps)
+        self.balance_fetch_counter += 1;
+        let should_fetch_balance = self.balance_fetch_counter == 1 || self.balance_fetch_counter % 1800 == 0;
+
+        if should_fetch_balance {
+            let ctx_clone = app::context::context();
+
+            spawn_local(async move {
+                log::info!("Fetching wallet balance...");
+                match ctx_clone.get_wallet_balance().await {
+                    Some(balance) => {
+                        log::info!("Wallet balance fetched successfully: tokens={}, gas={}", balance.token_balance, balance.gas_balance);
+                    }
+                    None => {
+                        log::warn!("Failed to fetch wallet balance");
+                    }
+                }
+            });
+        }
+
         egui::TopBottomPanel::top("header")
             .exact_height(40.0)
             .frame(egui::Frame::new()
@@ -926,9 +983,60 @@ impl MyApp {
                                 .size(14.0)
                                 .color(app::theme::MutantColors::SUCCESS)
                         );
+
+                        // Add wallet balance display
+                        let ctx = app::context::context();
+                        let wallet_balance_cache = ctx.get_wallet_balance_cache();
+                        let balance_option = wallet_balance_cache.read().unwrap().as_ref().cloned();
+
+                        if let Some(balance) = balance_option {
+                            ui.separator();
+
+                            // Format the balance values (assuming they're in wei, convert to readable format)
+                            let token_balance = self.format_balance(&balance.token_balance);
+                            let gas_balance = self.format_balance(&balance.gas_balance);
+
+                            ui.label(
+                                egui::RichText::new(format!("💰 {} ANT", token_balance))
+                                    .size(12.0)
+                                    .color(app::theme::MutantColors::ACCENT_BLUE)
+                            );
+
+                            ui.label(
+                                egui::RichText::new(format!("⛽ {} ETH", gas_balance))
+                                    .size(12.0)
+                                    .color(app::theme::MutantColors::ACCENT_GREEN)
+                            );
+                        } else {
+                            // Show a placeholder or loading indicator
+                            ui.separator();
+                            ui.label(
+                                egui::RichText::new("💰 Loading...")
+                                    .size(12.0)
+                                    .color(app::theme::MutantColors::TEXT_SECONDARY)
+                            );
+                        }
                     });
                 });
             });
+    }
+
+    /// Format balance from wei to readable format
+    fn format_balance(&self, balance_str: &str) -> String {
+        // Parse the balance string as a big number (it's in wei)
+        match balance_str.parse::<u128>() {
+            Ok(balance_wei) => {
+                // Convert from wei to ether (divide by 10^18)
+                let balance_ether = balance_wei as f64 / 1_000_000_000_000_000_000.0;
+
+                // Always show 18 decimal places for full precision
+                format!("{:.18}", balance_ether)
+            }
+            Err(_) => {
+                // If parsing fails, just show the raw string
+                balance_str.to_string()
+            }
+        }
     }
 
     /// Draw the left menu bar

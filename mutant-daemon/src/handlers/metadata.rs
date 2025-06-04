@@ -5,7 +5,7 @@ use mutant_lib::storage::{IndexEntry, PadStatus};
 use mutant_lib::MutAnt;
 use mutant_protocol::{
     ErrorResponse, KeyDetails, ListKeysRequest, ListKeysResponse, Response, StatsRequest,
-    StatsResponse,
+    StatsResponse, WalletBalanceRequest, WalletBalanceResponse,
 };
 
 use super::common::UpdateSender;
@@ -106,6 +106,69 @@ pub(crate) async fn handle_stats(
         free_pads: stats.free_pads,
         pending_verify_pads: stats.pending_verification_pads,
     });
+
+    update_tx
+        .send(response)
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    Ok(())
+}
+
+pub(crate) async fn handle_wallet_balance(
+    _req: WalletBalanceRequest,
+    update_tx: UpdateSender,
+    mutant: Arc<MutAnt>,
+) -> Result<(), DaemonError> {
+    log::debug!("Handling WalletBalance request");
+
+    // Get the wallet from MutAnt
+    let wallet_result = mutant.get_wallet().await;
+
+    let response = match wallet_result {
+        Ok(wallet) => {
+            // Get token and gas balances
+            let token_balance_result = wallet.balance_of_tokens().await;
+            let gas_balance_result = wallet.balance_of_gas_tokens().await;
+
+            match (token_balance_result, gas_balance_result) {
+                (Ok(token_balance), Ok(gas_balance)) => {
+                    log::info!("Retrieved wallet balances - Tokens: {}, Gas: {}", token_balance, gas_balance);
+                    Response::WalletBalance(WalletBalanceResponse {
+                        token_balance: token_balance.to_string(),
+                        gas_balance: gas_balance.to_string(),
+                    })
+                }
+                (Err(token_err), Ok(_)) => {
+                    log::error!("Failed to get token balance: {}", token_err);
+                    Response::Error(ErrorResponse {
+                        error: format!("Failed to get token balance: {}", token_err),
+                        original_request: None,
+                    })
+                }
+                (Ok(_), Err(gas_err)) => {
+                    log::error!("Failed to get gas balance: {}", gas_err);
+                    Response::Error(ErrorResponse {
+                        error: format!("Failed to get gas balance: {}", gas_err),
+                        original_request: None,
+                    })
+                }
+                (Err(token_err), Err(gas_err)) => {
+                    log::error!("Failed to get both balances - Token: {}, Gas: {}", token_err, gas_err);
+                    Response::Error(ErrorResponse {
+                        error: format!("Failed to get wallet balances - Token: {}, Gas: {}", token_err, gas_err),
+                        original_request: None,
+                    })
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to get wallet: {}", e);
+            Response::Error(ErrorResponse {
+                error: format!("Failed to get wallet: {}", e),
+                original_request: None,
+            })
+        }
+    };
 
     update_tx
         .send(response)

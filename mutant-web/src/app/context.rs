@@ -37,6 +37,7 @@ pub struct Context {
     keys_cache: Arc<RwLock<Vec<KeyDetails>>>,
     tasks_cache: Arc<RwLock<Vec<TaskListEntry>>>,
     stats_cache: Arc<RwLock<Option<StatsResponse>>>,
+    wallet_balance_cache: Arc<RwLock<Option<mutant_protocol::WalletBalanceResponse>>>,
     put_progress: Arc<RwLock<HashMap<String, Arc<RwLock<Progress>>>>>,
     get_progress: Arc<RwLock<HashMap<String, Arc<RwLock<Progress>>>>>,
 }
@@ -65,6 +66,7 @@ impl Context {
             keys_cache: Arc::new(RwLock::new(Vec::new())),
             tasks_cache: Arc::new(RwLock::new(Vec::new())),
             stats_cache: Arc::new(RwLock::new(None)),
+            wallet_balance_cache: Arc::new(RwLock::new(None)),
             put_progress: Arc::new(RwLock::new(HashMap::new())),
             get_progress: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -318,6 +320,28 @@ impl Context {
 
     pub fn get_stats_cache(&self) -> Arc<RwLock<Option<StatsResponse>>> {
         self.stats_cache.clone()
+    }
+
+    // Get wallet balance from daemon and update cache
+    pub async fn get_wallet_balance(&self) -> Option<mutant_protocol::WalletBalanceResponse> {
+        let result = self.client.get_wallet_balance().await;
+
+        if let Ok(balance) = result {
+            // Update cache
+            {
+                let mut cache = self.wallet_balance_cache.write().unwrap();
+                *cache = Some(balance.clone());
+            }
+
+            Some(balance)
+        } else {
+            log::error!("Failed to get wallet balance: {:?}", result.err());
+            None
+        }
+    }
+
+    pub fn get_wallet_balance_cache(&self) -> Arc<RwLock<Option<mutant_protocol::WalletBalanceResponse>>> {
+        self.wallet_balance_cache.clone()
     }
 
     // Create a new progress object for tracking a put operation

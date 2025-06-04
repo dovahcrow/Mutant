@@ -14,6 +14,7 @@ use mutant_protocol::{
     ExportResult, HealthCheckResult, ImportResult, KeyDetails, PurgeResult, PutSource, Request,
     StatsResponse, StorageMode, SyncResult, Task, TaskId, TaskListEntry, TaskProgress,
     TaskResult, TaskStatus, TaskStoppedResponse, TaskType, PutRequest, PutDataRequest,
+    WalletBalanceRequest, WalletBalanceResponse,
     // Colony integration types
     SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse, GetUserContactResponse, GetUserContactRequest,
 };
@@ -38,6 +39,7 @@ pub enum PendingRequestKey {
     Mv,
     ListKeys,
     Stats,
+    WalletBalance,
     Sync,
     Purge,
     Import,
@@ -65,6 +67,7 @@ pub enum PendingSender {
     Mv(oneshot::Sender<Result<(), ClientError>>),
     ListKeys(oneshot::Sender<Result<Vec<KeyDetails>, ClientError>>),
     Stats(oneshot::Sender<Result<StatsResponse, ClientError>>),
+    WalletBalance(oneshot::Sender<Result<WalletBalanceResponse, ClientError>>),
     Sync(oneshot::Sender<Result<SyncResult, ClientError>>),
     Purge(oneshot::Sender<Result<PurgeResult, ClientError>>),
     Import(oneshot::Sender<Result<ImportResult, ClientError>>),
@@ -566,6 +569,10 @@ impl MutantClient {
 
     pub async fn get_stats(&mut self) -> Result<StatsResponse, ClientError> {
         direct_request!(self, Stats, StatsRequest {})
+    }
+
+    pub async fn get_wallet_balance(&mut self) -> Result<WalletBalanceResponse, ClientError> {
+        direct_request!(self, WalletBalance, WalletBalanceRequest {})
     }
 
     // Colony integration methods

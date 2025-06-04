@@ -428,6 +428,7 @@ pub enum Request {
     Import(ImportRequest),
     Export(ExportRequest),
     HealthCheck(HealthCheckRequest),
+    WalletBalance(WalletBalanceRequest),
     // Colony integration requests
     Search(SearchRequest),
     IndexContent(IndexContentRequest),
@@ -520,6 +521,16 @@ pub struct StatsResponse {
     pub occupied_pads: u64,
     pub free_pads: u64,
     pub pending_verify_pads: u64,
+}
+
+// Wallet balance request/response
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct WalletBalanceRequest {}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct WalletBalanceResponse {
+    pub token_balance: String,
+    pub gas_balance: String,
 }
 // End of added structs
 
@@ -732,6 +743,7 @@ pub enum Response {
     MvSuccess(MvSuccessResponse),
     ListKeys(ListKeysResponse),
     Stats(StatsResponse),
+    WalletBalance(WalletBalanceResponse),
     Import(ImportResponse),
     Export(ExportResponse),
     /// A chunk of data from a get operation.

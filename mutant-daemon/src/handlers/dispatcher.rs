@@ -9,7 +9,7 @@ use mutant_protocol::Request;
 use super::common::UpdateSender;
 use super::data_operations::{handle_get, handle_put, handle_put_data, handle_rm, handle_mv};
 use super::import_export::{handle_export, handle_import};
-use super::metadata::{handle_list_keys, handle_stats};
+use super::metadata::{handle_list_keys, handle_stats, handle_wallet_balance};
 use super::system_operations::{handle_health_check, handle_purge, handle_sync};
 use super::task_management::{handle_list_tasks, handle_query_task, handle_stop_task};
 use super::colony::{handle_search, handle_index_content, handle_get_metadata, handle_add_contact, handle_list_content, handle_sync_contacts, handle_get_user_contact};
@@ -36,6 +36,7 @@ pub(crate) async fn handle_request(
             handle_list_keys(list_keys_req, update_tx, mutant).await?
         }
         Request::Stats(stats_req) => handle_stats(stats_req, update_tx, mutant).await?,
+        Request::WalletBalance(wallet_balance_req) => handle_wallet_balance(wallet_balance_req, update_tx, mutant).await?,
         Request::Sync(sync_req) => handle_sync(sync_req, update_tx, mutant, tasks).await?,
         Request::Purge(purge_req) => handle_purge(purge_req, update_tx, mutant, tasks).await?,
         Request::Import(import_req) => handle_import(import_req, update_tx, mutant).await?,

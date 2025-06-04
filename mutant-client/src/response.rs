@@ -3,7 +3,7 @@ use mutant_protocol::{
     ErrorResponse, ExportResponse, ImportResponse, ListKeysResponse, MvSuccessResponse, Response,
     RmSuccessResponse, Task, TaskCreatedResponse, TaskListResponse, TaskProgress,
     TaskResult, TaskResultResponse, TaskStatus, TaskStoppedResponse, TaskType,
-    TaskUpdateResponse,
+    TaskUpdateResponse, WalletBalanceResponse,
     // Colony integration responses
     SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse, GetUserContactResponse,
 };
@@ -240,7 +240,12 @@ impl MutantClient {
                     requests.remove(&PendingRequestKey::Stats)
                 {
                     error!("Error occurred during stats request: {}", error);
-                    let _ = sender.send(Err(ClientError::ServerError(error)));
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(PendingSender::WalletBalance(sender)) =
+                    requests.remove(&PendingRequestKey::WalletBalance)
+                {
+                    error!("Error occurred during wallet balance request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
                 } else if let Some(PendingSender::Import(sender)) =
                     requests.remove(&PendingRequestKey::Import)
                 {
@@ -345,6 +350,19 @@ impl MutantClient {
                     }
                 } else {
                     warn!("Received Stats response but no Stats request was pending");
+                }
+            }
+            Response::WalletBalance(wallet_balance_response) => {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::WalletBalance);
+                if let Some(PendingSender::WalletBalance(sender)) = pending_sender {
+                    if sender.send(Ok(wallet_balance_response)).is_err() {
+                        warn!("Failed to send WalletBalance response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received WalletBalance response but no WalletBalance request was pending");
                 }
             }
             Response::Import(ImportResponse { result }) => {
