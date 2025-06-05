@@ -3,12 +3,21 @@ use eframe::egui;
 use crate::app::{Window, context::context};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use mutant_protocol::ColonyEvent;
 
 // Global state for storing user contact info responses
 lazy_static::lazy_static! {
     static ref USER_CONTACT_RESPONSES: Arc<Mutex<HashMap<String, UserContactInfo>>> = Arc::new(Mutex::new(HashMap::new()));
     static ref CONTENT_LIST_RESPONSES: Arc<Mutex<HashMap<String, Vec<ContentItem>>>> = Arc::new(Mutex::new(HashMap::new()));
     static ref CONTACT_LIST_RESPONSES: Arc<Mutex<HashMap<String, Vec<String>>>> = Arc::new(Mutex::new(HashMap::new()));
+    static ref COLONY_PROGRESS_EVENTS: Arc<Mutex<Vec<ColonyProgressEvent>>> = Arc::new(Mutex::new(Vec::new()));
+}
+
+#[derive(Clone, Debug)]
+pub struct ColonyProgressEvent {
+    pub event: mutant_protocol::ColonyEvent,
+    pub timestamp: std::time::Instant,
+    pub operation_id: Option<String>,
 }
 
 /// The Colony window for managing contacts and discovering content
@@ -50,6 +59,12 @@ pub struct ColonyWindow {
     /// Flag to trigger contact list reload
     #[serde(skip)]
     should_load_contacts: bool,
+    /// Colony operation progress events
+    #[serde(skip)]
+    progress_events: Vec<ColonyProgressEvent>,
+    /// Current operation status message
+    #[serde(skip)]
+    current_operation_status: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -104,6 +119,8 @@ impl Default for ColonyWindow {
             should_load_content: true,
             is_loading_contacts: false,
             should_load_contacts: true,
+            progress_events: Vec::new(),
+            current_operation_status: None,
         }
     }
 }
@@ -114,6 +131,9 @@ impl Window for ColonyWindow {
     }
 
     fn draw(&mut self, ui: &mut egui::Ui) {
+        // Check for colony progress events
+        self.check_progress_events();
+
         // Auto-load user contact info on first draw if not already loaded/loading
         if self.should_load_contact_info && !self.is_loading_user_contact {
             self.load_user_contact_info();
@@ -224,6 +244,19 @@ impl Window for ColonyWindow {
             });
 
             ui.separator();
+
+            // Progress status section
+            if let Some(status) = &self.current_operation_status {
+                ui.horizontal(|ui| {
+                    ui.label("🔄");
+                    ui.label(
+                        egui::RichText::new(status)
+                            .color(super::theme::MutantColors::ACCENT_BLUE)
+                            .size(12.0)
+                    );
+                });
+                ui.separator();
+            }
 
             // User's own contact information section
             ui.group(|ui| {
@@ -545,6 +578,103 @@ impl Window for ColonyWindow {
 }
 
 impl ColonyWindow {
+    /// Check for and process colony progress events
+    fn check_progress_events(&mut self) {
+        if let Ok(mut events) = COLONY_PROGRESS_EVENTS.lock() {
+            if !events.is_empty() {
+                // Process new events
+                for event in events.drain(..) {
+                    self.progress_events.push(event.clone());
+
+                    // Update current operation status based on the event
+                    match &event.event {
+                        mutant_protocol::ColonyEvent::InitializationStarted => {
+                            self.current_operation_status = Some("Initializing colony manager...".to_string());
+                        }
+                        mutant_protocol::ColonyEvent::InitializationCompleted => {
+                            self.current_operation_status = Some("Colony manager initialized".to_string());
+                        }
+                        mutant_protocol::ColonyEvent::AddContactStarted { pod_address } => {
+                            self.current_operation_status = Some(format!("Adding contact: {}", pod_address));
+                        }
+                        mutant_protocol::ColonyEvent::ContactVerificationStarted { pod_address } => {
+                            self.current_operation_status = Some(format!("Verifying contact: {}", pod_address));
+                        }
+                        mutant_protocol::ColonyEvent::ContactVerificationCompleted { pod_address } => {
+                            self.current_operation_status = Some(format!("Contact verified: {}", pod_address));
+                        }
+                        mutant_protocol::ColonyEvent::AddContactCompleted { pod_address } => {
+                            self.current_operation_status = Some(format!("Contact added: {}", pod_address));
+                            // Refresh contacts list after adding
+                            self.should_load_contacts = true;
+                        }
+                        mutant_protocol::ColonyEvent::SyncContactsStarted { total_contacts } => {
+                            self.current_operation_status = Some(format!("Syncing {} contacts...", total_contacts));
+                            self.is_syncing = true;
+                        }
+                        mutant_protocol::ColonyEvent::ContactSyncStarted { pod_address, contact_index, total_contacts } => {
+                            self.current_operation_status = Some(format!("Syncing contact {} of {}: {}", contact_index + 1, total_contacts, pod_address));
+                        }
+                        mutant_protocol::ColonyEvent::ContactSyncCompleted { pod_address, contact_index, total_contacts } => {
+                            self.current_operation_status = Some(format!("Synced contact {} of {}: {}", contact_index + 1, total_contacts, pod_address));
+                        }
+                        mutant_protocol::ColonyEvent::SyncContactsCompleted { synced_count } => {
+                            self.current_operation_status = Some(format!("Sync completed: {} contacts synced", synced_count));
+                            self.is_syncing = false;
+                            // Refresh content list after syncing
+                            self.should_load_content = true;
+                        }
+                        mutant_protocol::ColonyEvent::IndexingStarted { user_key } => {
+                            self.current_operation_status = Some(format!("Indexing content: {}", user_key));
+                        }
+                        mutant_protocol::ColonyEvent::IndexingCompleted { user_key, success } => {
+                            if *success {
+                                self.current_operation_status = Some(format!("Content indexed: {}", user_key));
+                            } else {
+                                self.current_operation_status = Some(format!("Failed to index: {}", user_key));
+                            }
+                        }
+                        mutant_protocol::ColonyEvent::SearchStarted { query_type } => {
+                            self.current_operation_status = Some(format!("Searching: {}", query_type));
+                        }
+                        mutant_protocol::ColonyEvent::SearchCompleted { results_count } => {
+                            self.current_operation_status = Some(format!("Search completed: {} results", results_count));
+                        }
+                        mutant_protocol::ColonyEvent::CacheRefreshStarted => {
+                            self.current_operation_status = Some("Refreshing cache...".to_string());
+                        }
+                        mutant_protocol::ColonyEvent::CacheRefreshCompleted => {
+                            self.current_operation_status = Some("Cache refreshed".to_string());
+                        }
+                        mutant_protocol::ColonyEvent::Progress { operation, message, current, total } => {
+                            let progress_text = if let (Some(current), Some(total)) = (current, total) {
+                                format!("{}: {} ({}/{})", operation, message, current, total)
+                            } else {
+                                format!("{}: {}", operation, message)
+                            };
+                            self.current_operation_status = Some(progress_text);
+                        }
+                        mutant_protocol::ColonyEvent::OperationCompleted { operation } => {
+                            self.current_operation_status = Some(format!("{} completed", operation));
+                        }
+                        mutant_protocol::ColonyEvent::OperationFailed { operation, error } => {
+                            self.current_operation_status = Some(format!("{} failed: {}", operation, error));
+                            self.is_syncing = false; // Reset syncing state on any failure
+                        }
+                        _ => {
+                            // Handle other events as needed
+                            log::debug!("Received colony event: {:?}", event.event);
+                        }
+                    }
+                }
+
+                // Keep only the last 50 events to prevent memory growth
+                if self.progress_events.len() > 50 {
+                    self.progress_events.drain(0..self.progress_events.len() - 50);
+                }
+            }
+        }
+    }
     /// Add a new contact
     fn add_contact(&mut self) {
         if !self.new_contact_address.trim().is_empty() {
@@ -1030,5 +1160,24 @@ impl ColonyWindow {
         let filtered_count = self.content_list.len() - self.pod_content.iter().map(|p| p.content_items.len()).sum::<usize>();
         log::info!("Organized {} content items into {} pods (filtered out {} user's own items)",
                   self.content_list.len(), self.pod_content.len(), filtered_count);
+    }
+}
+
+/// Add a colony progress event to the global state for UI updates
+pub fn add_colony_progress_event(event: mutant_protocol::ColonyEvent, operation_id: Option<String>) {
+    let progress_event = ColonyProgressEvent {
+        event,
+        timestamp: std::time::Instant::now(),
+        operation_id,
+    };
+
+    if let Ok(mut events) = COLONY_PROGRESS_EVENTS.lock() {
+        events.push(progress_event);
+
+        // Keep only the last 100 events to prevent memory growth
+        let len = events.len();
+        if len > 100 {
+            events.drain(0..len - 100);
+        }
     }
 }

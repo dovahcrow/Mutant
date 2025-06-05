@@ -286,6 +286,87 @@ pub type PutCallback = Arc<
         + Sync,
 >;
 
+/// Events emitted during colony operations.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ColonyEvent {
+    /// Colony manager initialization started
+    InitializationStarted,
+
+    /// Colony manager initialization completed
+    InitializationCompleted,
+
+    /// User pod creation/verification started
+    UserPodCheckStarted,
+
+    /// User pod creation/verification completed
+    UserPodCheckCompleted,
+
+    /// Contact addition started
+    AddContactStarted { pod_address: String },
+
+    /// Contact pod verification started
+    ContactVerificationStarted { pod_address: String },
+
+    /// Contact pod verification completed
+    ContactVerificationCompleted { pod_address: String },
+
+    /// Contact addition completed
+    AddContactCompleted { pod_address: String },
+
+    /// Contacts sync started
+    SyncContactsStarted { total_contacts: usize },
+
+    /// Individual contact sync started
+    ContactSyncStarted { pod_address: String, contact_index: usize, total_contacts: usize },
+
+    /// Individual contact sync completed
+    ContactSyncCompleted { pod_address: String, contact_index: usize, total_contacts: usize },
+
+    /// Contacts sync completed
+    SyncContactsCompleted { synced_count: usize },
+
+    /// Content indexing started
+    IndexingStarted { user_key: String },
+
+    /// Content indexing completed
+    IndexingCompleted { user_key: String, success: bool },
+
+    /// Cache refresh started
+    CacheRefreshStarted,
+
+    /// Cache refresh completed
+    CacheRefreshCompleted,
+
+    /// Search operation started
+    SearchStarted { query_type: String },
+
+    /// Search operation completed
+    SearchCompleted { results_count: usize },
+
+    /// Generic operation progress with custom message
+    Progress { operation: String, message: String, current: Option<usize>, total: Option<usize> },
+
+    /// Operation completed successfully
+    OperationCompleted { operation: String },
+
+    /// Operation failed
+    OperationFailed { operation: String, error: String },
+}
+
+/// Callback type used during colony operations to report progress and allow cancellation.
+pub type ColonyCallback = Arc<
+    dyn Fn(
+            ColonyEvent,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = Result<bool, Box<dyn std::error::Error + Send + Sync>>>
+                    + Send
+                    + Sync,
+            >,
+        > + Send
+        + Sync,
+>;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskProgress {
     Put(PutEvent),
@@ -293,6 +374,7 @@ pub enum TaskProgress {
     Sync(SyncEvent),
     Purge(PurgeEvent),
     HealthCheck(HealthCheckEvent),
+    Colony(ColonyEvent),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -719,6 +801,13 @@ pub struct ListContactsResponse {
     pub contacts: Vec<String>, // List of pod addresses
 }
 
+/// Response containing colony operation progress
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ColonyProgressResponse {
+    pub event: ColonyEvent,
+    pub operation_id: Option<String>,
+}
+
 /// Response containing a chunk of data from a get operation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetDataResponse {
@@ -783,6 +872,8 @@ pub enum Response {
     SyncContacts(SyncContactsResponse),
     GetUserContact(GetUserContactResponse),
     ListContacts(ListContactsResponse),
+    /// Colony operation progress update
+    ColonyProgress(ColonyProgressResponse),
 }
 
 // Helper moved to where Response is used (client/server)

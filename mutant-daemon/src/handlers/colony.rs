@@ -9,16 +9,30 @@ use mutant_protocol::{
     IndexContentResponse, GetMetadataRequest, GetMetadataResponse, AddContactRequest,
     AddContactResponse, ListContentRequest, ListContentResponse, SyncContactsRequest,
     SyncContactsResponse, GetUserContactRequest, GetUserContactResponse, ListContactsRequest,
-    ListContactsResponse
+    ListContactsResponse, ColonyEvent, ColonyProgressResponse
 };
 
 use super::common::UpdateSender;
+
+/// Helper function to send colony progress events
+fn send_colony_progress(update_tx: &UpdateSender, event: ColonyEvent, operation_id: Option<String>) {
+    let response = Response::ColonyProgress(ColonyProgressResponse {
+        event,
+        operation_id,
+    });
+
+    if let Err(e) = update_tx.send(response) {
+        log::error!("Failed to send colony progress event: {}", e);
+    }
+}
 
 // Global colony manager instance
 static COLONY_MANAGER: OnceCell<Arc<ColonyManager>> = OnceCell::const_new();
 
 /// Initialize the global colony manager
 pub async fn init_colony_manager(wallet: autonomi::Wallet, network_choice: NetworkChoice, private_key_hex: Option<String>) -> Result<(), DaemonError> {
+    log::info!("Starting colony manager initialization");
+
     let manager = ColonyManager::new(wallet, network_choice, private_key_hex).await?;
 
     // Ensure the user's pod exists on the network
@@ -44,7 +58,7 @@ pub async fn get_colony_manager() -> Result<Arc<ColonyManager>, DaemonError> {
 }
 
 /// Handle search requests
-/// 
+///
 /// Executes SPARQL queries against the local RDF graph database to find content
 /// based on various criteria (text, type, predicate, etc.).
 pub async fn handle_search(
@@ -53,39 +67,71 @@ pub async fn handle_search(
     _original_request_str: &str,
 ) -> Result<(), DaemonError> {
     log::debug!("Handling search request: {:?}", req);
-    
+
+    // Send progress event: search started
+    let query_type = if req.query.is_object() {
+        req.query.get("type").and_then(|v| v.as_str()).unwrap_or("unknown").to_string()
+    } else {
+        "sparql".to_string()
+    };
+
+    send_colony_progress(&update_tx, ColonyEvent::SearchStarted {
+        query_type: query_type.clone()
+    }, None);
+
     let colony_manager = get_colony_manager().await?;
-    
+
     match colony_manager.search(req.query).await {
         Ok(results) => {
+            // Count results for progress event
+            let results_count = if let Some(bindings) = results.get("results")
+                .and_then(|r| r.get("bindings"))
+                .and_then(|b| b.as_array()) {
+                bindings.len()
+            } else {
+                0
+            };
+
+            // Send progress event: search completed
+            send_colony_progress(&update_tx, ColonyEvent::SearchCompleted {
+                results_count
+            }, None);
+
             let response = Response::Search(SearchResponse { results });
-            
+
             if let Err(e) = update_tx.send(response) {
                 log::error!("Failed to send search response: {}", e);
                 return Err(DaemonError::Internal(format!("Failed to send search response: {}", e)));
             }
-            
+
             log::debug!("Search request completed successfully");
             Ok(())
         }
         Err(e) => {
             log::error!("Search request failed: {}", e);
+
+            // Send progress event: search failed
+            send_colony_progress(&update_tx, ColonyEvent::OperationFailed {
+                operation: format!("search_{}", query_type),
+                error: e.to_string()
+            }, None);
+
             let error_response = Response::Error(ErrorResponse {
                 error: format!("Search failed: {}", e),
                 original_request: Some(_original_request_str.to_string()),
             });
-            
+
             if let Err(send_err) = update_tx.send(error_response) {
                 log::error!("Failed to send error response: {}", send_err);
             }
-            
+
             Err(e)
         }
     }
 }
 
 /// Handle content indexing requests
-/// 
+///
 /// Creates metadata pods for stored content, enabling search and discovery.
 /// The metadata should be in JSON-LD format following Schema.org conventions.
 pub async fn handle_index_content(
@@ -93,37 +139,55 @@ pub async fn handle_index_content(
     update_tx: UpdateSender,
     _original_request_str: &str,
 ) -> Result<(), DaemonError> {
-    log::debug!("Handling index content request: key={}, public_address={:?}", 
+    log::debug!("Handling index content request: key={}, public_address={:?}",
                req.user_key, req.public_address);
-    
+
+    // Send progress event: indexing started
+    send_colony_progress(&update_tx, ColonyEvent::IndexingStarted {
+        user_key: req.user_key.clone()
+    }, None);
+
     let colony_manager = get_colony_manager().await?;
-    
+
     match colony_manager.index_content(&req.user_key, req.metadata, req.public_address).await {
         Ok((success, pod_address)) => {
+            // Send progress event: indexing completed
+            send_colony_progress(&update_tx, ColonyEvent::IndexingCompleted {
+                user_key: req.user_key.clone(),
+                success
+            }, None);
+
             let response = Response::IndexContent(IndexContentResponse {
                 success,
                 pod_address,
             });
-            
+
             if let Err(e) = update_tx.send(response) {
                 log::error!("Failed to send index content response: {}", e);
                 return Err(DaemonError::Internal(format!("Failed to send index content response: {}", e)));
             }
-            
+
             log::debug!("Index content request completed successfully");
             Ok(())
         }
         Err(e) => {
             log::error!("Index content request failed: {}", e);
+
+            // Send progress event: indexing failed
+            send_colony_progress(&update_tx, ColonyEvent::IndexingCompleted {
+                user_key: req.user_key.clone(),
+                success: false
+            }, None);
+
             let error_response = Response::Error(ErrorResponse {
                 error: format!("Content indexing failed: {}", e),
                 original_request: Some(_original_request_str.to_string()),
             });
-            
+
             if let Err(send_err) = update_tx.send(error_response) {
                 log::error!("Failed to send error response: {}", send_err);
             }
-            
+
             Err(e)
         }
     }
@@ -180,10 +244,30 @@ pub async fn handle_add_contact(
     log::debug!("Handling add contact request: pod_address={}, name={:?}",
                req.pod_address, req.contact_name);
 
+    // Send progress event: operation started
+    send_colony_progress(&update_tx, ColonyEvent::AddContactStarted {
+        pod_address: req.pod_address.clone()
+    }, None);
+
     let colony_manager = get_colony_manager().await?;
+
+    // Send progress event: verifying contact pod
+    send_colony_progress(&update_tx, ColonyEvent::ContactVerificationStarted {
+        pod_address: req.pod_address.clone()
+    }, None);
 
     match colony_manager.add_contact(&req.pod_address, req.contact_name).await {
         Ok(()) => {
+            // Send progress event: contact verification completed
+            send_colony_progress(&update_tx, ColonyEvent::ContactVerificationCompleted {
+                pod_address: req.pod_address.clone()
+            }, None);
+
+            // Send progress event: operation completed
+            send_colony_progress(&update_tx, ColonyEvent::AddContactCompleted {
+                pod_address: req.pod_address.clone()
+            }, None);
+
             let response = Response::AddContact(AddContactResponse {
                 success: true,
             });
@@ -198,6 +282,13 @@ pub async fn handle_add_contact(
         }
         Err(e) => {
             log::error!("Add contact request failed: {}", e);
+
+            // Send progress event: operation failed
+            send_colony_progress(&update_tx, ColonyEvent::OperationFailed {
+                operation: "add_contact".to_string(),
+                error: e.to_string()
+            }, None);
+
             let error_response = Response::Error(ErrorResponse {
                 error: format!("Add contact failed: {}", e),
                 original_request: Some(_original_request_str.to_string()),
@@ -264,8 +355,38 @@ pub async fn handle_sync_contacts(
 
     let colony_manager = get_colony_manager().await?;
 
+    // Get contacts count first for progress tracking
+    let contacts = match colony_manager.get_contacts().await {
+        Ok(contacts) => contacts,
+        Err(e) => {
+            log::error!("Failed to get contacts list: {}", e);
+            let error_response = Response::Error(ErrorResponse {
+                error: format!("Failed to get contacts list: {}", e),
+                original_request: Some(_original_request_str.to_string()),
+            });
+
+            if let Err(send_err) = update_tx.send(error_response) {
+                log::error!("Failed to send error response: {}", send_err);
+            }
+
+            return Err(e);
+        }
+    };
+
+    let total_contacts = contacts.len();
+
+    // Send progress event: sync started
+    send_colony_progress(&update_tx, ColonyEvent::SyncContactsStarted {
+        total_contacts
+    }, None);
+
     match colony_manager.sync_all_contacts().await {
         Ok(synced_count) => {
+            // Send progress event: sync completed
+            send_colony_progress(&update_tx, ColonyEvent::SyncContactsCompleted {
+                synced_count
+            }, None);
+
             let response = Response::SyncContacts(SyncContactsResponse { synced_count });
 
             if let Err(e) = update_tx.send(response) {
@@ -278,6 +399,13 @@ pub async fn handle_sync_contacts(
         }
         Err(e) => {
             log::error!("Sync contacts request failed: {}", e);
+
+            // Send progress event: operation failed
+            send_colony_progress(&update_tx, ColonyEvent::OperationFailed {
+                operation: "sync_contacts".to_string(),
+                error: e.to_string()
+            }, None);
+
             let error_response = Response::Error(ErrorResponse {
                 error: format!("Sync contacts failed: {}", e),
                 original_request: Some(_original_request_str.to_string()),
@@ -377,17 +505,48 @@ pub async fn handle_list_contacts(
 }
 
 /// Refresh the colony cache from the network
-/// 
+///
 /// This is a utility function that can be called periodically to update
 /// the local RDF graph database with new pods from the network.
 pub async fn refresh_colony_cache() -> Result<(), DaemonError> {
     log::info!("Refreshing colony cache from network");
-    
+
     let colony_manager = get_colony_manager().await?;
     colony_manager.refresh_cache().await?;
-    
+
     log::info!("Colony cache refresh completed");
     Ok(())
+}
+
+/// Refresh the colony cache from the network with progress updates
+///
+/// This version sends progress events via WebSocket for UI feedback.
+pub async fn refresh_colony_cache_with_progress(update_tx: UpdateSender) -> Result<(), DaemonError> {
+    log::info!("Refreshing colony cache from network");
+
+    // Send progress event: cache refresh started
+    send_colony_progress(&update_tx, ColonyEvent::CacheRefreshStarted, None);
+
+    let colony_manager = get_colony_manager().await?;
+
+    match colony_manager.refresh_cache().await {
+        Ok(()) => {
+            // Send progress event: cache refresh completed
+            send_colony_progress(&update_tx, ColonyEvent::CacheRefreshCompleted, None);
+
+            log::info!("Colony cache refresh completed");
+            Ok(())
+        }
+        Err(e) => {
+            // Send progress event: cache refresh failed
+            send_colony_progress(&update_tx, ColonyEvent::OperationFailed {
+                operation: "cache_refresh".to_string(),
+                error: e.to_string()
+            }, None);
+
+            Err(e)
+        }
+    }
 }
 
 /// Save the colony key store

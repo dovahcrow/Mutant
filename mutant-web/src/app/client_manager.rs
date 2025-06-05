@@ -68,22 +68,34 @@ lazy_static! {
     };
 }
 
-// Helper function to ensure connection and handle errors
+// Helper function to ensure connection and handle errors with retry logic
 async fn ensure_connected(client: &mut MutantClient, connected: &mut bool) -> Result<(), String> {
-    if *connected {
+    if *connected && client.is_connected() {
         return Ok(());
     }
 
+    // If we think we're connected but the client says otherwise, reset our state
+    if *connected && !client.is_connected() {
+        warn!("Connection state mismatch detected, resetting connection");
+        *connected = false;
+        client.disconnect();
+    }
+
     let ws_url = default_ws_url();
-    match client.connect(&ws_url).await {
+    info!("Attempting to connect to daemon at: {}", ws_url);
+
+    // Use the new retry logic with 3 attempts and exponential backoff
+    match client.connect_with_retry(&ws_url, 3, 500).await {
         Ok(_) => {
+            info!("Successfully connected to daemon");
             *connected = true;
             Ok(())
         }
         Err(e) => {
-            error!("Failed to connect to daemon: {:?}", e);
+            error!("Failed to connect to daemon after retries: {:?}", e);
             *connected = false;
-            Err(format!("Failed to connect: {:?}", e))
+            client.disconnect(); // Ensure clean state
+            Err(format!("Failed to connect after retries: {:?}", e))
         }
     }
 }
@@ -145,6 +157,37 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
         // Create a single client that will be used for all operations
         let mut client = MutantClient::new();
         let mut connected = false;
+
+        // Spawn a background task to handle colony progress events
+        let client_for_progress = client.clone();
+        spawn_local(async move {
+            let mut client_for_progress = client_for_progress;
+            loop {
+                // Check for responses from the client
+                if let Some(response_result) = client_for_progress.next_response().await {
+                    match response_result {
+                        Ok(response) => {
+                            // Handle colony progress events
+                            if let mutant_protocol::Response::ColonyProgress(progress_response) = response {
+                                crate::app::colony_window::add_colony_progress_event(
+                                    progress_response.event,
+                                    progress_response.operation_id
+                                );
+                            }
+                            // Other responses are handled by the client's process_response method
+                        }
+                        Err(e) => {
+                            error!("Error in colony progress handler: {:?}", e);
+                            // Break the loop on error to avoid infinite error loops
+                            break;
+                        }
+                    }
+                } else {
+                    // No more responses, client disconnected
+                    break;
+                }
+            }
+        });
 
         // Process commands until shutdown
         while let Some(cmd) = rx.next().await {

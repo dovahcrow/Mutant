@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::{Arc, RwLock}};
 
 use app::{context::init_context, fs_window::FsWindow, Window, DEFAULT_WS_URL};
 use futures::{channel::oneshot, StreamExt};
-use log::{error, info};
+use log::{error, info, warn};
 use mutant_client::{MutantClient, ProgressReceiver};
 use mutant_protocol::{TaskProgress, TaskResult};
 use wasm_bindgen::prelude::*;
@@ -102,9 +102,17 @@ impl Client {
                 request_rx: rx,
             };
 
-            info!("Connecting to daemon");
-            this.connect(&DEFAULT_WS_URL()).await.unwrap();
-            info!("Client connected");
+            info!("Connecting to daemon with retry logic");
+            match this.connect(&DEFAULT_WS_URL()).await {
+                Ok(_) => {
+                    info!("Client connected successfully");
+                }
+                Err(e) => {
+                    error!("Failed to connect to daemon: {:?}", e);
+                    // Don't panic here - the client will retry on individual requests
+                    warn!("Client will attempt to reconnect on first request");
+                }
+            }
 
             // Note: Progress updates for streaming put operations are now handled
             // by the existing mutant-client progress system since we create proper

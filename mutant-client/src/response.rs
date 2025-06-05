@@ -531,6 +531,10 @@ impl MutantClient {
                 // These might be added later if needed
                 warn!("Received unsupported colony response");
             },
+            Response::ColonyProgress(_) => {
+                // Colony progress events are handled by the web UI directly
+                debug!("Received colony progress event");
+            },
         }
     }
 
@@ -577,12 +581,37 @@ impl MutantClient {
                         return Some(Err(ClientError::WebSocketError(format!("{:?}", e))));
                     }
                     None => {
+                        warn!("CLIENT: WebSocket receiver returned None - connection closed");
                         return None;
                     }
                 }
             }
         } else {
-            error!("CLIENT: WebSocket receiver is None (not connected)");
+            // This is the error we're seeing - receiver is None
+            // This can happen during connection setup or if the receiver was moved
+            warn!("CLIENT: WebSocket receiver is None (not connected or receiver moved to response handler)");
+
+            // Instead of returning None immediately, we could wait a bit and retry
+            // This helps with the race condition during connection setup
+            #[cfg(target_arch = "wasm32")]
+            {
+                use wasm_bindgen_futures::JsFuture;
+                use web_sys::js_sys;
+                let promise = js_sys::Promise::new(&mut |resolve, _| {
+                    web_sys::window()
+                        .unwrap()
+                        .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 10)
+                        .unwrap();
+                });
+                let _ = JsFuture::from(promise).await;
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            }
+
+            // Return None to indicate no response available
             None
         }
     }

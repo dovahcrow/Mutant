@@ -102,7 +102,7 @@ type TaskChannels = (CompletionSender, ProgressSender, Option<DataStreamSender>)
 type TaskChannelsMap = Arc<Mutex<HashMap<TaskId, TaskChannels>>>;
 
 #[derive(Debug, Clone, PartialEq)]
-enum ConnectionState {
+pub enum ConnectionState {
     Disconnected,
     Connecting,
     Connected,
@@ -131,16 +131,21 @@ impl MutantClient {
         }
     }
 
-    /// Establishes a WebSocket connection to the Mutant Daemon.
+    /// Establishes a WebSocket connection to the Mutant Daemon with retry logic.
     pub async fn connect(&mut self, addr: &str) -> Result<(), ClientError> {
-        info!("CLIENT: Attempting to connect to WebSocket at {}", addr);
+        self.connect_with_retry(addr, 3, 1000).await
+    }
+
+    /// Establishes a WebSocket connection with configurable retry logic.
+    pub async fn connect_with_retry(&mut self, addr: &str, max_retries: u32, initial_delay_ms: u64) -> Result<(), ClientError> {
+        info!("CLIENT: Attempting to connect to WebSocket at {} (max_retries: {})", addr, max_retries);
 
         if self.sender.is_some() {
             warn!("CLIENT: Already connected or connecting.");
             return Ok(());
         }
 
-        // Parse the URL
+        // Parse the URL once
         let url = match Url::parse(addr) {
             Ok(url) => {
                 info!("CLIENT: Successfully parsed URL: {}", url);
@@ -152,73 +157,127 @@ impl MutantClient {
             }
         };
 
-        info!("CLIENT: Setting connection state to Connecting");
-        *self.state.lock().unwrap() = ConnectionState::Connecting;
+        let mut last_error = None;
+        let mut delay_ms = initial_delay_ms;
 
-        // Connect using nash-ws
-        info!("CLIENT: Attempting to create WebSocket connection to {}", url);
-        let connection_result = nash_ws::WebSocket::new(url.as_str()).await;
-
-        match connection_result {
-            Ok((sender, receiver)) => {
-                info!("CLIENT: Successfully established WebSocket connection");
-                self.sender = Some(sender);
-                self.receiver = Some(receiver);
-
-                info!("CLIENT: Setting connection state to Connected");
-                *self.state.lock().unwrap() = ConnectionState::Connected;
-
-                info!("CLIENT: Creating response handling task");
-                let mut client_clone = self.partial_take_receiver();
+        for attempt in 0..=max_retries {
+            if attempt > 0 {
+                info!("CLIENT: Retry attempt {} of {} after {}ms delay", attempt, max_retries, delay_ms);
 
                 #[cfg(target_arch = "wasm32")]
                 {
-                    info!("CLIENT: Spawning WASM response handler");
-                    spawn_local(async move {
-                        info!("CLIENT: WASM response handler started");
-                        while let Some(response) = client_clone.next_response().await {
-                            match response {
-                                Ok(_resp) => {
-                                    // Response processed by process_response
-                                },
-                                Err(e) => {
-                                    error!("CLIENT: Error processing response: {:?}", e);
-                                }
-                            }
-                        }
-                        info!("CLIENT: WASM response handler exited");
+                    use wasm_bindgen_futures::JsFuture;
+                    use web_sys::js_sys;
+                    let promise = js_sys::Promise::new(&mut |resolve, _| {
+                        web_sys::window()
+                            .unwrap()
+                            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, delay_ms as i32)
+                            .unwrap();
                     });
+                    let _ = JsFuture::from(promise).await;
                 }
 
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    info!("CLIENT: Spawning native response handler");
-                    tokio::spawn(async move {
-                        info!("CLIENT: Native response handler started");
-                        while let Some(response) = client_clone.next_response().await {
-                            match response {
-                                Ok(_resp) => {
-                                    // Response processed by process_response
-                                },
-                                Err(e) => {
-                                    error!("CLIENT: Error processing response: {:?}", e);
-                                }
-                            }
-                        }
-                        info!("CLIENT: Native response handler exited");
-                    });
+                    tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
                 }
 
-                info!("CLIENT: Connection setup complete");
-                Ok(())
-            },
-            Err(e) => {
-                let error_msg = format!("{:?}", e);
-                error!("CLIENT: Failed to establish WebSocket connection: {}", error_msg);
-                *self.state.lock().unwrap() = ConnectionState::Disconnected;
-                Err(ClientError::WebSocketError(error_msg))
+                delay_ms = (delay_ms * 2).min(5000); // Exponential backoff, max 5 seconds
+            }
+
+            info!("CLIENT: Setting connection state to Connecting (attempt {})", attempt + 1);
+            *self.state.lock().unwrap() = ConnectionState::Connecting;
+
+            // Connect using nash-ws
+            info!("CLIENT: Attempting to create WebSocket connection to {} (attempt {})", url, attempt + 1);
+            let connection_result = nash_ws::WebSocket::new(url.as_str()).await;
+
+            match connection_result {
+                Ok((sender, receiver)) => {
+                    info!("CLIENT: Successfully established WebSocket connection on attempt {}", attempt + 1);
+
+                    // Store the connection components
+                    self.sender = Some(sender);
+                    self.receiver = Some(receiver);
+
+                    // Verify the receiver is properly set before proceeding
+                    if self.receiver.is_none() {
+                        error!("CLIENT: Receiver is None after connection setup - this should not happen");
+                        *self.state.lock().unwrap() = ConnectionState::Disconnected;
+                        return Err(ClientError::InternalError("Receiver not properly initialized".to_string()));
+                    }
+
+                    info!("CLIENT: Creating response handling task");
+                    let mut client_clone = self.partial_take_receiver();
+
+                    // Verify the clone has the receiver
+                    if client_clone.receiver.is_none() {
+                        error!("CLIENT: Clone receiver is None - connection setup failed");
+                        *self.state.lock().unwrap() = ConnectionState::Disconnected;
+                        return Err(ClientError::InternalError("Failed to transfer receiver to response handler".to_string()));
+                    }
+
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        info!("CLIENT: Spawning WASM response handler");
+                        spawn_local(async move {
+                            info!("CLIENT: WASM response handler started");
+                            while let Some(response) = client_clone.next_response().await {
+                                match response {
+                                    Ok(_resp) => {
+                                        // Response processed by process_response
+                                    },
+                                    Err(e) => {
+                                        error!("CLIENT: Error processing response: {:?}", e);
+                                    }
+                                }
+                            }
+                            info!("CLIENT: WASM response handler exited");
+                        });
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        info!("CLIENT: Spawning native response handler");
+                        tokio::spawn(async move {
+                            info!("CLIENT: Native response handler started");
+                            while let Some(response) = client_clone.next_response().await {
+                                match response {
+                                    Ok(_resp) => {
+                                        // Response processed by process_response
+                                    },
+                                    Err(e) => {
+                                        error!("CLIENT: Error processing response: {:?}", e);
+                                    }
+                                }
+                            }
+                            info!("CLIENT: Native response handler exited");
+                        });
+                    }
+
+                    // Only mark as connected after everything is set up
+                    info!("CLIENT: Setting connection state to Connected");
+                    *self.state.lock().unwrap() = ConnectionState::Connected;
+
+                    info!("CLIENT: Connection setup complete on attempt {}", attempt + 1);
+                    return Ok(());
+                },
+                Err(e) => {
+                    let error_msg = format!("{:?}", e);
+                    error!("CLIENT: Failed to establish WebSocket connection on attempt {}: {}", attempt + 1, error_msg);
+                    *self.state.lock().unwrap() = ConnectionState::Disconnected;
+                    last_error = Some(ClientError::WebSocketError(error_msg));
+
+                    if attempt == max_retries {
+                        break;
+                    }
+                }
             }
         }
+
+        // If we get here, all retries failed
+        error!("CLIENT: All {} connection attempts failed", max_retries + 1);
+        Err(last_error.unwrap_or_else(|| ClientError::WebSocketError("Unknown connection error".to_string())))
     }
 
     // --- Public API Methods ---
@@ -693,6 +752,25 @@ impl MutantClient {
         let mut client = Self::new();
         client.connect(url).await?;
         Ok(client)
+    }
+
+    /// Check if the client is connected and the connection is healthy
+    pub fn is_connected(&self) -> bool {
+        let state = self.state.lock().unwrap();
+        *state == ConnectionState::Connected && self.sender.is_some()
+    }
+
+    /// Get the current connection state
+    pub fn connection_state(&self) -> ConnectionState {
+        self.state.lock().unwrap().clone()
+    }
+
+    /// Disconnect and reset the client state
+    pub fn disconnect(&mut self) {
+        info!("CLIENT: Disconnecting");
+        self.sender = None;
+        self.receiver = None;
+        *self.state.lock().unwrap() = ConnectionState::Disconnected;
     }
 }
 
