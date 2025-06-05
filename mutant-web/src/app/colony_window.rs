@@ -369,30 +369,29 @@ impl Window for ColonyWindow {
             // Right column - Content discovery (takes remaining space)
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.heading("Available Content");
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            // Refresh button
-                            let refresh_button = ui.add_enabled(
-                                !self.is_loading_content,
-                                egui::Button::new(if self.is_loading_content { "Loading..." } else { "🔄 Refresh" })
-                                    .fill(super::theme::MutantColors::ACCENT_BLUE)
-                            );
+                    // ui.horizontal(|ui| {
+                    //     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    //         // Refresh button
+                    //         let refresh_button = ui.add_enabled(
+                    //             !self.is_loading_content,
+                    //             egui::Button::new(if self.is_loading_content { "Loading..." } else { "🔄 Refresh" })
+                    //                 .fill(super::theme::MutantColors::ACCENT_BLUE)
+                    //         );
 
-                            if refresh_button.clicked() {
-                                self.load_content_list();
-                            }
-                        });
-                    });
+                    //         if refresh_button.clicked() {
+                    //             self.load_content_list();
+                    //         }
+                    //     });
+                    // });
 
                     // Search bar
                     ui.horizontal(|ui| {
                         ui.label("Search:");
                         ui.text_edit_singleline(&mut self.search_query);
-                        if ui.button("🔍").clicked() {
+                        if ui.small_button("🔍").clicked() {
                             self.search_content();
                         }
-                        if ui.button("Clear").clicked() {
+                        if ui.small_button("Clear").clicked() {
                             self.search_query.clear();
                             self.load_content_list();
                         }
@@ -401,7 +400,7 @@ impl Window for ColonyWindow {
                     ui.separator();
 
                     // Content list organized by pods
-                    ui.label(format!("Content Items ({} items from {} pods)", self.content_list.len(), self.pod_content.len()));
+                    // ui.label(format!("Content Items ({} items from {} pods)", self.content_list.len(), self.pod_content.len()));
 
                     ui.push_id("content_scroll", |ui| {
                         egui::ScrollArea::vertical()
