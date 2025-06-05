@@ -362,15 +362,85 @@ impl ColonyManager {
         ).await
         .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod manager: {}", e)))?;
 
-        // Check if our pod already exists by trying to get its pointers
-        let pointers = pod_manager.key_store.get_pointers();
-        if pointers.contains_key(&self.pod_public_address) {
-            log::info!("User pod already exists: {}", self.pod_public_address);
-            return Ok(self.pod_public_address.clone());
+        // First, check if pod exists locally
+        log::debug!("Checking if pod exists locally: {}", self.pod_public_address);
+        match pod_manager.get_subject_data(&self.pod_public_address).await {
+            Ok(data) => {
+                // Parse the JSON response to check if there are actual results
+                match serde_json::from_str::<serde_json::Value>(&data) {
+                    Ok(json) => {
+                        if let Some(results) = json.get("results")
+                            .and_then(|r| r.get("bindings"))
+                            .and_then(|b| b.as_array()) {
+                            if !results.is_empty() {
+                                // Pod exists locally with actual data
+                                log::info!("Pod already exists locally with data: {}", self.pod_public_address);
+                                return Ok(self.pod_public_address.clone());
+                            } else {
+                                // Empty results, pod doesn't exist locally
+                                log::debug!("Pod query returned empty results locally: {}", self.pod_public_address);
+                            }
+                        } else {
+                            // Malformed response, treat as not found
+                            log::debug!("Pod query returned malformed response locally: {}", self.pod_public_address);
+                        }
+                    }
+                    Err(e) => {
+                        // Failed to parse JSON, treat as not found
+                        log::debug!("Failed to parse pod query response locally: {}", e);
+                    }
+                }
+                // Pod doesn't exist locally, try to sync from network
+                log::info!("Pod not found locally, syncing from network: {}", self.pod_public_address);
+            }
+            Err(_) => {
+                // Pod doesn't exist locally, try to sync from network
+                log::info!("Pod not found locally (error), syncing from network: {}", self.pod_public_address);
+            }
         }
 
-        // Pod doesn't exist, create it
-        log::info!("Creating new user pod: {}", self.pod_public_address);
+        // Sync from network to get latest pods
+        pod_manager.refresh_cache().await
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to refresh cache from network: {}", e)))?;
+
+        // Check again if pod exists locally after sync
+        log::debug!("Checking if pod exists locally after sync: {}", self.pod_public_address);
+        match pod_manager.get_subject_data(&self.pod_public_address).await {
+            Ok(data) => {
+                // Parse the JSON response to check if there are actual results
+                match serde_json::from_str::<serde_json::Value>(&data) {
+                    Ok(json) => {
+                        if let Some(results) = json.get("results")
+                            .and_then(|r| r.get("bindings"))
+                            .and_then(|b| b.as_array()) {
+                            if !results.is_empty() {
+                                // Pod now exists locally after sync with actual data
+                                log::info!("Pod found locally after sync with data: {}", self.pod_public_address);
+                                return Ok(self.pod_public_address.clone());
+                            } else {
+                                // Empty results, pod still doesn't exist locally
+                                log::debug!("Pod query returned empty results after sync: {}", self.pod_public_address);
+                            }
+                        } else {
+                            // Malformed response, treat as not found
+                            log::debug!("Pod query returned malformed response after sync: {}", self.pod_public_address);
+                        }
+                    }
+                    Err(e) => {
+                        // Failed to parse JSON, treat as not found
+                        log::debug!("Failed to parse pod query response after sync: {}", e);
+                    }
+                }
+                // Pod still doesn't exist, need to create it
+                log::info!("Pod not found after sync, creating new pod: {}", self.pod_public_address);
+            }
+            Err(_) => {
+                // Pod still doesn't exist, need to create it
+                log::info!("Pod not found after sync (error), creating new pod: {}", self.pod_public_address);
+            }
+        }
+
+        // Create the pod since it doesn't exist on the network
         let (pod_address, _scratchpad_address) = pod_manager.add_pod("main").await
             .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod: {}", e)))?;
 
@@ -611,9 +681,16 @@ impl ColonyManager {
 
         // Get all pod pointers (contacts) from the key store
         let pointers = pod_manager.key_store.get_pointers();
-        let contacts: Vec<String> = pointers.keys().cloned().collect();
+        let all_contacts: Vec<String> = pointers.keys().cloned().collect();
 
-        log::debug!("Found {} contacts: {:?}", contacts.len(), contacts);
+        // Filter out our own pod address from the contacts list
+        let contacts: Vec<String> = all_contacts.into_iter()
+            .filter(|contact| contact != &self.pod_public_address)
+            .collect();
+
+        log::debug!("Found {} total pod pointers, {} external contacts (filtered out own pod: {})",
+                   pointers.len(), contacts.len(), self.pod_public_address);
+        log::debug!("External contacts: {:?}", contacts);
         Ok(contacts)
     }
 
