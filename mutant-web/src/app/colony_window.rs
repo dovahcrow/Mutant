@@ -299,79 +299,302 @@ impl Window for ColonyWindow {
                     .show_inside(ui, |ui| {
                     // Left column - Contacts management
                     ui.vertical(|ui| {
-                        ui.heading("Contacts");
-
-                        // Add new contact section
-                        ui.group(|ui| {
-                            ui.label("Add New Contact:");
-
-                            ui.horizontal(|ui| {
-                                ui.label("Pod Address:");
-                                ui.text_edit_singleline(&mut self.new_contact_address);
-                            });
-
-                            ui.horizontal(|ui| {
-                                ui.label("Name (optional):");
-                                ui.text_edit_singleline(&mut self.new_contact_name);
-                            });
-
-                            ui.horizontal(|ui| {
-                                if ui.button("Add Contact").clicked() {
-                                    self.add_contact();
-                                }
-
-                                if ui.button("Clear").clicked() {
-                                    self.new_contact_address.clear();
-                                    self.new_contact_name.clear();
-                                }
+                        // Professional header with icon and styling
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("👥 Contacts")
+                                    .heading()
+                                    .strong()
+                                    .color(super::theme::MutantColors::ACCENT_ORANGE)
+                            );
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(
+                                    egui::RichText::new(format!("{}", self.contacts.len()))
+                                        .strong()
+                                        .color(super::theme::MutantColors::ACCENT_BLUE)
+                                );
                             });
                         });
 
-                        ui.separator();
+                        ui.add_space(8.0);
 
-                        // Contacts list
-                        ui.label(format!("Contacts ({})", self.contacts.len()));
+                        // Professional add new contact section with better styling
+                        egui::Frame::new()
+                            .fill(super::theme::MutantColors::SURFACE)
+                            .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_MEDIUM))
+                            .inner_margin(egui::Margin::same(12))
+                            .corner_radius(egui::Rounding::same(6))
+                            .show(ui, |ui| {
+                                ui.vertical(|ui| {
+                                    // Section header
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new("➕ Add New Contact")
+                                                .strong()
+                                                .color(super::theme::MutantColors::ACCENT_GREEN)
+                                        );
+                                    });
 
-                        ui.push_id("contacts_scroll", |ui| {
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false; 2])
-                                .show(ui, |ui| {
-                                    for (index, contact) in self.contacts.iter().enumerate() {
-                                        ui.group(|ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.vertical(|ui| {
-                                                    if let Some(name) = &contact.name {
-                                                        ui.label(
-                                                            egui::RichText::new(name)
-                                                                .strong()
-                                                                .color(super::theme::MutantColors::ACCENT_ORANGE)
-                                                        );
-                                                    }
-                                                    ui.label(
-                                                        egui::RichText::new(&contact.pod_address)
-                                                            .size(10.0)
-                                                            .color(super::theme::MutantColors::TEXT_MUTED)
-                                                    );
-                                                    if let Some(last_synced) = &contact.last_synced {
-                                                        ui.label(
-                                                            egui::RichText::new(format!("Last synced: {}", last_synced))
-                                                                .size(9.0)
-                                                                .color(super::theme::MutantColors::TEXT_MUTED)
-                                                        );
-                                                    }
-                                                });
+                                    ui.add_space(6.0);
 
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    if ui.button("🗑").clicked() {
-                                                        // Mark for removal (we'll handle this after the loop)
-                                                        // For now, just log it
-                                                        log::info!("Remove contact at index {}", index);
-                                                    }
-                                                });
-                                            });
-                                        });
-                                    }
+                                    // Pod Address input with better styling
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            egui::RichText::new("Pod Address")
+                                                .size(11.0)
+                                                .color(super::theme::MutantColors::TEXT_SECONDARY)
+                                        );
+                                        let _address_response = ui.add(
+                                            egui::TextEdit::singleline(&mut self.new_contact_address)
+                                                .hint_text("Enter pod address...")
+                                                .desired_width(f32::INFINITY)
+                                        );
+
+                                        // Show validation feedback
+                                        if !self.new_contact_address.is_empty() && self.new_contact_address.len() < 10 {
+                                            ui.label(
+                                                egui::RichText::new("⚠ Address seems too short")
+                                                    .size(10.0)
+                                                    .color(super::theme::MutantColors::WARNING)
+                                            );
+                                        }
+                                    });
+
+                                    ui.add_space(4.0);
+
+                                    // Name input with better styling
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            egui::RichText::new("Display Name (optional)")
+                                                .size(11.0)
+                                                .color(super::theme::MutantColors::TEXT_SECONDARY)
+                                        );
+                                        ui.add(
+                                            egui::TextEdit::singleline(&mut self.new_contact_name)
+                                                .hint_text("Enter friendly name...")
+                                                .desired_width(f32::INFINITY)
+                                        );
+                                    });
+
+                                    ui.add_space(8.0);
+
+                                    // Action buttons with professional styling
+                                    ui.horizontal(|ui| {
+                                        let add_enabled = !self.new_contact_address.trim().is_empty();
+                                        let add_button = ui.add_enabled(
+                                            add_enabled,
+                                            egui::Button::new(
+                                                egui::RichText::new("✓ Add Contact")
+                                                    .color(if add_enabled {
+                                                        super::theme::MutantColors::TEXT_PRIMARY
+                                                    } else {
+                                                        super::theme::MutantColors::TEXT_DISABLED
+                                                    })
+                                            )
+                                            .fill(if add_enabled {
+                                                super::theme::MutantColors::ACCENT_GREEN
+                                            } else {
+                                                super::theme::MutantColors::SURFACE
+                                            })
+                                        );
+
+                                        if add_button.clicked() {
+                                            self.add_contact();
+                                        }
+
+                                        let clear_enabled = !self.new_contact_address.is_empty() || !self.new_contact_name.is_empty();
+                                        let clear_button = ui.add_enabled(
+                                            clear_enabled,
+                                            egui::Button::new(
+                                                egui::RichText::new("✕ Clear")
+                                                    .color(super::theme::MutantColors::TEXT_SECONDARY)
+                                            )
+                                            .fill(super::theme::MutantColors::SURFACE)
+                                            .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_MEDIUM))
+                                        );
+
+                                        if clear_button.clicked() {
+                                            self.new_contact_address.clear();
+                                            self.new_contact_name.clear();
+                                        }
+                                    });
                                 });
+                            });
+
+                        ui.add_space(12.0);
+
+                        // Professional contacts list section
+                        ui.vertical(|ui| {
+                            // Contacts list header
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("📋 Contact List")
+                                        .strong()
+                                        .color(super::theme::MutantColors::ACCENT_BLUE)
+                                );
+                            });
+
+                            ui.add_space(6.0);
+
+                            // Show empty state or contact list
+                            if self.contacts.is_empty() {
+                                // Empty state with helpful message
+                                egui::Frame::new()
+                                    .fill(super::theme::MutantColors::BACKGROUND_LIGHT)
+                                    .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_DARK))
+                                    .inner_margin(egui::Margin::same(16))
+                                    .corner_radius(egui::Rounding::same(4))
+                                    .show(ui, |ui| {
+                                        ui.vertical_centered(|ui| {
+                                            ui.label(
+                                                egui::RichText::new("👤")
+                                                    .size(24.0)
+                                                    .color(super::theme::MutantColors::TEXT_MUTED)
+                                            );
+                                            ui.label(
+                                                egui::RichText::new("No contacts yet")
+                                                    .strong()
+                                                    .color(super::theme::MutantColors::TEXT_SECONDARY)
+                                            );
+                                            ui.label(
+                                                egui::RichText::new("Add a contact above to start discovering content")
+                                                    .size(11.0)
+                                                    .color(super::theme::MutantColors::TEXT_MUTED)
+                                            );
+                                        });
+                                    });
+                            } else {
+                                // Contact list with professional styling
+                                ui.push_id("contacts_scroll", |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .auto_shrink([false; 2])
+                                        .max_height(300.0) // Limit height to prevent excessive scrolling
+                                        .show(ui, |ui| {
+                                            for (index, contact) in self.contacts.iter().enumerate() {
+                                                // Professional contact item with better styling
+                                                egui::Frame::new()
+                                                    .fill(super::theme::MutantColors::BACKGROUND_LIGHT)
+                                                    .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_DARK))
+                                                    .inner_margin(egui::Margin::symmetric(10, 8))
+                                                    .corner_radius(egui::Rounding::same(4))
+                                                    .show(ui, |ui| {
+                                                        ui.horizontal(|ui| {
+                                                            // Contact status indicator
+                                                            ui.label(
+                                                                egui::RichText::new("●")
+                                                                    .size(12.0)
+                                                                    .color(super::theme::MutantColors::ACCENT_GREEN) // Online indicator
+                                                            );
+
+                                                            // Contact information
+                                                            ui.vertical(|ui| {
+                                                                // Contact name or fallback
+                                                                let unnamed_contact = "Unnamed Contact".to_string();
+                                                                let display_name = contact.name.as_ref()
+                                                                    .unwrap_or(&unnamed_contact);
+                                                                ui.label(
+                                                                    egui::RichText::new(display_name)
+                                                                        .strong()
+                                                                        .size(12.0)
+                                                                        .color(super::theme::MutantColors::ACCENT_ORANGE)
+                                                                );
+
+                                                                // Truncated address with tooltip
+                                                                let truncated_address = if contact.pod_address.len() > 40 {
+                                                                    format!("{}...{}",
+                                                                        &contact.pod_address[..20],
+                                                                        &contact.pod_address[contact.pod_address.len()-20..])
+                                                                } else {
+                                                                    contact.pod_address.clone()
+                                                                };
+
+                                                                let address_label = ui.label(
+                                                                    egui::RichText::new(&truncated_address)
+                                                                        .size(10.0)
+                                                                        .color(super::theme::MutantColors::TEXT_MUTED)
+                                                                        .family(egui::FontFamily::Monospace)
+                                                                );
+
+                                                                // Show full address on hover
+                                                                address_label.on_hover_text(&contact.pod_address);
+
+                                                                // Sync status
+                                                                if let Some(last_synced) = &contact.last_synced {
+                                                                    ui.horizontal(|ui| {
+                                                                        ui.label(
+                                                                            egui::RichText::new("🔄")
+                                                                                .size(9.0)
+                                                                                .color(super::theme::MutantColors::ACCENT_BLUE)
+                                                                        );
+                                                                        ui.label(
+                                                                            egui::RichText::new(format!("Synced: {}", last_synced))
+                                                                                .size(9.0)
+                                                                                .color(super::theme::MutantColors::TEXT_MUTED)
+                                                                        );
+                                                                    });
+                                                                } else {
+                                                                    ui.horizontal(|ui| {
+                                                                        ui.label(
+                                                                            egui::RichText::new("⏳")
+                                                                                .size(9.0)
+                                                                                .color(super::theme::MutantColors::WARNING)
+                                                                        );
+                                                                        ui.label(
+                                                                            egui::RichText::new("Never synced")
+                                                                                .size(9.0)
+                                                                                .color(super::theme::MutantColors::TEXT_MUTED)
+                                                                        );
+                                                                    });
+                                                                }
+                                                            });
+
+                                                            // Action buttons
+                                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                                // Delete button with confirmation
+                                                                let delete_button = ui.add(
+                                                                    egui::Button::new(
+                                                                        egui::RichText::new("🗑")
+                                                                            .size(12.0)
+                                                                            .color(super::theme::MutantColors::ERROR)
+                                                                    )
+                                                                    .fill(super::theme::MutantColors::SURFACE)
+                                                                    .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::ERROR))
+                                                                    .small()
+                                                                );
+
+                                                                if delete_button.clicked() {
+                                                                    // TODO: Implement contact removal
+                                                                    log::info!("Remove contact at index {}: {}", index, contact.pod_address);
+                                                                }
+
+                                                                delete_button.on_hover_text("Remove contact");
+
+                                                                // Copy address button
+                                                                let copy_button = ui.add(
+                                                                    egui::Button::new(
+                                                                        egui::RichText::new("📋")
+                                                                            .size(12.0)
+                                                                            .color(super::theme::MutantColors::ACCENT_BLUE)
+                                                                    )
+                                                                    .fill(super::theme::MutantColors::SURFACE)
+                                                                    .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::ACCENT_BLUE))
+                                                                    .small()
+                                                                );
+
+                                                                if copy_button.clicked() {
+                                                                    ui.ctx().copy_text(contact.pod_address.clone());
+                                                                }
+
+                                                                copy_button.on_hover_text("Copy address");
+                                                            });
+                                                        });
+                                                    });
+
+                                                ui.add_space(4.0); // Space between contact items
+                                            }
+                                        });
+                                });
+                            }
                         });
                     });
                 });
