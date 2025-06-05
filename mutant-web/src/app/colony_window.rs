@@ -257,81 +257,24 @@ impl Window for ColonyWindow {
                         egui::Button::new(if self.is_syncing { "Syncing..." } else { "🔄 Sync All" })
                             .fill(super::theme::MutantColors::ACCENT_ORANGE)
                     );
-                    
+
                     if sync_button.clicked() {
                         self.sync_all_contacts();
                     }
-                });
-            });
 
-            ui.separator();
-
-            // User's own contact information section
-            ui.group(|ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("Your Contact Address")
-                            .strong()
-                            .color(super::theme::MutantColors::ACCENT_ORANGE)
-                    );
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("🔄 Refresh").clicked() {
-                            self.user_contact_info = None;
-                            self.is_loading_user_contact = false;
-                            self.should_load_contact_info = true;
+                    // Contact address and copy button - minimal inline version
+                    if let Some(user_info) = &self.user_contact_info {
+                        if ui.button("📋 Copy").clicked() {
+                            ui.ctx().copy_text(user_info.contact_address.clone());
                         }
-                    });
+
+                        ui.label(
+                            egui::RichText::new(&user_info.contact_address)
+                                .strong()
+                                .color(super::theme::MutantColors::ACCENT_BLUE)
+                        );
+                    }
                 });
-
-                if self.is_loading_user_contact {
-                    ui.label("Loading your contact information...");
-                } else if let Some(user_info) = &self.user_contact_info {
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.label(
-                                egui::RichText::new("Share this address with friends so they can add you as a contact:")
-                                    .size(11.0)
-                                    .color(super::theme::MutantColors::TEXT_SECONDARY)
-                            );
-
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new(&user_info.contact_address)
-                                        .strong()
-                                        .color(super::theme::MutantColors::ACCENT_BLUE)
-                                );
-
-                                if ui.button("📋 Copy").clicked() {
-                                    ui.ctx().copy_text(user_info.contact_address.clone());
-                                }
-                            });
-
-                            if let Some(display_name) = &user_info.display_name {
-                                ui.label(
-                                    egui::RichText::new(format!("Display: {}", display_name))
-                                        .size(10.0)
-                                        .color(super::theme::MutantColors::TEXT_MUTED)
-                                );
-                            }
-
-                            ui.label(
-                                egui::RichText::new(format!("Type: {}", user_info.contact_type))
-                                    .size(10.0)
-                                    .color(super::theme::MutantColors::TEXT_MUTED)
-                            );
-                        });
-                    });
-                } else {
-                    ui.horizontal(|ui| {
-                        ui.label("Click 'Refresh' to load your contact information");
-                        if ui.button("Load Now").clicked() {
-                            self.user_contact_info = None;
-                            self.is_loading_user_contact = false;
-                            self.should_load_contact_info = true;
-                        }
-                    });
-                }
             });
 
             ui.separator();
