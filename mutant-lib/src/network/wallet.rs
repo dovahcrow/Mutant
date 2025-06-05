@@ -82,7 +82,7 @@ pub async fn create_testnet_wallet_with_transfer(
     // This avoids complex Uint256 arithmetic and is sufficient for testing
     let transfer_tokens = if !master_token_balance.is_zero() {
         // Transfer 1000 tokens (with 18 decimals = 1000 * 10^18)
-        let amount_str = "1000000000000000000000"; // 1000 * 10^18
+        let amount_str = "10000000000000000000"; // 1000 * 10^18
         amount_str.parse().unwrap_or(master_token_balance.saturating_sub(master_token_balance))
     } else {
         master_token_balance.saturating_sub(master_token_balance) // Zero
@@ -90,7 +90,7 @@ pub async fn create_testnet_wallet_with_transfer(
 
     let transfer_gas = if !master_gas_balance.is_zero() {
         // Transfer 1000 gas tokens (with 18 decimals = 1000 * 10^18)
-        let amount_str = "1000000000000000000000"; // 1000 * 10^18
+        let amount_str = "10000000000000000000"; // 1000 * 10^18
         amount_str.parse().unwrap_or(master_gas_balance.saturating_sub(master_gas_balance))
     } else {
         master_gas_balance.saturating_sub(master_gas_balance) // Zero

@@ -5,6 +5,10 @@ use serde_json::Value;
 use autonomi::{Client, Wallet};
 use mutant_lib::config::NetworkChoice;
 use crate::error::Error as DaemonError;
+use hex;
+use sha2::{Digest, Sha256};
+use autonomi::client::key_derivation::{DerivationIndex, MainSecretKey};
+use autonomi::{SecretKey, PublicKey};
 
 /// Default testnet private key used for development and testing
 const DEV_TESTNET_PRIVATE_KEY_HEX: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -20,9 +24,23 @@ pub struct ColonyManager {
     wallet: Wallet,
     network_choice: NetworkChoice,
     initialized: bool,
+    /// The user's pod public address derived from the main secret key
+    pod_public_address: String,
+}
+
+fn index(i: u64) -> DerivationIndex {
+
+    let mut bytes = [0u8; 32];
+
+    bytes[..8].copy_from_slice(&i.to_ne_bytes());
+
+    DerivationIndex::from_bytes(bytes)
+
 }
 
 impl ColonyManager {
+
+
     /// Initialize the colony manager with default configuration
     ///
     /// This will create or load existing colony data from the standard data directory.
@@ -43,7 +61,11 @@ impl ColonyManager {
         } else {
             log::info!("Creating new colony key store from environment mnemonic");
             // Get mnemonic from environment variable, fall back to default if not set
-            let mnemonic = std::env::var("COLONY_MNEMONIC").unwrap();
+            let mnemonic = std::env::var("COLONY_MNEMONIC")
+                .unwrap_or_else(|_| {
+                    log::warn!("COLONY_MNEMONIC environment variable not set, using default mnemonic");
+                    "distance unusual problem mail service tide talk term lonely weather cheap patrol".to_string()
+                });
             KeyStore::from_mnemonic(&mnemonic)
                 .map_err(|e| DaemonError::ColonyError(format!("Failed to create key store: {}", e)))?
         };
@@ -60,19 +82,23 @@ impl ColonyManager {
                 }
             }
             None => {
-                log::warn!("No private key provided, using default testnet master key for colony");
-                panic!("LOL");
+                log::warn!("No private key provided for colony manager");
+                return Err(DaemonError::ColonyError("Private key required for colony manager initialization".to_string()));
             }
         };
 
-        key_store.set_wallet_key(wallet_key)
+        key_store.set_wallet_key(wallet_key.clone())
             .map_err(|e| DaemonError::ColonyError(format!("Failed to set wallet key: {}", e)))?;
-        
+
+        // Derive the pod public address from the wallet key
+        let pod_public_address = key_store.get_address_at_index(1).unwrap();
+        log::info!("Derived pod public address: {}", pod_public_address);
+
         // Initialize graph database
         let graph_path = data_store.get_graph_path();
         let graph = Graph::open(&graph_path)
             .map_err(|e| DaemonError::ColonyError(format!("Failed to open graph database: {}", e)))?;
-        
+
         Ok(ColonyManager {
             key_store: Arc::new(RwLock::new(key_store)),
             data_store: Arc::new(RwLock::new(data_store)),
@@ -80,6 +106,7 @@ impl ColonyManager {
             wallet,
             network_choice,
             initialized: true,
+            pod_public_address,
         })
     }
 
@@ -378,6 +405,11 @@ impl ColonyManager {
         Ok(metadata)
     }
 
+    /// Get the user's pod public address
+    pub fn get_pod_address(&self) -> &str {
+        &self.pod_public_address
+    }
+
     /// Add a contact (pod address) to sync with
     pub async fn add_contact(&self, pod_address: &str, contact_name: Option<String>) -> Result<(), DaemonError> {
         if !self.initialized {
@@ -403,15 +435,18 @@ impl ColonyManager {
         ).await
         .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod manager: {}", e)))?;
 
-        // First, try to add the pod as a reference using add_pod_ref
-        pod_manager.add_pod_ref("contact", pod_address)
+        // Use our pod public address instead of "main"
+        pod_manager.add_pod_ref(&self.pod_public_address, pod_address)
             .map_err(|e| DaemonError::ColonyError(format!("Failed to add pod reference: {}", e)))?;
 
-        log::debug!("Added pod reference: {} at depth 1", pod_address);
+        log::debug!("Added pod reference: {} to our pod: {} at depth 1", pod_address, self.pod_public_address);
 
         // Now download and sync the contact's pod using refresh_ref
         pod_manager.refresh_ref(1).await
             .map_err(|e| DaemonError::ColonyError(format!("Failed to sync contact pod: {}", e)))?;
+
+        pod_manager.upload_all().await
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to upload pod: {}", e)))?;
 
         log::info!("Successfully added and synced contact pod: {}", pod_address);
         Ok(())
@@ -480,22 +515,21 @@ impl ColonyManager {
 
         log::debug!("Getting user contact information");
 
-        // Get the wallet address as the primary contact method
-        let wallet_address = self.wallet.address().to_string();
-        let contact_type = "wallet".to_string();
+        // Use the pod public address as the primary contact method
+        let pod_address = self.pod_public_address.clone();
+        let contact_type = "pod".to_string();
 
-        // For display name, we could use the wallet address truncated or a user-friendly name
-        // For now, let's use a truncated version of the wallet address
-        let display_name = if wallet_address.len() > 16 {
-            Some(format!("{}...{}", &wallet_address[0..8], &wallet_address[wallet_address.len()-8..]))
+        // For display name, use a truncated version of the pod address
+        let display_name = if pod_address.len() > 16 {
+            Some(format!("{}...{}", &pod_address[0..8], &pod_address[pod_address.len()-8..]))
         } else {
-            Some(wallet_address.clone())
+            Some(pod_address.clone())
         };
 
-        log::debug!("User contact info: address={}, type={}, display_name={:?}",
-                   wallet_address, contact_type, display_name);
+        log::debug!("User contact info: pod_address={}, type={}, display_name={:?}",
+                   pod_address, contact_type, display_name);
 
-        Ok((wallet_address, contact_type, display_name))
+        Ok((pod_address, contact_type, display_name))
     }
 
     /// Refresh the local cache from the network

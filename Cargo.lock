@@ -2340,8 +2340,8 @@ dependencies = [
 
 [[package]]
 name = "colonylib"
-version = "0.1.0"
-source = "git+https://github.com/zettawatt/colonylib?branch=main#43ddce4adb925290d3096066ebdd48d860d21052"
+version = "0.2.0"
+source = "git+https://github.com/zettawatt/colonylib?branch=main#89bc7b5accd867d0c20944b0d1d9e39b9fa8e30a"
 dependencies = [
  "autonomi",
  "bip39",
@@ -6148,6 +6148,8 @@ dependencies = [
  "env_logger 0.11.8",
  "ffmpeg-next",
  "futures-util",
+ "hex 0.4.3",
+ "hkdf",
  "lazy_static",
  "lockfile",
  "log",
@@ -6155,6 +6157,7 @@ dependencies = [
  "mutant-protocol",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 1.0.69",
  "tokio",
  "uuid",
