@@ -514,6 +514,9 @@ impl ColonyWindow {
             return;
         }
 
+        // Set loading state so the UI will pick up the results
+        self.is_loading_content = true;
+
         let query = serde_json::json!({
             "type": "text",
             "text": self.search_query.trim(),
@@ -536,6 +539,10 @@ impl ColonyWindow {
                 }
                 Err(e) => {
                     log::error!("Search failed: {:?}", e);
+                    // Store error state
+                    if let Ok(mut responses) = CONTENT_LIST_RESPONSES.lock() {
+                        responses.insert("content_list_error".to_string(), Vec::new());
+                    }
                 }
             }
         });
@@ -629,19 +636,10 @@ impl ColonyWindow {
         let mut content_items = Vec::new();
 
         for (subject_uri, properties) in subjects {
-            // Filter out non-file entries by checking for required Schema.org file properties
-            // A valid file entry should have at least a name and contentSize
-            let has_name = properties.contains_key("http://schema.org/name") || properties.contains_key("schema:name");
-            let has_content_size = properties.contains_key("http://schema.org/contentSize") || properties.contains_key("schema:contentSize");
+            // Debug: log all properties for this subject to understand what's available
+            log::debug!("Subject: {} has properties: {:?}", subject_uri, properties.keys().collect::<Vec<_>>());
 
-            // Skip entries that don't look like actual files
-            if !has_name || !has_content_size {
-                log::debug!("Skipping non-file subject: {} (has_name: {}, has_content_size: {})",
-                           subject_uri, has_name, has_content_size);
-                continue;
-            }
-
-            // Additional filter: skip subjects that contain colony-specific metadata predicates
+            // Filter out colony-specific metadata predicates first
             let has_colony_metadata = properties.keys().any(|key| {
                 key.contains("colonylib/vocabulary") ||
                 key.contains("pod_index") ||
@@ -650,6 +648,18 @@ impl ColonyWindow {
 
             if has_colony_metadata {
                 log::debug!("Skipping colony metadata subject: {}", subject_uri);
+                continue;
+            }
+
+            // Check if this looks like file content (has description mentioning "File uploaded by")
+            let has_file_description = properties.get("http://schema.org/description")
+                .or_else(|| properties.get("schema:description"))
+                .map(|desc| desc.contains("File uploaded by"))
+                .unwrap_or(false);
+
+            // For now, be more lenient - include anything that looks like file content
+            if !has_file_description {
+                log::debug!("Skipping non-file subject: {} (no file description)", subject_uri);
                 continue;
             }
 
