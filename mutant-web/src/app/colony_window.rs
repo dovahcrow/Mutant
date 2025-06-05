@@ -411,36 +411,28 @@ impl Window for ColonyWindow {
 
                                 for (_pod_index, pod_content) in self.pod_content.iter_mut().enumerate() {
                                     ui.group(|ui| {
-                                        // Pod header with expand/collapse functionality
+                                        // Compact pod header - single line
                                         ui.horizontal(|ui| {
                                             let expand_icon = if pod_content.is_expanded { "🔽" } else { "▶" };
                                             if ui.button(expand_icon).clicked() {
                                                 pod_content.is_expanded = !pod_content.is_expanded;
                                             }
 
-                                            ui.vertical(|ui| {
-                                                // Pod name or address
-                                                let pod_display_name = pod_content.pod_name.as_ref()
-                                                    .unwrap_or(&pod_content.pod_address);
-                                                ui.label(
-                                                    egui::RichText::new(format!("📁 {}", pod_display_name))
-                                                        .strong()
-                                                        .color(super::theme::MutantColors::ACCENT_ORANGE)
-                                                );
+                                            // Pod name or address
+                                            let pod_display_name = pod_content.pod_name.as_ref()
+                                                .unwrap_or(&pod_content.pod_address);
+                                            ui.label(
+                                                egui::RichText::new(format!("📁 {}", pod_display_name))
+                                                    .strong()
+                                                    .size(11.0)
+                                                    .color(super::theme::MutantColors::ACCENT_ORANGE)
+                                            );
 
-                                                // Pod address (if different from name)
-                                                if pod_content.pod_name.is_some() {
-                                                    ui.label(
-                                                        egui::RichText::new(&pod_content.pod_address)
-                                                            .size(9.0)
-                                                            .color(super::theme::MutantColors::TEXT_MUTED)
-                                                    );
-                                                }
-
-                                                // Content count
+                                            // Content count
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                 ui.label(
                                                     egui::RichText::new(format!("{} items", pod_content.content_items.len()))
-                                                        .size(10.0)
+                                                        .size(9.0)
                                                         .color(super::theme::MutantColors::TEXT_SECONDARY)
                                                 );
                                             });
@@ -450,53 +442,41 @@ impl Window for ColonyWindow {
                                         if pod_content.is_expanded {
                                             ui.separator();
                                             for content in &pod_content.content_items {
-                                                ui.group(|ui| {
-                                                    ui.horizontal(|ui| {
-                                                        ui.vertical(|ui| {
-                                                            ui.label(
-                                                                egui::RichText::new(&content.title)
-                                                                    .strong()
-                                                                    .color(super::theme::MutantColors::ACCENT_BLUE)
-                                                            );
+                                                // Compact single-line content item
+                                                ui.horizontal(|ui| {
+                                                    // Title
+                                                    ui.label(
+                                                        egui::RichText::new(&content.title)
+                                                            .strong()
+                                                            .size(10.0)
+                                                            .color(super::theme::MutantColors::ACCENT_BLUE)
+                                                    );
 
-                                                            if let Some(description) = &content.description {
-                                                                ui.label(
-                                                                    egui::RichText::new(description)
-                                                                        .size(11.0)
-                                                                        .color(super::theme::MutantColors::TEXT_SECONDARY)
-                                                                );
-                                                            }
+                                                    // Metadata in compact format
+                                                    let mut metadata_parts = Vec::new();
+                                                    metadata_parts.push(content.content_type.clone());
 
-                                                            ui.horizontal(|ui| {
-                                                                ui.label(
-                                                                    egui::RichText::new(&content.content_type)
-                                                                        .size(10.0)
-                                                                        .color(super::theme::MutantColors::ACCENT_GREEN)
-                                                                );
+                                                    if let Some(size) = content.size {
+                                                        metadata_parts.push(Self::format_file_size(size));
+                                                    }
 
-                                                                if let Some(size) = content.size {
-                                                                    ui.label(
-                                                                        egui::RichText::new(Self::format_file_size(size))
-                                                                            .size(10.0)
-                                                                            .color(super::theme::MutantColors::TEXT_MUTED)
-                                                                    );
-                                                                }
+                                                    if let Some(date) = &content.date_created {
+                                                        metadata_parts.push(Self::format_date(date));
+                                                    }
 
-                                                                if let Some(date) = &content.date_created {
-                                                                    ui.label(
-                                                                        egui::RichText::new(Self::format_date(date))
-                                                                            .size(10.0)
-                                                                            .color(super::theme::MutantColors::TEXT_MUTED)
-                                                                    );
-                                                                }
-                                                            });
-                                                        });
+                                                    if !metadata_parts.is_empty() {
+                                                        ui.label(
+                                                            egui::RichText::new(format!("({})", metadata_parts.join(" • ")))
+                                                                .size(9.0)
+                                                                .color(super::theme::MutantColors::TEXT_MUTED)
+                                                        );
+                                                    }
 
-                                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                            if ui.button("📥 Download").clicked() {
-                                                                download_address = Some(content.address.clone());
-                                                            }
-                                                        });
+                                                    // Download button on the right
+                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        if ui.small_button("📥").clicked() {
+                                                            download_address = Some(content.address.clone());
+                                                        }
                                                     });
                                                 });
                                             }
