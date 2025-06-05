@@ -154,41 +154,18 @@ async fn handle_get_operation(
 // Start the client manager in a background task
 fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<ClientCommand>) {
     spawn_local(async move {
+        // Set up the colony progress callback
+        #[cfg(target_arch = "wasm32")]
+        {
+            mutant_client::set_colony_progress_callback(|event, operation_id| {
+                log::debug!("CLIENT MANAGER: Received colony progress event via callback: {:?}", event);
+                crate::app::colony_window::add_colony_progress_event(event, operation_id);
+            });
+        }
+
         // Create a single client that will be used for all operations
         let mut client = MutantClient::new();
         let mut connected = false;
-
-        // Spawn a background task to handle colony progress events
-        let client_for_progress = client.clone();
-        spawn_local(async move {
-            let mut client_for_progress = client_for_progress;
-            loop {
-                // Check for responses from the client
-                if let Some(response_result) = client_for_progress.next_response().await {
-                    match response_result {
-                        Ok(response) => {
-                            // Handle colony progress events
-                            if let mutant_protocol::Response::ColonyProgress(progress_response) = response {
-                                log::debug!("CLIENT MANAGER: Received colony progress event: {:?}", progress_response.event);
-                                crate::app::colony_window::add_colony_progress_event(
-                                    progress_response.event,
-                                    progress_response.operation_id
-                                );
-                            }
-                            // Other responses are handled by the client's process_response method
-                        }
-                        Err(e) => {
-                            error!("Error in colony progress handler: {:?}", e);
-                            // Break the loop on error to avoid infinite error loops
-                            break;
-                        }
-                    }
-                } else {
-                    // No more responses, client disconnected
-                    break;
-                }
-            }
-        });
 
         // Process commands until shutdown
         while let Some(cmd) = rx.next().await {

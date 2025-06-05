@@ -6,6 +6,7 @@ use mutant_protocol::{
     TaskUpdateResponse, WalletBalanceResponse, DaemonStatusResponse,
     // Colony integration responses
     SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse, GetUserContactResponse, ListContactsResponse,
+    ColonyEvent,
 };
 
 use crate::{
@@ -16,6 +17,19 @@ use crate::{
 use super::MutantClient;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+#[cfg(target_arch = "wasm32")]
+use std::sync::OnceLock;
+
+// Global callback for colony progress events (WASM only)
+#[cfg(target_arch = "wasm32")]
+static COLONY_PROGRESS_CALLBACK: OnceLock<fn(ColonyEvent, Option<String>)> = OnceLock::new();
+
+/// Set the global colony progress callback (WASM only)
+#[cfg(target_arch = "wasm32")]
+pub fn set_colony_progress_callback(callback: fn(ColonyEvent, Option<String>)) {
+    let _ = COLONY_PROGRESS_CALLBACK.set(callback);
+}
 
 impl MutantClient {
     /// Processes a deserialized response from the server
@@ -531,9 +545,17 @@ impl MutantClient {
                 // These might be added later if needed
                 warn!("Received unsupported colony response");
             },
-            Response::ColonyProgress(_) => {
+            Response::ColonyProgress(progress_response) => {
                 // Colony progress events are handled by the web UI directly
-                debug!("Received colony progress event");
+                debug!("Received colony progress event: {:?}", progress_response.event);
+
+                // Call the global colony progress callback if it's set
+                #[cfg(target_arch = "wasm32")]
+                {
+                    if let Some(callback) = COLONY_PROGRESS_CALLBACK.get() {
+                        callback(progress_response.event, progress_response.operation_id);
+                    }
+                }
             },
         }
     }

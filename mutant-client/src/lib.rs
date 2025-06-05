@@ -25,6 +25,10 @@ mod macros;
 mod request;
 mod response;
 
+// Re-export the colony progress callback function for WASM
+#[cfg(target_arch = "wasm32")]
+pub use response::set_colony_progress_callback;
+
 use crate::error::ClientError;
 
 // Shared state for tasks managed by the client (using Arc<Mutex> for thread safety)

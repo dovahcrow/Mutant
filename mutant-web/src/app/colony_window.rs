@@ -15,7 +15,6 @@ lazy_static::lazy_static! {
 #[derive(Clone, Debug)]
 pub struct ColonyProgressEvent {
     pub event: mutant_protocol::ColonyEvent,
-    pub timestamp: std::time::Instant,
     pub operation_id: Option<String>,
 }
 
@@ -1404,7 +1403,6 @@ pub fn add_colony_progress_event(event: mutant_protocol::ColonyEvent, operation_
 
     let progress_event = ColonyProgressEvent {
         event,
-        timestamp: std::time::Instant::now(),
         operation_id,
     };
 
