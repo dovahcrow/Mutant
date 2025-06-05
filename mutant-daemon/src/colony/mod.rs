@@ -334,27 +334,58 @@ impl ColonyManager {
             .map_err(|e| DaemonError::ColonyError(format!("Failed to upload pod: {}", e)))?;
 
         log::info!("Successfully indexed content in pod: {}", user_pod_address);
-        Ok((true, Some(user_pod_address)))
+        Ok((true, Some(user_pod_address.to_string())))
     }
 
-    /// Get or create a user's main pod for storing their content metadata
-    async fn get_or_create_user_pod(
-        &self,
-        pod_manager: &mut PodManager<'_>,
-        user_key: &str,
-    ) -> Result<String, DaemonError> {
-        // For now, create a new pod each time
-        // In a real implementation, we'd store the user's pod address persistently
-        log::info!("Creating new pod for user: {}", user_key);
+    /// Ensure the user's main pod exists, creating it if necessary
+    pub async fn ensure_user_pod_exists(&self) -> Result<String, DaemonError> {
+        if !self.initialized {
+            return Err(DaemonError::ColonyError("Colony manager not initialized".to_string()));
+        }
+
+        log::info!("Ensuring user pod exists: {}", self.pod_public_address);
+
+        // Initialize client for pod operations
+        let client = self.get_client().await?;
+
+        // Get locks and hold them for the duration of the operation
+        let mut data_store = self.data_store.write().await;
+        let mut key_store = self.key_store.write().await;
+        let mut graph = self.graph.write().await;
+
+        let mut pod_manager = PodManager::new(
+            client,
+            &self.wallet,
+            &mut *data_store,
+            &mut *key_store,
+            &mut *graph,
+        ).await
+        .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod manager: {}", e)))?;
+
+        // Check if our pod already exists by trying to get its pointers
+        let pointers = pod_manager.key_store.get_pointers();
+        if pointers.contains_key(&self.pod_public_address) {
+            log::info!("User pod already exists: {}", self.pod_public_address);
+            return Ok(self.pod_public_address.clone());
+        }
+
+        // Pod doesn't exist, create it
+        log::info!("Creating new user pod: {}", self.pod_public_address);
         let (pod_address, _scratchpad_address) = pod_manager.add_pod("main").await
             .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod: {}", e)))?;
 
-        // Add basic metadata about the pod itself (simplified format)
+        // Verify the created pod address matches our expected address
+        if pod_address != self.pod_public_address {
+            log::warn!("Created pod address {} doesn't match expected address {}",
+                      pod_address, self.pod_public_address);
+        }
+
+        // Add basic metadata about the pod itself
         let pod_metadata = serde_json::json!({
             "type": "UserPod",
-            "name": format!("Content Pod for {}", user_key),
-            "description": format!("Metadata pod containing all public content for user {}", user_key),
-            "owner": user_key,
+            "name": format!("Content Pod for {}", self.pod_public_address),
+            "description": format!("Metadata pod containing all public content for user {}", self.pod_public_address),
+            "owner": self.pod_public_address,
             "created": chrono::Utc::now().to_rfc3339()
         });
 
@@ -369,7 +400,22 @@ impl ColonyManager {
             .map_err(|e| DaemonError::ColonyError(format!("Failed to add pod metadata (pod_address: {}, subject_id: {}, metadata_len: {}): {}",
                 pod_address, pod_subject_id, pod_metadata_str.len(), e)))?;
 
+        // Upload the pod to the network
+        pod_manager.upload_all().await
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to upload pod: {}", e)))?;
+
+        log::info!("Successfully created and uploaded user pod: {}", pod_address);
         Ok(pod_address)
+    }
+
+    /// Get or create a user's main pod for storing their content metadata
+    async fn get_or_create_user_pod(
+        &self,
+        _pod_manager: &mut PodManager<'_>,
+        _user_key: &str,
+    ) -> Result<String, DaemonError> {
+        // Use the new ensure_user_pod_exists method
+        self.ensure_user_pod_exists().await
     }
     
     /// Get metadata for a specific address
@@ -420,6 +466,9 @@ impl ColonyManager {
         }
 
         log::info!("Adding contact pod: {} (name: {:?})", pod_address, contact_name);
+
+        // Ensure our own pod exists before trying to add references to it
+        self.ensure_user_pod_exists().await?;
 
         // Initialize client for pod operations
         let client = self.get_client().await?;

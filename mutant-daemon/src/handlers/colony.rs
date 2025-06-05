@@ -20,9 +20,18 @@ static COLONY_MANAGER: OnceCell<Arc<ColonyManager>> = OnceCell::const_new();
 /// Initialize the global colony manager
 pub async fn init_colony_manager(wallet: autonomi::Wallet, network_choice: NetworkChoice, private_key_hex: Option<String>) -> Result<(), DaemonError> {
     let manager = ColonyManager::new(wallet, network_choice, private_key_hex).await?;
+
+    // Ensure the user's pod exists on the network
+    log::info!("Ensuring user pod exists during initialization");
+    if let Err(e) = manager.ensure_user_pod_exists().await {
+        log::warn!("Failed to ensure user pod exists during initialization: {}. Pod will be created when needed.", e);
+    } else {
+        log::info!("User pod verified/created successfully during initialization");
+    }
+
     COLONY_MANAGER.set(Arc::new(manager))
         .map_err(|_| DaemonError::ColonyError("Colony manager already initialized".to_string()))?;
-    
+
     log::info!("Colony manager initialized successfully");
     Ok(())
 }
