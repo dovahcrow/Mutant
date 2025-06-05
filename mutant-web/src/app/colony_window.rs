@@ -3,7 +3,6 @@ use eframe::egui;
 use crate::app::{Window, context::context};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
-use mutant_protocol::ColonyEvent;
 
 // Global state for storing user contact info responses
 lazy_static::lazy_static! {
@@ -65,6 +64,12 @@ pub struct ColonyWindow {
     /// Current operation status message
     #[serde(skip)]
     current_operation_status: Option<String>,
+    /// Current operation progress (0.0 to 1.0)
+    #[serde(skip)]
+    current_progress: f32,
+    /// Whether an operation is currently in progress
+    #[serde(skip)]
+    operation_in_progress: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -121,6 +126,8 @@ impl Default for ColonyWindow {
             should_load_contacts: true,
             progress_events: Vec::new(),
             current_operation_status: None,
+            current_progress: 0.0,
+            operation_in_progress: false,
         }
     }
 }
@@ -224,8 +231,20 @@ impl Window for ColonyWindow {
                 }
             }
         }
-        // Use a vertical layout for the main content
-        ui.vertical(|ui| {
+        // Reserve space for the footer (30px) and use the remaining space for content
+        let footer_height = 30.0;
+        let available_height = ui.available_height();
+        let content_height = available_height - footer_height - 10.0; // 10px for separator
+
+        // Use a vertical layout for the main content with reserved space
+        ui.allocate_ui_with_layout(
+            egui::Vec2::new(ui.available_width(), content_height),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+            ui.set_max_height(content_height);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
             // Header section
             ui.horizontal(|ui| {
                 ui.heading("Colony - Content Discovery");
@@ -244,19 +263,6 @@ impl Window for ColonyWindow {
             });
 
             ui.separator();
-
-            // Progress status section
-            if let Some(status) = &self.current_operation_status {
-                ui.horizontal(|ui| {
-                    ui.label("🔄");
-                    ui.label(
-                        egui::RichText::new(status)
-                            .color(super::theme::MutantColors::ACCENT_BLUE)
-                            .size(12.0)
-                    );
-                });
-                ui.separator();
-            }
 
             // User's own contact information section
             ui.group(|ui| {
@@ -573,7 +579,83 @@ impl Window for ColonyWindow {
                     );
                 });
             }
-        });
+                }); // Close ScrollArea
+            }); // Close allocate_ui_with_layout
+
+        // Progress footer - always show at the bottom
+        ui.separator();
+
+        // Create a thin footer for progress display
+        ui.allocate_ui_with_layout(
+            egui::Vec2::new(ui.available_width(), 30.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                if self.operation_in_progress {
+                    // Show active progress
+                    ui.horizontal(|ui| {
+                        // Progress bar
+                        let progress_bar = egui::ProgressBar::new(self.current_progress)
+                            .fill(super::theme::MutantColors::ACCENT_ORANGE)
+                            .animate(true)
+                            .desired_width(200.0);
+                        ui.add(progress_bar);
+
+                        // Progress percentage
+                        ui.label(
+                            egui::RichText::new(format!("{:.0}%", self.current_progress * 100.0))
+                                .color(super::theme::MutantColors::ACCENT_ORANGE)
+                                .size(12.0)
+                        );
+
+                        // Status message
+                        if let Some(status) = &self.current_operation_status {
+                            ui.label(
+                                egui::RichText::new(status)
+                                    .color(super::theme::MutantColors::TEXT_PRIMARY)
+                                    .size(12.0)
+                            );
+                        }
+                    });
+                } else if let Some(status) = &self.current_operation_status {
+                    // Show last completed operation status
+                    ui.horizontal(|ui| {
+                        // Completed progress bar (full)
+                        let progress_bar = egui::ProgressBar::new(1.0)
+                            .fill(super::theme::MutantColors::SUCCESS)
+                            .desired_width(200.0);
+                        ui.add(progress_bar);
+
+                        // Checkmark and status
+                        ui.label(
+                            egui::RichText::new("✓")
+                                .color(super::theme::MutantColors::SUCCESS)
+                                .size(14.0)
+                        );
+
+                        ui.label(
+                            egui::RichText::new(status)
+                                .color(super::theme::MutantColors::TEXT_PRIMARY)
+                                .size(12.0)
+                        );
+                    });
+                } else {
+                    // Show ready state
+                    ui.horizontal(|ui| {
+                        // Empty progress bar
+                        let progress_bar = egui::ProgressBar::new(0.0)
+                            .fill(super::theme::MutantColors::TEXT_MUTED)
+                            .desired_width(200.0);
+                        ui.add(progress_bar);
+
+                        ui.label(
+                            egui::RichText::new("Ready")
+                                .color(super::theme::MutantColors::TEXT_MUTED)
+                                .size(12.0)
+                        );
+                    });
+                }
+            }
+        );
     }
 }
 
@@ -590,42 +672,64 @@ impl ColonyWindow {
                     match &event.event {
                         mutant_protocol::ColonyEvent::InitializationStarted => {
                             self.current_operation_status = Some("Initializing colony manager...".to_string());
+                            self.operation_in_progress = true;
+                            self.current_progress = 0.0;
                         }
                         mutant_protocol::ColonyEvent::InitializationCompleted => {
                             self.current_operation_status = Some("Colony manager initialized".to_string());
+                            self.operation_in_progress = false;
+                            self.current_progress = 1.0;
                         }
                         mutant_protocol::ColonyEvent::AddContactStarted { pod_address } => {
                             self.current_operation_status = Some(format!("Adding contact: {}", pod_address));
+                            self.operation_in_progress = true;
+                            self.current_progress = 0.0;
                         }
                         mutant_protocol::ColonyEvent::ContactVerificationStarted { pod_address } => {
                             self.current_operation_status = Some(format!("Verifying contact: {}", pod_address));
+                            self.current_progress = 0.3;
                         }
                         mutant_protocol::ColonyEvent::ContactVerificationCompleted { pod_address } => {
                             self.current_operation_status = Some(format!("Contact verified: {}", pod_address));
+                            self.current_progress = 0.7;
                         }
                         mutant_protocol::ColonyEvent::AddContactCompleted { pod_address } => {
                             self.current_operation_status = Some(format!("Contact added: {}", pod_address));
+                            self.operation_in_progress = false;
+                            self.current_progress = 1.0;
                             // Refresh contacts list after adding
                             self.should_load_contacts = true;
                         }
                         mutant_protocol::ColonyEvent::SyncContactsStarted { total_contacts } => {
                             self.current_operation_status = Some(format!("Syncing {} contacts...", total_contacts));
                             self.is_syncing = true;
+                            self.operation_in_progress = true;
+                            self.current_progress = 0.0;
                         }
                         mutant_protocol::ColonyEvent::ContactSyncStarted { pod_address, contact_index, total_contacts } => {
                             self.current_operation_status = Some(format!("Syncing contact {} of {}: {}", contact_index + 1, total_contacts, pod_address));
+                            if *total_contacts > 0 {
+                                self.current_progress = (*contact_index as f32) / (*total_contacts as f32);
+                            }
                         }
                         mutant_protocol::ColonyEvent::ContactSyncCompleted { pod_address, contact_index, total_contacts } => {
                             self.current_operation_status = Some(format!("Synced contact {} of {}: {}", contact_index + 1, total_contacts, pod_address));
+                            if *total_contacts > 0 {
+                                self.current_progress = ((*contact_index + 1) as f32) / (*total_contacts as f32);
+                            }
                         }
                         mutant_protocol::ColonyEvent::SyncContactsCompleted { synced_count } => {
                             self.current_operation_status = Some(format!("Sync completed: {} contacts synced", synced_count));
                             self.is_syncing = false;
+                            self.operation_in_progress = false;
+                            self.current_progress = 1.0;
                             // Refresh content list after syncing
                             self.should_load_content = true;
                         }
                         mutant_protocol::ColonyEvent::IndexingStarted { user_key } => {
                             self.current_operation_status = Some(format!("Indexing content: {}", user_key));
+                            self.operation_in_progress = true;
+                            self.current_progress = 0.0;
                         }
                         mutant_protocol::ColonyEvent::IndexingCompleted { user_key, success } => {
                             if *success {
@@ -633,18 +737,28 @@ impl ColonyWindow {
                             } else {
                                 self.current_operation_status = Some(format!("Failed to index: {}", user_key));
                             }
+                            self.operation_in_progress = false;
+                            self.current_progress = 1.0;
                         }
                         mutant_protocol::ColonyEvent::SearchStarted { query_type } => {
                             self.current_operation_status = Some(format!("Searching: {}", query_type));
+                            self.operation_in_progress = true;
+                            self.current_progress = 0.0;
                         }
                         mutant_protocol::ColonyEvent::SearchCompleted { results_count } => {
                             self.current_operation_status = Some(format!("Search completed: {} results", results_count));
+                            self.operation_in_progress = false;
+                            self.current_progress = 1.0;
                         }
                         mutant_protocol::ColonyEvent::CacheRefreshStarted => {
                             self.current_operation_status = Some("Refreshing cache...".to_string());
+                            self.operation_in_progress = true;
+                            self.current_progress = 0.0;
                         }
                         mutant_protocol::ColonyEvent::CacheRefreshCompleted => {
                             self.current_operation_status = Some("Cache refreshed".to_string());
+                            self.operation_in_progress = false;
+                            self.current_progress = 1.0;
                         }
                         mutant_protocol::ColonyEvent::Progress { operation, message, current, total } => {
                             let progress_text = if let (Some(current), Some(total)) = (current, total) {
@@ -653,12 +767,24 @@ impl ColonyWindow {
                                 format!("{}: {}", operation, message)
                             };
                             self.current_operation_status = Some(progress_text);
+                            self.operation_in_progress = true;
+
+                            // Calculate progress if current and total are provided
+                            if let (Some(current), Some(total)) = (current, total) {
+                                if *total > 0 {
+                                    self.current_progress = (*current as f32) / (*total as f32);
+                                }
+                            }
                         }
                         mutant_protocol::ColonyEvent::OperationCompleted { operation } => {
                             self.current_operation_status = Some(format!("{} completed", operation));
+                            self.operation_in_progress = false;
+                            self.current_progress = 1.0;
                         }
                         mutant_protocol::ColonyEvent::OperationFailed { operation, error } => {
                             self.current_operation_status = Some(format!("{} failed: {}", operation, error));
+                            self.operation_in_progress = false;
+                            self.current_progress = 0.0;
                             self.is_syncing = false; // Reset syncing state on any failure
                         }
                         _ => {
