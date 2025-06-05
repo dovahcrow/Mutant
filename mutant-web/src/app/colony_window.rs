@@ -35,8 +35,6 @@ pub struct ColonyWindow {
     /// UI state
     #[serde(skip)]
     is_syncing: bool,
-    #[serde(skip)]
-    last_sync_status: Option<String>,
     /// User's own contact information
     #[serde(skip)]
     user_contact_info: Option<UserContactInfo>,
@@ -118,7 +116,6 @@ impl Default for ColonyWindow {
             new_contact_address: String::new(),
             new_contact_name: String::new(),
             is_syncing: false,
-            last_sync_status: None,
             user_contact_info: None,
             is_loading_user_contact: false,
             should_load_contact_info: true,
@@ -510,18 +507,6 @@ impl Window for ColonyWindow {
                     });
                 });
             });
-
-            // Status bar at bottom
-            if let Some(status) = &self.last_sync_status {
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label("Status:");
-                    ui.label(
-                        egui::RichText::new(status)
-                            .color(super::theme::MutantColors::SUCCESS)
-                    );
-                });
-            }
                 }); // Close ScrollArea
             }); // Close allocate_ui_with_layout
 
@@ -895,7 +880,6 @@ impl ColonyWindow {
         }
 
         self.is_syncing = true;
-        self.last_sync_status = Some("Syncing contacts...".to_string());
 
         let ctx = context();
         wasm_bindgen_futures::spawn_local(async move {
