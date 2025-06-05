@@ -211,6 +211,9 @@ impl Window for ColonyWindow {
         if self.is_loading_contacts {
             if let Ok(responses) = CONTACT_LIST_RESPONSES.lock() {
                 if let Some(contact_addresses) = responses.get("contact_list") {
+                    log::debug!("Processing contact list response with {} addresses", contact_addresses.len());
+                    log::debug!("Contact addresses from daemon: {:?}", contact_addresses);
+
                     // Convert contact addresses to Contact structs
                     self.contacts = contact_addresses.iter().map(|address| Contact {
                         pod_address: address.clone(),
@@ -218,20 +221,25 @@ impl Window for ColonyWindow {
                         last_synced: None, // No sync info from daemon yet
                     }).collect();
                     self.is_loading_contacts = false;
-                    log::info!("Loaded {} contacts from daemon", self.contacts.len());
+                    log::info!("UI: Loaded {} contacts from daemon", self.contacts.len());
+
                     // Remove the response from the global state
                     drop(responses);
                     if let Ok(mut responses) = CONTACT_LIST_RESPONSES.lock() {
                         responses.remove("contact_list");
+                        log::debug!("Cleaned up contact_list from global state");
                     }
                 } else if responses.contains_key("contact_list_error") {
                     // Handle error case
+                    log::warn!("Contact list loading failed, resetting loading state");
                     self.is_loading_contacts = false;
                     drop(responses);
                     if let Ok(mut responses) = CONTACT_LIST_RESPONSES.lock() {
                         responses.remove("contact_list_error");
                     }
                 }
+            } else {
+                log::error!("Failed to acquire lock on CONTACT_LIST_RESPONSES during UI update");
             }
         }
         // Reserve space for the footer (30px) and use the remaining space for content
@@ -425,13 +433,30 @@ impl Window for ColonyWindow {
 
                         // Professional contacts list section
                         ui.vertical(|ui| {
-                            // Contacts list header
+                            // Contacts list header with refresh button
                             ui.horizontal(|ui| {
                                 ui.label(
                                     egui::RichText::new("📋 Contact List")
                                         .strong()
                                         .color(super::theme::MutantColors::ACCENT_BLUE)
                                 );
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    // Manual refresh button for debugging
+                                    let refresh_button = ui.add_enabled(
+                                        !self.is_loading_contacts,
+                                        egui::Button::new(if self.is_loading_contacts { "Loading..." } else { "🔄" })
+                                            .fill(super::theme::MutantColors::ACCENT_BLUE)
+                                            .small()
+                                    );
+
+                                    if refresh_button.clicked() {
+                                        log::info!("Manual contact list refresh requested");
+                                        self.load_contacts();
+                                    }
+
+                                    refresh_button.on_hover_text("Refresh contact list");
+                                });
                             });
 
                             ui.add_space(6.0);
@@ -856,6 +881,8 @@ impl ColonyWindow {
                             self.current_progress = 1.0;
                             // Refresh contacts list after adding
                             self.should_load_contacts = true;
+                            // Also refresh content list to show new content from the added contact
+                            self.should_load_content = true;
                         }
                         mutant_protocol::ColonyEvent::SyncContactsStarted { total_contacts } => {
                             self.current_operation_status = Some(format!("Syncing {} contacts...", total_contacts));
@@ -1061,24 +1088,17 @@ impl ColonyWindow {
     /// Add a new contact
     fn add_contact(&mut self) {
         if !self.new_contact_address.trim().is_empty() {
-            let contact = Contact {
-                pod_address: self.new_contact_address.trim().to_string(),
-                name: if self.new_contact_name.trim().is_empty() {
-                    None
-                } else {
-                    Some(self.new_contact_name.trim().to_string())
-                },
-                last_synced: None,
+            let pod_address = self.new_contact_address.trim().to_string();
+            let contact_name = if self.new_contact_name.trim().is_empty() {
+                None
+            } else {
+                Some(self.new_contact_name.trim().to_string())
             };
 
-            // Add to local list
-            self.contacts.push(contact.clone());
-
-            // Send to daemon
+            // Send to daemon - don't add to local list immediately
+            // The daemon will send progress events and we'll refresh the contact list when complete
             let ctx = context();
-            let pod_address = contact.pod_address.clone();
-            let contact_name = contact.name.clone();
-            
+
             wasm_bindgen_futures::spawn_local(async move {
                 match ctx.add_contact(&pod_address, contact_name).await {
                     Ok(_) => {
@@ -1423,20 +1443,27 @@ impl ColonyWindow {
     /// Load contacts from the daemon
     fn load_contacts(&mut self) {
         if self.is_loading_contacts {
+            log::debug!("Contact loading already in progress, skipping");
             return;
         }
 
+        log::info!("Starting contact list load from daemon");
         self.is_loading_contacts = true;
 
         let ctx = context();
         wasm_bindgen_futures::spawn_local(async move {
+            log::debug!("Sending list_contacts request to daemon");
             match ctx.list_contacts().await {
                 Ok(response) => {
                     log::info!("Contacts loaded successfully: {} contacts", response.contacts.len());
+                    log::debug!("Contact addresses: {:?}", response.contacts);
 
                     // Store the contacts in global state for the UI to pick up
                     if let Ok(mut responses) = CONTACT_LIST_RESPONSES.lock() {
                         responses.insert("contact_list".to_string(), response.contacts);
+                        log::debug!("Stored contacts in global state for UI pickup");
+                    } else {
+                        log::error!("Failed to acquire lock on CONTACT_LIST_RESPONSES");
                     }
                 }
                 Err(e) => {

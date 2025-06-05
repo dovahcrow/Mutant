@@ -1270,37 +1270,81 @@ impl ColonyManager {
             return Err(DaemonError::ColonyError("Colony manager not initialized".to_string()));
         }
 
-        log::debug!("Getting contacts list");
+        log::debug!("Getting contacts list using content discovery approach");
 
-        // Initialize client for pod operations
-        let client = self.get_client().await?;
+        // Use the same approach as content discovery - search for all content and extract unique pod addresses
+        // This is the proven working method that the UI uses to organize content by contacts
+        let search_query = serde_json::json!({
+            "type": "text",
+            "text": "",
+            "limit": 1000
+        });
 
-        // Get locks and hold them for the duration of the operation
-        let mut data_store = self.data_store.write().await;
-        let mut key_store = self.key_store.write().await;
-        let mut graph = self.graph.write().await;
+        let search_results = self.search(search_query).await?;
+        log::debug!("Content search results for contact extraction: {}", search_results);
 
-        let pod_manager = PodManager::new(
-            client,
-            &self.wallet,
-            &mut *data_store,
-            &mut *key_store,
-            &mut *graph,
-        ).await
-        .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod manager: {}", e)))?;
+        // Also log the structure to understand the format
+        if let Some(results) = search_results.get("results") {
+            if let Some(bindings) = results.get("bindings") {
+                if let Some(bindings_array) = bindings.as_array() {
+                    log::debug!("Search found {} bindings", bindings_array.len());
+                    for (i, binding) in bindings_array.iter().take(3).enumerate() {
+                        log::debug!("Binding {}: {}", i, binding);
+                    }
+                } else {
+                    log::debug!("No bindings array found in search results");
+                }
+            } else {
+                log::debug!("No bindings found in search results");
+            }
+        } else {
+            log::debug!("No results found in search response");
+        }
 
-        // Get all pod pointers (contacts) from the key store
-        let pointers = pod_manager.key_store.get_pointers();
-        let all_contacts: Vec<String> = pointers.keys().cloned().collect();
+        // Extract unique pod addresses from the search results
+        let contacts = self.extract_contacts_from_content(&search_results)?;
 
-        // Filter out our own pod address from the contacts list
-        let contacts: Vec<String> = all_contacts.into_iter()
-            .filter(|contact| contact != &self.pod_public_address)
-            .collect();
+        log::debug!("Found {} contacts from content discovery", contacts.len());
+        log::debug!("Contacts: {:?}", contacts);
 
-        log::debug!("Found {} total pod pointers, {} external contacts (filtered out own pod: {})",
-                   pointers.len(), contacts.len(), self.pod_public_address);
-        log::debug!("External contacts: {:?}", contacts);
+        Ok(contacts)
+    }
+
+    /// Extract unique contact pod addresses from content search results
+    fn extract_contacts_from_content(&self, search_results: &Value) -> Result<Vec<String>, DaemonError> {
+        let mut contacts = Vec::new();
+
+        // The search results have a direct "pods_found" field that lists all pod addresses
+        if let Some(pods_found) = search_results.get("pods_found") {
+            if let Some(pods_array) = pods_found.as_array() {
+                log::debug!("Found pods_found array with {} entries", pods_array.len());
+
+                for pod_entry in pods_array {
+                    if let Some(pod_uri) = pod_entry.as_str() {
+                        // Remove the "ant://" prefix to get the pod address
+                        let pod_address = if pod_uri.starts_with("ant://") {
+                            pod_uri.replace("ant://", "")
+                        } else {
+                            pod_uri.to_string()
+                        };
+
+                        // Don't include our own pod address
+                        if pod_address != self.pod_public_address {
+                            log::debug!("Adding contact pod: {}", pod_address);
+                            contacts.push(pod_address);
+                        } else {
+                            log::debug!("Skipping own pod address: {}", pod_address);
+                        }
+                    }
+                }
+            } else {
+                log::debug!("pods_found is not an array");
+            }
+        } else {
+            log::debug!("No pods_found field in search results");
+        }
+
+        log::debug!("Extracted {} unique contact pods from content", contacts.len());
         Ok(contacts)
     }
 
