@@ -69,6 +69,9 @@ pub struct ColonyWindow {
     /// Whether an operation is currently in progress
     #[serde(skip)]
     operation_in_progress: bool,
+    /// Whether the contacts section is expanded (visible)
+    #[serde(skip)]
+    contacts_section_expanded: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -127,6 +130,7 @@ impl Default for ColonyWindow {
             current_operation_status: None,
             current_progress: 0.0,
             operation_in_progress: false,
+            contacts_section_expanded: false,
         }
     }
 }
@@ -249,6 +253,13 @@ impl Window for ColonyWindow {
                 .show(ui, |ui| {
             // Header section
             ui.horizontal(|ui| {
+                // Toggle button for contacts section
+                let contacts_icon = if self.contacts_section_expanded { "👥" } else { "👤" };
+                let contacts_button = ui.button(format!("{} Contacts", contacts_icon));
+                if contacts_button.clicked() {
+                    self.contacts_section_expanded = !self.contacts_section_expanded;
+                }
+
                 ui.heading("Colony - Content Discovery");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Sync button
@@ -279,14 +290,16 @@ impl Window for ColonyWindow {
 
             ui.separator();
 
-            // Two-column layout using SidePanel for better space management
-            egui::SidePanel::left("colony_contacts_panel")
-                .resizable(true)
-                .min_width(280.0)
-                .default_width(320.0)
-                .max_width(450.0)
-                .show_separator_line(true)
-                .show_inside(ui, |ui| {
+            // Conditionally show contacts panel based on toggle state
+            if self.contacts_section_expanded {
+                // Two-column layout using SidePanel for better space management
+                egui::SidePanel::left("colony_contacts_panel")
+                    .resizable(true)
+                    .min_width(280.0)
+                    .default_width(320.0)
+                    .max_width(450.0)
+                    .show_separator_line(true)
+                    .show_inside(ui, |ui| {
                     // Left column - Contacts management
                     ui.vertical(|ui| {
                         ui.heading("Contacts");
@@ -365,8 +378,9 @@ impl Window for ColonyWindow {
                         });
                     });
                 });
+            }
 
-            // Right column - Content discovery (takes remaining space)
+            // Content discovery section (takes remaining space or full width when contacts are hidden)
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 ui.vertical(|ui| {
                     // ui.horizontal(|ui| {
