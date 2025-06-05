@@ -292,13 +292,49 @@ pub enum ColonyEvent {
     /// Colony manager initialization started
     InitializationStarted,
 
+    /// Data store initialization started
+    DataStoreInitStarted,
+
+    /// Data store initialization completed
+    DataStoreInitCompleted,
+
+    /// Key store initialization started
+    KeyStoreInitStarted,
+
+    /// Key store initialization completed
+    KeyStoreInitCompleted,
+
+    /// Key derivation started
+    KeyDerivationStarted,
+
+    /// Key derivation completed
+    KeyDerivationCompleted { pod_address: String },
+
+    /// Graph database initialization started
+    GraphInitStarted,
+
+    /// Graph database initialization completed
+    GraphInitCompleted,
+
     /// Colony manager initialization completed
     InitializationCompleted,
 
     /// User pod creation/verification started
     UserPodCheckStarted,
 
-    /// User pod creation/verification completed
+    /// User pod creation started
+    UserPodCreationStarted,
+
+    /// User pod creation completed
+    UserPodCreationCompleted { pod_address: String },
+
+    /// User pod verification started
+    UserPodVerificationStarted { pod_address: String },
+
+    /// User pod verification completed
+    UserPodVerificationCompleted { pod_address: String, exists: bool },
+
+    /// User pod check completed
     UserPodCheckCompleted,
 
     /// Contact addition started
@@ -308,7 +344,25 @@ pub enum ColonyEvent {
     ContactVerificationStarted { pod_address: String },
 
     /// Contact pod verification completed
-    ContactVerificationCompleted { pod_address: String },
+    ContactVerificationCompleted { pod_address: String, exists: bool },
+
+    /// Contact pod reference addition started
+    ContactRefAdditionStarted { pod_address: String },
+
+    /// Contact pod reference addition completed
+    ContactRefAdditionCompleted { pod_address: String },
+
+    /// Contact pod download started
+    ContactPodDownloadStarted { pod_address: String },
+
+    /// Contact pod download completed
+    ContactPodDownloadCompleted { pod_address: String },
+
+    /// Contact pod upload started
+    ContactPodUploadStarted,
+
+    /// Contact pod upload completed
+    ContactPodUploadCompleted,
 
     /// Contact addition completed
     AddContactCompleted { pod_address: String },
@@ -321,6 +375,12 @@ pub enum ColonyEvent {
 
     /// Individual contact sync completed
     ContactSyncCompleted { pod_address: String, contact_index: usize, total_contacts: usize },
+
+    /// Pod refresh operation started
+    PodRefreshStarted { total_pods: usize },
+
+    /// Pod refresh operation completed
+    PodRefreshCompleted { refreshed_pods: usize },
 
     /// Contacts sync completed
     SyncContactsCompleted { synced_count: usize },

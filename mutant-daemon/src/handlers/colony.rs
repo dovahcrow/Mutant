@@ -16,6 +16,8 @@ use super::common::UpdateSender;
 
 /// Helper function to send colony progress events
 fn send_colony_progress(update_tx: &UpdateSender, event: ColonyEvent, operation_id: Option<String>) {
+    log::debug!("Sending colony progress event: {:?}", event);
+
     let response = Response::ColonyProgress(ColonyProgressResponse {
         event,
         operation_id,
@@ -23,6 +25,8 @@ fn send_colony_progress(update_tx: &UpdateSender, event: ColonyEvent, operation_
 
     if let Err(e) = update_tx.send(response) {
         log::error!("Failed to send colony progress event: {}", e);
+    } else {
+        log::debug!("Successfully sent colony progress event");
     }
 }
 
@@ -45,6 +49,51 @@ pub async fn init_colony_manager(wallet: autonomi::Wallet, network_choice: Netwo
 
     COLONY_MANAGER.set(Arc::new(manager))
         .map_err(|_| DaemonError::ColonyError("Colony manager already initialized".to_string()))?;
+
+    log::info!("Colony manager initialized successfully");
+    Ok(())
+}
+
+/// Initialize the global colony manager with progress updates
+#[allow(dead_code)]
+pub async fn init_colony_manager_with_progress(
+    wallet: autonomi::Wallet,
+    network_choice: NetworkChoice,
+    private_key_hex: Option<String>,
+    update_tx: UpdateSender
+) -> Result<(), DaemonError> {
+    log::info!("Starting colony manager initialization with progress tracking");
+
+    // Send progress event: initialization started
+    send_colony_progress(&update_tx, ColonyEvent::InitializationStarted, None);
+
+    let manager = ColonyManager::new_with_progress(wallet, network_choice, private_key_hex, update_tx.clone()).await?;
+
+    // Send progress event: user pod check started
+    send_colony_progress(&update_tx, ColonyEvent::UserPodCheckStarted, None);
+
+    // Ensure the user's pod exists on the network
+    log::info!("Ensuring user pod exists during initialization");
+    if let Err(e) = manager.ensure_user_pod_exists_with_progress(update_tx.clone()).await {
+        log::warn!("Failed to ensure user pod exists during initialization: {}. Pod will be created when needed.", e);
+
+        // Send progress event: operation failed
+        send_colony_progress(&update_tx, ColonyEvent::OperationFailed {
+            operation: "user_pod_check".to_string(),
+            error: e.to_string()
+        }, None);
+    } else {
+        log::info!("User pod verified/created successfully during initialization");
+
+        // Send progress event: user pod check completed
+        send_colony_progress(&update_tx, ColonyEvent::UserPodCheckCompleted, None);
+    }
+
+    COLONY_MANAGER.set(Arc::new(manager))
+        .map_err(|_| DaemonError::ColonyError("Colony manager already initialized".to_string()))?;
+
+    // Send progress event: initialization completed
+    send_colony_progress(&update_tx, ColonyEvent::InitializationCompleted, None);
 
     log::info!("Colony manager initialized successfully");
     Ok(())
@@ -256,13 +305,8 @@ pub async fn handle_add_contact(
         pod_address: req.pod_address.clone()
     }, None);
 
-    match colony_manager.add_contact(&req.pod_address, req.contact_name).await {
+    match colony_manager.add_contact_with_progress(&req.pod_address, req.contact_name, update_tx.clone()).await {
         Ok(()) => {
-            // Send progress event: contact verification completed
-            send_colony_progress(&update_tx, ColonyEvent::ContactVerificationCompleted {
-                pod_address: req.pod_address.clone()
-            }, None);
-
             // Send progress event: operation completed
             send_colony_progress(&update_tx, ColonyEvent::AddContactCompleted {
                 pod_address: req.pod_address.clone()
@@ -375,12 +419,14 @@ pub async fn handle_sync_contacts(
 
     let total_contacts = contacts.len();
 
+    log::debug!("handle_sync_contacts: Starting sync for {} contacts", total_contacts);
+
     // Send progress event: sync started
     send_colony_progress(&update_tx, ColonyEvent::SyncContactsStarted {
         total_contacts
     }, None);
 
-    match colony_manager.sync_all_contacts().await {
+    match colony_manager.sync_all_contacts_with_progress(update_tx.clone()).await {
         Ok(synced_count) => {
             // Send progress event: sync completed
             send_colony_progress(&update_tx, ColonyEvent::SyncContactsCompleted {
@@ -508,6 +554,7 @@ pub async fn handle_list_contacts(
 ///
 /// This is a utility function that can be called periodically to update
 /// the local RDF graph database with new pods from the network.
+#[allow(dead_code)]
 pub async fn refresh_colony_cache() -> Result<(), DaemonError> {
     log::info!("Refreshing colony cache from network");
 
@@ -521,6 +568,7 @@ pub async fn refresh_colony_cache() -> Result<(), DaemonError> {
 /// Refresh the colony cache from the network with progress updates
 ///
 /// This version sends progress events via WebSocket for UI feedback.
+#[allow(dead_code)]
 pub async fn refresh_colony_cache_with_progress(update_tx: UpdateSender) -> Result<(), DaemonError> {
     log::info!("Refreshing colony cache from network");
 
@@ -550,8 +598,9 @@ pub async fn refresh_colony_cache_with_progress(update_tx: UpdateSender) -> Resu
 }
 
 /// Save the colony key store
-/// 
+///
 /// This ensures that derived keys are persisted to disk.
+#[allow(dead_code)]
 pub async fn save_colony_state() -> Result<(), DaemonError> {
     log::debug!("Saving colony state");
     
@@ -563,13 +612,15 @@ pub async fn save_colony_state() -> Result<(), DaemonError> {
 }
 
 /// Check if the colony manager is initialized
+#[allow(dead_code)]
 pub fn is_colony_initialized() -> bool {
     COLONY_MANAGER.get().is_some()
 }
 
 /// Shutdown the colony manager
-/// 
+///
 /// This saves the current state and cleans up resources.
+#[allow(dead_code)]
 pub async fn shutdown_colony() -> Result<(), DaemonError> {
     if is_colony_initialized() {
         log::info!("Shutting down colony manager");

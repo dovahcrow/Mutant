@@ -5,12 +5,10 @@ use serde_json::Value;
 use autonomi::{Client, Wallet};
 use mutant_lib::config::NetworkChoice;
 use crate::error::Error as DaemonError;
-use hex;
-use sha2::{Digest, Sha256};
-use autonomi::client::key_derivation::{DerivationIndex, MainSecretKey};
-use autonomi::{SecretKey, PublicKey};
+use autonomi::client::key_derivation::DerivationIndex;
 
 /// Default testnet private key used for development and testing
+#[allow(dead_code)]
 const DEV_TESTNET_PRIVATE_KEY_HEX: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 /// Colony integration manager for MutAnt daemon
@@ -28,6 +26,7 @@ pub struct ColonyManager {
     pod_public_address: String,
 }
 
+#[allow(dead_code)]
 fn index(i: u64) -> DerivationIndex {
 
     let mut bytes = [0u8; 32];
@@ -98,6 +97,114 @@ impl ColonyManager {
         let graph_path = data_store.get_graph_path();
         let graph = Graph::open(&graph_path)
             .map_err(|e| DaemonError::ColonyError(format!("Failed to open graph database: {}", e)))?;
+
+        Ok(ColonyManager {
+            key_store: Arc::new(RwLock::new(key_store)),
+            data_store: Arc::new(RwLock::new(data_store)),
+            graph: Arc::new(RwLock::new(graph)),
+            wallet,
+            network_choice,
+            initialized: true,
+            pod_public_address,
+        })
+    }
+
+    /// Initialize the colony manager with progress updates
+    pub async fn new_with_progress(
+        wallet: Wallet,
+        network_choice: NetworkChoice,
+        private_key_hex: Option<String>,
+        update_tx: tokio::sync::mpsc::UnboundedSender<mutant_protocol::Response>
+    ) -> Result<Self, DaemonError> {
+        // Helper function to send progress events
+        let send_progress = |event: mutant_protocol::ColonyEvent| {
+            let response = mutant_protocol::Response::ColonyProgress(mutant_protocol::ColonyProgressResponse {
+                event,
+                operation_id: None,
+            });
+            if let Err(e) = update_tx.send(response) {
+                log::error!("Failed to send colony progress event: {}", e);
+            }
+        };
+
+        // Send progress event: data store initialization started
+        send_progress(mutant_protocol::ColonyEvent::DataStoreInitStarted);
+
+        // Initialize data store (creates directories if needed)
+        let data_store = DataStore::create()
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to create data store: {}", e)))?;
+
+        // Send progress event: data store initialization completed
+        send_progress(mutant_protocol::ColonyEvent::DataStoreInitCompleted);
+
+        // Send progress event: key store initialization started
+        send_progress(mutant_protocol::ColonyEvent::KeyStoreInitStarted);
+
+        // Initialize or load key store
+        let key_store_path = data_store.get_keystore_path();
+        let mut key_store = if key_store_path.exists() {
+            log::info!("Loading existing colony key store");
+            let mut file = std::fs::File::open(&key_store_path)
+                .map_err(|e| DaemonError::ColonyError(format!("Failed to open key store: {}", e)))?;
+            KeyStore::from_file(&mut file, "password")
+                .map_err(|e| DaemonError::ColonyError(format!("Failed to load key store: {}", e)))?
+        } else {
+            log::info!("Creating new colony key store from environment mnemonic");
+            // Get mnemonic from environment variable, fall back to default if not set
+            let mnemonic = std::env::var("COLONY_MNEMONIC")
+                .unwrap_or_else(|_| {
+                    log::warn!("COLONY_MNEMONIC environment variable not set, using default mnemonic");
+                    "distance unusual problem mail service tide talk term lonely weather cheap patrol".to_string()
+                });
+            KeyStore::from_mnemonic(&mnemonic)
+                .map_err(|e| DaemonError::ColonyError(format!("Failed to create key store: {}", e)))?
+        };
+
+        // Send progress event: key store initialization completed
+        send_progress(mutant_protocol::ColonyEvent::KeyStoreInitCompleted);
+
+        // Send progress event: key derivation started
+        send_progress(mutant_protocol::ColonyEvent::KeyDerivationStarted);
+
+        // Set the wallet key using the provided private key or fall back to default
+        let wallet_key = match private_key_hex {
+            Some(key) => {
+                log::info!("Using provided private key for colony wallet");
+                // Ensure the key has 0x prefix
+                if key.starts_with("0x") {
+                    key
+                } else {
+                    format!("0x{}", key)
+                }
+            }
+            None => {
+                log::warn!("No private key provided for colony manager");
+                return Err(DaemonError::ColonyError("Private key required for colony manager initialization".to_string()));
+            }
+        };
+
+        key_store.set_wallet_key(wallet_key.clone())
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to set wallet key: {}", e)))?;
+
+        // Derive the pod public address from the wallet key
+        let pod_public_address = key_store.get_address_at_index(1).unwrap();
+        log::info!("Derived pod public address: {}", pod_public_address);
+
+        // Send progress event: key derivation completed
+        send_progress(mutant_protocol::ColonyEvent::KeyDerivationCompleted {
+            pod_address: pod_public_address.clone()
+        });
+
+        // Send progress event: graph initialization started
+        send_progress(mutant_protocol::ColonyEvent::GraphInitStarted);
+
+        // Initialize graph database
+        let graph_path = data_store.get_graph_path();
+        let graph = Graph::open(&graph_path)
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to open graph database: {}", e)))?;
+
+        // Send progress event: graph initialization completed
+        send_progress(mutant_protocol::ColonyEvent::GraphInitCompleted);
 
         Ok(ColonyManager {
             key_store: Arc::new(RwLock::new(key_store)),
@@ -369,8 +476,14 @@ impl ColonyManager {
 
         // First, check if pod exists locally
         log::debug!("Checking if pod exists locally: {}", self.pod_public_address);
-        match pod_manager.get_subject_data(&self.pod_public_address).await {
-            Ok(data) => {
+        log::debug!("About to call pod_manager.get_subject_data()");
+
+        // Add timeout to prevent hanging indefinitely
+        let get_data_future = pod_manager.get_subject_data(&self.pod_public_address);
+        match tokio::time::timeout(tokio::time::Duration::from_secs(30), get_data_future).await {
+            Ok(result) => match result {
+                Ok(data) => {
+                log::debug!("get_subject_data() returned Ok, data length: {}", data.len());
                 // Parse the JSON response to check if there are actual results
                 match serde_json::from_str::<serde_json::Value>(&data) {
                     Ok(json) => {
@@ -395,12 +508,19 @@ impl ColonyManager {
                         log::debug!("Failed to parse pod query response locally: {}", e);
                     }
                 }
-                // Pod doesn't exist locally, try to sync from network
-                log::info!("Pod not found locally, syncing from network: {}", self.pod_public_address);
+                    // Pod doesn't exist locally, try to sync from network
+                    log::info!("Pod not found locally, syncing from network: {}", self.pod_public_address);
+                }
+                Err(e) => {
+                    // Pod doesn't exist locally, try to sync from network
+                    log::info!("Pod not found locally (error), syncing from network: {}", self.pod_public_address);
+                    log::debug!("get_subject_data() error: {}", e);
+                }
             }
             Err(_) => {
-                // Pod doesn't exist locally, try to sync from network
-                log::info!("Pod not found locally (error), syncing from network: {}", self.pod_public_address);
+                // Timeout occurred
+                log::warn!("Timeout occurred while checking if pod exists locally: {}", self.pod_public_address);
+                log::info!("Pod check timed out, syncing from network: {}", self.pod_public_address);
             }
         }
 
@@ -485,14 +605,303 @@ impl ColonyManager {
         Ok(pod_address)
     }
 
+    /// Ensure the user's main pod exists with progress updates
+    pub async fn ensure_user_pod_exists_with_progress(
+        &self,
+        update_tx: tokio::sync::mpsc::UnboundedSender<mutant_protocol::Response>
+    ) -> Result<String, DaemonError> {
+        // Helper function to send progress events
+        let send_progress = |event: mutant_protocol::ColonyEvent| {
+            let response = mutant_protocol::Response::ColonyProgress(mutant_protocol::ColonyProgressResponse {
+                event,
+                operation_id: None,
+            });
+            if let Err(e) = update_tx.send(response) {
+                log::error!("Failed to send colony progress event: {}", e);
+            }
+        };
+
+        if !self.initialized {
+            return Err(DaemonError::ColonyError("Colony manager not initialized".to_string()));
+        }
+
+        log::info!("Ensuring user pod exists: {}", self.pod_public_address);
+
+        // Send progress event: user pod verification started
+        send_progress(mutant_protocol::ColonyEvent::UserPodVerificationStarted {
+            pod_address: self.pod_public_address.clone()
+        });
+
+        // Initialize client for pod operations
+        let client = self.get_client().await?;
+
+        // Get locks and hold them for the duration of the operation
+        let mut data_store = self.data_store.write().await;
+        let mut key_store = self.key_store.write().await;
+        let mut graph = self.graph.write().await;
+
+        let mut pod_manager = PodManager::new(
+            client,
+            &self.wallet,
+            &mut *data_store,
+            &mut *key_store,
+            &mut *graph,
+        ).await
+        .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod manager: {}", e)))?;
+
+        // First, check if pod exists locally
+        match pod_manager.get_subject_data(&self.pod_public_address).await {
+            Ok(data) => {
+                // Parse the JSON response to check if there are actual results
+                match serde_json::from_str::<serde_json::Value>(&data) {
+                    Ok(json) => {
+                        if let Some(results) = json.get("results")
+                            .and_then(|r| r.get("bindings"))
+                            .and_then(|b| b.as_array()) {
+                            if !results.is_empty() {
+                                // Pod exists locally with actual data
+                                log::info!("Pod already exists locally with data: {}", self.pod_public_address);
+
+                                // Send progress event: user pod verification completed
+                                send_progress(mutant_protocol::ColonyEvent::UserPodVerificationCompleted {
+                                    pod_address: self.pod_public_address.clone(),
+                                    exists: true
+                                });
+
+                                return Ok(self.pod_public_address.clone());
+                            }
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+            Err(_) => {}
+        }
+
+        // Pod doesn't exist locally, try to sync from network
+        log::info!("Pod not found locally, syncing from network: {}", self.pod_public_address);
+
+        // Send progress event: pod refresh started
+        send_progress(mutant_protocol::ColonyEvent::PodRefreshStarted { total_pods: 1 });
+
+        pod_manager.refresh_ref(10).await
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to refresh cache from network: {}", e)))?;
+
+        // Send progress event: pod refresh completed
+        send_progress(mutant_protocol::ColonyEvent::PodRefreshCompleted { refreshed_pods: 1 });
+
+        // Check again if pod exists locally after sync
+        match pod_manager.get_subject_data(&self.pod_public_address).await {
+            Ok(data) => {
+                match serde_json::from_str::<serde_json::Value>(&data) {
+                    Ok(json) => {
+                        if let Some(results) = json.get("results")
+                            .and_then(|r| r.get("bindings"))
+                            .and_then(|b| b.as_array()) {
+                            if !results.is_empty() {
+                                // Pod now exists locally after sync with actual data
+                                log::info!("Pod found locally after sync with data: {}", self.pod_public_address);
+
+                                // Send progress event: user pod verification completed
+                                send_progress(mutant_protocol::ColonyEvent::UserPodVerificationCompleted {
+                                    pod_address: self.pod_public_address.clone(),
+                                    exists: true
+                                });
+
+                                return Ok(self.pod_public_address.clone());
+                            }
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+            Err(_) => {}
+        }
+
+        // Pod still doesn't exist, need to create it
+        log::info!("Pod not found after sync, creating new pod: {}", self.pod_public_address);
+
+        // Send progress event: user pod creation started
+        send_progress(mutant_protocol::ColonyEvent::UserPodCreationStarted);
+
+        // Create the pod since it doesn't exist on the network
+        let (pod_address, _scratchpad_address) = pod_manager.add_pod("main").await
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod: {}", e)))?;
+
+        // Verify the created pod address matches our expected address
+        if pod_address != self.pod_public_address {
+            log::warn!("Created pod address {} doesn't match expected address {}",
+                      pod_address, self.pod_public_address);
+        }
+
+        // Add basic metadata about the pod itself
+        let pod_metadata = serde_json::json!({
+            "type": "UserPod",
+            "name": format!("Content Pod for {}", self.pod_public_address),
+            "description": format!("Metadata pod containing all public content for user {}", self.pod_public_address),
+            "owner": self.pod_public_address,
+            "created": chrono::Utc::now().to_rfc3339()
+        });
+
+        let pod_metadata_str = serde_json::to_string(&pod_metadata)
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to serialize pod metadata: {}", e)))?;
+
+        let pod_subject_id = format!("pod_{}", pod_address);
+
+        pod_manager.put_subject_data(&pod_address, &pod_subject_id, &pod_metadata_str).await
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to add pod metadata: {}", e)))?;
+
+        // Upload the pod to the network
+        pod_manager.upload_all().await
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to upload pod: {}", e)))?;
+
+        // Send progress event: user pod creation completed
+        send_progress(mutant_protocol::ColonyEvent::UserPodCreationCompleted {
+            pod_address: pod_address.clone()
+        });
+
+        // Send progress event: user pod verification completed
+        send_progress(mutant_protocol::ColonyEvent::UserPodVerificationCompleted {
+            pod_address: pod_address.clone(),
+            exists: true
+        });
+
+        log::info!("Successfully created and uploaded user pod: {}", pod_address);
+        Ok(pod_address)
+    }
+
     /// Get or create a user's main pod for storing their content metadata
     async fn get_or_create_user_pod(
         &self,
-        _pod_manager: &mut PodManager<'_>,
+        pod_manager: &mut PodManager<'_>,
         _user_key: &str,
     ) -> Result<String, DaemonError> {
-        // Use the new ensure_user_pod_exists method
-        self.ensure_user_pod_exists().await
+        // Reuse the existing pod_manager to avoid deadlock
+        // First, check if pod exists locally
+        log::debug!("Checking if pod exists locally: {}", self.pod_public_address);
+
+        // Add timeout to prevent hanging indefinitely
+        let get_data_future = pod_manager.get_subject_data(&self.pod_public_address);
+        match tokio::time::timeout(tokio::time::Duration::from_secs(30), get_data_future).await {
+            Ok(result) => match result {
+                Ok(data) => {
+                    log::debug!("get_subject_data() returned Ok, data length: {}", data.len());
+                    // Parse the JSON response to check if there are actual results
+                    match serde_json::from_str::<serde_json::Value>(&data) {
+                        Ok(json) => {
+                            if let Some(results) = json.get("results")
+                                .and_then(|r| r.get("bindings"))
+                                .and_then(|b| b.as_array()) {
+                                if !results.is_empty() {
+                                    // Pod exists locally with actual data
+                                    log::info!("Pod already exists locally with data: {}", self.pod_public_address);
+                                    return Ok(self.pod_public_address.clone());
+                                } else {
+                                    // Empty results, pod doesn't exist locally
+                                    log::debug!("Pod query returned empty results locally: {}", self.pod_public_address);
+                                }
+                            } else {
+                                // Malformed response, treat as not found
+                                log::debug!("Pod query returned malformed response locally: {}", self.pod_public_address);
+                            }
+                        }
+                        Err(e) => {
+                            // Failed to parse JSON, treat as not found
+                            log::debug!("Failed to parse pod query response locally: {}", e);
+                        }
+                    }
+                    // Pod doesn't exist locally, try to sync from network
+                    log::info!("Pod not found locally, syncing from network: {}", self.pod_public_address);
+                }
+                Err(e) => {
+                    // Pod doesn't exist locally, try to sync from network
+                    log::info!("Pod not found locally (error), syncing from network: {}", self.pod_public_address);
+                    log::debug!("get_subject_data() error: {}", e);
+                }
+            }
+            Err(_) => {
+                // Timeout occurred
+                log::warn!("Timeout occurred while checking if pod exists locally: {}", self.pod_public_address);
+                log::info!("Pod check timed out, syncing from network: {}", self.pod_public_address);
+            }
+        }
+
+        // Sync from network to get latest pods
+        log::debug!("Starting refresh_ref() to sync from network");
+        pod_manager.refresh_ref(10).await
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to refresh cache from network: {}", e)))?;
+        log::debug!("Completed refresh_ref() successfully");
+
+        // Check again if pod exists locally after sync
+        log::debug!("Checking if pod exists locally after sync: {}", self.pod_public_address);
+        match pod_manager.get_subject_data(&self.pod_public_address).await {
+            Ok(data) => {
+                // Parse the JSON response to check if there are actual results
+                match serde_json::from_str::<serde_json::Value>(&data) {
+                    Ok(json) => {
+                        if let Some(results) = json.get("results")
+                            .and_then(|r| r.get("bindings"))
+                            .and_then(|b| b.as_array()) {
+                            if !results.is_empty() {
+                                // Pod now exists locally after sync with actual data
+                                log::info!("Pod found locally after sync with data: {}", self.pod_public_address);
+                                return Ok(self.pod_public_address.clone());
+                            } else {
+                                // Empty results, pod still doesn't exist locally
+                                log::debug!("Pod query returned empty results after sync: {}", self.pod_public_address);
+                            }
+                        } else {
+                            // Malformed response, treat as not found
+                            log::debug!("Pod query returned malformed response after sync: {}", self.pod_public_address);
+                        }
+                    }
+                    Err(e) => {
+                        // Failed to parse JSON, treat as not found
+                        log::debug!("Failed to parse pod query response after sync: {}", e);
+                    }
+                }
+                // Pod still doesn't exist, need to create it
+                log::info!("Pod not found after sync, creating new pod: {}", self.pod_public_address);
+            }
+            Err(_) => {
+                // Pod still doesn't exist, need to create it
+                log::info!("Pod not found after sync (error), creating new pod: {}", self.pod_public_address);
+            }
+        }
+
+        // Create the pod since it doesn't exist on the network
+        let (pod_address, _scratchpad_address) = pod_manager.add_pod("main").await
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod: {}", e)))?;
+
+        // Verify the created pod address matches our expected address
+        if pod_address != self.pod_public_address {
+            log::warn!("Created pod address {} doesn't match expected address {}",
+                      pod_address, self.pod_public_address);
+        }
+
+        // Add basic metadata about the pod itself
+        let pod_metadata = serde_json::json!({
+            "type": "UserPod",
+            "name": format!("Content Pod for {}", self.pod_public_address),
+            "description": format!("Metadata pod containing all public content for user {}", self.pod_public_address),
+            "owner": self.pod_public_address,
+            "created": chrono::Utc::now().to_rfc3339()
+        });
+
+        let pod_metadata_str = serde_json::to_string(&pod_metadata)
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to serialize pod metadata: {}", e)))?;
+
+        let pod_subject_id = format!("pod_{}", pod_address);
+        log::debug!("Adding pod metadata: pod_address={}, subject_id={}, metadata_len={}",
+                   pod_address, pod_subject_id, pod_metadata_str.len());
+
+        pod_manager.put_subject_data(&pod_address, &pod_subject_id, &pod_metadata_str).await
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to add pod metadata (pod_address: {}, subject_id: {}, metadata_len: {}): {}",
+                pod_address, pod_subject_id, pod_metadata_str.len(), e)))?;
+
+        // Note: We don't call upload_all() here because the caller (index_content) will do it
+        log::info!("Successfully created user pod: {}", pod_address);
+        Ok(pod_address)
     }
     
     /// Get metadata for a specific address
@@ -532,11 +941,13 @@ impl ColonyManager {
     }
 
     /// Get the user's pod public address
+    #[allow(dead_code)]
     pub fn get_pod_address(&self) -> &str {
         &self.pod_public_address
     }
 
     /// Add a contact (pod address) to sync with
+    #[allow(dead_code)]
     pub async fn add_contact(&self, pod_address: &str, contact_name: Option<String>) -> Result<(), DaemonError> {
         if !self.initialized {
             return Err(DaemonError::ColonyError("Colony manager not initialized".to_string()));
@@ -581,6 +992,104 @@ impl ColonyManager {
         Ok(())
     }
 
+    /// Add a contact (pod address) to sync with - with progress updates
+    pub async fn add_contact_with_progress(
+        &self,
+        pod_address: &str,
+        contact_name: Option<String>,
+        update_tx: tokio::sync::mpsc::UnboundedSender<mutant_protocol::Response>
+    ) -> Result<(), DaemonError> {
+        // Helper function to send progress events
+        let send_progress = |event: mutant_protocol::ColonyEvent| {
+            let response = mutant_protocol::Response::ColonyProgress(mutant_protocol::ColonyProgressResponse {
+                event,
+                operation_id: None,
+            });
+            if let Err(e) = update_tx.send(response) {
+                log::error!("Failed to send colony progress event: {}", e);
+            }
+        };
+
+        if !self.initialized {
+            return Err(DaemonError::ColonyError("Colony manager not initialized".to_string()));
+        }
+
+        log::info!("Adding contact pod: {} (name: {:?})", pod_address, contact_name);
+
+        // Send progress event: contact verification started
+        send_progress(mutant_protocol::ColonyEvent::ContactVerificationStarted {
+            pod_address: pod_address.to_string()
+        });
+
+        // Ensure our own pod exists before trying to add references to it
+        self.ensure_user_pod_exists_with_progress(update_tx.clone()).await?;
+
+        // Initialize client for pod operations
+        let client = self.get_client().await?;
+
+        // Get locks and hold them for the duration of the operation
+        let mut data_store = self.data_store.write().await;
+        let mut key_store = self.key_store.write().await;
+        let mut graph = self.graph.write().await;
+
+        let mut pod_manager = PodManager::new(
+            client,
+            &self.wallet,
+            &mut *data_store,
+            &mut *key_store,
+            &mut *graph,
+        ).await
+        .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod manager: {}", e)))?;
+
+        // Send progress event: contact verification completed (assuming it exists if we got this far)
+        send_progress(mutant_protocol::ColonyEvent::ContactVerificationCompleted {
+            pod_address: pod_address.to_string(),
+            exists: true
+        });
+
+        // Send progress event: contact pod reference addition started
+        send_progress(mutant_protocol::ColonyEvent::ContactRefAdditionStarted {
+            pod_address: pod_address.to_string()
+        });
+
+        // Use our pod public address instead of "main"
+        pod_manager.add_pod_ref(&self.pod_public_address, pod_address)
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to add pod reference: {}", e)))?;
+
+        log::debug!("Added pod reference: {} to our pod: {} at depth 1", pod_address, self.pod_public_address);
+
+        // Send progress event: contact pod reference addition completed
+        send_progress(mutant_protocol::ColonyEvent::ContactRefAdditionCompleted {
+            pod_address: pod_address.to_string()
+        });
+
+        // Send progress event: contact pod download started
+        send_progress(mutant_protocol::ColonyEvent::ContactPodDownloadStarted {
+            pod_address: pod_address.to_string()
+        });
+
+        // Now download and sync the contact's pod using refresh_ref
+        pod_manager.refresh_ref(10).await
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to sync contact pod: {}", e)))?;
+
+        // Send progress event: contact pod download completed
+        send_progress(mutant_protocol::ColonyEvent::ContactPodDownloadCompleted {
+            pod_address: pod_address.to_string()
+        });
+
+        // Send progress event: contact pod upload started
+        send_progress(mutant_protocol::ColonyEvent::ContactPodUploadStarted);
+
+        pod_manager.upload_all().await
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to upload pod: {}", e)))?;
+
+        // Send progress event: contact pod upload completed
+        send_progress(mutant_protocol::ColonyEvent::ContactPodUploadCompleted);
+
+        log::info!("Successfully added and synced contact pod: {}", pod_address);
+        Ok(())
+    }
+
     /// List all available content from synced pods
     pub async fn list_all_content(&self) -> Result<Value, DaemonError> {
         if !self.initialized {
@@ -601,6 +1110,7 @@ impl ColonyManager {
     }
 
     /// Sync all contact pods to get latest content
+    #[allow(dead_code)]
     pub async fn sync_all_contacts(&self) -> Result<usize, DaemonError> {
         if !self.initialized {
             return Err(DaemonError::ColonyError("Colony manager not initialized".to_string()));
@@ -628,6 +1138,99 @@ impl ColonyManager {
         // Refresh cache to get latest data from all known pods
         pod_manager.refresh_ref(10).await
             .map_err(|e| DaemonError::ColonyError(format!("Failed to refresh cache: {}", e)))?;
+
+        // Get count of synced pods from key store
+        let pod_count = pod_manager.key_store.get_pointers().len();
+
+        log::info!("Successfully synced {} pods", pod_count);
+        Ok(pod_count)
+    }
+
+    /// Sync all contact pods to get latest content - with progress updates
+    pub async fn sync_all_contacts_with_progress(
+        &self,
+        update_tx: tokio::sync::mpsc::UnboundedSender<mutant_protocol::Response>
+    ) -> Result<usize, DaemonError> {
+        // Helper function to send progress events
+        let send_progress = |event: mutant_protocol::ColonyEvent| {
+            let response = mutant_protocol::Response::ColonyProgress(mutant_protocol::ColonyProgressResponse {
+                event,
+                operation_id: None,
+            });
+            if let Err(e) = update_tx.send(response) {
+                log::error!("Failed to send colony progress event: {}", e);
+            }
+        };
+
+        if !self.initialized {
+            return Err(DaemonError::ColonyError("Colony manager not initialized".to_string()));
+        }
+
+        log::info!("Syncing all contact pods");
+
+        // Get contacts list first for progress tracking
+        let contacts = self.get_contacts().await?;
+        let total_contacts = contacts.len();
+
+        log::debug!("sync_all_contacts_with_progress: Found {} contacts to sync", total_contacts);
+
+        // Initialize client for pod operations
+        let client = self.get_client().await?;
+
+        // Get locks and hold them for the duration of the operation
+        let mut data_store = self.data_store.write().await;
+        let mut key_store = self.key_store.write().await;
+        let mut graph = self.graph.write().await;
+
+        let mut pod_manager = PodManager::new(
+            client,
+            &self.wallet,
+            &mut *data_store,
+            &mut *key_store,
+            &mut *graph,
+        ).await
+        .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod manager: {}", e)))?;
+
+        // Send progress event: pod refresh started
+        log::debug!("Sending PodRefreshStarted event for {} pods", total_contacts);
+        send_progress(mutant_protocol::ColonyEvent::PodRefreshStarted {
+            total_pods: total_contacts
+        });
+
+        // Send individual contact sync events
+        for (index, contact) in contacts.iter().enumerate() {
+            log::debug!("Sending ContactSyncStarted event for contact {} ({}/{})", contact, index + 1, total_contacts);
+            send_progress(mutant_protocol::ColonyEvent::ContactSyncStarted {
+                pod_address: contact.clone(),
+                contact_index: index + 1,
+                total_contacts
+            });
+
+            // Note: The actual sync happens in refresh_ref which syncs all contacts at once
+            // So we'll send completion events after the refresh_ref call
+        }
+
+        // Refresh cache to get latest data from all known pods
+        log::debug!("Starting refresh_ref operation");
+        pod_manager.refresh_ref(10).await
+            .map_err(|e| DaemonError::ColonyError(format!("Failed to refresh cache: {}", e)))?;
+        log::debug!("Completed refresh_ref operation");
+
+        // Send individual contact sync completion events
+        for (index, contact) in contacts.iter().enumerate() {
+            log::debug!("Sending ContactSyncCompleted event for contact {} ({}/{})", contact, index + 1, total_contacts);
+            send_progress(mutant_protocol::ColonyEvent::ContactSyncCompleted {
+                pod_address: contact.clone(),
+                contact_index: index + 1,
+                total_contacts
+            });
+        }
+
+        // Send progress event: pod refresh completed
+        log::debug!("Sending PodRefreshCompleted event for {} pods", total_contacts);
+        send_progress(mutant_protocol::ColonyEvent::PodRefreshCompleted {
+            refreshed_pods: total_contacts
+        });
 
         // Get count of synced pods from key store
         let pod_count = pod_manager.key_store.get_pointers().len();
@@ -677,7 +1280,7 @@ impl ColonyManager {
         let mut key_store = self.key_store.write().await;
         let mut graph = self.graph.write().await;
 
-        let mut pod_manager = PodManager::new(
+        let pod_manager = PodManager::new(
             client,
             &self.wallet,
             &mut *data_store,

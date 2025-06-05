@@ -141,6 +141,9 @@ impl Window for ColonyWindow {
         // Check for colony progress events
         self.check_progress_events();
 
+        // Check for colony progress events first
+        self.check_progress_events();
+
         // Auto-load user contact info on first draw if not already loaded/loading
         if self.should_load_contact_info && !self.is_loading_user_contact {
             self.load_user_contact_info();
@@ -664,8 +667,10 @@ impl ColonyWindow {
     fn check_progress_events(&mut self) {
         if let Ok(mut events) = COLONY_PROGRESS_EVENTS.lock() {
             if !events.is_empty() {
+                log::debug!("Processing {} colony progress events", events.len());
                 // Process new events
                 for event in events.drain(..) {
+                    log::debug!("Processing colony event: {:?}", event.event);
                     self.progress_events.push(event.clone());
 
                     // Update current operation status based on the event
@@ -689,8 +694,12 @@ impl ColonyWindow {
                             self.current_operation_status = Some(format!("Verifying contact: {}", pod_address));
                             self.current_progress = 0.3;
                         }
-                        mutant_protocol::ColonyEvent::ContactVerificationCompleted { pod_address } => {
-                            self.current_operation_status = Some(format!("Contact verified: {}", pod_address));
+                        mutant_protocol::ColonyEvent::ContactVerificationCompleted { pod_address, exists } => {
+                            if *exists {
+                                self.current_operation_status = Some(format!("Contact verified: {}", pod_address));
+                            } else {
+                                self.current_operation_status = Some(format!("Contact not found: {}", pod_address));
+                            }
                             self.current_progress = 0.7;
                         }
                         mutant_protocol::ColonyEvent::AddContactCompleted { pod_address } => {
@@ -787,6 +796,106 @@ impl ColonyWindow {
                             self.current_progress = 0.0;
                             self.is_syncing = false; // Reset syncing state on any failure
                         }
+                        // Additional detailed progress events for init operations
+                        mutant_protocol::ColonyEvent::DataStoreInitStarted => {
+                            self.current_operation_status = Some("Initializing data store...".to_string());
+                            self.current_progress = 0.1;
+                        }
+                        mutant_protocol::ColonyEvent::DataStoreInitCompleted => {
+                            self.current_operation_status = Some("Data store initialized".to_string());
+                            self.current_progress = 0.2;
+                        }
+                        mutant_protocol::ColonyEvent::KeyStoreInitStarted => {
+                            self.current_operation_status = Some("Initializing key store...".to_string());
+                            self.current_progress = 0.3;
+                        }
+                        mutant_protocol::ColonyEvent::KeyStoreInitCompleted => {
+                            self.current_operation_status = Some("Key store initialized".to_string());
+                            self.current_progress = 0.4;
+                        }
+                        mutant_protocol::ColonyEvent::KeyDerivationStarted => {
+                            self.current_operation_status = Some("Deriving keys...".to_string());
+                            self.current_progress = 0.5;
+                        }
+                        mutant_protocol::ColonyEvent::KeyDerivationCompleted { pod_address } => {
+                            self.current_operation_status = Some(format!("Keys derived: {}", pod_address));
+                            self.current_progress = 0.6;
+                        }
+                        mutant_protocol::ColonyEvent::GraphInitStarted => {
+                            self.current_operation_status = Some("Initializing graph database...".to_string());
+                            self.current_progress = 0.7;
+                        }
+                        mutant_protocol::ColonyEvent::GraphInitCompleted => {
+                            self.current_operation_status = Some("Graph database initialized".to_string());
+                            self.current_progress = 0.8;
+                        }
+
+                        // Additional detailed progress events for user pod operations
+                        mutant_protocol::ColonyEvent::UserPodCheckStarted => {
+                            self.current_operation_status = Some("Checking user pod...".to_string());
+                            self.current_progress = 0.0;
+                        }
+                        mutant_protocol::ColonyEvent::UserPodVerificationStarted { pod_address } => {
+                            self.current_operation_status = Some(format!("Verifying pod: {}", pod_address));
+                            self.current_progress = 0.2;
+                        }
+                        mutant_protocol::ColonyEvent::UserPodVerificationCompleted { pod_address, exists } => {
+                            if *exists {
+                                self.current_operation_status = Some(format!("Pod verified: {}", pod_address));
+                            } else {
+                                self.current_operation_status = Some(format!("Pod not found: {}", pod_address));
+                            }
+                            self.current_progress = 0.5;
+                        }
+                        mutant_protocol::ColonyEvent::UserPodCreationStarted => {
+                            self.current_operation_status = Some("Creating user pod...".to_string());
+                            self.current_progress = 0.6;
+                        }
+                        mutant_protocol::ColonyEvent::UserPodCreationCompleted { pod_address } => {
+                            self.current_operation_status = Some(format!("Pod created: {}", pod_address));
+                            self.current_progress = 0.9;
+                        }
+                        mutant_protocol::ColonyEvent::UserPodCheckCompleted => {
+                            self.current_operation_status = Some("User pod ready".to_string());
+                            self.current_progress = 1.0;
+                        }
+
+                        // Additional detailed progress events for contact operations
+                        mutant_protocol::ColonyEvent::ContactRefAdditionStarted { pod_address } => {
+                            self.current_operation_status = Some(format!("Adding reference: {}", pod_address));
+                            self.current_progress = 0.3;
+                        }
+                        mutant_protocol::ColonyEvent::ContactRefAdditionCompleted { pod_address } => {
+                            self.current_operation_status = Some(format!("Reference added: {}", pod_address));
+                            self.current_progress = 0.4;
+                        }
+                        mutant_protocol::ColonyEvent::ContactPodDownloadStarted { pod_address } => {
+                            self.current_operation_status = Some(format!("Downloading pod: {}", pod_address));
+                            self.current_progress = 0.5;
+                        }
+                        mutant_protocol::ColonyEvent::ContactPodDownloadCompleted { pod_address } => {
+                            self.current_operation_status = Some(format!("Pod downloaded: {}", pod_address));
+                            self.current_progress = 0.7;
+                        }
+                        mutant_protocol::ColonyEvent::ContactPodUploadStarted => {
+                            self.current_operation_status = Some("Uploading updated pod...".to_string());
+                            self.current_progress = 0.8;
+                        }
+                        mutant_protocol::ColonyEvent::ContactPodUploadCompleted => {
+                            self.current_operation_status = Some("Pod uploaded".to_string());
+                            self.current_progress = 0.9;
+                        }
+
+                        // Pod refresh events
+                        mutant_protocol::ColonyEvent::PodRefreshStarted { total_pods } => {
+                            self.current_operation_status = Some(format!("Refreshing {} pods...", total_pods));
+                            self.current_progress = 0.0;
+                        }
+                        mutant_protocol::ColonyEvent::PodRefreshCompleted { refreshed_pods } => {
+                            self.current_operation_status = Some(format!("Refreshed {} pods", refreshed_pods));
+                            self.current_progress = 1.0;
+                        }
+
                         _ => {
                             // Handle other events as needed
                             log::debug!("Received colony event: {:?}", event.event);
@@ -1291,6 +1400,8 @@ impl ColonyWindow {
 
 /// Add a colony progress event to the global state for UI updates
 pub fn add_colony_progress_event(event: mutant_protocol::ColonyEvent, operation_id: Option<String>) {
+    log::debug!("Adding colony progress event: {:?}", event);
+
     let progress_event = ColonyProgressEvent {
         event,
         timestamp: std::time::Instant::now(),
@@ -1299,11 +1410,14 @@ pub fn add_colony_progress_event(event: mutant_protocol::ColonyEvent, operation_
 
     if let Ok(mut events) = COLONY_PROGRESS_EVENTS.lock() {
         events.push(progress_event);
+        log::debug!("Colony progress events queue now has {} events", events.len());
 
         // Keep only the last 100 events to prevent memory growth
         let len = events.len();
         if len > 100 {
             events.drain(0..len - 100);
         }
+    } else {
+        log::error!("Failed to lock COLONY_PROGRESS_EVENTS mutex");
     }
 }

@@ -169,6 +169,7 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                         Ok(response) => {
                             // Handle colony progress events
                             if let mutant_protocol::Response::ColonyProgress(progress_response) = response {
+                                log::debug!("CLIENT MANAGER: Received colony progress event: {:?}", progress_response.event);
                                 crate::app::colony_window::add_colony_progress_event(
                                     progress_response.event,
                                     progress_response.operation_id
