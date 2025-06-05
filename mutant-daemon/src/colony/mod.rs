@@ -207,16 +207,19 @@ impl ColonyManager {
         // Determine content type based on file extension
         let (schema_type, encoding_format) = self.determine_content_type(file_name);
 
+        // Use the pod address instead of user_key for author and description
+        let pod_address = &self.pod_public_address;
+
         // Use proper Schema.org format with schema: prefix like the example
         serde_json::json!({
             "@context": {"schema": "http://schema.org/"},
             "@type": schema_type,
             "@id": format!("ant://{}", public_address),
             "schema:name": file_name,
-            "schema:description": format!("File uploaded by {}", user_key),
+            "schema:description": format!("File uploaded by {}", pod_address),
             "schema:contentSize": file_size,
             "schema:encodingFormat": encoding_format,
-            "schema:author": user_key,
+            "schema:author": pod_address,
             "schema:dateCreated": chrono::Utc::now().to_rfc3339(),
             "schema:url": public_address
         })

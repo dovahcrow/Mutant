@@ -18,6 +18,8 @@ pub struct ColonyWindow {
     contacts: Vec<Contact>,
     /// Available content from all contacts
     content_list: Vec<ContentItem>,
+    /// Content organized by pods
+    pod_content: Vec<PodContent>,
     /// Search query for filtering content
     search_query: String,
     /// New contact input fields
@@ -75,11 +77,21 @@ pub struct ContentItem {
     pub date_created: Option<String>,
 }
 
+/// Structure to organize content by pods
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PodContent {
+    pub pod_address: String,
+    pub pod_name: Option<String>,
+    pub content_items: Vec<ContentItem>,
+    pub is_expanded: bool,
+}
+
 impl Default for ColonyWindow {
     fn default() -> Self {
         Self {
             contacts: Vec::new(),
             content_list: Vec::new(),
+            pod_content: Vec::new(),
             search_query: String::new(),
             new_contact_address: String::new(),
             new_contact_name: String::new(),
@@ -147,6 +159,7 @@ impl Window for ColonyWindow {
             if let Ok(responses) = CONTENT_LIST_RESPONSES.lock() {
                 if let Some(content_list) = responses.get("content_list") {
                     self.content_list = content_list.clone();
+                    self.organize_content_by_pods();
                     self.is_loading_content = false;
                     // Remove the response from the global state
                     drop(responses);
@@ -403,69 +416,113 @@ impl Window for ColonyWindow {
 
                     ui.separator();
 
-                    // Content list
-                    ui.label(format!("Content Items ({})", self.content_list.len()));
+                    // Content list organized by pods
+                    ui.label(format!("Content Items ({} items from {} pods)", self.content_list.len(), self.pod_content.len()));
 
                     ui.push_id("content_scroll", |ui| {
                         egui::ScrollArea::vertical()
                             .auto_shrink([false; 2])
                             .show(ui, |ui| {
-                                for content in &self.content_list {
+                                let mut download_address: Option<String> = None;
+
+                                for (_pod_index, pod_content) in self.pod_content.iter_mut().enumerate() {
                                     ui.group(|ui| {
+                                        // Pod header with expand/collapse functionality
                                         ui.horizontal(|ui| {
+                                            let expand_icon = if pod_content.is_expanded { "🔽" } else { "▶" };
+                                            if ui.button(expand_icon).clicked() {
+                                                pod_content.is_expanded = !pod_content.is_expanded;
+                                            }
+
                                             ui.vertical(|ui| {
+                                                // Pod name or address
+                                                let pod_display_name = pod_content.pod_name.as_ref()
+                                                    .unwrap_or(&pod_content.pod_address);
                                                 ui.label(
-                                                    egui::RichText::new(&content.title)
+                                                    egui::RichText::new(format!("📁 {}", pod_display_name))
                                                         .strong()
-                                                        .color(super::theme::MutantColors::ACCENT_BLUE)
+                                                        .color(super::theme::MutantColors::ACCENT_ORANGE)
                                                 );
 
-                                                if let Some(description) = &content.description {
+                                                // Pod address (if different from name)
+                                                if pod_content.pod_name.is_some() {
                                                     ui.label(
-                                                        egui::RichText::new(description)
-                                                            .size(11.0)
-                                                            .color(super::theme::MutantColors::TEXT_SECONDARY)
-                                                    );
-                                                }
-
-                                                ui.horizontal(|ui| {
-                                                    ui.label(
-                                                        egui::RichText::new(&content.content_type)
-                                                            .size(10.0)
-                                                            .color(super::theme::MutantColors::ACCENT_GREEN)
-                                                    );
-
-                                                    ui.label(
-                                                        egui::RichText::new(format!("by: {}", content.source_contact))
-                                                            .size(10.0)
+                                                        egui::RichText::new(&pod_content.pod_address)
+                                                            .size(9.0)
                                                             .color(super::theme::MutantColors::TEXT_MUTED)
                                                     );
-
-                                                    if let Some(size) = content.size {
-                                                        ui.label(
-                                                            egui::RichText::new(Self::format_file_size(size))
-                                                                .size(10.0)
-                                                                .color(super::theme::MutantColors::TEXT_MUTED)
-                                                        );
-                                                    }
-
-                                                    if let Some(date) = &content.date_created {
-                                                        ui.label(
-                                                            egui::RichText::new(Self::format_date(date))
-                                                                .size(10.0)
-                                                                .color(super::theme::MutantColors::TEXT_MUTED)
-                                                        );
-                                                    }
-                                                });
-                                            });
-
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if ui.button("📥 Download").clicked() {
-                                                    self.download_content(&content.address);
                                                 }
+
+                                                // Content count
+                                                ui.label(
+                                                    egui::RichText::new(format!("{} items", pod_content.content_items.len()))
+                                                        .size(10.0)
+                                                        .color(super::theme::MutantColors::TEXT_SECONDARY)
+                                                );
                                             });
                                         });
+
+                                        // Show content items if expanded
+                                        if pod_content.is_expanded {
+                                            ui.separator();
+                                            for content in &pod_content.content_items {
+                                                ui.group(|ui| {
+                                                    ui.horizontal(|ui| {
+                                                        ui.vertical(|ui| {
+                                                            ui.label(
+                                                                egui::RichText::new(&content.title)
+                                                                    .strong()
+                                                                    .color(super::theme::MutantColors::ACCENT_BLUE)
+                                                            );
+
+                                                            if let Some(description) = &content.description {
+                                                                ui.label(
+                                                                    egui::RichText::new(description)
+                                                                        .size(11.0)
+                                                                        .color(super::theme::MutantColors::TEXT_SECONDARY)
+                                                                );
+                                                            }
+
+                                                            ui.horizontal(|ui| {
+                                                                ui.label(
+                                                                    egui::RichText::new(&content.content_type)
+                                                                        .size(10.0)
+                                                                        .color(super::theme::MutantColors::ACCENT_GREEN)
+                                                                );
+
+                                                                if let Some(size) = content.size {
+                                                                    ui.label(
+                                                                        egui::RichText::new(Self::format_file_size(size))
+                                                                            .size(10.0)
+                                                                            .color(super::theme::MutantColors::TEXT_MUTED)
+                                                                    );
+                                                                }
+
+                                                                if let Some(date) = &content.date_created {
+                                                                    ui.label(
+                                                                        egui::RichText::new(Self::format_date(date))
+                                                                            .size(10.0)
+                                                                            .color(super::theme::MutantColors::TEXT_MUTED)
+                                                                    );
+                                                                }
+                                                            });
+                                                        });
+
+                                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                            if ui.button("📥 Download").clicked() {
+                                                                download_address = Some(content.address.clone());
+                                                            }
+                                                        });
+                                                    });
+                                                });
+                                            }
+                                        }
                                     });
+                                }
+
+                                // Handle download outside the loop to avoid borrowing issues
+                                if let Some(address) = download_address {
+                                    self.download_content(&address);
                                 }
                             });
                     });
@@ -921,5 +978,43 @@ impl ColonyWindow {
                 }
             }
         });
+    }
+
+    /// Organize content items by their source pods
+    fn organize_content_by_pods(&mut self) {
+        use std::collections::HashMap;
+
+        // Group content by source_contact (pod address)
+        let mut pod_groups: HashMap<String, Vec<ContentItem>> = HashMap::new();
+
+        for content_item in &self.content_list {
+            pod_groups.entry(content_item.source_contact.clone())
+                .or_insert_with(Vec::new)
+                .push(content_item.clone());
+        }
+
+        // Convert to PodContent structures
+        self.pod_content = pod_groups.into_iter().map(|(pod_address, content_items)| {
+            // Try to find a friendly name for this pod from our contacts
+            let pod_name = self.contacts.iter()
+                .find(|contact| contact.pod_address == pod_address)
+                .and_then(|contact| contact.name.clone());
+
+            PodContent {
+                pod_address,
+                pod_name,
+                content_items,
+                is_expanded: true, // Start with all pods expanded
+            }
+        }).collect();
+
+        // Sort pods by name/address for consistent display
+        self.pod_content.sort_by(|a, b| {
+            let a_display = a.pod_name.as_ref().unwrap_or(&a.pod_address);
+            let b_display = b.pod_name.as_ref().unwrap_or(&b.pod_address);
+            a_display.cmp(b_display)
+        });
+
+        log::info!("Organized {} content items into {} pods", self.content_list.len(), self.pod_content.len());
     }
 }
