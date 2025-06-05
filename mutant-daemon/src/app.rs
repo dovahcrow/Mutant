@@ -237,25 +237,10 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     log::info!("MutAnt initialized successfully{}",
         if is_public_only { " in public-only mode" } else { "" });
 
-    // Initialize Colony Manager for search and indexing in background
+    // Store colony initialization parameters for later use when WebSocket clients connect
     // This allows the daemon to start serving requests immediately while colony functionality
-    // is being initialized asynchronously
-    let mutant_for_colony = mutant.clone();
-    tokio::spawn(async move {
-        log::info!("Starting colony manager initialization in background...");
-        match mutant_for_colony.get_wallet().await {
-            Ok(wallet) => {
-                if let Err(e) = crate::handlers::colony::init_colony_manager(wallet, network_choice, actual_private_key.clone()).await {
-                    log::warn!("Failed to initialize colony manager: {}. Search functionality will be unavailable.", e);
-                } else {
-                    log::info!("Colony manager initialized successfully.");
-                }
-            }
-            Err(e) => {
-                log::warn!("Failed to get wallet for colony manager: {}. Search functionality will be unavailable.", e);
-            }
-        }
-    });
+    // is initialized on-demand with progress events sent to connected clients
+    crate::handlers::colony::set_colony_init_params(network_choice, actual_private_key.clone()).await;
 
     // Initialize Task Management
     let tasks: TaskMap = Arc::new(RwLock::new(HashMap::new()));

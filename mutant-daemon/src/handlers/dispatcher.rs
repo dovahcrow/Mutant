@@ -50,28 +50,28 @@ pub(crate) async fn handle_request(
         }
         // Colony integration requests
         Request::Search(search_req) => {
-            handle_search(search_req, update_tx, original_request_str).await?
+            handle_search(search_req, update_tx, original_request_str, mutant.clone()).await?
         }
         Request::IndexContent(index_req) => {
-            handle_index_content(index_req, update_tx, original_request_str).await?
+            handle_index_content(index_req, update_tx, original_request_str, mutant.clone()).await?
         }
         Request::GetMetadata(metadata_req) => {
-            handle_get_metadata(metadata_req, update_tx, original_request_str).await?
+            handle_get_metadata(metadata_req, update_tx, original_request_str, mutant.clone()).await?
         }
         Request::AddContact(add_contact_req) => {
-            handle_add_contact(add_contact_req, update_tx, original_request_str).await?
+            handle_add_contact(add_contact_req, update_tx, original_request_str, mutant.clone()).await?
         }
         Request::ListContent(list_content_req) => {
-            handle_list_content(list_content_req, update_tx, original_request_str).await?
+            handle_list_content(list_content_req, update_tx, original_request_str, mutant.clone()).await?
         }
         Request::SyncContacts(sync_contacts_req) => {
-            handle_sync_contacts(sync_contacts_req, update_tx, original_request_str).await?
+            handle_sync_contacts(sync_contacts_req, update_tx, original_request_str, mutant.clone()).await?
         }
         Request::GetUserContact(get_user_contact_req) => {
-            handle_get_user_contact(get_user_contact_req, update_tx, original_request_str).await?
+            handle_get_user_contact(get_user_contact_req, update_tx, original_request_str, mutant.clone()).await?
         }
         Request::ListContacts(list_contacts_req) => {
-            handle_list_contacts(list_contacts_req, update_tx, original_request_str).await?
+            handle_list_contacts(list_contacts_req, update_tx, original_request_str, mutant.clone()).await?
         }
     }
     Ok(())

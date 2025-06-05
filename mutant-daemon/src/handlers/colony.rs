@@ -33,6 +33,18 @@ fn send_colony_progress(update_tx: &UpdateSender, event: ColonyEvent, operation_
 // Global colony manager instance
 static COLONY_MANAGER: OnceCell<Arc<ColonyManager>> = OnceCell::const_new();
 
+// Global colony initialization parameters
+static COLONY_INIT_PARAMS: OnceCell<(NetworkChoice, Option<String>)> = OnceCell::const_new();
+
+/// Store colony initialization parameters for later use
+pub async fn set_colony_init_params(network_choice: NetworkChoice, private_key_hex: Option<String>) {
+    if let Err(_) = COLONY_INIT_PARAMS.set((network_choice, private_key_hex)) {
+        log::warn!("Colony initialization parameters already set");
+    } else {
+        log::info!("Colony initialization parameters stored for on-demand initialization");
+    }
+}
+
 /// Initialize the global colony manager
 pub async fn init_colony_manager(wallet: autonomi::Wallet, network_choice: NetworkChoice, private_key_hex: Option<String>) -> Result<(), DaemonError> {
     log::info!("Starting colony manager initialization");
@@ -99,6 +111,34 @@ pub async fn init_colony_manager_with_progress(
     Ok(())
 }
 
+/// Initialize colony manager on-demand with progress events
+pub async fn ensure_colony_manager_with_progress(
+    mutant: Arc<mutant_lib::MutAnt>,
+    update_tx: UpdateSender
+) -> Result<Arc<ColonyManager>, DaemonError> {
+    // Check if already initialized
+    if let Some(manager) = COLONY_MANAGER.get() {
+        return Ok(manager.clone());
+    }
+
+    // Get initialization parameters
+    let (network_choice, private_key_hex) = COLONY_INIT_PARAMS.get()
+        .ok_or_else(|| DaemonError::ColonyError("Colony initialization parameters not set".to_string()))?
+        .clone();
+
+    // Get wallet from MutAnt
+    let wallet = mutant.get_wallet().await
+        .map_err(|e| DaemonError::ColonyError(format!("Failed to get wallet: {}", e)))?;
+
+    // Initialize with progress events
+    init_colony_manager_with_progress(wallet, network_choice, private_key_hex, update_tx).await?;
+
+    // Return the initialized manager
+    COLONY_MANAGER.get()
+        .ok_or_else(|| DaemonError::ColonyError("Colony manager initialization failed".to_string()))
+        .map(|manager| manager.clone())
+}
+
 /// Get the global colony manager instance
 pub async fn get_colony_manager() -> Result<Arc<ColonyManager>, DaemonError> {
     COLONY_MANAGER.get()
@@ -114,6 +154,7 @@ pub async fn handle_search(
     req: SearchRequest,
     update_tx: UpdateSender,
     _original_request_str: &str,
+    mutant: Arc<mutant_lib::MutAnt>,
 ) -> Result<(), DaemonError> {
     log::debug!("Handling search request: {:?}", req);
 
@@ -128,7 +169,7 @@ pub async fn handle_search(
         query_type: query_type.clone()
     }, None);
 
-    let colony_manager = get_colony_manager().await?;
+    let colony_manager = ensure_colony_manager_with_progress(mutant, update_tx.clone()).await?;
 
     match colony_manager.search(req.query).await {
         Ok(results) => {
@@ -187,6 +228,7 @@ pub async fn handle_index_content(
     req: IndexContentRequest,
     update_tx: UpdateSender,
     _original_request_str: &str,
+    mutant: Arc<mutant_lib::MutAnt>,
 ) -> Result<(), DaemonError> {
     log::debug!("Handling index content request: key={}, public_address={:?}",
                req.user_key, req.public_address);
@@ -196,7 +238,7 @@ pub async fn handle_index_content(
         user_key: req.user_key.clone()
     }, None);
 
-    let colony_manager = get_colony_manager().await?;
+    let colony_manager = ensure_colony_manager_with_progress(mutant, update_tx.clone()).await?;
 
     match colony_manager.index_content(&req.user_key, req.metadata, req.public_address).await {
         Ok((success, pod_address)) => {
@@ -243,16 +285,17 @@ pub async fn handle_index_content(
 }
 
 /// Handle metadata retrieval requests
-/// 
+///
 /// Retrieves RDF metadata for a specific Autonomi address from the local graph database.
 pub async fn handle_get_metadata(
     req: GetMetadataRequest,
     update_tx: UpdateSender,
     _original_request_str: &str,
+    mutant: Arc<mutant_lib::MutAnt>,
 ) -> Result<(), DaemonError> {
     log::debug!("Handling get metadata request: address={}", req.address);
-    
-    let colony_manager = get_colony_manager().await?;
+
+    let colony_manager = ensure_colony_manager_with_progress(mutant, update_tx.clone()).await?;
     
     match colony_manager.get_metadata(&req.address).await {
         Ok(metadata) => {
@@ -289,6 +332,7 @@ pub async fn handle_add_contact(
     req: AddContactRequest,
     update_tx: UpdateSender,
     _original_request_str: &str,
+    mutant: Arc<mutant_lib::MutAnt>,
 ) -> Result<(), DaemonError> {
     log::debug!("Handling add contact request: pod_address={}, name={:?}",
                req.pod_address, req.contact_name);
@@ -298,7 +342,7 @@ pub async fn handle_add_contact(
         pod_address: req.pod_address.clone()
     }, None);
 
-    let colony_manager = get_colony_manager().await?;
+    let colony_manager = ensure_colony_manager_with_progress(mutant, update_tx.clone()).await?;
 
     // Send progress event: verifying contact pod
     send_colony_progress(&update_tx, ColonyEvent::ContactVerificationStarted {
@@ -354,10 +398,11 @@ pub async fn handle_list_content(
     _req: ListContentRequest,
     update_tx: UpdateSender,
     _original_request_str: &str,
+    mutant: Arc<mutant_lib::MutAnt>,
 ) -> Result<(), DaemonError> {
     log::debug!("Handling list content request");
 
-    let colony_manager = get_colony_manager().await?;
+    let colony_manager = ensure_colony_manager_with_progress(mutant, update_tx.clone()).await?;
 
     match colony_manager.list_all_content().await {
         Ok(content) => {
@@ -394,10 +439,11 @@ pub async fn handle_sync_contacts(
     _req: SyncContactsRequest,
     update_tx: UpdateSender,
     _original_request_str: &str,
+    mutant: Arc<mutant_lib::MutAnt>,
 ) -> Result<(), DaemonError> {
     log::debug!("Handling sync contacts request");
 
-    let colony_manager = get_colony_manager().await?;
+    let colony_manager = ensure_colony_manager_with_progress(mutant, update_tx.clone()).await?;
 
     // Get contacts count first for progress tracking
     let contacts = match colony_manager.get_contacts().await {
@@ -473,10 +519,11 @@ pub async fn handle_get_user_contact(
     _req: GetUserContactRequest,
     update_tx: UpdateSender,
     _original_request_str: &str,
+    mutant: Arc<mutant_lib::MutAnt>,
 ) -> Result<(), DaemonError> {
     log::debug!("Handling get user contact request");
 
-    let colony_manager = get_colony_manager().await?;
+    let colony_manager = ensure_colony_manager_with_progress(mutant, update_tx.clone()).await?;
 
     match colony_manager.get_user_contact_info().await {
         Ok((contact_address, contact_type, display_name)) => {
@@ -517,10 +564,11 @@ pub async fn handle_list_contacts(
     _req: ListContactsRequest,
     update_tx: UpdateSender,
     _original_request_str: &str,
+    mutant: Arc<mutant_lib::MutAnt>,
 ) -> Result<(), DaemonError> {
     log::debug!("Handling list contacts request");
 
-    let colony_manager = get_colony_manager().await?;
+    let colony_manager = ensure_colony_manager_with_progress(mutant, update_tx.clone()).await?;
 
     match colony_manager.get_contacts().await {
         Ok(contacts) => {
