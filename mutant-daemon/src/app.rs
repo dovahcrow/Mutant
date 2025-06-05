@@ -1,7 +1,7 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use xdg::BaseDirectories;
 
-use mutant_lib::{config::NetworkChoice, MutAnt};
+use mutant_lib::{config::{NetworkChoice, DEV_TESTNET_PRIVATE_KEY_HEX}, MutAnt};
 use tokio::sync::{RwLock, OnceCell};
 use warp::Filter;
 
@@ -18,30 +18,37 @@ pub static PUBLIC_ONLY_MODE: OnceCell<bool> = OnceCell::const_new();
 
 /// Helper function to initialize MutAnt based on network choice and private key
 /// Returns (MutAnt instance, is_public_only, actual_private_key_used)
-async fn init_mutant(network_choice: NetworkChoice, private_key: Option<String>) -> Result<(MutAnt, bool, Option<String>), Error> {
+async fn init_mutant(network_choice: NetworkChoice, private_key: Option<String>, random_testnet_key: bool) -> Result<(MutAnt, bool, Option<String>), Error> {
     let mut is_public_only = private_key.is_none();
     let mut actual_private_key = private_key.clone();
 
     let mutant = match (network_choice, private_key) {
         // Full access with private key
         (NetworkChoice::Devnet, _) => {
-            log::info!("Running in testnet mode - generating new random wallet");
             is_public_only = false;
 
-            // Use the new testnet mode that generates a valid wallet and transfers funds
-            match MutAnt::init_testnet().await {
-                Ok((mutant, public_address, new_private_key)) => {
-                    log::info!("🔑 NEW TESTNET WALLET CREATED");
-                    log::info!("📍 Public Address: {}", public_address);
-                    log::info!("💰 Transferred funds to new wallet");
-                    log::info!("🚀 Using new wallet for all operations");
-                    actual_private_key = Some(new_private_key);
-                    Ok(mutant)
+            if random_testnet_key {
+                log::info!("Running in testnet mode - generating new random wallet");
+                // Use the new testnet mode that generates a valid wallet and transfers funds
+                match MutAnt::init_testnet().await {
+                    Ok((mutant, public_address, new_private_key)) => {
+                        log::info!("🔑 NEW TESTNET WALLET CREATED");
+                        log::info!("📍 Public Address: {}", public_address);
+                        log::info!("💰 Transferred funds to new wallet");
+                        log::info!("🚀 Using new wallet for all operations");
+                        actual_private_key = Some(new_private_key);
+                        Ok(mutant)
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to create testnet wallet: {}. Falling back to master key.", e);
+                        MutAnt::init_local().await
+                    }
                 }
-                Err(e) => {
-                    log::warn!("Failed to create testnet wallet: {}. Falling back to master key.", e);
-                    MutAnt::init_local().await
-                }
+            } else {
+                log::info!("Running in testnet mode - using testnet master key");
+                // Set the actual private key to the testnet master key for colony manager
+                actual_private_key = Some(DEV_TESTNET_PRIVATE_KEY_HEX.to_string());
+                MutAnt::init_local().await
             }
         }
         (NetworkChoice::Alphanet, Some(key)) => {
@@ -155,6 +162,7 @@ pub struct AppOptions {
     pub ignore_ctrl_c: bool,
     pub bind_address: String,
     pub lock_file_path: String,
+    pub random_testnet_key: bool,
 }
 
 pub async fn run(options: AppOptions) -> Result<(), Error> {
@@ -220,7 +228,7 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     };
 
     // Initialize MutAnt with the appropriate mode
-    let (mutant, is_public_only, actual_private_key) = init_mutant(network_choice, private_key.clone()).await?;
+    let (mutant, is_public_only, actual_private_key) = init_mutant(network_choice, private_key.clone(), options.random_testnet_key).await?;
     let mutant = Arc::new(mutant);
 
     // Set the public-only mode flag
