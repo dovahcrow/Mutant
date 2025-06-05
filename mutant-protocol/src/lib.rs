@@ -438,6 +438,7 @@ pub enum Request {
     ListContent(ListContentRequest),
     SyncContacts(SyncContactsRequest),
     GetUserContact(GetUserContactRequest),
+    ListContacts(ListContactsRequest),
 }
 
 // --- Outgoing Responses ---
@@ -708,6 +709,16 @@ pub struct GetUserContactResponse {
     pub display_name: Option<String>,
 }
 
+/// Request to list all contacts
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListContactsRequest;
+
+/// Response containing list of contacts
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListContactsResponse {
+    pub contacts: Vec<String>, // List of pod addresses
+}
+
 /// Response containing a chunk of data from a get operation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetDataResponse {
@@ -771,6 +782,7 @@ pub enum Response {
     ListContent(ListContentResponse),
     SyncContacts(SyncContactsResponse),
     GetUserContact(GetUserContactResponse),
+    ListContacts(ListContactsResponse),
 }
 
 // Helper moved to where Response is used (client/server)

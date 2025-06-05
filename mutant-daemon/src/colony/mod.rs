@@ -532,6 +532,39 @@ impl ColonyManager {
         Ok((pod_address, contact_type, display_name))
     }
 
+    /// Get the list of contacts (pod references) for this user
+    pub async fn get_contacts(&self) -> Result<Vec<String>, DaemonError> {
+        if !self.initialized {
+            return Err(DaemonError::ColonyError("Colony manager not initialized".to_string()));
+        }
+
+        log::debug!("Getting contacts list");
+
+        // Initialize client for pod operations
+        let client = self.get_client().await?;
+
+        // Get locks and hold them for the duration of the operation
+        let mut data_store = self.data_store.write().await;
+        let mut key_store = self.key_store.write().await;
+        let mut graph = self.graph.write().await;
+
+        let mut pod_manager = PodManager::new(
+            client,
+            &self.wallet,
+            &mut *data_store,
+            &mut *key_store,
+            &mut *graph,
+        ).await
+        .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod manager: {}", e)))?;
+
+        // Get all pod pointers (contacts) from the key store
+        let pointers = pod_manager.key_store.get_pointers();
+        let contacts: Vec<String> = pointers.keys().cloned().collect();
+
+        log::debug!("Found {} contacts: {:?}", contacts.len(), contacts);
+        Ok(contacts)
+    }
+
     /// Refresh the local cache from the network
     /// 
     /// This downloads new pods and updates the local graph database.

@@ -12,7 +12,7 @@ use super::import_export::{handle_export, handle_import};
 use super::metadata::{handle_list_keys, handle_stats, handle_wallet_balance, handle_daemon_status};
 use super::system_operations::{handle_health_check, handle_purge, handle_sync};
 use super::task_management::{handle_list_tasks, handle_query_task, handle_stop_task};
-use super::colony::{handle_search, handle_index_content, handle_get_metadata, handle_add_contact, handle_list_content, handle_sync_contacts, handle_get_user_contact};
+use super::colony::{handle_search, handle_index_content, handle_get_metadata, handle_add_contact, handle_list_content, handle_sync_contacts, handle_get_user_contact, handle_list_contacts};
 
 pub(crate) async fn handle_request(
     request: Request,
@@ -69,6 +69,9 @@ pub(crate) async fn handle_request(
         }
         Request::GetUserContact(get_user_contact_req) => {
             handle_get_user_contact(get_user_contact_req, update_tx, original_request_str).await?
+        }
+        Request::ListContacts(list_contacts_req) => {
+            handle_list_contacts(list_contacts_req, update_tx, original_request_str).await?
         }
     }
     Ok(())

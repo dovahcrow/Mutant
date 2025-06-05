@@ -8,7 +8,8 @@ use mutant_protocol::{
     ErrorResponse, Response, SearchRequest, SearchResponse, IndexContentRequest,
     IndexContentResponse, GetMetadataRequest, GetMetadataResponse, AddContactRequest,
     AddContactResponse, ListContentRequest, ListContentResponse, SyncContactsRequest,
-    SyncContactsResponse, GetUserContactRequest, GetUserContactResponse
+    SyncContactsResponse, GetUserContactRequest, GetUserContactResponse, ListContactsRequest,
+    ListContactsResponse
 };
 
 use super::common::UpdateSender;
@@ -314,6 +315,46 @@ pub async fn handle_get_user_contact(
             log::error!("Get user contact request failed: {}", e);
             let error_response = Response::Error(ErrorResponse {
                 error: format!("Get user contact failed: {}", e),
+                original_request: Some(_original_request_str.to_string()),
+            });
+
+            if let Err(send_err) = update_tx.send(error_response) {
+                log::error!("Failed to send error response: {}", send_err);
+            }
+
+            Err(e)
+        }
+    }
+}
+
+/// Handle list contacts requests
+///
+/// Returns the list of contacts (pod addresses) that the user has added.
+pub async fn handle_list_contacts(
+    _req: ListContactsRequest,
+    update_tx: UpdateSender,
+    _original_request_str: &str,
+) -> Result<(), DaemonError> {
+    log::debug!("Handling list contacts request");
+
+    let colony_manager = get_colony_manager().await?;
+
+    match colony_manager.get_contacts().await {
+        Ok(contacts) => {
+            let response = Response::ListContacts(ListContactsResponse { contacts });
+
+            if let Err(e) = update_tx.send(response) {
+                log::error!("Failed to send list contacts response: {}", e);
+                return Err(DaemonError::Internal(format!("Failed to send list contacts response: {}", e)));
+            }
+
+            log::debug!("List contacts request completed successfully");
+            Ok(())
+        }
+        Err(e) => {
+            log::error!("List contacts request failed: {}", e);
+            let error_response = Response::Error(ErrorResponse {
+                error: format!("List contacts failed: {}", e),
                 original_request: Some(_original_request_str.to_string()),
             });
 

@@ -5,7 +5,7 @@ use mutant_protocol::{
     TaskResult, TaskResultResponse, TaskStatus, TaskStoppedResponse, TaskType,
     TaskUpdateResponse, WalletBalanceResponse, DaemonStatusResponse,
     // Colony integration responses
-    SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse, GetUserContactResponse,
+    SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse, GetUserContactResponse, ListContactsResponse,
 };
 
 use crate::{
@@ -286,6 +286,11 @@ impl MutantClient {
                 {
                     error!("Error occurred during get user contact request: {}", error);
                     let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(PendingSender::ListContacts(sender)) =
+                    requests.remove(&PendingRequestKey::ListContacts)
+                {
+                    error!("Error occurred during list contacts request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
                 } else {
                     warn!("Received server error, but no matching pending request found.");
                 }
@@ -489,6 +494,19 @@ impl MutantClient {
                     }
                 } else {
                     warn!("Received GetUserContact response but no GetUserContact request was pending");
+                }
+            }
+            Response::ListContacts(list_contacts_response) => {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::ListContacts);
+                if let Some(PendingSender::ListContacts(sender)) = pending_sender {
+                    if sender.send(Ok(list_contacts_response)).is_err() {
+                        warn!("Failed to send ListContacts response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received ListContacts response but no ListContacts request was pending");
                 }
             }
             // Other colony responses that don't have direct client methods yet

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 lazy_static::lazy_static! {
     static ref USER_CONTACT_RESPONSES: Arc<Mutex<HashMap<String, UserContactInfo>>> = Arc::new(Mutex::new(HashMap::new()));
     static ref CONTENT_LIST_RESPONSES: Arc<Mutex<HashMap<String, Vec<ContentItem>>>> = Arc::new(Mutex::new(HashMap::new()));
+    static ref CONTACT_LIST_RESPONSES: Arc<Mutex<HashMap<String, Vec<String>>>> = Arc::new(Mutex::new(HashMap::new()));
 }
 
 /// The Colony window for managing contacts and discovering content
@@ -41,6 +42,12 @@ pub struct ColonyWindow {
     /// Flag to trigger content list reload
     #[serde(skip)]
     should_load_content: bool,
+    /// Contact list loading state
+    #[serde(skip)]
+    is_loading_contacts: bool,
+    /// Flag to trigger contact list reload
+    #[serde(skip)]
+    should_load_contacts: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -83,6 +90,8 @@ impl Default for ColonyWindow {
             should_load_contact_info: true,
             is_loading_content: false,
             should_load_content: true,
+            is_loading_contacts: false,
+            should_load_contacts: true,
         }
     }
 }
@@ -103,6 +112,12 @@ impl Window for ColonyWindow {
         if self.should_load_content && !self.is_loading_content {
             self.load_content_list();
             self.should_load_content = false;
+        }
+
+        // Auto-load contacts on first draw if not already loaded/loading
+        if self.should_load_contacts && !self.is_loading_contacts {
+            self.load_contacts();
+            self.should_load_contacts = false;
         }
 
         // Check for completed user contact info response
@@ -144,6 +159,34 @@ impl Window for ColonyWindow {
                     drop(responses);
                     if let Ok(mut responses) = CONTENT_LIST_RESPONSES.lock() {
                         responses.remove("content_list_error");
+                    }
+                }
+            }
+        }
+
+        // Check for completed contact list response
+        if self.is_loading_contacts {
+            if let Ok(responses) = CONTACT_LIST_RESPONSES.lock() {
+                if let Some(contact_addresses) = responses.get("contact_list") {
+                    // Convert contact addresses to Contact structs
+                    self.contacts = contact_addresses.iter().map(|address| Contact {
+                        pod_address: address.clone(),
+                        name: None, // We don't have names from the daemon yet
+                        last_synced: None, // No sync info from daemon yet
+                    }).collect();
+                    self.is_loading_contacts = false;
+                    log::info!("Loaded {} contacts from daemon", self.contacts.len());
+                    // Remove the response from the global state
+                    drop(responses);
+                    if let Ok(mut responses) = CONTACT_LIST_RESPONSES.lock() {
+                        responses.remove("contact_list");
+                    }
+                } else if responses.contains_key("contact_list_error") {
+                    // Handle error case
+                    self.is_loading_contacts = false;
+                    drop(responses);
+                    if let Ok(mut responses) = CONTACT_LIST_RESPONSES.lock() {
+                        responses.remove("contact_list_error");
                     }
                 }
             }
@@ -806,6 +849,36 @@ impl ColonyWindow {
             // Fallback to showing the raw string if parsing fails
             date_str.to_string()
         }
+    }
+
+    /// Load contacts from the daemon
+    fn load_contacts(&mut self) {
+        if self.is_loading_contacts {
+            return;
+        }
+
+        self.is_loading_contacts = true;
+
+        let ctx = context();
+        wasm_bindgen_futures::spawn_local(async move {
+            match ctx.list_contacts().await {
+                Ok(response) => {
+                    log::info!("Contacts loaded successfully: {} contacts", response.contacts.len());
+
+                    // Store the contacts in global state for the UI to pick up
+                    if let Ok(mut responses) = CONTACT_LIST_RESPONSES.lock() {
+                        responses.insert("contact_list".to_string(), response.contacts);
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to load contacts: {:?}", e);
+                    // Store error state
+                    if let Ok(mut responses) = CONTACT_LIST_RESPONSES.lock() {
+                        responses.insert("contact_list_error".to_string(), Vec::new());
+                    }
+                }
+            }
+        });
     }
 
     /// Load the user's own contact information

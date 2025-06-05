@@ -2,7 +2,7 @@ use std::{collections::{BTreeMap, HashMap}, sync::{Arc, Mutex, RwLock}};
 
 use lazy_static::lazy_static;
 use log::error;
-use mutant_protocol::{KeyDetails, StatsResponse, StorageMode, TaskListEntry, TaskId, TaskProgress, SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse, GetUserContactResponse};
+use mutant_protocol::{KeyDetails, StatsResponse, StorageMode, TaskListEntry, TaskId, TaskProgress, SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse, GetUserContactResponse, ListContactsResponse};
 use tokio::sync::mpsc;
 
 
@@ -636,6 +636,10 @@ impl Context {
     /// Get the user's own contact information that can be shared with friends
     pub async fn get_user_contact(&self) -> Result<GetUserContactResponse, String> {
         client_manager::get_user_contact().await
+    }
+
+    pub async fn list_contacts(&self) -> Result<ListContactsResponse, String> {
+        client_manager::list_contacts().await
     }
 
     /// Remove a key from the daemon

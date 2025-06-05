@@ -17,6 +17,7 @@ use mutant_protocol::{
     WalletBalanceRequest, WalletBalanceResponse, DaemonStatusRequest, DaemonStatusResponse,
     // Colony integration types
     SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse, GetUserContactResponse, GetUserContactRequest,
+    ListContactsResponse, ListContactsRequest,
 };
 
 pub mod error;
@@ -53,6 +54,7 @@ pub enum PendingRequestKey {
     ListContent,
     SyncContacts,
     GetUserContact,
+    ListContacts,
 }
 
 // Enum to hold the different sender types for the pending requests map
@@ -82,6 +84,7 @@ pub enum PendingSender {
     ListContent(oneshot::Sender<Result<ListContentResponse, ClientError>>),
     SyncContacts(oneshot::Sender<Result<SyncContactsResponse, ClientError>>),
     GetUserContact(oneshot::Sender<Result<GetUserContactResponse, ClientError>>),
+    ListContacts(oneshot::Sender<Result<ListContactsResponse, ClientError>>),
 }
 
 // The new map type for pending requests
@@ -609,6 +612,11 @@ impl MutantClient {
     /// Get the user's own contact information that can be shared with friends
     pub async fn get_user_contact(&mut self) -> Result<GetUserContactResponse, ClientError> {
         direct_request!(self, GetUserContact, GetUserContactRequest)
+    }
+
+    /// List all contacts (pod addresses) that have been added
+    pub async fn list_contacts(&mut self) -> Result<ListContactsResponse, ClientError> {
+        direct_request!(self, ListContacts, ListContactsRequest)
     }
 
     pub async fn import(&mut self, file_path: &str) -> Result<ImportResult, ClientError> {
