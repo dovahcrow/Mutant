@@ -525,7 +525,14 @@ impl ColonyWindow {
             match ctx.search(query).await {
                 Ok(response) => {
                     log::info!("Search completed: {:?}", response.results);
-                    // TODO: Parse results and update content list
+
+                    // Parse the SPARQL results into ContentItem structures
+                    let content_items = Self::parse_content_response(response.results);
+
+                    // Store the response in global state for the UI to pick up
+                    if let Ok(mut responses) = CONTENT_LIST_RESPONSES.lock() {
+                        responses.insert("content_list".to_string(), content_items);
+                    }
                 }
                 Err(e) => {
                     log::error!("Search failed: {:?}", e);
@@ -622,6 +629,30 @@ impl ColonyWindow {
         let mut content_items = Vec::new();
 
         for (subject_uri, properties) in subjects {
+            // Filter out non-file entries by checking for required Schema.org file properties
+            // A valid file entry should have at least a name and contentSize
+            let has_name = properties.contains_key("http://schema.org/name") || properties.contains_key("schema:name");
+            let has_content_size = properties.contains_key("http://schema.org/contentSize") || properties.contains_key("schema:contentSize");
+
+            // Skip entries that don't look like actual files
+            if !has_name || !has_content_size {
+                log::debug!("Skipping non-file subject: {} (has_name: {}, has_content_size: {})",
+                           subject_uri, has_name, has_content_size);
+                continue;
+            }
+
+            // Additional filter: skip subjects that contain colony-specific metadata predicates
+            let has_colony_metadata = properties.keys().any(|key| {
+                key.contains("colonylib/vocabulary") ||
+                key.contains("pod_index") ||
+                key == "ant://colonylib/vocabulary/0.1/predicate#date"
+            });
+
+            if has_colony_metadata {
+                log::debug!("Skipping colony metadata subject: {}", subject_uri);
+                continue;
+            }
+
             // Extract the address from the subject URI or url property
             let address = properties.get("http://schema.org/url")
                 .or_else(|| properties.get("schema:url"))

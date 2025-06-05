@@ -442,7 +442,7 @@ impl ColonyManager {
         log::debug!("Added pod reference: {} to our pod: {} at depth 1", pod_address, self.pod_public_address);
 
         // Now download and sync the contact's pod using refresh_ref
-        pod_manager.refresh_ref(1).await
+        pod_manager.refresh_ref(10).await
             .map_err(|e| DaemonError::ColonyError(format!("Failed to sync contact pod: {}", e)))?;
 
         pod_manager.upload_all().await
@@ -460,8 +460,8 @@ impl ColonyManager {
 
         log::debug!("Listing all content from synced pods");
 
-        // Use a broad text search to get all content
-        // Since we want all content, we'll search for a very common term or use an empty search
+        // Use a broad text search to get all content, then filter in the parsing stage
+        // Since ColonyLib doesn't support custom SPARQL queries, we'll use text search
         let search_query = serde_json::json!({
             "type": "text",
             "text": "",
@@ -497,7 +497,7 @@ impl ColonyManager {
         .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod manager: {}", e)))?;
 
         // Refresh cache to get latest data from all known pods
-        pod_manager.refresh_cache().await
+        pod_manager.refresh_ref(10).await
             .map_err(|e| DaemonError::ColonyError(format!("Failed to refresh cache: {}", e)))?;
 
         // Get count of synced pods from key store
