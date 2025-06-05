@@ -344,15 +344,19 @@ impl ColonyManager {
         }
 
         log::info!("Ensuring user pod exists: {}", self.pod_public_address);
+        log::debug!("Starting ensure_user_pod_exists method");
 
         // Initialize client for pod operations
+        log::debug!("Getting client for pod operations");
         let client = self.get_client().await?;
 
         // Get locks and hold them for the duration of the operation
+        log::debug!("Acquiring locks for data_store, key_store, and graph");
         let mut data_store = self.data_store.write().await;
         let mut key_store = self.key_store.write().await;
         let mut graph = self.graph.write().await;
 
+        log::debug!("Creating PodManager");
         let mut pod_manager = PodManager::new(
             client,
             &self.wallet,
@@ -361,6 +365,7 @@ impl ColonyManager {
             &mut *graph,
         ).await
         .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod manager: {}", e)))?;
+        log::debug!("PodManager created successfully");
 
         // First, check if pod exists locally
         log::debug!("Checking if pod exists locally: {}", self.pod_public_address);
@@ -400,8 +405,10 @@ impl ColonyManager {
         }
 
         // Sync from network to get latest pods
-        pod_manager.refresh_cache().await
+        log::debug!("Starting refresh_cache() to sync from network");
+        pod_manager.refresh_ref(10).await
             .map_err(|e| DaemonError::ColonyError(format!("Failed to refresh cache from network: {}", e)))?;
+        log::debug!("Completed refresh_cache() successfully");
 
         // Check again if pod exists locally after sync
         log::debug!("Checking if pod exists locally after sync: {}", self.pod_public_address);
