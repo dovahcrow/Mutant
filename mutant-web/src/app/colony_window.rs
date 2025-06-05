@@ -984,10 +984,22 @@ impl ColonyWindow {
     fn organize_content_by_pods(&mut self) {
         use std::collections::HashMap;
 
-        // Group content by source_contact (pod address)
+        // Get the user's own pod address to filter it out
+        let user_pod_address = self.user_contact_info.as_ref()
+            .map(|info| &info.contact_address);
+
+        // Group content by source_contact (pod address), filtering out user's own content
         let mut pod_groups: HashMap<String, Vec<ContentItem>> = HashMap::new();
 
         for content_item in &self.content_list {
+            // Skip content from the user's own pod
+            if let Some(user_pod) = user_pod_address {
+                if content_item.source_contact == *user_pod {
+                    log::debug!("Filtering out user's own content: {}", content_item.title);
+                    continue;
+                }
+            }
+
             pod_groups.entry(content_item.source_contact.clone())
                 .or_insert_with(Vec::new)
                 .push(content_item.clone());
@@ -1015,6 +1027,8 @@ impl ColonyWindow {
             a_display.cmp(b_display)
         });
 
-        log::info!("Organized {} content items into {} pods", self.content_list.len(), self.pod_content.len());
+        let filtered_count = self.content_list.len() - self.pod_content.iter().map(|p| p.content_items.len()).sum::<usize>();
+        log::info!("Organized {} content items into {} pods (filtered out {} user's own items)",
+                  self.content_list.len(), self.pod_content.len(), filtered_count);
     }
 }
