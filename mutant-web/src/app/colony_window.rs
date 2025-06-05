@@ -411,10 +411,10 @@ impl Window for ColonyWindow {
 
                                 for (_pod_index, pod_content) in self.pod_content.iter_mut().enumerate() {
                                     ui.group(|ui| {
-                                        // Compact pod header - single line
+                                        // Ultra-compact pod header - single line with small button
                                         ui.horizontal(|ui| {
                                             let expand_icon = if pod_content.is_expanded { "🔽" } else { "▶" };
-                                            if ui.button(expand_icon).clicked() {
+                                            if ui.small_button(expand_icon).clicked() {
                                                 pod_content.is_expanded = !pod_content.is_expanded;
                                             }
 
@@ -424,7 +424,7 @@ impl Window for ColonyWindow {
                                             ui.label(
                                                 egui::RichText::new(format!("📁 {}", pod_display_name))
                                                     .strong()
-                                                    .size(11.0)
+                                                    .size(10.0)
                                                     .color(super::theme::MutantColors::ACCENT_ORANGE)
                                             );
 
@@ -442,31 +442,36 @@ impl Window for ColonyWindow {
                                         if pod_content.is_expanded {
                                             ui.separator();
                                             for content in &pod_content.content_items {
-                                                // Compact single-line content item
+                                                // Compact single-line content item with colors
                                                 ui.horizontal(|ui| {
-                                                    // Title
+                                                    // Title with stronger blue
                                                     ui.label(
                                                         egui::RichText::new(&content.title)
                                                             .strong()
                                                             .size(10.0)
-                                                            .color(super::theme::MutantColors::ACCENT_BLUE)
+                                                            .color(super::theme::MutantColors::ACCENT_GREEN)
                                                     );
 
-                                                    // Metadata in compact format
-                                                    let mut metadata_parts = Vec::new();
-                                                    metadata_parts.push(content.content_type.clone());
+                                                    // // Content type with green accent
+                                                    // ui.label(
+                                                    //     egui::RichText::new(&content.content_type)
+                                                    //         .size(9.0)
+                                                    //         .color(super::theme::MutantColors::ACCENT_GREEN)
+                                                    // );
 
+                                                    // Size with orange accent if available
                                                     if let Some(size) = content.size {
-                                                        metadata_parts.push(Self::format_file_size(size));
-                                                    }
-
-                                                    if let Some(date) = &content.date_created {
-                                                        metadata_parts.push(Self::format_date(date));
-                                                    }
-
-                                                    if !metadata_parts.is_empty() {
                                                         ui.label(
-                                                            egui::RichText::new(format!("({})", metadata_parts.join(" • ")))
+                                                            egui::RichText::new(Self::format_file_size(size))
+                                                                .size(9.0)
+                                                                .color(super::theme::MutantColors::ACCENT_BLUE)
+                                                        );
+                                                    }
+
+                                                    // Date with muted color if available
+                                                    if let Some(date) = &content.date_created {
+                                                        ui.label(
+                                                            egui::RichText::new(Self::format_date(date))
                                                                 .size(9.0)
                                                                 .color(super::theme::MutantColors::TEXT_MUTED)
                                                         );
