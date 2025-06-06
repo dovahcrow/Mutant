@@ -377,7 +377,12 @@ impl FsWindow {
 
     /// Add a new Put window tab to the internal dock system
     pub fn add_put_tab(&mut self) {
-        log::info!("FsWindow: Creating new Put window tab");
+        self.add_put_tab_with_file(None);
+    }
+
+    /// Add a new Put window tab with optional pre-selected file info
+    pub fn add_put_tab_with_file(&mut self, file_info: Option<(String, u64)>) {
+        log::info!("FsWindow: Creating new Put window tab with file info: {:?}", file_info);
 
         // Check if a Put tab already exists
         let tab_exists = self.internal_dock.iter_all_tabs().any(|(_, existing_tab)| {
@@ -385,8 +390,12 @@ impl FsWindow {
         });
 
         if !tab_exists {
-            // Create a new Put window
-            let put_window = PutWindow::new();
+            // Create a new Put window with or without file info
+            let put_window = if let Some((filename, file_size)) = file_info {
+                PutWindow::new_with_file(filename, file_size)
+            } else {
+                PutWindow::new()
+            };
             let tab = crate::app::fs::internal_tab::FsInternalTab::Put(put_window);
 
             // Add to the internal dock system

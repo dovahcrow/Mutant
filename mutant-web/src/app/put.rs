@@ -24,6 +24,8 @@ pub struct PutWindow {
     #[serde(skip)] // Skip serializing file data to avoid localStorage quota issues
     file_data: Arc<RwLock<Option<Vec<u8>>>>,
 
+    // Track if file is selected but upload not started yet
+    file_selected_but_not_uploaded: Arc<RwLock<bool>>,
 
     // Key name input
     key_name: Arc<RwLock<String>>,
@@ -78,6 +80,7 @@ impl Default for PutWindow {
             selected_file: Arc::new(RwLock::new(None)),
             file_size: Arc::new(RwLock::new(None)),
             file_data: Arc::new(RwLock::new(None)),
+            file_selected_but_not_uploaded: Arc::new(RwLock::new(false)),
             key_name: Arc::new(RwLock::new(String::new())),
             public: Arc::new(RwLock::new(false)),
             storage_mode: Arc::new(RwLock::new(StorageMode::Heaviest)),
@@ -148,6 +151,8 @@ impl PutWindow {
     pub fn new() -> Self {
         Self::default()
     }
+
+
 
     fn check_progress(&self) {
         // Check if we should update the progress based on the timer
@@ -452,8 +457,22 @@ impl PutWindow {
         rx.await.map_err(|_| "Channel error".to_string())?
     }
 
-    fn start_upload(&self) {
+    // Create a new PutWindow with pre-selected file info
+    pub fn new_with_file(filename: String, file_size: u64) -> Self {
+        let mut window = Self::default();
 
+        // Set the selected file info
+        *window.selected_file.write().unwrap() = Some(filename.clone());
+        *window.file_size.write().unwrap() = Some(file_size);
+        *window.file_selected_but_not_uploaded.write().unwrap() = true;
+
+        // Pre-fill key name with full filename (including extension)
+        *window.key_name.write().unwrap() = filename;
+
+        window
+    }
+
+    fn start_upload(&self) {
         // Get upload parameters
         let key_name = self.key_name.read().unwrap().clone();
         let public = *self.public.read().unwrap();
@@ -465,9 +484,16 @@ impl PutWindow {
             return;
         }
 
+        // Check if we have a selected file
+        if !*self.file_selected_but_not_uploaded.read().unwrap() {
+            notifications::error("Please select a file first".to_string());
+            return;
+        }
+
         // Set upload state
         *self.is_uploading.write().unwrap() = true;
         *self.upload_complete.write().unwrap() = false;
+        *self.file_selected_but_not_uploaded.write().unwrap() = false;
         *self.start_time.write().unwrap() = Some(SystemTime::now());
 
         // Reset all progress
@@ -478,9 +504,7 @@ impl PutWindow {
         *self.upload_progress.write().unwrap() = 0.0;
         *self.confirmation_progress.write().unwrap() = 0.0;
 
-
-
-        // Directly trigger file selection for upload
+        // Trigger file selection for upload (since we need the actual File object)
         self.select_file_and_upload(key_name, storage_mode, public, no_verify);
     }
 
@@ -571,6 +595,7 @@ impl PutWindow {
         *self.selected_file.write().unwrap() = None;
         *self.file_size.write().unwrap() = None;
         *self.file_data.write().unwrap() = None;
+        *self.file_selected_but_not_uploaded.write().unwrap() = false;
         *self.key_name.write().unwrap() = String::new();
 
         // Reset file reading progress (Phase 1)
@@ -600,6 +625,7 @@ impl PutWindow {
         let is_uploading = *self.is_uploading.read().unwrap();
         let upload_complete = *self.upload_complete.read().unwrap();
         let is_reading_file = *self.is_reading_file.read().unwrap();
+        let file_selected_but_not_uploaded = *self.file_selected_but_not_uploaded.read().unwrap();
 
         // Check if we're in any kind of processing state
         let is_processing = is_uploading || is_reading_file;
@@ -621,11 +647,16 @@ impl PutWindow {
 
             ui.add_space(10.0);
 
-            // Show selected file info if any (from previous upload)
+            // Show selected file info if any
             if let Some(filename) = &*self.selected_file.read().unwrap() {
                 ui.group(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(RichText::new("Last Selected File:").color(MutantColors::TEXT_SECONDARY));
+                        let label_text = if file_selected_but_not_uploaded {
+                            "Selected File:"
+                        } else {
+                            "Last Selected File:"
+                        };
+                        ui.label(RichText::new(label_text).color(MutantColors::TEXT_SECONDARY));
                         ui.label(RichText::new(filename).color(MutantColors::ACCENT_BLUE));
 
                         if let Some(size) = *self.file_size.read().unwrap() {
@@ -672,20 +703,26 @@ impl PutWindow {
 
             ui.add_space(10.0);
 
-            // Upload button - now triggers file selection and upload
-            let can_upload = !self.key_name.read().unwrap().is_empty();
-
+            // Upload button section - different behavior based on file selection state
             ui.add_space(15.0);
             ui.horizontal(|ui| {
-                if ui.add_enabled(can_upload, primary_button("📁 Select File and Upload")).clicked() {
-                    self.start_upload();
+                if file_selected_but_not_uploaded {
+                    // File is selected, show "Start Upload" button
+                    let can_upload = !self.key_name.read().unwrap().is_empty();
+                    if ui.add_enabled(can_upload, primary_button("� Start Upload")).clicked() {
+                        self.start_upload();
+                    }
+
+                    if !can_upload {
+                        ui.add_space(5.0);
+                        ui.label(RichText::new("⚠ Please enter a key name").color(MutantColors::WARNING));
+                    }
+                } else {
+                    // No file selected, this shouldn't happen in the new flow
+                    // But we'll keep it as fallback
+                    ui.label(RichText::new("Please select a file from the upload menu").color(MutantColors::TEXT_MUTED));
                 }
             });
-
-            if !can_upload {
-                ui.add_space(5.0);
-                ui.label(RichText::new("⚠ Please enter a key name").color(MutantColors::WARNING));
-            }
 
             // Show error message if any
             if let Some(error) = &*self.error_message.read().unwrap() {
