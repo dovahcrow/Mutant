@@ -767,12 +767,10 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
 
                         // Use the file path put method
                         match put_client.put(&key, &file_path, mode, public, no_verify).await {
-                            Ok((_task_future, _progress_rx, _data_stream)) => {
-                                // Generate a unique put ID for tracking
-                                let put_id = format!("put_{}_{}", key, uuid::Uuid::new_v4());
-
+                            Ok((task_id, _task_future, _progress_rx, _data_stream)) => {
+                                // Now we have the real task ID from the daemon!
                                 if !sender.is_canceled() {
-                                    let _ = sender.send(Ok(put_id));
+                                    let _ = sender.send(Ok(task_id.to_string()));
                                 }
                             }
                             Err(e) => {

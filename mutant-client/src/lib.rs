@@ -295,8 +295,8 @@ impl MutantClient {
     // --- Public API Methods ---
     // A simple request/response map or channels might be needed.
 
-    pub async fn put<'a>(
-        &'a mut self,
+    pub async fn put(
+        &mut self,
         user_key: &str,
         source_path: &str,
         mode: StorageMode,
@@ -304,27 +304,93 @@ impl MutantClient {
         no_verify: bool,
     ) -> Result<
         (
-            impl Future<Output = Result<TaskResult, ClientError>> + 'a,
+            TaskId, // Direct TaskId
+            impl Future<Output = Result<TaskResult, ClientError>> + '_, // Future for overall task completion
             ProgressReceiver,
             Option<DataStreamReceiver>,
         ),
         ClientError,
     > {
-        long_request!(
-            self,
-            Put,
-            PutRequest {
-                user_key: user_key.to_string(),
-                source: PutSource::FilePath(source_path.to_string()),
-                filename: Some(std::path::Path::new(source_path)
-                    .file_name()
-                    .map(|f| f.to_string_lossy().to_string())
-                    .unwrap_or_else(|| source_path.to_string())),
-                mode,
-                public,
-                no_verify,
+        // Check connection state
+        let connection_state = self.state.lock().unwrap().clone();
+
+        if connection_state != ConnectionState::Connected {
+            error!("CLIENT: Cannot send put request - not connected (state: {:?})", connection_state);
+            return Err(ClientError::NotConnected);
+        }
+
+        // Create the request
+        let key = PendingRequestKey::TaskCreation;
+        let req = Request::Put(PutRequest {
+            user_key: user_key.to_string(),
+            source: PutSource::FilePath(source_path.to_string()),
+            filename: Some(std::path::Path::new(source_path)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| source_path.to_string())),
+            mode,
+            public,
+            no_verify,
+        });
+
+        // Check if there's already a pending request
+        let pending_key_exists = self.pending_requests.lock().unwrap().contains_key(&key);
+        if pending_key_exists {
+            error!("CLIENT: Another put/get request is already pending");
+            return Err(ClientError::InternalError(
+                "Another put/get request is already pending".to_string(),
+            ));
+        }
+
+        let (completion_tx, completion_rx) = oneshot::channel();
+        let (progress_tx, progress_rx) = mpsc::unbounded_channel();
+
+        let (task_creation_tx, task_creation_rx) = oneshot::channel();
+        self.pending_requests.lock().unwrap().insert(
+            key.clone(),
+            PendingSender::TaskCreation(
+                task_creation_tx,
+                (completion_tx, progress_tx, None),
+                TaskType::Put,
+            ),
+        );
+
+        // Send the request
+        if let Err(e) = self.send_request(req).await {
+            error!("CLIENT: Failed to send Put request: {:?}", e);
+            // Remove the pending request if sending failed
+            self.pending_requests.lock().unwrap().remove(&key);
+            return Err(e);
+        }
+
+        // Await the TaskId from the response handler
+        let task_id = match task_creation_rx.await {
+            Ok(Ok(id)) => {
+                id
             }
-        )
+            Ok(Err(e)) => {
+                error!("CLIENT: Failed to create task (error from oneshot): {:?}", e);
+                return Err(e);
+            }
+            Err(e) => { // oneshot::Canceled
+                error!("CLIENT: TaskCreated channel canceled while awaiting TaskId: {:?}", e);
+                return Err(ClientError::InternalError(format!("TaskCreated channel canceled: {:?}", e)));
+            }
+        };
+
+        // Define the overall completion future
+        let overall_completion_future = async move {
+            match completion_rx.await {
+                Ok(result) => {
+                    result
+                },
+                Err(e) => { // oneshot::Canceled
+                    error!("CLIENT: Completion channel canceled for task {}: {:?}", task_id, e);
+                    Err(ClientError::InternalError(format!("Completion channel canceled for task {}: {:?}", task_id, e)))
+                }
+            }
+        };
+        Ok((task_id, overall_completion_future, progress_rx, None))
     }
 
     /// Put operation with direct byte data instead of a file path

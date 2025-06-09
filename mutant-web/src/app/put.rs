@@ -128,7 +128,7 @@ impl Window for PutWindow {
         self.draw_upload_form(ui);
 
         // Request a repaint to ensure we update frequently
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
+        ui.ctx().request_repaint_after(Duration::from_millis(16));
     }
 }
 
@@ -604,7 +604,18 @@ impl PutWindow {
                     spawn_local(async move {
                         // Monitor progress updates
                         loop {
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            // WASM-compatible sleep using setTimeout
+                            {
+                                use wasm_bindgen_futures::JsFuture;
+                                use js_sys;
+                                let promise = js_sys::Promise::new(&mut |resolve, _| {
+                                    web_sys::window()
+                                        .unwrap()
+                                        .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 100)
+                                        .unwrap();
+                                });
+                                let _ = JsFuture::from(promise).await;
+                            }
 
                             let progress_data = progress_clone.read().unwrap();
                             let mut has_progress = false;
