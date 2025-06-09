@@ -977,48 +977,7 @@ impl Default for MyApp {
 }
 
 impl MyApp {
-    fn trigger_file_selection_for_upload(&self) {
-        use wasm_bindgen::JsCast;
-        use wasm_bindgen::closure::Closure;
-        use web_sys::Event;
 
-        // Create file input element
-        let document = web_sys::window().unwrap().document().unwrap();
-        let input = document
-            .create_element("input")
-            .unwrap()
-            .dyn_into::<web_sys::HtmlInputElement>()
-            .unwrap();
-
-        input.set_type("file");
-        input.set_accept("*/*");
-
-        // Clone the fs_window reference for the closure
-        let fs_window = self.fs_window.clone();
-        let input_clone = input.clone();
-
-        let onchange = Closure::once(move |_event: Event| {
-            if let Some(files) = input_clone.files() {
-                if files.length() > 0 {
-                    if let Some(file) = files.get(0) {
-                        let file_name = file.name();
-                        let file_size_js = file.size();
-
-                        // Create the put window with the selected file info (keeping full filename with extension)
-                        fs_window.write().unwrap().add_put_tab_with_file(Some((file_name.clone(), file_size_js as u64)));
-
-                        app::notifications::info(format!("File selected: {}. Upload window opened.", file_name));
-                    }
-                }
-            }
-        });
-
-        input.set_onchange(Some(onchange.as_ref().unchecked_ref()));
-        onchange.forget();
-
-        // Trigger file picker
-        input.click();
-    }
 
     /// Draw the header bar at the top of the screen
     fn draw_header(&mut self, ctx: &egui::Context) {
@@ -1278,7 +1237,8 @@ impl MyApp {
                     };
 
                     if menu_button(ui, "📤", "Upload", "Upload", upload_open).clicked() {
-                        self.trigger_file_selection_for_upload();
+                        // Directly open the PutWindow with the new file picker flow
+                        self.fs_window.write().unwrap().add_put_tab();
                     }
 
                     if menu_button(ui, "📊", "Stats", "Stats", stats_open).clicked() {

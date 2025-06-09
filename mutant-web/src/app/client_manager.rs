@@ -57,6 +57,11 @@ enum ClientCommand {
     SyncContacts(oneshot::Sender<Result<SyncContactsResponse, String>>),
     GetUserContact(oneshot::Sender<Result<GetUserContactResponse, String>>),
     ListContacts(oneshot::Sender<Result<ListContactsResponse, String>>),
+    // Filesystem navigation
+    ListDirectory(String, oneshot::Sender<Result<mutant_protocol::ListDirectoryResponse, String>>),
+    GetFileInfo(String, oneshot::Sender<Result<mutant_protocol::GetFileInfoResponse, String>>),
+    // File path upload
+    PutFilePath(String, String, mutant_protocol::StorageMode, bool, bool, oneshot::Sender<Result<String, String>>),
 }
 
 // Singleton channel to the client manager
@@ -684,6 +689,106 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                         }
                     }
                 }
+                // Filesystem navigation command handlers
+                ClientCommand::ListDirectory(path, sender) => {
+                    if let Err(e) = ensure_connected(&mut client, &mut connected).await {
+                        if !sender.is_canceled() {
+                            let _ = sender.send(Err(e));
+                        }
+                        continue;
+                    }
+
+                    match client.list_directory(&path).await {
+                        Ok(response) => {
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Ok(response));
+                            }
+                        }
+                        Err(e) => {
+                            if e.to_string().contains("connection") || e.to_string().contains("websocket") {
+                                connected = false;
+                                warn!("Connection lost during list directory, will reconnect on next request");
+                            }
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Err(format!("Failed to list directory: {:?}", e)));
+                            }
+                        }
+                    }
+                }
+                ClientCommand::GetFileInfo(path, sender) => {
+                    if let Err(e) = ensure_connected(&mut client, &mut connected).await {
+                        if !sender.is_canceled() {
+                            let _ = sender.send(Err(e));
+                        }
+                        continue;
+                    }
+
+                    match client.get_file_info(&path).await {
+                        Ok(response) => {
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Ok(response));
+                            }
+                        }
+                        Err(e) => {
+                            if e.to_string().contains("connection") || e.to_string().contains("websocket") {
+                                connected = false;
+                                warn!("Connection lost during get file info, will reconnect on next request");
+                            }
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Err(format!("Failed to get file info: {:?}", e)));
+                            }
+                        }
+                    }
+                }
+                ClientCommand::PutFilePath(key, file_path, mode, public, no_verify, sender) => {
+                    if let Err(e) = ensure_connected(&mut client, &mut connected).await {
+                        if !sender.is_canceled() {
+                            let _ = sender.send(Err(e));
+                        }
+                        continue;
+                    }
+
+                    // Create a new client for the put operation to avoid lifetime issues
+                    let mut put_client = client.clone();
+
+                    // Spawn a separate task to handle the put operation
+                    spawn_local(async move {
+                        // Connect the client first since cloned clients don't have a connection
+                        let ws_url = default_ws_url();
+                        if let Err(e) = put_client.connect(&ws_url).await {
+                            error!("Failed to connect cloned client: {:?}", e);
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Err(format!("Failed to connect: {:?}", e)));
+                            }
+                            return;
+                        }
+
+                        info!("Starting file path upload: {} -> {}", file_path, key);
+
+                        // Use the file path put method
+                        match put_client.put(&key, &file_path, mode, public, no_verify).await {
+                            Ok((_task_future, _progress_rx, _data_stream)) => {
+                                // Generate a unique put ID for tracking
+                                let put_id = format!("put_{}_{}", key, uuid::Uuid::new_v4());
+
+                                if !sender.is_canceled() {
+                                    let _ = sender.send(Ok(put_id));
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to start file path upload: {:?}", e);
+                                if e.to_string().contains("connection") || e.to_string().contains("websocket") {
+                                    // Mark as disconnected for reconnection
+                                    // Note: we can't update the main client's connected state from here
+                                    warn!("Connection lost during put file path, will reconnect on next request");
+                                }
+                                if !sender.is_canceled() {
+                                    let _ = sender.send(Err(format!("Failed to start upload: {:?}", e)));
+                                }
+                            }
+                        }
+                    });
+                }
                 ClientCommand::StartGetStream(name, is_public, sender) => {
                     info!("Processing StartGetStream command for key: {}", name);
 
@@ -1203,6 +1308,96 @@ pub async fn list_contacts() -> Result<ListContactsResponse, String> {
         },
         Err(e) => {
             error!("Failed to send list contacts command: {:?}", e);
+            Err(format!("Failed to send command: {:?}", e))
+        }
+    }
+}
+
+// Filesystem navigation public API functions
+
+pub async fn list_directory(path: &str) -> Result<mutant_protocol::ListDirectoryResponse, String> {
+    info!("Starting list directory request for path: {}", path);
+
+    let (tx, rx) = oneshot::channel();
+    match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::ListDirectory(path.to_string(), tx)) {
+        Ok(_) => {
+            info!("ListDirectory command sent to client manager");
+            match rx.await {
+                Ok(result) => {
+                    info!("Received list directory response from client manager");
+                    result
+                },
+                Err(e) => {
+                    error!("Failed to receive list directory response: {:?}", e);
+                    Err(format!("Failed to receive response: {:?}", e))
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to send list directory command: {:?}", e);
+            Err(format!("Failed to send command: {:?}", e))
+        }
+    }
+}
+
+pub async fn get_file_info(path: &str) -> Result<mutant_protocol::GetFileInfoResponse, String> {
+    info!("Starting get file info request for path: {}", path);
+
+    let (tx, rx) = oneshot::channel();
+    match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::GetFileInfo(path.to_string(), tx)) {
+        Ok(_) => {
+            info!("GetFileInfo command sent to client manager");
+            match rx.await {
+                Ok(result) => {
+                    info!("Received get file info response from client manager");
+                    result
+                },
+                Err(e) => {
+                    error!("Failed to receive get file info response: {:?}", e);
+                    Err(format!("Failed to receive response: {:?}", e))
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to send get file info command: {:?}", e);
+            Err(format!("Failed to send command: {:?}", e))
+        }
+    }
+}
+
+pub async fn put_file_path(
+    key: &str,
+    file_path: &str,
+    mode: mutant_protocol::StorageMode,
+    public: bool,
+    no_verify: bool,
+) -> Result<String, String> {
+    info!("Starting put file path request for key {} from path {}", key, file_path);
+
+    let (tx, rx) = oneshot::channel();
+    match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::PutFilePath(
+        key.to_string(),
+        file_path.to_string(),
+        mode,
+        public,
+        no_verify,
+        tx,
+    )) {
+        Ok(_) => {
+            info!("PutFilePath command sent to client manager");
+            match rx.await {
+                Ok(result) => {
+                    info!("Received put file path response from client manager");
+                    result
+                },
+                Err(e) => {
+                    error!("Failed to receive put file path response: {:?}", e);
+                    Err(format!("Failed to receive response: {:?}", e))
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to send put file path command: {:?}", e);
             Err(format!("Failed to send command: {:?}", e))
         }
     }

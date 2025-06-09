@@ -305,6 +305,16 @@ impl MutantClient {
                 {
                     error!("Error occurred during list contacts request: {}", error);
                     let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(PendingSender::ListDirectory(sender)) =
+                    requests.remove(&PendingRequestKey::ListDirectory)
+                {
+                    error!("Error occurred during list directory request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
+                } else if let Some(PendingSender::GetFileInfo(sender)) =
+                    requests.remove(&PendingRequestKey::GetFileInfo)
+                {
+                    error!("Error occurred during get file info request: {}", error);
+                    let _ = sender.send(Err(ClientError::ServerError(error.clone())));
                 } else {
                     warn!("Received server error, but no matching pending request found.");
                 }
@@ -555,6 +565,33 @@ impl MutantClient {
                     if let Some(callback) = COLONY_PROGRESS_CALLBACK.get() {
                         callback(progress_response.event, progress_response.operation_id);
                     }
+                }
+            },
+            // Filesystem navigation responses
+            Response::ListDirectory(list_directory_response) => {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::ListDirectory);
+                if let Some(PendingSender::ListDirectory(sender)) = pending_sender {
+                    if sender.send(Ok(list_directory_response)).is_err() {
+                        warn!("Failed to send ListDirectory response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received ListDirectory response but no ListDirectory request was pending");
+                }
+            },
+            Response::GetFileInfo(get_file_info_response) => {
+                let pending_sender = pending_requests
+                    .lock()
+                    .unwrap()
+                    .remove(&PendingRequestKey::GetFileInfo);
+                if let Some(PendingSender::GetFileInfo(sender)) = pending_sender {
+                    if sender.send(Ok(get_file_info_response)).is_err() {
+                        warn!("Failed to send GetFileInfo response (receiver dropped)");
+                    }
+                } else {
+                    warn!("Received GetFileInfo response but no GetFileInfo request was pending");
                 }
             },
         }

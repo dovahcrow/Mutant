@@ -12,6 +12,7 @@ mod video_stream;
 mod http_video;
 mod transcoding;
 pub mod colony;
+mod filesystem;
 
 // Public exports
 pub use websocket::handle_ws;

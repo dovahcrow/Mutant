@@ -18,6 +18,8 @@ use mutant_protocol::{
     // Colony integration types
     SearchResponse, AddContactResponse, ListContentResponse, SyncContactsResponse, GetUserContactResponse, GetUserContactRequest,
     ListContactsResponse, ListContactsRequest,
+    // Filesystem navigation types
+    ListDirectoryRequest, ListDirectoryResponse, GetFileInfoRequest, GetFileInfoResponse,
 };
 
 pub mod error;
@@ -59,6 +61,9 @@ pub enum PendingRequestKey {
     SyncContacts,
     GetUserContact,
     ListContacts,
+    // Filesystem navigation
+    ListDirectory,
+    GetFileInfo,
 }
 
 // Enum to hold the different sender types for the pending requests map
@@ -89,6 +94,9 @@ pub enum PendingSender {
     SyncContacts(oneshot::Sender<Result<SyncContactsResponse, ClientError>>),
     GetUserContact(oneshot::Sender<Result<GetUserContactResponse, ClientError>>),
     ListContacts(oneshot::Sender<Result<ListContactsResponse, ClientError>>),
+    // Filesystem navigation
+    ListDirectory(oneshot::Sender<Result<ListDirectoryResponse, ClientError>>),
+    GetFileInfo(oneshot::Sender<Result<GetFileInfoResponse, ClientError>>),
 }
 
 // The new map type for pending requests
@@ -680,6 +688,22 @@ impl MutantClient {
     /// List all contacts (pod addresses) that have been added
     pub async fn list_contacts(&mut self) -> Result<ListContactsResponse, ClientError> {
         direct_request!(self, ListContacts, ListContactsRequest)
+    }
+
+    // --- Filesystem Navigation Methods ---
+
+    /// List the contents of a directory on the daemon's filesystem
+    pub async fn list_directory(&mut self, path: &str) -> Result<ListDirectoryResponse, ClientError> {
+        direct_request!(self, ListDirectory, ListDirectoryRequest {
+            path: path.to_string(),
+        })
+    }
+
+    /// Get information about a file or directory on the daemon's filesystem
+    pub async fn get_file_info(&mut self, path: &str) -> Result<GetFileInfoResponse, ClientError> {
+        direct_request!(self, GetFileInfo, GetFileInfoRequest {
+            path: path.to_string(),
+        })
     }
 
     pub async fn import(&mut self, file_path: &str) -> Result<ImportResult, ClientError> {

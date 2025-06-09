@@ -654,4 +654,28 @@ impl Context {
 
         result
     }
+
+    // --- Filesystem Navigation Methods ---
+
+    /// List the contents of a directory on the daemon's filesystem
+    pub async fn list_directory(&self, path: &str) -> Result<mutant_protocol::ListDirectoryResponse, String> {
+        client_manager::list_directory(path).await
+    }
+
+    /// Get information about a file or directory on the daemon's filesystem
+    pub async fn get_file_info(&self, path: &str) -> Result<mutant_protocol::GetFileInfoResponse, String> {
+        client_manager::get_file_info(path).await
+    }
+
+    /// Upload a file using its filesystem path (no streaming to web client)
+    pub async fn put_file_path(
+        &self,
+        key: &str,
+        file_path: &str,
+        public: bool,
+        mode: StorageMode,
+        no_verify: bool,
+    ) -> Result<String, String> {
+        client_manager::put_file_path(key, file_path, mode, public, no_verify).await
+    }
 }

@@ -581,6 +581,9 @@ pub enum Request {
     SyncContacts(SyncContactsRequest),
     GetUserContact(GetUserContactRequest),
     ListContacts(ListContactsRequest),
+    // Filesystem navigation requests
+    ListDirectory(ListDirectoryRequest),
+    GetFileInfo(GetFileInfoRequest),
 }
 
 // --- Outgoing Responses ---
@@ -807,6 +810,18 @@ pub struct SyncContactsRequest {
     // Empty for now - syncs all contacts
 }
 
+// --- Filesystem Navigation Requests ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListDirectoryRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetFileInfoRequest {
+    pub path: String,
+}
+
 // Colony integration response types
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct SearchResponse {
@@ -837,6 +852,33 @@ pub struct ListContentResponse {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct SyncContactsResponse {
     pub synced_count: usize,
+}
+
+// --- Filesystem Navigation Response Types ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileSystemEntry {
+    pub name: String,
+    pub path: String,
+    pub is_directory: bool,
+    pub size: Option<u64>,
+    pub modified: Option<u64>, // Unix timestamp
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListDirectoryResponse {
+    pub path: String,
+    pub entries: Vec<FileSystemEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetFileInfoResponse {
+    pub path: String,
+    pub exists: bool,
+    pub is_directory: bool,
+    pub size: Option<u64>,
+    pub modified: Option<u64>, // Unix timestamp
+    pub readable: bool,
 }
 
 /// Request to get user's own contact information
@@ -934,6 +976,9 @@ pub enum Response {
     ListContacts(ListContactsResponse),
     /// Colony operation progress update
     ColonyProgress(ColonyProgressResponse),
+    // Filesystem navigation responses
+    ListDirectory(ListDirectoryResponse),
+    GetFileInfo(GetFileInfoResponse),
 }
 
 // Helper moved to where Response is used (client/server)

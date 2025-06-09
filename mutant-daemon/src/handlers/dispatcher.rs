@@ -13,6 +13,7 @@ use super::metadata::{handle_list_keys, handle_stats, handle_wallet_balance, han
 use super::system_operations::{handle_health_check, handle_purge, handle_sync};
 use super::task_management::{handle_list_tasks, handle_query_task, handle_stop_task};
 use super::colony::{handle_search, handle_index_content, handle_get_metadata, handle_add_contact, handle_list_content, handle_sync_contacts, handle_get_user_contact, handle_list_contacts};
+use super::filesystem::{handle_list_directory, handle_get_file_info};
 
 pub(crate) async fn handle_request(
     request: Request,
@@ -72,6 +73,13 @@ pub(crate) async fn handle_request(
         }
         Request::ListContacts(list_contacts_req) => {
             handle_list_contacts(list_contacts_req, update_tx, original_request_str, mutant.clone()).await?
+        }
+        // Filesystem navigation requests
+        Request::ListDirectory(list_directory_req) => {
+            handle_list_directory(list_directory_req, update_tx).await?
+        }
+        Request::GetFileInfo(get_file_info_req) => {
+            handle_get_file_info(get_file_info_req, update_tx).await?
         }
     }
     Ok(())
