@@ -394,20 +394,26 @@ impl FilePicker {
                     return;
                 }
 
-                // Professional file tree with full height
+                // Compact file tree with full height
                 let remaining_height = ui.available_height() - 60.0; // Reserve space for bottom section
 
                 egui::Frame::new()
                     .fill(MutantColors::BACKGROUND_DARK)
                     .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_LIGHT))
                     .corner_radius(6.0)
-                    .inner_margin(egui::Margin::same(4))
+                    .inner_margin(egui::Margin::same(2)) // Reduced from 4 to 2
                     .show(ui, |ui| {
+                        // Set compact spacing for the entire tree
+                        ui.spacing_mut().item_spacing.y = 0.0; // Minimal spacing between items
+                        ui.spacing_mut().indent = 12.0;
+
                         egui::ScrollArea::vertical()
                             .min_scrolled_height(remaining_height)
                             .max_height(remaining_height)
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
+                                // Ensure compact spacing in scroll area
+                                ui.spacing_mut().item_spacing.y = 0.0;
                                 // Clone necessary data to avoid borrowing issues
                                 let show_hidden = *self.show_hidden.read().unwrap();
                                 let selected_file = self.selected_file.read().unwrap().clone();
@@ -539,36 +545,20 @@ impl FilePicker {
             return false;
         }
 
-        // Professional indentation with visual hierarchy
-        let indent_per_level = 16.0;
+        // Compact indentation for maximum density
+        let indent_per_level = 12.0;
         let total_indent = indent_per_level * (indent_level as f32);
 
-        // Add subtle visual hierarchy lines for deeper levels
-        if indent_level > 0 {
-            ui.horizontal(|ui| {
-                // Draw connection lines for tree structure
-                for _level in 0..indent_level {
-                    ui.add_space(8.0);
-                    let line_color = MutantColors::BORDER_LIGHT.gamma_multiply(0.3);
-                    let line_x = ui.cursor().left() + 8.0;
-                    let line_start = ui.cursor().top();
-                    let line_end = line_start + 20.0;
-
-                    ui.painter().line_segment(
-                        [egui::Pos2::new(line_x, line_start), egui::Pos2::new(line_x, line_end)],
-                        egui::Stroke::new(1.0, line_color)
-                    );
-                    ui.add_space(8.0);
-                }
-            });
-        }
+        // Compact layout with minimal spacing
+        ui.spacing_mut().item_spacing.y = 1.0; // Minimal vertical spacing
+        ui.spacing_mut().indent = 12.0; // Compact indentation
 
         ui.horizontal(|ui| {
             // Apply indentation
             ui.add_space(total_indent);
 
             if node.is_directory {
-                // Professional directory node styling
+                // Compact directory node styling
                 let (icon, icon_color) = if node.expanded {
                     ("📂", MutantColors::ACCENT_ORANGE)
                 } else {
@@ -576,13 +566,15 @@ impl FilePicker {
                 };
 
                 let text = RichText::new(format!("{} {}/", icon, node.name))
-                    .size(13.0)
-                    .color(icon_color)
-                    .strong();
+                    .size(12.0)
+                    .color(icon_color);
 
                 let header = egui::CollapsingHeader::new(text)
                     .default_open(node.expanded)
                     .show(ui, |ui| {
+                        // Ensure compact spacing for children too
+                        ui.spacing_mut().item_spacing.y = 1.0;
+
                         // Draw children
                         let mut sorted_children: Vec<_> = node.children.iter_mut().collect();
                         sorted_children.sort_by(|(_, a), (_, b)| {
@@ -616,8 +608,8 @@ impl FilePicker {
                     // when it detects an expanded but unloaded directory
                 }
             } else {
-                // Professional file node styling
-                ui.add_space(20.0); // Align with directory names
+                // Compact file node styling
+                ui.add_space(16.0); // Align with directory names
 
                 let is_selected = selected_file
                     .as_ref()
@@ -632,38 +624,38 @@ impl FilePicker {
                     MutantColors::TEXT_PRIMARY
                 };
 
-                // Create clickable area for the file with proper height
+                // Create compact clickable area for the file
                 let row_response = ui.allocate_response(
-                    egui::Vec2::new(ui.available_width(), 24.0),
+                    egui::Vec2::new(ui.available_width(), 18.0), // Reduced from 24.0 to 18.0
                     egui::Sense::click()
                 );
 
                 let row_rect = row_response.rect;
 
-                // Professional selection background with subtle border
+                // Compact selection background
                 if is_selected {
                     ui.painter().rect_filled(
                         row_rect,
-                        6.0,
+                        3.0, // Reduced corner radius
                         bg_color
                     );
                     ui.painter().rect_stroke(
                         row_rect,
-                        6.0,
+                        3.0,
                         egui::Stroke::new(1.0, MutantColors::ACCENT_ORANGE.gamma_multiply(0.6)),
                         egui::epaint::StrokeKind::Outside
                     );
                 } else if row_response.hovered() {
                     ui.painter().rect_filled(
                         row_rect,
-                        6.0,
+                        3.0,
                         MutantColors::BACKGROUND_MEDIUM.gamma_multiply(0.5)
                     );
                 }
 
-                // Draw file icon and name with better spacing
-                let text_pos = row_rect.left_top() + egui::Vec2::new(8.0, (row_rect.height() - 14.0) / 2.0);
-                let font_id = egui::FontId::new(13.0, egui::FontFamily::Proportional);
+                // Draw file icon and name with compact spacing
+                let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, (row_rect.height() - 12.0) / 2.0);
+                let font_id = egui::FontId::new(11.0, egui::FontFamily::Proportional); // Reduced font size
 
                 // Draw icon with specific color
                 ui.painter().text(
@@ -674,8 +666,8 @@ impl FilePicker {
                     icon_color
                 );
 
-                // Draw filename with proper spacing
-                let filename_pos = text_pos + egui::Vec2::new(20.0, 0.0);
+                // Draw filename with compact spacing
+                let filename_pos = text_pos + egui::Vec2::new(16.0, 0.0); // Reduced spacing
                 ui.painter().text(
                     filename_pos,
                     egui::Align2::LEFT_CENTER,
@@ -684,15 +676,15 @@ impl FilePicker {
                     filename_color
                 );
 
-                // Professional file stats on the right
+                // Compact file stats on the right
                 if let Some(size) = node.size {
                     let size_text = format_file_size(size);
-                    let size_pos = egui::Pos2::new(row_rect.right() - 8.0, text_pos.y);
+                    let size_pos = egui::Pos2::new(row_rect.right() - 4.0, text_pos.y);
                     ui.painter().text(
                         size_pos,
                         egui::Align2::RIGHT_CENTER,
                         size_text,
-                        egui::FontId::new(11.0, egui::FontFamily::Monospace),
+                        egui::FontId::new(10.0, egui::FontFamily::Monospace), // Smaller font
                         MutantColors::TEXT_MUTED
                     );
                 }
