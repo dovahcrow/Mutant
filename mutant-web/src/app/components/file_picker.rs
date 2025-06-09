@@ -427,7 +427,8 @@ impl FilePicker {
                                     &selected_file,
                                     &self.selected_file,
                                     &self.is_loading,
-                                    &self.error_message
+                                    &self.error_message,
+                                    self.files_only
                                 );
 
                                 // Check for expanded but unloaded directories and load them
@@ -440,87 +441,7 @@ impl FilePicker {
                             });
                     });
 
-                ui.add_space(8.0);
-
-                // Professional selected file display
-                if let Some(selected) = &*self.selected_file.read().unwrap() {
-                    egui::Frame::new()
-                        .fill(MutantColors::ACCENT_GREEN.gamma_multiply(0.1))
-                        .stroke(egui::Stroke::new(1.0, MutantColors::ACCENT_GREEN.gamma_multiply(0.4)))
-                        .corner_radius(6.0)
-                        .inner_margin(egui::Margin::same(12))
-                        .show(ui, |ui| {
-                            ui.vertical(|ui| {
-                                // Selected file header
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("✓").color(MutantColors::ACCENT_GREEN).size(16.0).strong());
-                                    ui.add_space(6.0);
-                                    ui.label(RichText::new("Selected File").color(MutantColors::ACCENT_GREEN).size(12.0).strong());
-                                });
-
-                                ui.add_space(6.0);
-
-                                // File path with truncation for long paths
-                                let display_path = if selected.len() > 50 {
-                                    format!("...{}", &selected[selected.len()-47..])
-                                } else {
-                                    selected.clone()
-                                };
-
-                                ui.label(RichText::new(display_path).color(MutantColors::TEXT_PRIMARY).size(11.0).family(egui::FontFamily::Monospace));
-
-                                ui.add_space(8.0);
-
-                                // Action buttons
-                                ui.horizontal(|ui| {
-                                    // Primary action button
-                                    let next_button = egui::Button::new(
-                                        RichText::new("Continue →")
-                                            .color(egui::Color32::WHITE)
-                                            .size(12.0)
-                                            .strong()
-                                    )
-                                    .fill(MutantColors::ACCENT_GREEN)
-                                    .stroke(egui::Stroke::new(1.0, MutantColors::ACCENT_GREEN.gamma_multiply(1.2)))
-                                    .corner_radius(4.0);
-
-                                    if ui.add(next_button).clicked() {
-                                        file_selected = true;
-                                    }
-
-                                    ui.add_space(8.0);
-
-                                    // Secondary action button
-                                    let clear_button = egui::Button::new(
-                                        RichText::new("✕ Clear")
-                                            .color(MutantColors::TEXT_MUTED)
-                                            .size(11.0)
-                                    )
-                                    .fill(MutantColors::BACKGROUND_MEDIUM)
-                                    .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_LIGHT))
-                                    .corner_radius(4.0);
-
-                                    if ui.add(clear_button).clicked() {
-                                        *self.selected_file.write().unwrap() = None;
-                                    }
-                                });
-                            });
-                        });
-                } else {
-                    // Placeholder when no file is selected
-                    egui::Frame::new()
-                        .fill(MutantColors::BACKGROUND_MEDIUM.gamma_multiply(0.5))
-                        .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_LIGHT.gamma_multiply(0.5)))
-                        .corner_radius(6.0)
-                        .inner_margin(egui::Margin::same(12))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("📄").color(MutantColors::TEXT_MUTED).size(14.0));
-                                ui.add_space(6.0);
-                                ui.label(RichText::new("No file selected").color(MutantColors::TEXT_MUTED).size(12.0));
-                            });
-                        });
-                }
+                // No selection confirmation needed - files are selected immediately
             },
         );
 
@@ -536,7 +457,8 @@ impl FilePicker {
         selected_file: &Option<String>,
         selected_file_arc: &Arc<RwLock<Option<String>>>,
         is_loading: &Arc<RwLock<bool>>,
-        error_message: &Arc<RwLock<Option<String>>>
+        error_message: &Arc<RwLock<Option<String>>>,
+        files_only: bool
     ) -> bool {
         let mut file_selected = false;
 
@@ -594,7 +516,8 @@ impl FilePicker {
                                 selected_file,
                                 selected_file_arc,
                                 is_loading,
-                                error_message
+                                error_message,
+                                files_only
                             ) {
                                 file_selected = true;
                             }
@@ -689,10 +612,37 @@ impl FilePicker {
                     );
                 }
 
-                // Handle file selection
+                // Handle file selection - immediately advance to next step
                 if row_response.clicked() {
-                    *selected_file_arc.write().unwrap() = Some(node.path.clone());
-                    file_selected = true;
+                    if files_only {
+                        // Validate the file before selecting it and immediately advance
+                        let path = node.path.clone();
+                        let selected_file_arc = selected_file_arc.clone();
+                        let error_message = error_message.clone();
+
+                        spawn_local(async move {
+                            let ctx = context::context();
+                            match ctx.get_file_info(&path).await {
+                                Ok(info) => {
+                                    if info.exists && !info.is_directory {
+                                        *selected_file_arc.write().unwrap() = Some(path);
+                                        *error_message.write().unwrap() = None;
+                                        // File is valid - the UI will automatically advance on next frame
+                                    } else if info.is_directory {
+                                        *error_message.write().unwrap() = Some("Please select a file, not a directory".to_string());
+                                    } else {
+                                        *error_message.write().unwrap() = Some("File does not exist".to_string());
+                                    }
+                                }
+                                Err(e) => {
+                                    *error_message.write().unwrap() = Some(format!("Error checking file: {}", e));
+                                }
+                            }
+                        });
+                    } else {
+                        *selected_file_arc.write().unwrap() = Some(node.path.clone());
+                    }
+                    file_selected = true; // Immediately signal that a file was selected
                 }
 
                 if row_response.hovered() {

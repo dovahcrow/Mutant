@@ -579,10 +579,83 @@ impl PutWindow {
         let is_uploading = self.is_uploading.clone();
         let error_message = self.error_message.clone();
 
+        // Create progress tracking for this upload
+        let (progress_id, progress) = ctx.create_progress(&key_name, &file_path);
+
+        // Store progress references for UI updates
+        let reservation_progress = self.reservation_progress.clone();
+        let upload_progress = self.upload_progress.clone();
+        let confirmation_progress = self.confirmation_progress.clone();
+        let upload_complete = self.upload_complete.clone();
+
         spawn_local(async move {
+            log::info!("Starting file path upload: {} -> {}", file_path, key_name);
             match ctx.put_file_path(&key_name, &file_path, public, storage_mode, no_verify).await {
                 Ok(put_id) => {
-                    *current_put_id.write().unwrap() = Some(put_id);
+                    log::info!("File path upload started successfully with put_id: {}", put_id);
+                    *current_put_id.write().unwrap() = Some(put_id.clone());
+
+                    // Start a progress monitoring task
+                    let progress_clone = progress.clone();
+                    let is_uploading_clone = is_uploading.clone();
+                    let upload_complete_clone = upload_complete.clone();
+                    let _error_message_clone = error_message.clone();
+
+                    spawn_local(async move {
+                        // Monitor progress updates
+                        loop {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+                            let progress_data = progress_clone.read().unwrap();
+                            let mut has_progress = false;
+
+                            // Update progress bars based on operation data
+                            for (operation, value) in &progress_data.operation {
+                                has_progress = true;
+                                match operation.as_str() {
+                                    "reservation" => {
+                                        let progress = if value.nb_to_reserve > 0 {
+                                            value.nb_reserved as f32 / value.nb_to_reserve as f32
+                                        } else {
+                                            0.0
+                                        };
+                                        *reservation_progress.write().unwrap() = progress;
+                                    }
+                                    "upload" => {
+                                        let progress = if value.total_pads > 0 {
+                                            value.nb_written as f32 / value.total_pads as f32
+                                        } else {
+                                            0.0
+                                        };
+                                        *upload_progress.write().unwrap() = progress;
+                                    }
+                                    "confirmation" => {
+                                        let progress = if value.total_pads > 0 {
+                                            value.nb_confirmed as f32 / value.total_pads as f32
+                                        } else {
+                                            0.0
+                                        };
+                                        *confirmation_progress.write().unwrap() = progress;
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            // Check if upload is complete
+                            if let Some(confirmation) = progress_data.operation.get("confirmation") {
+                                if confirmation.total_pads > 0 && confirmation.nb_confirmed >= confirmation.total_pads {
+                                    *upload_complete_clone.write().unwrap() = true;
+                                    *is_uploading_clone.write().unwrap() = false;
+                                    break;
+                                }
+                            }
+
+                            // Check if upload is still active
+                            if !*is_uploading_clone.read().unwrap() {
+                                break;
+                            }
+                        }
+                    });
                 }
                 Err(e) => {
                     *is_uploading.write().unwrap() = false;
