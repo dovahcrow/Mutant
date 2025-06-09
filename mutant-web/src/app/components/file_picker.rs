@@ -547,13 +547,13 @@ impl FilePicker {
                     MutantColors::TEXT_PRIMARY
                 };
 
-                // Create compact clickable area for the file
-                let row_response = ui.allocate_response(
-                    egui::Vec2::new(ui.available_width(), 18.0), // Reduced from 24.0 to 18.0
+                // Use a more reliable button-like approach for single-click detection
+                let button_response = ui.allocate_response(
+                    egui::Vec2::new(ui.available_width(), 18.0),
                     egui::Sense::click()
                 );
 
-                let row_rect = row_response.rect;
+                let row_rect = button_response.rect;
 
                 // Compact selection background
                 if is_selected {
@@ -568,7 +568,7 @@ impl FilePicker {
                         egui::Stroke::new(1.0, MutantColors::ACCENT_ORANGE.gamma_multiply(0.6)),
                         egui::epaint::StrokeKind::Outside
                     );
-                } else if row_response.hovered() {
+                } else if button_response.hovered() {
                     ui.painter().rect_filled(
                         row_rect,
                         3.0,
@@ -613,39 +613,22 @@ impl FilePicker {
                 }
 
                 // Handle file selection - immediately advance to next step
-                if row_response.clicked() {
+                // Simple single-click detection
+                if button_response.clicked() {
                     if files_only {
-                        // Validate the file before selecting it and immediately advance
-                        let path = node.path.clone();
-                        let selected_file_arc = selected_file_arc.clone();
-                        let error_message = error_message.clone();
-
-                        spawn_local(async move {
-                            let ctx = context::context();
-                            match ctx.get_file_info(&path).await {
-                                Ok(info) => {
-                                    if info.exists && !info.is_directory {
-                                        *selected_file_arc.write().unwrap() = Some(path);
-                                        *error_message.write().unwrap() = None;
-                                        // File is valid - the UI will automatically advance on next frame
-                                    } else if info.is_directory {
-                                        *error_message.write().unwrap() = Some("Please select a file, not a directory".to_string());
-                                    } else {
-                                        *error_message.write().unwrap() = Some("File does not exist".to_string());
-                                    }
-                                }
-                                Err(e) => {
-                                    *error_message.write().unwrap() = Some(format!("Error checking file: {}", e));
-                                }
-                            }
-                        });
-                    } else {
+                        // For files_only mode, immediately select the file since we know it's a file from the tree
+                        // The tree already shows only files, so no need for async validation
                         *selected_file_arc.write().unwrap() = Some(node.path.clone());
+                        *error_message.write().unwrap() = None;
+                        file_selected = true; // Immediately signal that a file was selected
+                    } else {
+                        // For directory mode, allow any selection
+                        *selected_file_arc.write().unwrap() = Some(node.path.clone());
+                        file_selected = true; // Immediately signal that a file was selected
                     }
-                    file_selected = true; // Immediately signal that a file was selected
                 }
 
-                if row_response.hovered() {
+                if button_response.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
             }
