@@ -299,93 +299,224 @@ impl FilePicker {
     pub fn draw(&mut self, ui: &mut egui::Ui) -> bool {
         let mut file_selected = false;
 
-        ui.vertical(|ui| {
-            // Header with navigation and controls
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("📁 File Browser").color(MutantColors::TEXT_PRIMARY));
+        // Use all available space
+        let available_rect = ui.available_rect_before_wrap();
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Hidden files toggle
-                    let show_hidden = *self.show_hidden.read().unwrap();
-                    let toggle_text = if show_hidden { "🙈 Hide Hidden" } else { "👁 Show Hidden" };
-                    if ui.button(toggle_text).clicked() {
-                        self.toggle_hidden_files();
-                    }
-                });
-            });
+        ui.allocate_ui_with_layout(
+            available_rect.size(),
+            egui::Layout::top_down(egui::Align::LEFT),
+            |ui| {
+                // Professional header with subtle background
+                egui::Frame::new()
+                    .fill(MutantColors::BACKGROUND_MEDIUM)
+                    .inner_margin(egui::Margin::same(12))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            // Modern file browser icon and title
+                            ui.label(
+                                RichText::new("🗂")
+                                    .size(16.0)
+                                    .color(MutantColors::ACCENT_BLUE)
+                            );
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new("File Browser")
+                                    .size(14.0)
+                                    .color(MutantColors::TEXT_PRIMARY)
+                                    .strong()
+                            );
 
-            ui.separator();
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                // Sleek toggle button for hidden files
+                                let show_hidden = *self.show_hidden.read().unwrap();
+                                let (icon, text, color) = if show_hidden {
+                                    ("👁", "Hidden", MutantColors::ACCENT_GREEN)
+                                } else {
+                                    ("👁‍🗨", "Hidden", MutantColors::TEXT_MUTED)
+                                };
 
-            // Error message
-            if let Some(error) = &*self.error_message.read().unwrap() {
-                ui.colored_label(MutantColors::ERROR, format!("❌ {}", error));
-                ui.separator();
-            }
+                                let button = egui::Button::new(
+                                    RichText::new(format!("{} {}", icon, text))
+                                        .size(11.0)
+                                        .color(color)
+                                )
+                                .fill(if show_hidden {
+                                    MutantColors::ACCENT_GREEN.gamma_multiply(0.1)
+                                } else {
+                                    MutantColors::BACKGROUND_DARK
+                                })
+                                .stroke(egui::Stroke::new(1.0, color.gamma_multiply(0.3)))
+                                .corner_radius(4.0);
 
-            // Loading indicator
-            if *self.is_loading.read().unwrap() {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("Loading...");
-                });
-                return;
-            }
-
-            // File tree
-            egui::ScrollArea::vertical()
-                .max_height(400.0)
-                .show(ui, |ui| {
-                    // Clone necessary data to avoid borrowing issues
-                    let show_hidden = *self.show_hidden.read().unwrap();
-                    let selected_file = self.selected_file.read().unwrap().clone();
-
-                    let mut root = self.root.write().unwrap();
-                    file_selected = Self::draw_tree_node_static(
-                        ui,
-                        &mut *root,
-                        0,
-                        show_hidden,
-                        &selected_file,
-                        &self.selected_file,
-                        &self.is_loading,
-                        &self.error_message
-                    );
-
-                    // Check for expanded but unloaded directories and load them
-                    let paths_to_load = Self::collect_unloaded_expanded_paths(&*root);
-                    drop(root); // Release the lock before async operations
-
-                    for path in paths_to_load {
-                        self.load_directory(&path);
-                    }
-                });
-
-            ui.separator();
-
-            // Selected file display
-            if let Some(selected) = &*self.selected_file.read().unwrap() {
-                ui.group(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("✅ Selected:").color(MutantColors::ACCENT_GREEN));
-                        ui.label(RichText::new(selected).color(MutantColors::TEXT_PRIMARY));
+                                if ui.add(button).clicked() {
+                                    self.toggle_hidden_files();
+                                }
+                            });
+                        });
                     });
-                });
-                ui.add_space(10.0);
 
-                // Add a "Next" button for better UX
-                ui.horizontal(|ui| {
-                    if ui.button("➡ Next").clicked() {
-                        file_selected = true;
-                    }
+                // Subtle separator line
+                ui.add_space(1.0);
+                ui.separator();
+                ui.add_space(1.0);
 
-                    ui.add_space(10.0);
+                // Error message with professional styling
+                if let Some(error) = &*self.error_message.read().unwrap() {
+                    egui::Frame::new()
+                        .fill(MutantColors::ERROR.gamma_multiply(0.1))
+                        .stroke(egui::Stroke::new(1.0, MutantColors::ERROR.gamma_multiply(0.3)))
+                        .corner_radius(6.0)
+                        .inner_margin(egui::Margin::same(8))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("⚠").color(MutantColors::ERROR).size(14.0));
+                                ui.add_space(6.0);
+                                ui.label(RichText::new(error).color(MutantColors::ERROR).size(12.0));
+                            });
+                        });
+                    ui.add_space(8.0);
+                }
 
-                    if ui.button("Clear Selection").clicked() {
-                        *self.selected_file.write().unwrap() = None;
-                    }
-                });
-            }
-        });
+                // Loading indicator with professional styling
+                if *self.is_loading.read().unwrap() {
+                    egui::Frame::new()
+                        .fill(MutantColors::ACCENT_BLUE.gamma_multiply(0.1))
+                        .stroke(egui::Stroke::new(1.0, MutantColors::ACCENT_BLUE.gamma_multiply(0.3)))
+                        .corner_radius(6.0)
+                        .inner_margin(egui::Margin::same(8))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.add_space(6.0);
+                                ui.label(RichText::new("Loading directory...").color(MutantColors::ACCENT_BLUE).size(12.0));
+                            });
+                        });
+                    return;
+                }
+
+                // Professional file tree with full height
+                let remaining_height = ui.available_height() - 60.0; // Reserve space for bottom section
+
+                egui::Frame::new()
+                    .fill(MutantColors::BACKGROUND_DARK)
+                    .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_LIGHT))
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::same(4))
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .min_scrolled_height(remaining_height)
+                            .max_height(remaining_height)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                // Clone necessary data to avoid borrowing issues
+                                let show_hidden = *self.show_hidden.read().unwrap();
+                                let selected_file = self.selected_file.read().unwrap().clone();
+
+                                let mut root = self.root.write().unwrap();
+                                file_selected = Self::draw_tree_node_static(
+                                    ui,
+                                    &mut *root,
+                                    0,
+                                    show_hidden,
+                                    &selected_file,
+                                    &self.selected_file,
+                                    &self.is_loading,
+                                    &self.error_message
+                                );
+
+                                // Check for expanded but unloaded directories and load them
+                                let paths_to_load = Self::collect_unloaded_expanded_paths(&*root);
+                                drop(root); // Release the lock before async operations
+
+                                for path in paths_to_load {
+                                    self.load_directory(&path);
+                                }
+                            });
+                    });
+
+                ui.add_space(8.0);
+
+                // Professional selected file display
+                if let Some(selected) = &*self.selected_file.read().unwrap() {
+                    egui::Frame::new()
+                        .fill(MutantColors::ACCENT_GREEN.gamma_multiply(0.1))
+                        .stroke(egui::Stroke::new(1.0, MutantColors::ACCENT_GREEN.gamma_multiply(0.4)))
+                        .corner_radius(6.0)
+                        .inner_margin(egui::Margin::same(12))
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                // Selected file header
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("✓").color(MutantColors::ACCENT_GREEN).size(16.0).strong());
+                                    ui.add_space(6.0);
+                                    ui.label(RichText::new("Selected File").color(MutantColors::ACCENT_GREEN).size(12.0).strong());
+                                });
+
+                                ui.add_space(6.0);
+
+                                // File path with truncation for long paths
+                                let display_path = if selected.len() > 50 {
+                                    format!("...{}", &selected[selected.len()-47..])
+                                } else {
+                                    selected.clone()
+                                };
+
+                                ui.label(RichText::new(display_path).color(MutantColors::TEXT_PRIMARY).size(11.0).family(egui::FontFamily::Monospace));
+
+                                ui.add_space(8.0);
+
+                                // Action buttons
+                                ui.horizontal(|ui| {
+                                    // Primary action button
+                                    let next_button = egui::Button::new(
+                                        RichText::new("Continue →")
+                                            .color(egui::Color32::WHITE)
+                                            .size(12.0)
+                                            .strong()
+                                    )
+                                    .fill(MutantColors::ACCENT_GREEN)
+                                    .stroke(egui::Stroke::new(1.0, MutantColors::ACCENT_GREEN.gamma_multiply(1.2)))
+                                    .corner_radius(4.0);
+
+                                    if ui.add(next_button).clicked() {
+                                        file_selected = true;
+                                    }
+
+                                    ui.add_space(8.0);
+
+                                    // Secondary action button
+                                    let clear_button = egui::Button::new(
+                                        RichText::new("✕ Clear")
+                                            .color(MutantColors::TEXT_MUTED)
+                                            .size(11.0)
+                                    )
+                                    .fill(MutantColors::BACKGROUND_MEDIUM)
+                                    .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_LIGHT))
+                                    .corner_radius(4.0);
+
+                                    if ui.add(clear_button).clicked() {
+                                        *self.selected_file.write().unwrap() = None;
+                                    }
+                                });
+                            });
+                        });
+                } else {
+                    // Placeholder when no file is selected
+                    egui::Frame::new()
+                        .fill(MutantColors::BACKGROUND_MEDIUM.gamma_multiply(0.5))
+                        .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_LIGHT.gamma_multiply(0.5)))
+                        .corner_radius(6.0)
+                        .inner_margin(egui::Margin::same(12))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("📄").color(MutantColors::TEXT_MUTED).size(14.0));
+                                ui.add_space(6.0);
+                                ui.label(RichText::new("No file selected").color(MutantColors::TEXT_MUTED).size(12.0));
+                            });
+                        });
+                }
+            },
+        );
 
         file_selected
     }
@@ -408,20 +539,46 @@ impl FilePicker {
             return false;
         }
 
-        // Compact indentation for maximum space efficiency
-        let indent_per_level = 12.0;
+        // Professional indentation with visual hierarchy
+        let indent_per_level = 16.0;
         let total_indent = indent_per_level * (indent_level as f32);
+
+        // Add subtle visual hierarchy lines for deeper levels
+        if indent_level > 0 {
+            ui.horizontal(|ui| {
+                // Draw connection lines for tree structure
+                for _level in 0..indent_level {
+                    ui.add_space(8.0);
+                    let line_color = MutantColors::BORDER_LIGHT.gamma_multiply(0.3);
+                    let line_x = ui.cursor().left() + 8.0;
+                    let line_start = ui.cursor().top();
+                    let line_end = line_start + 20.0;
+
+                    ui.painter().line_segment(
+                        [egui::Pos2::new(line_x, line_start), egui::Pos2::new(line_x, line_end)],
+                        egui::Stroke::new(1.0, line_color)
+                    );
+                    ui.add_space(8.0);
+                }
+            });
+        }
 
         ui.horizontal(|ui| {
             // Apply indentation
             ui.add_space(total_indent);
 
             if node.is_directory {
-                // Directory node - use collapsing header
-                let icon = if node.expanded { "📂" } else { "📁" };
+                // Professional directory node styling
+                let (icon, icon_color) = if node.expanded {
+                    ("📂", MutantColors::ACCENT_ORANGE)
+                } else {
+                    ("📁", MutantColors::ACCENT_BLUE)
+                };
+
                 let text = RichText::new(format!("{} {}/", icon, node.name))
-                    .size(12.0)
-                    .color(MutantColors::ACCENT_ORANGE);
+                    .size(13.0)
+                    .color(icon_color)
+                    .strong();
 
                 let header = egui::CollapsingHeader::new(text)
                     .default_open(node.expanded)
@@ -459,60 +616,85 @@ impl FilePicker {
                     // when it detects an expanded but unloaded directory
                 }
             } else {
-                // File node
-                ui.add_space(18.0); // Align with directory names
+                // Professional file node styling
+                ui.add_space(20.0); // Align with directory names
 
                 let is_selected = selected_file
                     .as_ref()
                     .map_or(false, |selected| selected == &node.path);
 
-                // File icon and color
-                let file_icon = "📄";
+                // Determine file icon and colors based on extension
+                let (file_icon, icon_color, bg_color) = Self::get_file_styling(&node.name, is_selected);
+
                 let filename_color = if is_selected {
                     MutantColors::ACCENT_ORANGE
                 } else {
                     MutantColors::TEXT_PRIMARY
                 };
 
-                // Create clickable area for the file
+                // Create clickable area for the file with proper height
                 let row_response = ui.allocate_response(
-                    egui::Vec2::new(ui.available_width(), 20.0),
+                    egui::Vec2::new(ui.available_width(), 24.0),
                     egui::Sense::click()
                 );
 
                 let row_rect = row_response.rect;
 
-                // Selection background
+                // Professional selection background with subtle border
                 if is_selected {
                     ui.painter().rect_filled(
                         row_rect,
-                        4.0,
-                        MutantColors::ACCENT_ORANGE.gamma_multiply(0.2)
+                        6.0,
+                        bg_color
+                    );
+                    ui.painter().rect_stroke(
+                        row_rect,
+                        6.0,
+                        egui::Stroke::new(1.0, MutantColors::ACCENT_ORANGE.gamma_multiply(0.6)),
+                        egui::epaint::StrokeKind::Outside
+                    );
+                } else if row_response.hovered() {
+                    ui.painter().rect_filled(
+                        row_rect,
+                        6.0,
+                        MutantColors::BACKGROUND_MEDIUM.gamma_multiply(0.5)
                     );
                 }
 
-                // Draw file icon and name
-                let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, (row_rect.height() - 12.0) / 2.0);
-                let font_id = egui::FontId::new(12.0, egui::FontFamily::Proportional);
+                // Draw file icon and name with better spacing
+                let text_pos = row_rect.left_top() + egui::Vec2::new(8.0, (row_rect.height() - 14.0) / 2.0);
+                let font_id = egui::FontId::new(13.0, egui::FontFamily::Proportional);
 
+                // Draw icon with specific color
                 ui.painter().text(
                     text_pos,
                     egui::Align2::LEFT_CENTER,
-                    format!("{} {}", file_icon, node.name),
+                    file_icon,
+                    font_id.clone(),
+                    icon_color
+                );
+
+                // Draw filename with proper spacing
+                let filename_pos = text_pos + egui::Vec2::new(20.0, 0.0);
+                ui.painter().text(
+                    filename_pos,
+                    egui::Align2::LEFT_CENTER,
+                    &node.name,
                     font_id,
                     filename_color
                 );
 
-                // File stats on the right
+                // Professional file stats on the right
                 if let Some(size) = node.size {
                     let size_text = format_file_size(size);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(size_text)
-                                .color(MutantColors::TEXT_MUTED)
-                                .size(11.0)
-                        );
-                    });
+                    let size_pos = egui::Pos2::new(row_rect.right() - 8.0, text_pos.y);
+                    ui.painter().text(
+                        size_pos,
+                        egui::Align2::RIGHT_CENTER,
+                        size_text,
+                        egui::FontId::new(11.0, egui::FontFamily::Monospace),
+                        MutantColors::TEXT_MUTED
+                    );
                 }
 
                 // Handle file selection
@@ -544,6 +726,53 @@ impl FilePicker {
         }
 
         paths
+    }
+
+    /// Get professional file styling based on file extension
+    fn get_file_styling(filename: &str, is_selected: bool) -> (&'static str, egui::Color32, egui::Color32) {
+        let extension = std::path::Path::new(filename)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        let (icon, base_color) = match extension.as_str() {
+            // Code files
+            "rs" | "rust" => ("🦀", MutantColors::ACCENT_ORANGE),
+            "js" | "ts" | "jsx" | "tsx" => ("📜", MutantColors::WARNING),
+            "py" | "python" => ("🐍", MutantColors::ACCENT_GREEN),
+            "html" | "htm" => ("🌐", MutantColors::ACCENT_BLUE),
+            "css" | "scss" | "sass" => ("🎨", MutantColors::ACCENT_BLUE),
+            "json" | "yaml" | "yml" | "toml" => ("⚙", MutantColors::TEXT_MUTED),
+
+            // Documents
+            "md" | "markdown" => ("📝", MutantColors::TEXT_PRIMARY),
+            "txt" | "log" => ("📄", MutantColors::TEXT_MUTED),
+            "pdf" => ("📕", MutantColors::ERROR),
+
+            // Images
+            "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" => ("🖼", MutantColors::ACCENT_GREEN),
+
+            // Videos
+            "mp4" | "avi" | "mkv" | "mov" | "webm" => ("🎬", MutantColors::ACCENT_ORANGE),
+
+            // Archives
+            "zip" | "tar" | "gz" | "rar" | "7z" => ("📦", MutantColors::WARNING),
+
+            // Executables
+            "exe" | "bin" | "app" => ("⚡", MutantColors::ERROR),
+
+            // Default
+            _ => ("📄", MutantColors::TEXT_MUTED),
+        };
+
+        let bg_color = if is_selected {
+            base_color.gamma_multiply(0.15)
+        } else {
+            MutantColors::BACKGROUND_DARK
+        };
+
+        (icon, base_color, bg_color)
     }
 }
 
