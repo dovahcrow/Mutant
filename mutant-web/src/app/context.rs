@@ -675,7 +675,7 @@ impl Context {
         public: bool,
         mode: StorageMode,
         no_verify: bool,
-    ) -> Result<String, String> {
+    ) -> Result<(String, tokio::sync::mpsc::UnboundedReceiver<Result<mutant_protocol::TaskProgress, String>>), String> {
         client_manager::put_file_path(key, file_path, mode, public, no_verify).await
     }
 }

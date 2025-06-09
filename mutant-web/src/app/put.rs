@@ -579,93 +579,103 @@ impl PutWindow {
         let is_uploading = self.is_uploading.clone();
         let error_message = self.error_message.clone();
 
-        // Create progress tracking for this upload
-        let (progress_id, progress) = ctx.create_progress(&key_name, &file_path);
+        // Create progress tracking for this upload (not used anymore, but kept for compatibility)
+        let (_progress_id, _progress) = ctx.create_progress(&key_name, &file_path);
 
         // Store progress references for UI updates
         let reservation_progress = self.reservation_progress.clone();
         let upload_progress = self.upload_progress.clone();
         let confirmation_progress = self.confirmation_progress.clone();
         let upload_complete = self.upload_complete.clone();
+        let total_chunks = self.total_chunks.clone();
+        let chunks_to_reserve = self.chunks_to_reserve.clone();
+        let initial_written_count = self.initial_written_count.clone();
+        let initial_confirmed_count = self.initial_confirmed_count.clone();
 
         spawn_local(async move {
             log::info!("Starting file path upload: {} -> {}", file_path, key_name);
             match ctx.put_file_path(&key_name, &file_path, public, storage_mode, no_verify).await {
-                Ok(put_id) => {
+                Ok((put_id, mut progress_rx)) => {
                     log::info!("File path upload started successfully with put_id: {}", put_id);
                     *current_put_id.write().unwrap() = Some(put_id.clone());
 
-                    // Start a progress monitoring task
-                    let progress_clone = progress.clone();
+                    // Start a progress monitoring task using the real progress receiver
                     let is_uploading_clone = is_uploading.clone();
                     let upload_complete_clone = upload_complete.clone();
                     let _error_message_clone = error_message.clone();
 
                     spawn_local(async move {
-                        // Monitor progress updates
-                        loop {
-                            // WASM-compatible sleep using setTimeout
-                            {
-                                use wasm_bindgen_futures::JsFuture;
-                                use js_sys;
-                                let promise = js_sys::Promise::new(&mut |resolve, _| {
-                                    web_sys::window()
-                                        .unwrap()
-                                        .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 100)
-                                        .unwrap();
-                                });
-                                let _ = JsFuture::from(promise).await;
-                            }
+                        // Listen for real progress updates from the daemon
+                        while let Some(progress_result) = progress_rx.recv().await {
+                            match progress_result {
+                                Ok(task_progress) => {
+                                    log::debug!("Received progress update: {:?}", task_progress);
 
-                            let progress_data = progress_clone.read().unwrap();
-                            let mut has_progress = false;
-
-                            // Update progress bars based on operation data
-                            for (operation, value) in &progress_data.operation {
-                                has_progress = true;
-                                match operation.as_str() {
-                                    "reservation" => {
-                                        let progress = if value.nb_to_reserve > 0 {
-                                            value.nb_reserved as f32 / value.nb_to_reserve as f32
-                                        } else {
-                                            0.0
-                                        };
-                                        *reservation_progress.write().unwrap() = progress;
+                                    // Handle different types of progress updates
+                                    match task_progress {
+                                        mutant_protocol::TaskProgress::Put(put_event) => {
+                                            match put_event {
+                                                mutant_protocol::PutEvent::Starting {
+                                                    total_chunks: event_total_chunks,
+                                                    initial_written_count: event_initial_written_count,
+                                                    initial_confirmed_count: event_initial_confirmed_count,
+                                                    chunks_to_reserve: event_chunks_to_reserve
+                                                } => {
+                                                    *total_chunks.write().unwrap() = event_total_chunks;
+                                                    *chunks_to_reserve.write().unwrap() = event_chunks_to_reserve;
+                                                    *initial_written_count.write().unwrap() = event_initial_written_count;
+                                                    *initial_confirmed_count.write().unwrap() = event_initial_confirmed_count;
+                                                    log::info!("Put operation starting: {} total chunks, {} to reserve", event_total_chunks, event_chunks_to_reserve);
+                                                }
+                                                mutant_protocol::PutEvent::PadReserved => {
+                                                    // Update reservation progress
+                                                    let chunks_to_reserve_val = *chunks_to_reserve.read().unwrap();
+                                                    if chunks_to_reserve_val > 0 {
+                                                        let current_reserved = *reservation_progress.read().unwrap() * chunks_to_reserve_val as f32;
+                                                        let new_progress = (current_reserved + 1.0) / chunks_to_reserve_val as f32;
+                                                        *reservation_progress.write().unwrap() = new_progress.min(1.0);
+                                                    }
+                                                }
+                                                mutant_protocol::PutEvent::PadsWritten => {
+                                                    // Update upload progress
+                                                    let total_chunks_val = *total_chunks.read().unwrap();
+                                                    if total_chunks_val > 0 {
+                                                        let current_written = *upload_progress.read().unwrap() * total_chunks_val as f32;
+                                                        let new_progress = (current_written + 1.0) / total_chunks_val as f32;
+                                                        *upload_progress.write().unwrap() = new_progress.min(1.0);
+                                                    }
+                                                }
+                                                mutant_protocol::PutEvent::PadsConfirmed => {
+                                                    // Update confirmation progress
+                                                    let total_chunks_val = *total_chunks.read().unwrap();
+                                                    if total_chunks_val > 0 {
+                                                        let current_confirmed = *confirmation_progress.read().unwrap() * total_chunks_val as f32;
+                                                        let new_progress = (current_confirmed + 1.0) / total_chunks_val as f32;
+                                                        *confirmation_progress.write().unwrap() = new_progress.min(1.0);
+                                                    }
+                                                }
+                                                mutant_protocol::PutEvent::Complete => {
+                                                    log::info!("Put operation completed successfully");
+                                                    *upload_complete_clone.write().unwrap() = true;
+                                                    *is_uploading_clone.write().unwrap() = false;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            log::debug!("Received non-put progress update: {:?}", task_progress);
+                                        }
                                     }
-                                    "upload" => {
-                                        let progress = if value.total_pads > 0 {
-                                            value.nb_written as f32 / value.total_pads as f32
-                                        } else {
-                                            0.0
-                                        };
-                                        *upload_progress.write().unwrap() = progress;
-                                    }
-                                    "confirmation" => {
-                                        let progress = if value.total_pads > 0 {
-                                            value.nb_confirmed as f32 / value.total_pads as f32
-                                        } else {
-                                            0.0
-                                        };
-                                        *confirmation_progress.write().unwrap() = progress;
-                                    }
-                                    _ => {}
                                 }
-                            }
-
-                            // Check if upload is complete
-                            if let Some(confirmation) = progress_data.operation.get("confirmation") {
-                                if confirmation.total_pads > 0 && confirmation.nb_confirmed >= confirmation.total_pads {
-                                    *upload_complete_clone.write().unwrap() = true;
+                                Err(e) => {
+                                    log::error!("Progress update error: {}", e);
                                     *is_uploading_clone.write().unwrap() = false;
                                     break;
                                 }
                             }
-
-                            // Check if upload is still active
-                            if !*is_uploading_clone.read().unwrap() {
-                                break;
-                            }
                         }
+
+                        log::info!("Progress monitoring task completed");
                     });
                 }
                 Err(e) => {

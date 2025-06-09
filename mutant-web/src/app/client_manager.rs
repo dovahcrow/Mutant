@@ -61,7 +61,7 @@ enum ClientCommand {
     ListDirectory(String, oneshot::Sender<Result<mutant_protocol::ListDirectoryResponse, String>>),
     GetFileInfo(String, oneshot::Sender<Result<mutant_protocol::GetFileInfoResponse, String>>),
     // File path upload
-    PutFilePath(String, String, mutant_protocol::StorageMode, bool, bool, oneshot::Sender<Result<String, String>>),
+    PutFilePath(String, String, mutant_protocol::StorageMode, bool, bool, oneshot::Sender<Result<(String, mpsc::UnboundedReceiver<Result<mutant_protocol::TaskProgress, String>>), String>>),
 }
 
 // Singleton channel to the client manager
@@ -767,10 +767,22 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
 
                         // Use the file path put method
                         match put_client.put(&key, &file_path, mode, public, no_verify).await {
-                            Ok((task_id, _task_future, _progress_rx, _data_stream)) => {
+                            Ok((task_id, _task_future, progress_rx, _data_stream)) => {
                                 // Now we have the real task ID from the daemon!
+                                // Forward the progress receiver to the caller
                                 if !sender.is_canceled() {
-                                    let _ = sender.send(Ok(task_id.to_string()));
+                                    // Forward progress_rx, mapping errors to String
+                                    let (prog_tx_fwd, prog_rx_fwd) = mpsc::unbounded_channel();
+                                    let mut original_progress_rx = progress_rx;
+                                    spawn_local(async move {
+                                        while let Some(res) = original_progress_rx.recv().await {
+                                            if prog_tx_fwd.send(res.map_err(|e| e.to_string())).is_err() {
+                                                break;
+                                            }
+                                        }
+                                    });
+
+                                    let _ = sender.send(Ok((task_id.to_string(), prog_rx_fwd)));
                                 }
                             }
                             Err(e) => {
@@ -1369,7 +1381,7 @@ pub async fn put_file_path(
     mode: mutant_protocol::StorageMode,
     public: bool,
     no_verify: bool,
-) -> Result<String, String> {
+) -> Result<(String, mpsc::UnboundedReceiver<Result<mutant_protocol::TaskProgress, String>>), String> {
     info!("Starting put file path request for key {} from path {}", key, file_path);
 
     let (tx, rx) = oneshot::channel();
