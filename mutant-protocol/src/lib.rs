@@ -869,6 +869,8 @@ pub struct FileSystemEntry {
 pub struct ListDirectoryResponse {
     pub path: String,
     pub entries: Vec<FileSystemEntry>,
+    /// The actual home directory path for display purposes
+    pub home_directory: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

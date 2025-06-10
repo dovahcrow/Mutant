@@ -104,16 +104,25 @@ impl FilePickerNode {
     }
 
     /// Insert entries from a directory listing into this node
-    pub fn insert_entries(&mut self, entries: &[FileSystemEntry]) {
+    pub fn insert_entries(&mut self, entries: &[FileSystemEntry], home_directory: &str) {
         self.children.clear();
         self.loaded = true;
 
         for entry in entries {
+            // Convert relative path to full path by prepending home directory
+            let full_path = if entry.path == "/" {
+                home_directory.to_string()
+            } else {
+                format!("{}{}", home_directory, entry.path)
+            };
+
             if entry.is_directory {
-                let child = FilePickerNode::new_dir(&entry.name, &entry.path);
+                let child = FilePickerNode::new_dir(&entry.name, &full_path);
                 self.children.insert(entry.name.clone(), child);
             } else {
-                let child = FilePickerNode::new_file(entry);
+                let mut file_entry = entry.clone();
+                file_entry.path = full_path;
+                let child = FilePickerNode::new_file(&file_entry);
                 self.children.insert(entry.name.clone(), child);
             }
         }
@@ -159,11 +168,13 @@ impl Default for FilePicker {
 
 impl FilePicker {
     pub fn new() -> Self {
-        // Start with the user's home directory or root
-        let initial_path = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+        // Start with "/" as root - the daemon will map this to the user's home directory
+        // This provides security isolation while keeping the web interface simple
+        let root_path = "/";
 
-        // Create root node
-        let root = FilePickerNode::new_dir("", &initial_path);
+        // Create root node starting from "/" - the name will be updated when we get the response
+        let mut root = FilePickerNode::new_dir("Loading...", root_path);
+        root.expanded = true; // Expand the root by default
 
         let picker = Self {
             root: Arc::new(RwLock::new(root)),
@@ -174,8 +185,9 @@ impl FilePicker {
             show_hidden: Arc::new(RwLock::new(false)),
         };
 
-        // Load initial directory
-        picker.load_directory(&initial_path);
+        // Load root directory contents (daemon will resolve to home directory)
+        picker.load_directory(root_path);
+
         picker
     }
 
@@ -224,13 +236,14 @@ impl FilePicker {
                 Ok(response) => {
                     // Update the tree node
                     let mut root_guard = root.write().unwrap();
-                    if let Some(node) = root_guard.find_node_mut(&path) {
-                        node.insert_entries(&response.entries);
-                    } else {
-                        // If this is the root path, update the root node directly
-                        if path == root_guard.path {
-                            root_guard.insert_entries(&response.entries);
-                        }
+
+                    // Check if this is the root path first
+                    if path == root_guard.path {
+                        // Update the root node name to show the full home directory path
+                        root_guard.name = response.home_directory.clone();
+                        root_guard.insert_entries(&response.entries, &response.home_directory);
+                    } else if let Some(node) = root_guard.find_node_mut(&path) {
+                        node.insert_entries(&response.entries, &response.home_directory);
                     }
                 }
                 Err(e) => {
@@ -270,7 +283,7 @@ impl FilePicker {
                 let path = path.to_string();
                 let selected_file = self.selected_file.clone();
                 let error_message = self.error_message.clone();
-                
+
                 async move {
                     let ctx = context::context();
                     match ctx.get_file_info(&path).await {
@@ -294,6 +307,8 @@ impl FilePicker {
             *self.selected_file.write().unwrap() = Some(path.to_string());
         }
     }
+
+
 
     /// Draw the file picker UI
     pub fn draw(&mut self, ui: &mut egui::Ui) -> bool {
