@@ -346,20 +346,18 @@ impl PutWindow {
                     egui::Vec2::new(right_width, content_height),
                     egui::Layout::top_down(egui::Align::Center),
                     |ui| {
-                        // Center the content both horizontally and vertically
-                        ui.vertical_centered(|ui| {
-                            // Calculate proper vertical centering
-                            let available_height = ui.available_height();
-                            let content_height_estimate = 300.0; // More realistic estimate
-                            let vertical_padding = (available_height - content_height_estimate).max(0.0) / 2.0;
-                            ui.add_space(vertical_padding);
+                        // Simple centering with equal top/bottom margins
+                        let available_height = ui.available_height();
+                        let margin = available_height * 0.1; // 15% margin top and bottom
 
+                        ui.add_space(margin);
+
+                        ui.vertical_centered(|ui| {
                             // Constrain the content width for better readability
                             let max_content_width = (right_width * 0.8).min(350.0);
 
-                            // Use a vertical layout that centers content
                             ui.allocate_ui_with_layout(
-                                egui::Vec2::new(max_content_width, content_height_estimate),
+                                egui::Vec2::new(max_content_width, available_height - (margin * 2.0)),
                                 egui::Layout::top_down(egui::Align::Center),
                                 |ui| {
                         // Header for configuration with gradient-like styling - centered
@@ -412,64 +410,65 @@ impl PutWindow {
 
                         ui.add_space(8.0);
 
-                        // Privacy setting - compact layout without group
-                        ui.vertical_centered(|ui| {
-                            ui.horizontal(|ui| {
-                                let is_public = *self.public.read().unwrap();
-                                let (icon, color) = if is_public {
-                                    ("🌐", MutantColors::ACCENT_GREEN)
+                        // Privacy setting - fixed height with group for visual consistency
+                        ui.group(|ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.set_height(80.0); // Fixed height for consistency
+                            ui.vertical_centered(|ui| {
+                                ui.horizontal(|ui| {
+                                    let is_public = *self.public.read().unwrap();
+                                    let (icon, color) = if is_public {
+                                        ("🌐", MutantColors::ACCENT_GREEN)
+                                    } else {
+                                        ("🔒", MutantColors::ACCENT_BLUE)
+                                    };
+                                    ui.label(RichText::new(icon).size(14.0).color(color));
+                                    ui.label(RichText::new("Privacy Setting").size(13.0).color(MutantColors::TEXT_PRIMARY).strong());
+                                });
+
+                                // Center the buttons horizontally
+                                ui.horizontal_centered(|ui| {
+                                    let mut public = self.public.write().unwrap();
+
+                                    // Private button (default)
+                                    let private_button = if !*public {
+                                        egui::Button::new(RichText::new("🔒 Private").color(MutantColors::TEXT_PRIMARY))
+                                            .fill(MutantColors::ACCENT_BLUE)
+                                            .stroke(egui::Stroke::new(2.0, MutantColors::ACCENT_BLUE))
+                                    } else {
+                                        egui::Button::new(RichText::new("🔒 Private").color(MutantColors::TEXT_SECONDARY))
+                                            .fill(MutantColors::SURFACE)
+                                            .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_MEDIUM))
+                                    };
+
+                                    if ui.add(private_button).clicked() {
+                                        *public = false;
+                                    }
+
+
+                                    // Public button
+                                    let public_button = if *public {
+                                        egui::Button::new(RichText::new("🌐 Public").color(MutantColors::TEXT_PRIMARY))
+                                            .fill(MutantColors::ACCENT_GREEN)
+                                            .stroke(egui::Stroke::new(2.0, MutantColors::ACCENT_GREEN))
+                                    } else {
+                                        egui::Button::new(RichText::new("🌐 Public").color(MutantColors::TEXT_SECONDARY))
+                                            .fill(MutantColors::SURFACE)
+                                            .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_MEDIUM))
+                                    };
+
+                                    if ui.add(public_button).clicked() {
+                                        *public = true;
+                                    }
+                                });
+
+                                let description = if *self.public.read().unwrap() {
+                                    "File will be publicly accessible to anyone"
                                 } else {
-                                    ("🔒", MutantColors::ACCENT_BLUE)
+                                    "File will be private and encrypted"
                                 };
-                                ui.label(RichText::new(icon).size(14.0).color(color));
-                                ui.label(RichText::new("Privacy Setting").size(13.0).color(MutantColors::TEXT_PRIMARY).strong());
+                                ui.label(RichText::new(description).size(10.0).color(MutantColors::TEXT_MUTED));
                             });
-                            ui.add_space(4.0);
-
-                            // Center the buttons horizontally
-                            ui.horizontal_centered(|ui| {
-                                let mut public = self.public.write().unwrap();
-
-                                // Private button (default)
-                                let private_button = if !*public {
-                                    egui::Button::new(RichText::new("🔒 Private").color(MutantColors::TEXT_PRIMARY))
-                                        .fill(MutantColors::ACCENT_BLUE)
-                                        .stroke(egui::Stroke::new(2.0, MutantColors::ACCENT_BLUE))
-                                } else {
-                                    egui::Button::new(RichText::new("🔒 Private").color(MutantColors::TEXT_SECONDARY))
-                                        .fill(MutantColors::SURFACE)
-                                        .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_MEDIUM))
-                                };
-
-                                if ui.add(private_button).clicked() {
-                                    *public = false;
-                                }
-
-                                ui.add_space(6.0);
-
-                                // Public button
-                                let public_button = if *public {
-                                    egui::Button::new(RichText::new("🌐 Public").color(MutantColors::TEXT_PRIMARY))
-                                        .fill(MutantColors::ACCENT_GREEN)
-                                        .stroke(egui::Stroke::new(2.0, MutantColors::ACCENT_GREEN))
-                                } else {
-                                    egui::Button::new(RichText::new("🌐 Public").color(MutantColors::TEXT_SECONDARY))
-                                        .fill(MutantColors::SURFACE)
-                                        .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_MEDIUM))
-                                };
-
-                                if ui.add(public_button).clicked() {
-                                    *public = true;
-                                }
-                            });
-
-                            ui.add_space(2.0);
-                            let description = if *self.public.read().unwrap() {
-                                "File will be private and encrypted"
-                            } else {
-                                "File will be publicly accessible to anyone"
-                            };
-                            ui.label(RichText::new(description).size(10.0).color(MutantColors::TEXT_MUTED));
                         });
 
                         ui.add_space(8.0);
@@ -570,6 +569,8 @@ impl PutWindow {
                                 }
                             );
                         });
+
+                        ui.add_space(margin);
                     }
                 );
         });
