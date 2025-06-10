@@ -253,52 +253,8 @@ impl PutWindow {
                     // Update total chunks
                     *self.total_chunks.write().unwrap() = total_chunks;
 
-                    // Check if current phase is complete
-                    if confirmed_count == total_chunks && total_chunks > 0 {
-                        let current_phase = *self.current_phase.read().unwrap();
-                        let is_public = *self.public.read().unwrap();
-
-                        if current_phase == 1 {
-                            // Phase 1 (file data) is complete
-                            *self.phase1_complete.write().unwrap() = true;
-
-                            // Store Phase 1 progress
-                            *self.phase1_reservation_progress.write().unwrap() = *self.reservation_progress.read().unwrap();
-                            *self.phase1_upload_progress.write().unwrap() = *self.upload_progress.read().unwrap();
-                            *self.phase1_confirmation_progress.write().unwrap() = *self.confirmation_progress.read().unwrap();
-                            *self.phase1_total_chunks.write().unwrap() = *self.total_chunks.read().unwrap();
-
-                            if is_public {
-                                // For public uploads, move to Phase 2 (public index upload)
-                                *self.current_phase.write().unwrap() = 2;
-
-                                // Reset current progress for Phase 2
-                                *self.reservation_progress.write().unwrap() = 0.0;
-                                *self.upload_progress.write().unwrap() = 0.0;
-                                *self.confirmation_progress.write().unwrap() = 0.0;
-                                *self.total_chunks.write().unwrap() = 0;
-
-                                // Don't mark as complete yet - wait for Phase 2
-                                log::info!("Phase 1 complete, starting Phase 2 (public index upload)");
-                            } else {
-                                // For private uploads, we're done after Phase 1
-                                self.complete_upload();
-                            }
-                        } else if current_phase == 2 {
-                            // Phase 2 (public index) is complete
-                            *self.phase2_complete.write().unwrap() = true;
-
-                            // Store Phase 2 progress
-                            *self.phase2_reservation_progress.write().unwrap() = *self.reservation_progress.read().unwrap();
-                            *self.phase2_upload_progress.write().unwrap() = *self.upload_progress.read().unwrap();
-                            *self.phase2_confirmation_progress.write().unwrap() = *self.confirmation_progress.read().unwrap();
-                            *self.phase2_total_chunks.write().unwrap() = *self.total_chunks.read().unwrap();
-
-                            // Both phases complete for public upload
-                            self.complete_upload();
-                            log::info!("Phase 2 complete, public upload finished");
-                        }
-                    }
+                    // Note: Phase detection is now handled in the real-time progress receiver
+                    // This polling-based checker is kept for backward compatibility but phase logic moved
                 }
             }
         }
@@ -984,6 +940,21 @@ impl PutWindow {
         let initial_written_count = self.initial_written_count.clone();
         let initial_confirmed_count = self.initial_confirmed_count.clone();
 
+        // Store phase tracking references
+        let current_phase = self.current_phase.clone();
+        let phase1_complete = self.phase1_complete.clone();
+        let phase2_complete = self.phase2_complete.clone();
+        let phase1_reservation_progress = self.phase1_reservation_progress.clone();
+        let phase1_upload_progress = self.phase1_upload_progress.clone();
+        let phase1_confirmation_progress = self.phase1_confirmation_progress.clone();
+        let phase1_total_chunks = self.phase1_total_chunks.clone();
+        let phase2_reservation_progress = self.phase2_reservation_progress.clone();
+        let phase2_upload_progress = self.phase2_upload_progress.clone();
+        let phase2_confirmation_progress = self.phase2_confirmation_progress.clone();
+        let phase2_total_chunks = self.phase2_total_chunks.clone();
+        let public_address = self.public_address.clone();
+        let key_name_clone = key_name.clone();
+
         spawn_local(async move {
             log::info!("Starting file path upload: {} -> {}", file_path, key_name);
             match ctx
@@ -1079,12 +1050,81 @@ impl PutWindow {
                                                     }
                                                 }
                                                 mutant_protocol::PutEvent::Complete => {
-                                                    log::info!(
-                                                        "Put operation completed successfully"
-                                                    );
-                                                    *upload_complete_clone.write().unwrap() = true;
-                                                    *is_uploading_clone.write().unwrap() = false;
-                                                    break;
+                                                    log::info!("Put operation phase completed successfully");
+
+                                                    // Check which phase just completed
+                                                    let current_phase_val = *current_phase.read().unwrap();
+
+                                                    if current_phase_val == 1 {
+                                                        // Phase 1 (file data) is complete
+                                                        *phase1_complete.write().unwrap() = true;
+
+                                                        // Store Phase 1 progress
+                                                        *phase1_reservation_progress.write().unwrap() = *reservation_progress.read().unwrap();
+                                                        *phase1_upload_progress.write().unwrap() = *upload_progress.read().unwrap();
+                                                        *phase1_confirmation_progress.write().unwrap() = *confirmation_progress.read().unwrap();
+                                                        *phase1_total_chunks.write().unwrap() = *total_chunks.read().unwrap();
+
+                                                        if public {
+                                                            // For public uploads, move to Phase 2 (public index upload)
+                                                            *current_phase.write().unwrap() = 2;
+
+                                                            // Reset current progress for Phase 2
+                                                            *reservation_progress.write().unwrap() = 0.0;
+                                                            *upload_progress.write().unwrap() = 0.0;
+                                                            *confirmation_progress.write().unwrap() = 0.0;
+                                                            *total_chunks.write().unwrap() = 0;
+
+                                                            // Don't mark as complete yet - wait for Phase 2
+                                                            log::info!("Phase 1 complete, waiting for Phase 2 (public index upload)");
+                                                            // Continue listening for Phase 2 events
+                                                        } else {
+                                                            // For private uploads, we're done after Phase 1
+                                                            *upload_complete_clone.write().unwrap() = true;
+                                                            *is_uploading_clone.write().unwrap() = false;
+
+                                                            // Refresh the keys list
+                                                            spawn_local(async move {
+                                                                let ctx = context::context();
+                                                                let _ = ctx.list_keys().await;
+                                                            });
+
+                                                            break;
+                                                        }
+                                                    } else if current_phase_val == 2 {
+                                                        // Phase 2 (public index) is complete
+                                                        *phase2_complete.write().unwrap() = true;
+
+                                                        // Store Phase 2 progress
+                                                        *phase2_reservation_progress.write().unwrap() = *reservation_progress.read().unwrap();
+                                                        *phase2_upload_progress.write().unwrap() = *upload_progress.read().unwrap();
+                                                        *phase2_confirmation_progress.write().unwrap() = *confirmation_progress.read().unwrap();
+                                                        *phase2_total_chunks.write().unwrap() = *total_chunks.read().unwrap();
+
+                                                        // Both phases complete for public upload
+                                                        *upload_complete_clone.write().unwrap() = true;
+                                                        *is_uploading_clone.write().unwrap() = false;
+
+                                                        // Refresh the keys list and get public address
+                                                        spawn_local(async move {
+                                                            let ctx = context::context();
+                                                            let _ = ctx.list_keys().await;
+
+                                                            // Fetch the key details to get the public address
+                                                            let keys = ctx.list_keys().await;
+                                                            for key in keys {
+                                                                if key.key == key_name_clone && key.is_public {
+                                                                    if let Some(addr) = key.public_address {
+                                                                        *public_address.write().unwrap() = Some(addr);
+                                                                        break;
+                                                                    }
+                                                                }
+                                                            }
+                                                        });
+
+                                                        log::info!("Phase 2 complete, public upload finished");
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
