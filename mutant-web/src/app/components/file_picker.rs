@@ -495,72 +495,94 @@ impl FilePicker {
             return false;
         }
 
-        // Compact indentation for maximum density
-        let indent_per_level = 12.0;
-        let total_indent = indent_per_level * (indent_level as f32);
+        // Compact indentation with maximum depth limit to prevent exponential growth
+        let indent_per_level = 8.0; // Reduced from 12.0
+        let max_indent = 80.0; // Maximum indentation to prevent excessive nesting
+        let total_indent = (indent_per_level * (indent_level as f32)).min(max_indent);
 
         // Compact layout with minimal spacing
-        ui.spacing_mut().item_spacing.y = 1.0; // Minimal vertical spacing
-        ui.spacing_mut().indent = 12.0; // Compact indentation
+        ui.spacing_mut().item_spacing.y = 0.0; // Minimal vertical spacing
+        ui.spacing_mut().indent = 8.0; // Compact indentation
+
+        // Standard row height for both files and folders
+        let row_height = 18.0;
 
         ui.horizontal(|ui| {
             // Apply indentation
             ui.add_space(total_indent);
 
             if node.is_directory {
-                // Compact directory node styling
-                let (icon, icon_color) = if node.expanded {
+                // Custom compact directory styling to match file rows
+                let (folder_icon, icon_color) = if node.expanded {
                     ("📂", MutantColors::ACCENT_ORANGE)
                 } else {
                     ("📁", MutantColors::ACCENT_BLUE)
                 };
 
-                let text = RichText::new(format!("{} {}/", icon, node.name))
-                    .size(12.0)
-                    .color(icon_color);
+                // Expand/collapse arrow
+                let arrow_icon = if node.expanded { "▼" } else { "▶" };
 
-                let header = egui::CollapsingHeader::new(text)
-                    .default_open(node.expanded)
-                    .show(ui, |ui| {
-                        // Ensure compact spacing for children too
-                        ui.spacing_mut().item_spacing.y = 1.0;
+                // Use same button-like approach as files for consistent spacing
+                let button_response = ui.allocate_response(
+                    egui::Vec2::new(ui.available_width(), row_height),
+                    egui::Sense::click()
+                );
 
-                        // Draw children
-                        let mut sorted_children: Vec<_> = node.children.iter_mut().collect();
-                        sorted_children.sort_by(|(_, a), (_, b)| {
-                            match (a.is_directory, b.is_directory) {
-                                (true, false) => std::cmp::Ordering::Less,
-                                (false, true) => std::cmp::Ordering::Greater,
-                                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                            }
-                        });
+                let row_rect = button_response.rect;
 
-                        for (_, child) in sorted_children {
-                            if Self::draw_tree_node_static(
-                                ui,
-                                child,
-                                indent_level + 1,
-                                show_hidden,
-                                selected_file,
-                                selected_file_arc,
-                                is_loading,
-                                error_message,
-                                files_only
-                            ) {
-                                file_selected = true;
-                            }
-                        }
-                    });
+                // Hover effect for directories
+                if button_response.hovered() {
+                    ui.painter().rect_filled(
+                        row_rect,
+                        3.0,
+                        MutantColors::BACKGROUND_MEDIUM.gamma_multiply(0.5)
+                    );
+                }
+
+                // Draw directory content with compact spacing
+                let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, (row_rect.height() - 12.0) / 2.0);
+                let font_id = egui::FontId::new(11.0, egui::FontFamily::Proportional);
+
+                // Draw expand/collapse arrow
+                ui.painter().text(
+                    text_pos,
+                    egui::Align2::LEFT_CENTER,
+                    arrow_icon,
+                    font_id.clone(),
+                    MutantColors::TEXT_MUTED
+                );
+
+                // Draw folder icon
+                let icon_pos = text_pos + egui::Vec2::new(12.0, 0.0);
+                ui.painter().text(
+                    icon_pos,
+                    egui::Align2::LEFT_CENTER,
+                    folder_icon,
+                    font_id.clone(),
+                    icon_color
+                );
+
+                // Draw folder name
+                let name_pos = icon_pos + egui::Vec2::new(16.0, 0.0);
+                ui.painter().text(
+                    name_pos,
+                    egui::Align2::LEFT_CENTER,
+                    format!("{}/", node.name),
+                    font_id,
+                    icon_color
+                );
 
                 // Handle directory expansion
-                if header.header_response.clicked() {
-                    node.expanded = header.openness > 0.0;
-                    // Note: Directory loading will be handled by the main FilePicker logic
-                    // when it detects an expanded but unloaded directory
+                if button_response.clicked() {
+                    node.expanded = !node.expanded;
+                }
+
+                if button_response.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
             } else {
                 // Compact file node styling
-                ui.add_space(16.0); // Align with directory names
+                ui.add_space(28.0); // Align with directory names (arrow + icon spacing)
 
                 let is_selected = selected_file
                     .as_ref()
@@ -661,6 +683,38 @@ impl FilePicker {
                 }
             }
         });
+
+        // Draw children for expanded directories (outside the horizontal layout)
+        if node.is_directory && node.expanded {
+            // Ensure compact spacing for children
+            ui.spacing_mut().item_spacing.y = 0.0;
+
+            // Draw children
+            let mut sorted_children: Vec<_> = node.children.iter_mut().collect();
+            sorted_children.sort_by(|(_, a), (_, b)| {
+                match (a.is_directory, b.is_directory) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                }
+            });
+
+            for (_, child) in sorted_children {
+                if Self::draw_tree_node_static(
+                    ui,
+                    child,
+                    indent_level + 1,
+                    show_hidden,
+                    selected_file,
+                    selected_file_arc,
+                    is_loading,
+                    error_message,
+                    files_only
+                ) {
+                    file_selected = true;
+                }
+            }
+        }
 
         file_selected
     }
