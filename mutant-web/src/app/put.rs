@@ -11,7 +11,7 @@ use super::components::progress::detailed_progress;
 use super::components::file_picker::FilePicker;
 use super::context;
 use super::notifications;
-use super::theme::{MutantColors, primary_button, success_button};
+use super::theme::{MutantColors, success_button};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum PutStep {
@@ -87,7 +87,7 @@ impl Default for PutWindow {
             selected_file: Arc::new(RwLock::new(None)),
             file_size: Arc::new(RwLock::new(None)),
             key_name: Arc::new(RwLock::new(String::new())),
-            public: Arc::new(RwLock::new(false)),
+            public: Arc::new(RwLock::new(false)), // Default to private (false means private)
             storage_mode: Arc::new(RwLock::new(StorageMode::Heaviest)),
             no_verify: Arc::new(RwLock::new(false)),
 
@@ -346,91 +346,195 @@ impl PutWindow {
                     egui::Vec2::new(right_width, content_height),
                     egui::Layout::top_down(egui::Align::LEFT),
                     |ui| {
-                        // Header for configuration
-                        ui.heading(RichText::new("📤 Upload Configuration").size(18.0).color(MutantColors::TEXT_PRIMARY));
-                        ui.add_space(10.0);
+                        // Header for configuration with gradient-like styling
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("📤").size(20.0).color(MutantColors::ACCENT_ORANGE));
+                            ui.add_space(8.0);
+                            ui.heading(RichText::new("Upload Configuration").size(18.0).color(MutantColors::TEXT_PRIMARY));
+                        });
+                        ui.add_space(12.0);
 
-                        // Show selected file info
+                        // Show selected file info with enhanced styling
                         if let Some(filename) = &*self.selected_file.read().unwrap() {
                             ui.group(|ui| {
+                                ui.set_min_width(ui.available_width());
                                 ui.vertical(|ui| {
-                                    ui.label(RichText::new("Selected File:").color(MutantColors::TEXT_SECONDARY));
-                                    ui.label(RichText::new(filename).color(MutantColors::ACCENT_BLUE));
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("📄").size(14.0).color(MutantColors::ACCENT_BLUE));
+                                        ui.label(RichText::new("Selected File").size(13.0).color(MutantColors::TEXT_SECONDARY).strong());
+                                    });
+                                    ui.add_space(4.0);
+                                    ui.label(RichText::new(filename).size(14.0).color(MutantColors::ACCENT_BLUE).strong());
 
                                     if let Some(path) = &*self.selected_file_path.read().unwrap() {
-                                        ui.label(RichText::new(format!("Path: {}", path)).color(MutantColors::TEXT_MUTED));
+                                        ui.label(RichText::new(format!("📁 {}", path)).size(11.0).color(MutantColors::TEXT_MUTED));
                                     }
                                 });
                             });
-                            ui.add_space(10.0);
+                            ui.add_space(12.0);
                         }
 
-                        // Key name input with styled frame
+                        // Key name input with enhanced styling
                         ui.group(|ui| {
+                            ui.set_min_width(ui.available_width());
                             ui.vertical(|ui| {
-                                ui.label(RichText::new("Key Name:").color(MutantColors::TEXT_PRIMARY));
-                                ui.add_space(5.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("🔑").size(14.0).color(MutantColors::ACCENT_ORANGE));
+                                    ui.label(RichText::new("Key Name").size(13.0).color(MutantColors::TEXT_PRIMARY).strong());
+                                });
+                                ui.add_space(6.0);
                                 let mut key_name = self.key_name.write().unwrap();
                                 ui.text_edit_singleline(&mut *key_name);
                             });
                         });
 
-                        ui.add_space(10.0);
+                        ui.add_space(12.0);
 
-                        // Configuration options
-                        ui.collapsing("Upload Options", |ui| {
-                            // Public checkbox
-                            ui.horizontal(|ui| {
-                                let mut public = self.public.write().unwrap();
-                                ui.checkbox(&mut *public, "Public");
-                                ui.label("Make this file publicly accessible");
-                            });
+                        // Privacy setting - prominent display outside of collapsible
+                        ui.group(|ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    let is_public = *self.public.read().unwrap();
+                                    let (icon, color) = if is_public {
+                                        ("🌐", MutantColors::ACCENT_GREEN)
+                                    } else {
+                                        ("🔒", MutantColors::ACCENT_BLUE)
+                                    };
+                                    ui.label(RichText::new(icon).size(14.0).color(color));
+                                    ui.label(RichText::new("Privacy Setting").size(13.0).color(MutantColors::TEXT_PRIMARY).strong());
+                                });
+                                ui.add_space(6.0);
 
-                            // Storage mode selection
-                            ui.horizontal(|ui| {
-                                ui.label("Storage Mode:");
-                                let mut storage_mode = self.storage_mode.write().unwrap();
+                                ui.horizontal(|ui| {
+                                    let mut public = self.public.write().unwrap();
 
-                                egui::ComboBox::new(format!("mutant_put_storage_mode_{}", self.window_id), "")
-                                    .selected_text(format!("{:?}", *storage_mode))
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(&mut *storage_mode, StorageMode::Light, "Light");
-                                        ui.selectable_value(&mut *storage_mode, StorageMode::Medium, "Medium");
-                                        ui.selectable_value(&mut *storage_mode, StorageMode::Heavy, "Heavy");
-                                        ui.selectable_value(&mut *storage_mode, StorageMode::Heaviest, "Heaviest");
-                                    });
-                            });
+                                    // Private button (default)
+                                    let private_button = if !*public {
+                                        egui::Button::new(RichText::new("🔒 Private").color(MutantColors::TEXT_PRIMARY))
+                                            .fill(MutantColors::ACCENT_BLUE)
+                                            .stroke(egui::Stroke::new(2.0, MutantColors::ACCENT_BLUE))
+                                    } else {
+                                        egui::Button::new(RichText::new("🔒 Private").color(MutantColors::TEXT_SECONDARY))
+                                            .fill(MutantColors::SURFACE)
+                                            .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_MEDIUM))
+                                    };
 
-                            // No verify checkbox
-                            ui.horizontal(|ui| {
-                                let mut no_verify = self.no_verify.write().unwrap();
-                                ui.checkbox(&mut *no_verify, "Skip Verification");
-                                ui.label("Skip verification of uploaded data (faster but less safe)");
+                                    if ui.add(private_button).clicked() {
+                                        *public = false;
+                                    }
+
+                                    ui.add_space(8.0);
+
+                                    // Public button
+                                    let public_button = if *public {
+                                        egui::Button::new(RichText::new("🌐 Public").color(MutantColors::TEXT_PRIMARY))
+                                            .fill(MutantColors::ACCENT_GREEN)
+                                            .stroke(egui::Stroke::new(2.0, MutantColors::ACCENT_GREEN))
+                                    } else {
+                                        egui::Button::new(RichText::new("🌐 Public").color(MutantColors::TEXT_SECONDARY))
+                                            .fill(MutantColors::SURFACE)
+                                            .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_MEDIUM))
+                                    };
+
+                                    if ui.add(public_button).clicked() {
+                                        *public = true;
+                                    }
+                                });
+
+                                ui.add_space(4.0);
+                                let description = if *self.public.read().unwrap() {
+                                    "File will be publicly accessible to anyone"
+                                } else {
+                                    "File will be private and encrypted"
+                                };
+                                ui.label(RichText::new(description).size(11.0).color(MutantColors::TEXT_MUTED));
                             });
                         });
 
-                        ui.add_space(15.0);
+                        ui.add_space(12.0);
 
-                        // Upload button
+                        // Advanced options (renamed from "Upload Options")
+                        ui.collapsing(RichText::new("⚙️ Advanced").color(MutantColors::TEXT_PRIMARY), |ui| {
+                            ui.add_space(4.0);
+
+                            // Storage mode selection with enhanced styling
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("💾").size(12.0).color(MutantColors::ACCENT_BLUE));
+                                ui.label(RichText::new("Storage Mode:").color(MutantColors::TEXT_PRIMARY));
+                                ui.add_space(8.0);
+
+                                let mut storage_mode = self.storage_mode.write().unwrap();
+                                egui::ComboBox::new(format!("mutant_put_storage_mode_{}", self.window_id), "")
+                                    .selected_text(RichText::new(format!("{:?}", *storage_mode)).color(MutantColors::ACCENT_ORANGE))
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut *storage_mode, StorageMode::Light,
+                                            RichText::new("Light").color(MutantColors::TEXT_PRIMARY));
+                                        ui.selectable_value(&mut *storage_mode, StorageMode::Medium,
+                                            RichText::new("Medium").color(MutantColors::TEXT_PRIMARY));
+                                        ui.selectable_value(&mut *storage_mode, StorageMode::Heavy,
+                                            RichText::new("Heavy").color(MutantColors::TEXT_PRIMARY));
+                                        ui.selectable_value(&mut *storage_mode, StorageMode::Heaviest,
+                                            RichText::new("Heaviest").color(MutantColors::TEXT_PRIMARY));
+                                    });
+                            });
+
+                            ui.add_space(8.0);
+
+                            // No verify checkbox with enhanced styling
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("⚡").size(12.0).color(MutantColors::WARNING));
+                                let mut no_verify = self.no_verify.write().unwrap();
+                                ui.checkbox(&mut *no_verify, RichText::new("Skip Verification").color(MutantColors::TEXT_PRIMARY));
+                            });
+                            ui.label(RichText::new("Skip verification of uploaded data (faster but less safe)").size(11.0).color(MutantColors::TEXT_MUTED));
+                        });
+
+                        ui.add_space(20.0);
+
+                        // Upload button with enhanced styling
                         let can_upload = !self.key_name.read().unwrap().is_empty() && self.selected_file_path.read().unwrap().is_some();
-                        if ui.add_enabled(can_upload, primary_button("🚀 Start Upload")).clicked() {
-                            self.start_path_upload();
-                        }
+
+                        ui.vertical_centered(|ui| {
+                            let upload_button = if can_upload {
+                                egui::Button::new(RichText::new("🚀 Start Upload").size(16.0).strong().color(MutantColors::TEXT_PRIMARY))
+                                    .fill(MutantColors::ACCENT_ORANGE)
+                                    .stroke(egui::Stroke::new(2.0, MutantColors::ACCENT_ORANGE))
+                                    .min_size([200.0, 40.0].into())
+                            } else {
+                                egui::Button::new(RichText::new("🚀 Start Upload").size(16.0).color(MutantColors::TEXT_MUTED))
+                                    .fill(MutantColors::SURFACE)
+                                    .stroke(egui::Stroke::new(1.0, MutantColors::BORDER_MEDIUM))
+                                    .min_size([200.0, 40.0].into())
+                            };
+
+                            if ui.add_enabled(can_upload, upload_button).clicked() {
+                                self.start_path_upload();
+                            }
+                        });
 
                         if !can_upload {
-                            ui.add_space(5.0);
-                            if self.selected_file_path.read().unwrap().is_none() {
-                                ui.label(RichText::new("⚠ No file selected").color(MutantColors::WARNING));
-                            } else {
-                                ui.label(RichText::new("⚠ Please enter a key name").color(MutantColors::WARNING));
-                            }
+                            ui.add_space(8.0);
+                            ui.vertical_centered(|ui| {
+                                if self.selected_file_path.read().unwrap().is_none() {
+                                    ui.label(RichText::new("⚠ Please select a file to upload").size(12.0).color(MutantColors::WARNING));
+                                } else {
+                                    ui.label(RichText::new("⚠ Please enter a key name").size(12.0).color(MutantColors::WARNING));
+                                }
+                            });
                         }
 
-                        // Show error message if any
+                        // Show error message if any with enhanced styling
                         if let Some(error) = &*self.error_message.read().unwrap() {
-                            ui.add_space(10.0);
+                            ui.add_space(12.0);
                             ui.group(|ui| {
-                                ui.label(RichText::new(format!("❌ Error: {}", error)).color(MutantColors::ERROR));
+                                ui.set_min_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("❌").size(14.0).color(MutantColors::ERROR));
+                                    ui.label(RichText::new("Error").size(13.0).color(MutantColors::ERROR).strong());
+                                });
+                                ui.add_space(4.0);
+                                ui.label(RichText::new(error).size(12.0).color(MutantColors::ERROR));
                             });
                         }
                     }
@@ -696,7 +800,7 @@ impl PutWindow {
         *self.selected_file.write().unwrap() = None;
         *self.file_size.write().unwrap() = None;
         *self.key_name.write().unwrap() = String::new();
-        *self.public.write().unwrap() = false;
+        *self.public.write().unwrap() = false; // Reset to private
         *self.storage_mode.write().unwrap() = StorageMode::Heaviest;
         *self.no_verify.write().unwrap() = false;
         *self.is_uploading.write().unwrap() = false;
