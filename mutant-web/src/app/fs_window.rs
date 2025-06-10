@@ -516,21 +516,22 @@ impl FsWindow {
 
             // Calculate centered position based on available docking area
             let position = if let Some(available_rect) = self.last_docking_area_rect {
-                // Calculate center position accounting for the file tree panel on the right
-                // The file tree takes up about 320px by default, so we center in the remaining space
+                // Calculate position accounting for the file tree panel on the right
+                // The file tree takes up about 320px by default, so we position in the remaining space
                 let tree_panel_width = 320.0;
                 let effective_width = available_rect.width() - tree_panel_width;
                 let effective_height = available_rect.height();
 
-                // Center the window in the effective docking area
-                let x = available_rect.left() + (effective_width - size[0]) / 2.0;
-                let y = available_rect.top() + (effective_height - size[1]) / 2.0;
+                // Position the window more to the right side of the effective docking area
+                // Instead of centering (0.5), use 0.7 to position it more to the right
+                let x = available_rect.left() + (effective_width - size[0]) * 0.7;
+                let y = available_rect.top() + (effective_height - size[1]) / 2.0; // Keep vertical centering
 
                 // Ensure the window doesn't go off-screen or too close to edges
                 let x = x.max(20.0).min(available_rect.right() - size[0] - 20.0);
                 let y = y.max(20.0).min(available_rect.bottom() - size[1] - 20.0);
 
-                log::debug!("Calculated centered position: [{}, {}] for docking area: {:?}", x, y, available_rect);
+                log::debug!("Calculated right-centered position: [{}, {}] for docking area: {:?}", x, y, available_rect);
                 [x, y]
             } else {
                 // Fallback to a reasonable default position if no docking area rect is available
