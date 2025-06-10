@@ -337,12 +337,12 @@ impl FilePicker {
                 // Professional header with subtle background
                 egui::Frame::new()
                     .fill(MutantColors::BACKGROUND_MEDIUM)
-                    .inner_margin(egui::Margin::same(12))
+                    .inner_margin(egui::Margin::same(4))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             // Modern file browser icon and title
                             ui.label(
-                                RichText::new("🗂")
+                                RichText::new("📁")
                                     .size(16.0)
                                     .color(MutantColors::ACCENT_BLUE)
                             );
@@ -360,7 +360,7 @@ impl FilePicker {
                                 let (icon, text, color) = if show_hidden {
                                     ("👁", "Hidden", MutantColors::ACCENT_GREEN)
                                 } else {
-                                    ("👁‍🗨", "Hidden", MutantColors::TEXT_MUTED)
+                                    ("", "Hidden", MutantColors::TEXT_MUTED)
                                 };
 
                                 let button = egui::Button::new(

@@ -483,7 +483,7 @@ impl PutWindow {
 
                         // Advanced options (renamed from "Upload Options") - centered
                         ui.vertical_centered(|ui| {
-                            ui.collapsing(RichText::new("⚙️ Advanced").color(MutantColors::TEXT_PRIMARY), |ui| {
+                            ui.collapsing(RichText::new("⚙ Advanced").color(MutantColors::TEXT_PRIMARY), |ui| {
                                 ui.add_space(2.0);
 
                                 // Storage mode selection with enhanced styling - centered
