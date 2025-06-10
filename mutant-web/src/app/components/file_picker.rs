@@ -104,25 +104,16 @@ impl FilePickerNode {
     }
 
     /// Insert entries from a directory listing into this node
-    pub fn insert_entries(&mut self, entries: &[FileSystemEntry], home_directory: &str) {
+    pub fn insert_entries(&mut self, entries: &[FileSystemEntry]) {
         self.children.clear();
         self.loaded = true;
 
         for entry in entries {
-            // Convert relative path to full path by prepending home directory
-            let full_path = if entry.path == "/" {
-                home_directory.to_string()
-            } else {
-                format!("{}{}", home_directory, entry.path)
-            };
-
             if entry.is_directory {
-                let child = FilePickerNode::new_dir(&entry.name, &full_path);
+                let child = FilePickerNode::new_dir(&entry.name, &entry.path);
                 self.children.insert(entry.name.clone(), child);
             } else {
-                let mut file_entry = entry.clone();
-                file_entry.path = full_path;
-                let child = FilePickerNode::new_file(&file_entry);
+                let child = FilePickerNode::new_file(entry);
                 self.children.insert(entry.name.clone(), child);
             }
         }
@@ -196,9 +187,26 @@ impl FilePicker {
         self
     }
 
-    /// Get the currently selected file path
+    /// Get the currently selected file path (relative to home directory)
     pub fn selected_file(&self) -> Option<String> {
         self.selected_file.read().unwrap().clone()
+    }
+
+    /// Get the currently selected file path as a full filesystem path
+    pub fn selected_file_full_path(&self) -> Option<String> {
+        if let Some(relative_path) = self.selected_file.read().unwrap().clone() {
+            // Get the home directory from the root node name (which was set by the daemon response)
+            let root_guard = self.root.read().unwrap();
+            let home_directory = &root_guard.name;
+
+            if relative_path == "/" {
+                Some(home_directory.clone())
+            } else {
+                Some(format!("{}{}", home_directory, relative_path))
+            }
+        } else {
+            None
+        }
     }
 
     /// Toggle showing hidden files
@@ -241,9 +249,9 @@ impl FilePicker {
                     if path == root_guard.path {
                         // Update the root node name to show the full home directory path
                         root_guard.name = response.home_directory.clone();
-                        root_guard.insert_entries(&response.entries, &response.home_directory);
+                        root_guard.insert_entries(&response.entries);
                     } else if let Some(node) = root_guard.find_node_mut(&path) {
-                        node.insert_entries(&response.entries, &response.home_directory);
+                        node.insert_entries(&response.entries);
                     }
                 }
                 Err(e) => {

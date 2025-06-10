@@ -312,15 +312,15 @@ impl PutWindow {
         // Draw the file picker
         if let Some(ref mut picker) = *self.file_picker.write().unwrap() {
             if picker.draw(ui) {
-                // File was selected
-                if let Some(selected_path) = picker.selected_file() {
-                    *self.selected_file_path.write().unwrap() = Some(selected_path.clone());
+                // File was selected - get the full filesystem path for upload
+                if let Some(full_path) = picker.selected_file_full_path() {
+                    *self.selected_file_path.write().unwrap() = Some(full_path.clone());
 
                     // Extract filename from path for display
-                    let filename = std::path::Path::new(&selected_path)
+                    let filename = std::path::Path::new(&full_path)
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| selected_path.clone());
+                        .unwrap_or_else(|| full_path.clone());
 
                     *self.selected_file.write().unwrap() = Some(filename.clone());
                     *self.key_name.write().unwrap() = filename;
