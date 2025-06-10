@@ -7,8 +7,8 @@ use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, SystemTime};
 
 use super::Window;
-use super::components::progress::detailed_progress;
 use super::components::file_picker::FilePicker;
+use super::components::progress::detailed_progress;
 use super::context;
 use super::notifications;
 use super::theme::{MutantColors, success_button};
@@ -29,11 +29,11 @@ impl Default for PutStep {
 pub struct PutWindow {
     // Current step in the upload process
     current_step: Arc<RwLock<PutStep>>,
-    
+
     // File picker for selecting files from daemon filesystem
     #[serde(skip)]
     file_picker: Arc<RwLock<Option<FilePicker>>>,
-    
+
     // Selected file path from the file picker
     selected_file_path: Arc<RwLock<Option<String>>>,
 
@@ -292,8 +292,6 @@ impl PutWindow {
             }
         }
     }
-
-
 
     fn draw_configuration_step(&mut self, ui: &mut egui::Ui) {
         // Use the full available space without any margins or headers
@@ -614,14 +612,21 @@ impl PutWindow {
                     |ui| {
                         // Header
                         ui.vertical_centered(|ui| {
-                            ui.heading(RichText::new("🚀 Uploading...").size(20.0).color(MutantColors::TEXT_PRIMARY));
+                            ui.heading(
+                                RichText::new("🚀 Uploading...")
+                                    .size(20.0)
+                                    .color(MutantColors::TEXT_PRIMARY),
+                            );
                         });
                         ui.add_space(15.0);
 
                         // Show file being uploaded
                         if let Some(filename) = &*self.selected_file.read().unwrap() {
                             ui.vertical_centered(|ui| {
-                                ui.label(RichText::new(format!("Uploading: {}", filename)).color(MutantColors::TEXT_SECONDARY));
+                                ui.label(
+                                    RichText::new(format!("Uploading: {}", filename))
+                                        .color(MutantColors::TEXT_SECONDARY),
+                                );
                             });
                             ui.add_space(10.0);
                         }
@@ -644,8 +649,8 @@ impl PutWindow {
                                     reservation_progress,
                                     (reservation_progress * total_chunks as f32) as usize,
                                     total_chunks,
-                                    elapsed_str.clone()
-                                )
+                                    elapsed_str.clone(),
+                                ),
                             );
 
                             ui.add_space(5.0);
@@ -658,8 +663,8 @@ impl PutWindow {
                                     upload_progress,
                                     (upload_progress * total_chunks as f32) as usize,
                                     total_chunks,
-                                    elapsed_str.clone()
-                                )
+                                    elapsed_str.clone(),
+                                ),
                             );
 
                             ui.add_space(5.0);
@@ -672,13 +677,13 @@ impl PutWindow {
                                     confirmation_progress,
                                     (confirmation_progress * total_chunks as f32) as usize,
                                     total_chunks,
-                                    elapsed_str
-                                )
+                                    elapsed_str,
+                                ),
                             );
                         });
-                    }
+                    },
                 );
-            }
+            },
         );
     }
 
@@ -702,71 +707,81 @@ impl PutWindow {
                     ui.add_space(top_spacing);
                 }
 
-                // Constrain content width for better readability
-                let max_content_width = (available_width * 0.8).min(500.0);
+                // Center everything using the same mechanism as the title
+                ui.vertical_centered(|ui| {
+                    // Header
+                    ui.heading(
+                        RichText::new("✅ Upload Complete!")
+                            .size(20.0)
+                            .color(MutantColors::ACCENT_GREEN),
+                    );
 
-                ui.allocate_ui_with_layout(
-                    egui::Vec2::new(max_content_width, content_height),
-                    egui::Layout::top_down(egui::Align::Center),
-                    |ui| {
-                        // Header
+                    ui.add_space(15.0);
+
+                    ui.label(
+                        RichText::new("Successfully uploaded:").color(MutantColors::TEXT_SECONDARY),
+                    );
+                    // ui.label(RichText::new(filename).color(MutantColors::ACCENT_BLUE));
+
+                    if let Some(filename) = &*self.selected_file.read().unwrap() {
+                        ui.label(RichText::new(filename).color(MutantColors::ACCENT_BLUE));
+                    }
+
+                    ui.label(
+                        RichText::new(format!("Key: {}", self.key_name.read().unwrap()))
+                            .color(MutantColors::TEXT_PRIMARY),
+                    );
+
+                    let elapsed = *self.elapsed_time.read().unwrap();
+                    ui.label(
+                        RichText::new(format!("Time: {:.1}s", elapsed.as_secs_f64()))
+                            .color(MutantColors::TEXT_MUTED),
+                    );
+
+                    ui.add_space(10.0);
+
+                    // Show public address if available - using the same centering as title
+                    if let Some(public_addr) = &*self.public_address.read().unwrap() {
                         ui.vertical_centered(|ui| {
-                            ui.heading(RichText::new("✅ Upload Complete!").size(20.0).color(MutantColors::ACCENT_GREEN));
-                        });
-                        ui.add_space(15.0);
-
-                        // Show completion details
-                        if let Some(filename) = &*self.selected_file.read().unwrap() {
                             ui.group(|ui| {
                                 ui.vertical(|ui| {
-                                    ui.label(RichText::new("Successfully uploaded:").color(MutantColors::TEXT_SECONDARY));
-                                    ui.label(RichText::new(filename).color(MutantColors::ACCENT_BLUE));
-                                    ui.label(RichText::new(format!("Key: {}", self.key_name.read().unwrap())).color(MutantColors::TEXT_PRIMARY));
-
-                                    let elapsed = *self.elapsed_time.read().unwrap();
-                                    ui.label(RichText::new(format!("Time: {:.1}s", elapsed.as_secs_f64())).color(MutantColors::TEXT_MUTED));
-                                });
-                            });
-                        }
-
-                        ui.add_space(10.0);
-
-                        // Show public address if available
-                        if let Some(public_addr) = &*self.public_address.read().unwrap() {
-                            ui.group(|ui| {
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new("Public Address:").color(MutantColors::TEXT_SECONDARY));
+                                    ui.label(
+                                        RichText::new("Public Address:")
+                                            .color(MutantColors::TEXT_SECONDARY),
+                                    );
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new(public_addr).color(MutantColors::ACCENT_ORANGE));
+                                        ui.label(
+                                            RichText::new(public_addr)
+                                                .color(MutantColors::ACCENT_ORANGE),
+                                        );
                                         if ui.button("📋 Copy").clicked() {
                                             ui.ctx().copy_text(public_addr.clone());
-                                            notifications::info("Public address copied to clipboard!".to_string());
+                                            notifications::info(
+                                                "Public address copied to clipboard!".to_string(),
+                                            );
                                         }
                                     });
                                 });
                             });
-                            ui.add_space(10.0);
+                        });
+                        ui.add_space(10.0);
+                    }
+
+                    ui.vertical_centered(|ui| {
+                        if ui.add(success_button("🔄 Upload Another")).clicked() {
+                            self.reset();
                         }
 
-                        // Action buttons - centered
-                        ui.vertical_centered(|ui| {
-                            ui.horizontal(|ui| {
-                                if ui.add(success_button("🔄 Upload Another")).clicked() {
-                                    self.reset();
-                                }
+                        ui.add_space(10.0);
 
-                                ui.add_space(10.0);
-
-                                if ui.button("Close").clicked() {
-                                    // This would need to be handled by the window system
-                                    // For now, just reset
-                                    self.reset();
-                                }
-                            });
-                        });
-                    }
-                );
-            }
+                        if ui.button("Close").clicked() {
+                            // This would need to be handled by the window system
+                            // For now, just reset
+                            self.reset();
+                        }
+                    });
+                });
+            },
         );
     }
 
@@ -824,9 +839,15 @@ impl PutWindow {
 
         spawn_local(async move {
             log::info!("Starting file path upload: {} -> {}", file_path, key_name);
-            match ctx.put_file_path(&key_name, &file_path, public, storage_mode, no_verify).await {
+            match ctx
+                .put_file_path(&key_name, &file_path, public, storage_mode, no_verify)
+                .await
+            {
                 Ok((put_id, mut progress_rx)) => {
-                    log::info!("File path upload started successfully with put_id: {}", put_id);
+                    log::info!(
+                        "File path upload started successfully with put_id: {}",
+                        put_id
+                    );
                     *current_put_id.write().unwrap() = Some(put_id.clone());
 
                     // Start a progress monitoring task using the real progress receiver
@@ -847,45 +868,73 @@ impl PutWindow {
                                             match put_event {
                                                 mutant_protocol::PutEvent::Starting {
                                                     total_chunks: event_total_chunks,
-                                                    initial_written_count: event_initial_written_count,
-                                                    initial_confirmed_count: event_initial_confirmed_count,
-                                                    chunks_to_reserve: event_chunks_to_reserve
+                                                    initial_written_count:
+                                                        event_initial_written_count,
+                                                    initial_confirmed_count:
+                                                        event_initial_confirmed_count,
+                                                    chunks_to_reserve: event_chunks_to_reserve,
                                                 } => {
-                                                    *total_chunks.write().unwrap() = event_total_chunks;
-                                                    *chunks_to_reserve.write().unwrap() = event_chunks_to_reserve;
-                                                    *initial_written_count.write().unwrap() = event_initial_written_count;
-                                                    *initial_confirmed_count.write().unwrap() = event_initial_confirmed_count;
-                                                    log::info!("Put operation starting: {} total chunks, {} to reserve", event_total_chunks, event_chunks_to_reserve);
+                                                    *total_chunks.write().unwrap() =
+                                                        event_total_chunks;
+                                                    *chunks_to_reserve.write().unwrap() =
+                                                        event_chunks_to_reserve;
+                                                    *initial_written_count.write().unwrap() =
+                                                        event_initial_written_count;
+                                                    *initial_confirmed_count.write().unwrap() =
+                                                        event_initial_confirmed_count;
+                                                    log::info!(
+                                                        "Put operation starting: {} total chunks, {} to reserve",
+                                                        event_total_chunks,
+                                                        event_chunks_to_reserve
+                                                    );
                                                 }
                                                 mutant_protocol::PutEvent::PadReserved => {
                                                     // Update reservation progress
-                                                    let chunks_to_reserve_val = *chunks_to_reserve.read().unwrap();
+                                                    let chunks_to_reserve_val =
+                                                        *chunks_to_reserve.read().unwrap();
                                                     if chunks_to_reserve_val > 0 {
-                                                        let current_reserved = *reservation_progress.read().unwrap() * chunks_to_reserve_val as f32;
-                                                        let new_progress = (current_reserved + 1.0) / chunks_to_reserve_val as f32;
-                                                        *reservation_progress.write().unwrap() = new_progress.min(1.0);
+                                                        let current_reserved =
+                                                            *reservation_progress.read().unwrap()
+                                                                * chunks_to_reserve_val as f32;
+                                                        let new_progress = (current_reserved + 1.0)
+                                                            / chunks_to_reserve_val as f32;
+                                                        *reservation_progress.write().unwrap() =
+                                                            new_progress.min(1.0);
                                                     }
                                                 }
                                                 mutant_protocol::PutEvent::PadsWritten => {
                                                     // Update upload progress
-                                                    let total_chunks_val = *total_chunks.read().unwrap();
+                                                    let total_chunks_val =
+                                                        *total_chunks.read().unwrap();
                                                     if total_chunks_val > 0 {
-                                                        let current_written = *upload_progress.read().unwrap() * total_chunks_val as f32;
-                                                        let new_progress = (current_written + 1.0) / total_chunks_val as f32;
-                                                        *upload_progress.write().unwrap() = new_progress.min(1.0);
+                                                        let current_written =
+                                                            *upload_progress.read().unwrap()
+                                                                * total_chunks_val as f32;
+                                                        let new_progress = (current_written + 1.0)
+                                                            / total_chunks_val as f32;
+                                                        *upload_progress.write().unwrap() =
+                                                            new_progress.min(1.0);
                                                     }
                                                 }
                                                 mutant_protocol::PutEvent::PadsConfirmed => {
                                                     // Update confirmation progress
-                                                    let total_chunks_val = *total_chunks.read().unwrap();
+                                                    let total_chunks_val =
+                                                        *total_chunks.read().unwrap();
                                                     if total_chunks_val > 0 {
-                                                        let current_confirmed = *confirmation_progress.read().unwrap() * total_chunks_val as f32;
-                                                        let new_progress = (current_confirmed + 1.0) / total_chunks_val as f32;
-                                                        *confirmation_progress.write().unwrap() = new_progress.min(1.0);
+                                                        let current_confirmed =
+                                                            *confirmation_progress.read().unwrap()
+                                                                * total_chunks_val as f32;
+                                                        let new_progress = (current_confirmed
+                                                            + 1.0)
+                                                            / total_chunks_val as f32;
+                                                        *confirmation_progress.write().unwrap() =
+                                                            new_progress.min(1.0);
                                                     }
                                                 }
                                                 mutant_protocol::PutEvent::Complete => {
-                                                    log::info!("Put operation completed successfully");
+                                                    log::info!(
+                                                        "Put operation completed successfully"
+                                                    );
                                                     *upload_complete_clone.write().unwrap() = true;
                                                     *is_uploading_clone.write().unwrap() = false;
                                                     break;
@@ -893,7 +942,10 @@ impl PutWindow {
                                             }
                                         }
                                         _ => {
-                                            log::debug!("Received non-put progress update: {:?}", task_progress);
+                                            log::debug!(
+                                                "Received non-put progress update: {:?}",
+                                                task_progress
+                                            );
                                         }
                                     }
                                 }
@@ -912,7 +964,8 @@ impl PutWindow {
                 }
                 Err(e) => {
                     *is_uploading.write().unwrap() = false;
-                    *error_message.write().unwrap() = Some(format!("Failed to start upload: {}", e));
+                    *error_message.write().unwrap() =
+                        Some(format!("Failed to start upload: {}", e));
                 }
             }
         });
