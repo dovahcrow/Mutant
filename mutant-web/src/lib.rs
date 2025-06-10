@@ -1181,7 +1181,7 @@ impl MyApp {
                     ui.add_space(15.0);
 
                     // Check window states before creating buttons
-                    let upload_open = self.fs_window.read().unwrap().is_window_open("MutAnt Upload");
+                    let upload_open = app::window_system::window_system().tree().iter_all_tabs().any(|((_, _), w)| w.name() == "MutAnt Upload");
                     let stats_open = self.fs_window.read().unwrap().is_window_open("MutAnt Stats");
                     let colony_open = self.fs_window.read().unwrap().is_window_open("Colony");
 
@@ -1237,8 +1237,8 @@ impl MyApp {
                     };
 
                     if menu_button(ui, "📤", "Upload", "Upload", upload_open).clicked() {
-                        // Directly open the PutWindow with the new file picker flow
-                        self.fs_window.write().unwrap().add_put_tab();
+                        // Create a floating Put window using the global window system
+                        app::window_system::new_window(app::put::PutWindow::new());
                     }
 
                     if menu_button(ui, "📊", "Stats", "Stats", stats_open).clicked() {
@@ -1325,6 +1325,14 @@ impl eframe::App for MyApp {
                 // Render the static FS window directly
                 // All windows now dock within the FS window's internal dock system
                 self.fs_window.write().unwrap().draw(ui);
+            });
+
+        // Draw the global window system for floating windows (like Put window)
+        // This needs to be drawn over the central panel to show floating windows
+        egui::Area::new("floating_windows".into())
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                app::window_system::window_system_mut().draw_dock_only(ui);
             });
 
         // Show notifications

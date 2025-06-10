@@ -282,6 +282,7 @@ impl WindowSystem {
 
     fn default_window_size(window_type: &WindowType) -> [f32; 2] {
         match window_type {
+            WindowType::Put(_) => [900.0, 650.0], // Wide for side-by-side file picker and configuration
             WindowType::Fs(_) => [300.0, 600.0],
             WindowType::Stats(_) => [500.0, 600.0],
             WindowType::Colony(_) => [800.0, 600.0], // Wider for two-column layout
