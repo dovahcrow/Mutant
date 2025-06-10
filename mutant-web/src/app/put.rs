@@ -586,11 +586,14 @@ impl PutWindow {
     }
 
     fn draw_upload_progress_step(&mut self, ui: &mut egui::Ui) {
+        // Force the UI to expand to the full available rectangle, similar to configuration step
         let available_rect = ui.available_rect_before_wrap();
+        ui.expand_to_include_rect(available_rect);
+
         let available_width = available_rect.width();
         let available_height = available_rect.height();
 
-        // Center the progress content vertically and horizontally
+        // Use the full available space without any inner margins
         ui.allocate_ui_with_layout(
             egui::Vec2::new(available_width, available_height),
             egui::Layout::top_down(egui::Align::Center),
@@ -680,11 +683,14 @@ impl PutWindow {
     }
 
     fn draw_upload_complete_step(&mut self, ui: &mut egui::Ui) {
+        // Force the UI to expand to the full available rectangle, similar to configuration step
         let available_rect = ui.available_rect_before_wrap();
+        ui.expand_to_include_rect(available_rect);
+
         let available_width = available_rect.width();
         let available_height = available_rect.height();
 
-        // Center the completion content vertically and horizontally
+        // Use the full available space without any inner margins
         ui.allocate_ui_with_layout(
             egui::Vec2::new(available_width, available_height),
             egui::Layout::top_down(egui::Align::Center),
