@@ -193,8 +193,8 @@ impl Window for FsWindow {
                 .id(egui::Id::new(format!("fs_internal_dock_{}", self.dock_area_id)))
                 .show_inside(ui, &mut tab_viewer);
 
-            // Apply default sizes to any newly undocked windows
-            self.apply_default_sizes_to_floating_windows();
+            // NOTE: Removed apply_default_sizes_to_floating_windows() call here because
+            // egui_dock applies set_size() as fixed_size(), making windows non-resizable
 
             log::debug!("Dock area rendered with {} tabs", tab_count);
         });
@@ -252,6 +252,7 @@ impl FsWindow {
     }
 
     /// Apply default sizes to floating windows that don't have appropriate sizes
+    /// Only applies sizes to windows that are too small, too large, or newly created
     fn apply_default_sizes_to_floating_windows(&mut self) {
         // First, collect surface IDs and tab types for floating windows
         let floating_window_info: Vec<_> = self.internal_dock.iter_all_tabs()
@@ -266,13 +267,24 @@ impl FsWindow {
             })
             .collect();
 
-        // Now apply the sizes to each floating window
+        // Now apply the sizes to each floating window only if needed
         for (surface_id, default_size) in floating_window_info {
             if let Some(window_state) = self.internal_dock.get_window_state_mut(surface_id) {
-                // Apply default size to all floating windows to ensure they have reasonable sizes
-                // This will override any overly large sizes that result from undocking
-                log::debug!("Applying default size {:?} to floating window", default_size);
-                window_state.set_size(default_size.into());
+                let current_rect = window_state.rect();
+                let current_size = current_rect.size();
+
+                // Only apply default size if the window has unreasonable dimensions
+                // This prevents overriding user-resized windows
+                let needs_resize = current_size.x < 200.0 || current_size.y < 150.0 || // Too small
+                                  current_size.x > 2000.0 || current_size.y > 1500.0; // Too large
+
+                if needs_resize {
+                    log::debug!("Applying default size {:?} to floating window with unreasonable size {:?}", default_size, current_size);
+                    window_state.set_size(default_size.into());
+                } else {
+                    // Window has reasonable size, leave it alone to preserve user resizing
+                    log::trace!("Floating window has reasonable size {:?}, preserving user resize", current_size);
+                }
             }
         }
     }
