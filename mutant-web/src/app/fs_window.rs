@@ -96,7 +96,7 @@ impl Window for FsWindow {
         self.build_tree();
 
         // Use a horizontal layout with two panels - improved styling
-        egui::SidePanel::left(format!("mutant_fs_tree_panel_{}", self.window_id))
+        egui::SidePanel::right(format!("mutant_fs_tree_panel_{}", self.window_id))
             .resizable(true)
             .min_width(220.0)
             .default_width(320.0)
