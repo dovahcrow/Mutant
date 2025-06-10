@@ -308,7 +308,7 @@ impl PutWindow {
                 let left_width = content_width * 0.5;
 
                 ui.allocate_ui_with_layout(
-                    egui::Vec2::new(left_width, content_height),
+                    egui::Vec2::new(left_width, content_height - 15.0),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
                         // Initialize file picker if needed
