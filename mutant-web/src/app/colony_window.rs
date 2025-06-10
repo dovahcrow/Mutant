@@ -256,41 +256,89 @@ impl Window for ColonyWindow {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-            // Header section
-            ui.horizontal(|ui| {
-                // Toggle button for contacts section
-                let contacts_icon = if self.contacts_section_expanded { "👥" } else { "👤" };
-                let contacts_button = ui.button(format!("{} Contacts", contacts_icon));
-                if contacts_button.clicked() {
-                    self.contacts_section_expanded = !self.contacts_section_expanded;
-                }
-
-                ui.heading("Colony - Content Discovery");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Sync button
-                    let sync_button = ui.add_enabled(
-                        !self.is_syncing,
-                        egui::Button::new(if self.is_syncing { "Syncing..." } else { "🔄 Sync All" })
-                            .fill(super::theme::MutantColors::ACCENT_ORANGE)
+            // Improved header section with better organization
+            ui.vertical(|ui| {
+                // Main title and controls row
+                ui.horizontal(|ui| {
+                    // Title with icon
+                    ui.label(
+                        egui::RichText::new("🌐 Colony")
+                            .heading()
+                            .strong()
+                            .color(super::theme::MutantColors::ACCENT_ORANGE)
                     );
 
-                    if sync_button.clicked() {
-                        self.sync_all_contacts();
-                    }
+                    ui.label(
+                        egui::RichText::new("Content Discovery Network")
+                            .size(14.0)
+                            .color(super::theme::MutantColors::TEXT_SECONDARY)
+                    );
 
-                    // Contact address and copy button - minimal inline version
-                    if let Some(user_info) = &self.user_contact_info {
-                        if ui.button("📋 Copy").clicked() {
-                            ui.ctx().copy_text(user_info.contact_address.clone());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Sync button with better styling
+                        let sync_button = ui.add_enabled(
+                            !self.is_syncing,
+                            egui::Button::new(
+                                egui::RichText::new(if self.is_syncing { "⏳ Syncing..." } else { "🔄 Sync All" })
+                                    .strong()
+                            )
+                            .fill(super::theme::MutantColors::ACCENT_ORANGE)
+                            .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::ACCENT_ORANGE))
+                        );
+
+                        if sync_button.clicked() {
+                            self.sync_all_contacts();
                         }
 
-                        ui.label(
-                            egui::RichText::new(&user_info.contact_address)
-                                .strong()
-                                .color(super::theme::MutantColors::ACCENT_BLUE)
+                        // Toggle button for contacts section with better styling
+                        let contacts_icon = if self.contacts_section_expanded { "👥" } else { "👤" };
+                        let contacts_text = if self.contacts_section_expanded { "Hide Contacts" } else { "Show Contacts" };
+                        let contacts_button = ui.button(
+                            egui::RichText::new(format!("{} {}", contacts_icon, contacts_text))
+                                .color(super::theme::MutantColors::TEXT_PRIMARY)
                         );
-                    }
+                        if contacts_button.clicked() {
+                            self.contacts_section_expanded = !self.contacts_section_expanded;
+                        }
+                    });
                 });
+
+                ui.add_space(8.0);
+
+                // User contact info card (more prominent)
+                if let Some(user_info) = &self.user_contact_info {
+                    egui::Frame::new()
+                        .fill(super::theme::MutantColors::SURFACE)
+                        .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_MEDIUM))
+                        .inner_margin(egui::Margin::symmetric(12, 8))
+                        .corner_radius(6.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("📡 Your Colony Address:")
+                                        .size(12.0)
+                                        .color(super::theme::MutantColors::TEXT_SECONDARY)
+                                );
+
+                                ui.label(
+                                    egui::RichText::new(&user_info.contact_address)
+                                        .strong()
+                                        .family(egui::FontFamily::Monospace)
+                                        .size(11.0)
+                                        .color(super::theme::MutantColors::ACCENT_BLUE)
+                                );
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.small_button(
+                                        egui::RichText::new("📋 Copy")
+                                            .color(super::theme::MutantColors::TEXT_PRIMARY)
+                                    ).clicked() {
+                                        ui.ctx().copy_text(user_info.contact_address.clone());
+                                    }
+                                });
+                            });
+                        });
+                }
             });
 
             ui.separator();
@@ -331,7 +379,7 @@ impl Window for ColonyWindow {
                             .fill(super::theme::MutantColors::SURFACE)
                             .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_MEDIUM))
                             .inner_margin(egui::Margin::same(12))
-                            .corner_radius(egui::Rounding::same(6))
+                            .corner_radius(6.0)
                             .show(ui, |ui| {
                                 ui.vertical(|ui| {
                                     // Section header
@@ -468,7 +516,7 @@ impl Window for ColonyWindow {
                                     .fill(super::theme::MutantColors::BACKGROUND_LIGHT)
                                     .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_DARK))
                                     .inner_margin(egui::Margin::same(16))
-                                    .corner_radius(egui::Rounding::same(4))
+                                    .corner_radius(4.0)
                                     .show(ui, |ui| {
                                         ui.vertical_centered(|ui| {
                                             ui.label(
@@ -501,7 +549,7 @@ impl Window for ColonyWindow {
                                                     .fill(super::theme::MutantColors::BACKGROUND_LIGHT)
                                                     .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_DARK))
                                                     .inner_margin(egui::Margin::symmetric(10, 8))
-                                                    .corner_radius(egui::Rounding::same(4))
+                                                    .corner_radius(4.0)
                                                     .show(ui, |ui| {
                                                         ui.horizontal(|ui| {
                                                             // Contact status indicator
@@ -643,108 +691,234 @@ impl Window for ColonyWindow {
                     //     });
                     // });
 
-                    // Search bar
-                    ui.horizontal(|ui| {
-                        ui.label("Search:");
-                        ui.text_edit_singleline(&mut self.search_query);
-                        if ui.small_button("🔍").clicked() {
-                            self.search_content();
-                        }
-                        if ui.small_button("Clear").clicked() {
-                            self.search_query.clear();
-                            self.load_content_list();
-                        }
-                    });
+                    // Enhanced search section
+                    egui::Frame::new()
+                        .fill(super::theme::MutantColors::SURFACE)
+                        .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_MEDIUM))
+                        .inner_margin(egui::Margin::symmetric(12, 10))
+                        .corner_radius(6.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("🔍 Search Content:")
+                                        .strong()
+                                        .color(super::theme::MutantColors::ACCENT_BLUE)
+                                );
+
+                                // Search input with better styling
+                                let search_response = ui.add_sized(
+                                    [ui.available_width() - 120.0, 24.0],
+                                    egui::TextEdit::singleline(&mut self.search_query)
+                                        .hint_text("Search for content across all pods...")
+                                );
+
+                                // Auto-search on enter
+                                if search_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                    self.search_content();
+                                }
+
+                                // Search and clear buttons with better styling
+                                if ui.add(
+                                    egui::Button::new("🔍 Search")
+                                        .fill(super::theme::MutantColors::ACCENT_BLUE)
+                                ).clicked() {
+                                    self.search_content();
+                                }
+
+                                if ui.add(
+                                    egui::Button::new("✖ Clear")
+                                        .fill(super::theme::MutantColors::SURFACE_HOVER)
+                                ).clicked() {
+                                    self.search_query.clear();
+                                    self.load_content_list();
+                                }
+                            });
+                        });
 
                     ui.separator();
 
-                    // Content list organized by pods
-                    // ui.label(format!("Content Items ({} items from {} pods)", self.content_list.len(), self.pod_content.len()));
+                    // Content discovery section with better organization
+                    ui.add_space(8.0);
 
+                    // Content summary header
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("📚 Discovered Content")
+                                .heading()
+                                .strong()
+                                .color(super::theme::MutantColors::ACCENT_GREEN)
+                        );
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(format!("{} items from {} pods",
+                                    self.content_list.len(),
+                                    self.pod_content.len()))
+                                    .size(12.0)
+                                    .color(super::theme::MutantColors::TEXT_SECONDARY)
+                            );
+                        });
+                    });
+
+                    ui.add_space(6.0);
+
+                    // Enhanced content display with better styling
                     ui.push_id("content_scroll", |ui| {
                         egui::ScrollArea::vertical()
                             .auto_shrink([false; 2])
                             .show(ui, |ui| {
                                 let mut download_address: Option<String> = None;
 
-                                for (_pod_index, pod_content) in self.pod_content.iter_mut().enumerate() {
-                                    ui.group(|ui| {
-                                        // Ultra-compact pod header - single line with small button
-                                        ui.horizontal(|ui| {
-                                            let expand_icon = if pod_content.is_expanded { "🔽" } else { "▶" };
-                                            if ui.small_button(expand_icon).clicked() {
-                                                pod_content.is_expanded = !pod_content.is_expanded;
-                                            }
-
-                                            // Pod name or address
-                                            let pod_display_name = pod_content.pod_name.as_ref()
-                                                .unwrap_or(&pod_content.pod_address);
-                                            ui.label(
-                                                egui::RichText::new(format!("📁 {}", pod_display_name))
-                                                    .strong()
-                                                    .size(10.0)
-                                                    .color(super::theme::MutantColors::ACCENT_ORANGE)
-                                            );
-
-                                            // Content count
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if self.pod_content.is_empty() {
+                                    // Empty state with helpful message
+                                    egui::Frame::new()
+                                        .fill(super::theme::MutantColors::SURFACE)
+                                        .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_MEDIUM))
+                                        .inner_margin(egui::Margin::same(20))
+                                        .corner_radius(8.0)
+                                        .show(ui, |ui| {
+                                            ui.vertical_centered(|ui| {
                                                 ui.label(
-                                                    egui::RichText::new(format!("{} items", pod_content.content_items.len()))
-                                                        .size(9.0)
+                                                    egui::RichText::new("🔍 No content discovered yet")
+                                                        .size(16.0)
+                                                        .color(super::theme::MutantColors::TEXT_MUTED)
+                                                );
+                                                ui.add_space(8.0);
+                                                ui.label(
+                                                    egui::RichText::new("Add contacts and sync to discover content from the colony network")
+                                                        .size(12.0)
                                                         .color(super::theme::MutantColors::TEXT_SECONDARY)
                                                 );
                                             });
                                         });
-
-                                        // Show content items if expanded
-                                        if pod_content.is_expanded {
-                                            ui.separator();
-                                            for content in &pod_content.content_items {
-                                                // Compact single-line content item with colors
+                                } else {
+                                    // Display pods with enhanced styling
+                                    for (_pod_index, pod_content) in self.pod_content.iter_mut().enumerate() {
+                                        egui::Frame::new()
+                                            .fill(super::theme::MutantColors::SURFACE)
+                                            .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_MEDIUM))
+                                            .inner_margin(egui::Margin::symmetric(12, 10))
+                                            .corner_radius(6.0)
+                                            .show(ui, |ui| {
+                                                // Enhanced pod header
                                                 ui.horizontal(|ui| {
-                                                    // Title with stronger blue
+                                                    let expand_icon = if pod_content.is_expanded { "🔽" } else { "▶" };
+                                                    if ui.add(
+                                                        egui::Button::new(expand_icon)
+                                                            .fill(super::theme::MutantColors::BACKGROUND_LIGHT)
+                                                            .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_LIGHT))
+                                                    ).clicked() {
+                                                        pod_content.is_expanded = !pod_content.is_expanded;
+                                                    }
+
+                                                    ui.add_space(8.0);
+
+                                                    // Pod icon and name
                                                     ui.label(
-                                                        egui::RichText::new(&content.title)
-                                                            .strong()
-                                                            .size(10.0)
-                                                            .color(super::theme::MutantColors::ACCENT_GREEN)
+                                                        egui::RichText::new("🌐")
+                                                            .size(14.0)
+                                                            .color(super::theme::MutantColors::ACCENT_BLUE)
                                                     );
 
-                                                    // // Content type with green accent
-                                                    // ui.label(
-                                                    //     egui::RichText::new(&content.content_type)
-                                                    //         .size(9.0)
-                                                    //         .color(super::theme::MutantColors::ACCENT_GREEN)
-                                                    // );
+                                                    let pod_display_name = pod_content.pod_name.as_ref()
+                                                        .unwrap_or(&pod_content.pod_address);
+                                                    ui.label(
+                                                        egui::RichText::new(pod_display_name)
+                                                            .strong()
+                                                            .size(13.0)
+                                                            .color(super::theme::MutantColors::TEXT_PRIMARY)
+                                                    );
 
-                                                    // Size with orange accent if available
-                                                    if let Some(size) = content.size {
-                                                        ui.label(
-                                                            egui::RichText::new(Self::format_file_size(size))
-                                                                .size(9.0)
-                                                                .color(super::theme::MutantColors::ACCENT_BLUE)
-                                                        );
-                                                    }
-
-                                                    // Date with muted color if available
-                                                    if let Some(date) = &content.date_created {
-                                                        ui.label(
-                                                            egui::RichText::new(Self::format_date(date))
-                                                                .size(9.0)
-                                                                .color(super::theme::MutantColors::TEXT_MUTED)
-                                                        );
-                                                    }
-
-                                                    // Download button on the right
+                                                    // Content count badge
                                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        if ui.small_button("📥").clicked() {
-                                                            download_address = Some(content.address.clone());
-                                                        }
+                                                        egui::Frame::new()
+                                                            .fill(super::theme::MutantColors::ACCENT_ORANGE)
+                                                            .inner_margin(egui::Margin::symmetric(8, 4))
+                                                            .corner_radius(12.0)
+                                                            .show(ui, |ui| {
+                                                                ui.label(
+                                                                    egui::RichText::new(format!("{}", pod_content.content_items.len()))
+                                                                        .size(11.0)
+                                                                        .strong()
+                                                                        .color(super::theme::MutantColors::BACKGROUND_DARK)
+                                                                );
+                                                            });
                                                     });
                                                 });
-                                            }
-                                        }
-                                    });
+
+                                                // Show content items if expanded
+                                                if pod_content.is_expanded {
+                                                    ui.add_space(8.0);
+                                                    ui.separator();
+                                                    ui.add_space(6.0);
+
+                                                    for content in &pod_content.content_items {
+                                                        // Enhanced content item display
+                                                        egui::Frame::new()
+                                                            .fill(super::theme::MutantColors::BACKGROUND_LIGHT)
+                                                            .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_DARK))
+                                                            .inner_margin(egui::Margin::symmetric(10, 6))
+                                                            .corner_radius(4.0)
+                                                            .show(ui, |ui| {
+                                                                ui.horizontal(|ui| {
+                                                                    // Content type icon
+                                                                    let type_icon = match content.content_type.as_str() {
+                                                                        "video" => "🎥",
+                                                                        "audio" => "🎵",
+                                                                        "image" => "🖼️",
+                                                                        "document" => "📄",
+                                                                        _ => "📁"
+                                                                    };
+                                                                    ui.label(
+                                                                        egui::RichText::new(type_icon)
+                                                                            .size(12.0)
+                                                                    );
+
+                                                                    // Title
+                                                                    ui.label(
+                                                                        egui::RichText::new(&content.title)
+                                                                            .strong()
+                                                                            .size(12.0)
+                                                                            .color(super::theme::MutantColors::ACCENT_GREEN)
+                                                                    );
+
+                                                                    // Metadata
+                                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                                        // Download button
+                                                                        if ui.add(
+                                                                            egui::Button::new("📥")
+                                                                                .fill(super::theme::MutantColors::ACCENT_BLUE)
+                                                                                .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::ACCENT_BLUE))
+                                                                        ).clicked() {
+                                                                            download_address = Some(content.address.clone());
+                                                                        }
+
+                                                                        // Size
+                                                                        if let Some(size) = content.size {
+                                                                            ui.label(
+                                                                                egui::RichText::new(Self::format_file_size(size))
+                                                                                    .size(10.0)
+                                                                                    .color(super::theme::MutantColors::TEXT_MUTED)
+                                                                            );
+                                                                        }
+
+                                                                        // Date
+                                                                        if let Some(date) = &content.date_created {
+                                                                            ui.label(
+                                                                                egui::RichText::new(Self::format_date(date))
+                                                                                    .size(10.0)
+                                                                                    .color(super::theme::MutantColors::TEXT_MUTED)
+                                                                            );
+                                                                        }
+                                                                    });
+                                                                });
+                                                            });
+                                                        ui.add_space(4.0);
+                                                    }
+                                                }
+                                            });
+                                        ui.add_space(8.0);
+                                    }
                                 }
 
                                 // Handle download outside the loop to avoid borrowing issues
@@ -758,80 +932,116 @@ impl Window for ColonyWindow {
                 }); // Close ScrollArea
             }); // Close allocate_ui_with_layout
 
-        // Progress footer - always show at the bottom
-        ui.separator();
+        // Enhanced progress footer with better styling
+        ui.add_space(8.0);
 
-        // Create a thin footer for progress display
-        ui.allocate_ui_with_layout(
-            egui::Vec2::new(ui.available_width(), 30.0),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                if self.operation_in_progress {
-                    // Show active progress
-                    ui.horizontal(|ui| {
-                        // Progress bar
-                        let progress_bar = egui::ProgressBar::new(self.current_progress)
-                            .fill(super::theme::MutantColors::ACCENT_ORANGE)
-                            .animate(true)
-                            .desired_width(200.0);
-                        ui.add(progress_bar);
+        // Progress section with frame
+        egui::Frame::new()
+            .fill(super::theme::MutantColors::SURFACE)
+            .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_MEDIUM))
+            .inner_margin(egui::Margin::symmetric(12, 8))
+            .corner_radius(6.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // Status icon
+                    let (status_icon, status_color) = if self.operation_in_progress {
+                        ("⏳", super::theme::MutantColors::ACCENT_ORANGE)
+                    } else if self.current_operation_status.is_some() {
+                        ("✅", super::theme::MutantColors::SUCCESS)
+                    } else {
+                        ("🟢", super::theme::MutantColors::ACCENT_GREEN)
+                    };
 
-                        // Progress percentage
-                        ui.label(
-                            egui::RichText::new(format!("{:.0}%", self.current_progress * 100.0))
-                                .color(super::theme::MutantColors::ACCENT_ORANGE)
-                                .size(12.0)
-                        );
+                    ui.label(
+                        egui::RichText::new(status_icon)
+                            .size(14.0)
+                            .color(status_color)
+                    );
 
-                        // Status message
-                        if let Some(status) = &self.current_operation_status {
+                    ui.add_space(8.0);
+
+                    if self.operation_in_progress {
+                        // Active progress display
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                // Progress bar with better styling
+                                let progress_bar = egui::ProgressBar::new(self.current_progress)
+                                    .fill(super::theme::MutantColors::ACCENT_ORANGE)
+                                    .animate(true)
+                                    .desired_width(250.0)
+                                    .desired_height(8.0);
+                                ui.add(progress_bar);
+
+                                // Progress percentage
+                                ui.label(
+                                    egui::RichText::new(format!("{:.0}%", self.current_progress * 100.0))
+                                        .strong()
+                                        .color(super::theme::MutantColors::ACCENT_ORANGE)
+                                        .size(12.0)
+                                );
+                            });
+
+                            // Status message
+                            if let Some(status) = &self.current_operation_status {
+                                ui.label(
+                                    egui::RichText::new(status)
+                                        .color(super::theme::MutantColors::TEXT_PRIMARY)
+                                        .size(11.0)
+                                );
+                            }
+                        });
+                    } else if let Some(status) = &self.current_operation_status {
+                        // Completed operation status
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                // Completed progress bar
+                                let progress_bar = egui::ProgressBar::new(1.0)
+                                    .fill(super::theme::MutantColors::SUCCESS)
+                                    .desired_width(250.0)
+                                    .desired_height(8.0);
+                                ui.add(progress_bar);
+
+                                ui.label(
+                                    egui::RichText::new("Complete")
+                                        .strong()
+                                        .color(super::theme::MutantColors::SUCCESS)
+                                        .size(12.0)
+                                );
+                            });
+
                             ui.label(
                                 egui::RichText::new(status)
                                     .color(super::theme::MutantColors::TEXT_PRIMARY)
-                                    .size(12.0)
+                                    .size(11.0)
                             );
-                        }
-                    });
-                } else if let Some(status) = &self.current_operation_status {
-                    // Show last completed operation status
-                    ui.horizontal(|ui| {
-                        // Completed progress bar (full)
-                        let progress_bar = egui::ProgressBar::new(1.0)
-                            .fill(super::theme::MutantColors::SUCCESS)
-                            .desired_width(200.0);
-                        ui.add(progress_bar);
+                        });
+                    } else {
+                        // Ready state
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                // Ready progress bar
+                                let progress_bar = egui::ProgressBar::new(0.0)
+                                    .fill(super::theme::MutantColors::BORDER_MEDIUM)
+                                    .desired_width(250.0)
+                                    .desired_height(8.0);
+                                ui.add(progress_bar);
 
-                        // Checkmark and status
-                        ui.label(
-                            egui::RichText::new("✓")
-                                .color(super::theme::MutantColors::SUCCESS)
-                                .size(14.0)
-                        );
+                                ui.label(
+                                    egui::RichText::new("Ready")
+                                        .color(super::theme::MutantColors::TEXT_SECONDARY)
+                                        .size(12.0)
+                                );
+                            });
 
-                        ui.label(
-                            egui::RichText::new(status)
-                                .color(super::theme::MutantColors::TEXT_PRIMARY)
-                                .size(12.0)
-                        );
-                    });
-                } else {
-                    // Show ready state
-                    ui.horizontal(|ui| {
-                        // Empty progress bar
-                        let progress_bar = egui::ProgressBar::new(0.0)
-                            .fill(super::theme::MutantColors::TEXT_MUTED)
-                            .desired_width(200.0);
-                        ui.add(progress_bar);
-
-                        ui.label(
-                            egui::RichText::new("Ready")
-                                .color(super::theme::MutantColors::TEXT_MUTED)
-                                .size(12.0)
-                        );
-                    });
-                }
-            }
-        );
+                            ui.label(
+                                egui::RichText::new("Colony network ready for operations")
+                                    .color(super::theme::MutantColors::TEXT_MUTED)
+                                    .size(11.0)
+                            );
+                        });
+                    }
+                });
+            });
     }
 }
 
