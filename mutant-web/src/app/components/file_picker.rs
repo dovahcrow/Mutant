@@ -539,9 +539,13 @@ impl FilePicker {
                     );
                 }
 
-                // Draw directory content with compact spacing
-                let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, (row_rect.height() - 12.0) / 2.0);
+                // Draw directory content with compact spacing - properly aligned with selection background
                 let font_id = egui::FontId::new(10.0, egui::FontFamily::Monospace); // Use monospace for better arrow rendering
+                let icon_font_id = egui::FontId::new(11.0, egui::FontFamily::Proportional); // Use proportional for icons
+
+                // Calculate proper vertical center position for the text within the row
+                let text_y = row_rect.center().y;
+                let text_pos = egui::Pos2::new(row_rect.left() + 4.0, text_y);
 
                 // Draw expand/collapse arrow with better styling
                 ui.painter().text(
@@ -553,8 +557,7 @@ impl FilePicker {
                 );
 
                 // Draw folder icon
-                let icon_pos = text_pos + egui::Vec2::new(12.0, 0.0);
-                let icon_font_id = egui::FontId::new(11.0, egui::FontFamily::Proportional); // Use proportional for icons
+                let icon_pos = egui::Pos2::new(text_pos.x + 12.0, text_y);
                 ui.painter().text(
                     icon_pos,
                     egui::Align2::LEFT_CENTER,
@@ -564,7 +567,7 @@ impl FilePicker {
                 );
 
                 // Draw folder name
-                let name_pos = icon_pos + egui::Vec2::new(16.0, 0.0);
+                let name_pos = egui::Pos2::new(icon_pos.x + 16.0, text_y);
                 ui.painter().text(
                     name_pos,
                     egui::Align2::LEFT_CENTER,
@@ -626,9 +629,12 @@ impl FilePicker {
                     );
                 }
 
-                // Draw file icon and name with compact spacing - align with folder base position
-                let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, (row_rect.height() - 12.0) / 2.0); // Same base position as folders
-                let font_id = egui::FontId::new(11.0, egui::FontFamily::Proportional); // Reduced font size
+                // Draw file icon and name with compact spacing - properly aligned with selection background
+                let font_id = egui::FontId::new(11.0, egui::FontFamily::Proportional);
+
+                // Calculate proper vertical center position for the text within the row
+                let text_y = row_rect.center().y;
+                let text_pos = egui::Pos2::new(row_rect.left() + 4.0, text_y);
 
                 // Draw icon with specific color
                 ui.painter().text(
@@ -640,7 +646,7 @@ impl FilePicker {
                 );
 
                 // Draw filename with compact spacing
-                let filename_pos = text_pos + egui::Vec2::new(16.0, 0.0); // Reduced spacing
+                let filename_pos = egui::Pos2::new(text_pos.x + 16.0, text_y);
                 ui.painter().text(
                     filename_pos,
                     egui::Align2::LEFT_CENTER,
@@ -652,7 +658,7 @@ impl FilePicker {
                 // Compact file stats on the right
                 if let Some(size) = node.size {
                     let size_text = format_file_size(size);
-                    let size_pos = egui::Pos2::new(row_rect.right() - 4.0, text_pos.y);
+                    let size_pos = egui::Pos2::new(row_rect.right() - 4.0, text_y);
                     ui.painter().text(
                         size_pos,
                         egui::Align2::RIGHT_CENTER,
