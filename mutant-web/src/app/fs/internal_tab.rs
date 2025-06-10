@@ -48,6 +48,12 @@ impl FsInternalTab {
 /// TabViewer for FsInternalTab in the FsWindow's internal dock
 pub struct FsInternalTabViewer {}
 
+impl FsInternalTabViewer {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
 impl egui_dock::TabViewer for FsInternalTabViewer {
     type Tab = FsInternalTab;
 

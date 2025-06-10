@@ -55,11 +55,15 @@ pub struct FsWindow {
 
 impl Default for FsWindow {
     fn default() -> Self {
+        // Create an empty dock state - this should show the empty state initially
+        let internal_dock = egui_dock::DockState::new(vec![]);
+        log::debug!("Created new FsWindow with empty dock state");
+
         Self {
             keys: crate::app::context::context().get_key_cache(),
             root: crate::app::fs::tree::TreeNode::default(),
             selected_path: None,
-            internal_dock: egui_dock::DockState::new(vec![]),
+            internal_dock,
             active_downloads: Arc::new(Mutex::new(Vec::new())),
             window_id: uuid::Uuid::new_v4().to_string(),
             pending_delete: None,
@@ -91,8 +95,31 @@ impl Window for FsWindow {
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            // Show the internal dock system for all tabs
-            if self.internal_dock.iter_all_tabs().next().is_none() {
+            // Debug: Log the dock state for troubleshooting
+            let has_tabs = self.internal_dock.iter_all_tabs().next().is_some();
+            let tab_count = self.internal_dock.iter_all_tabs().count();
+            log::debug!("FsWindow dock state: has_tabs={}, tab_count={}", has_tabs, tab_count);
+
+            // Always set up the dock area styling first
+            ui.style_mut().visuals.widgets.active.weak_bg_fill = super::theme::MutantColors::BACKGROUND_LIGHT;
+            ui.style_mut().visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0, super::theme::MutantColors::ACCENT_ORANGE);
+            ui.style_mut().visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, super::theme::MutantColors::ACCENT_ORANGE);
+
+            ui.style_mut().visuals.widgets.inactive.weak_bg_fill = super::theme::MutantColors::BACKGROUND_MEDIUM;
+            ui.style_mut().visuals.widgets.inactive.bg_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
+            ui.style_mut().visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_MUTED);
+
+            ui.style_mut().visuals.widgets.hovered.weak_bg_fill = super::theme::MutantColors::SURFACE_HOVER;
+            ui.style_mut().visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, super::theme::MutantColors::ACCENT_ORANGE);
+            ui.style_mut().visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_PRIMARY);
+
+            // Create a custom tab viewer that handles colors
+            let mut tab_viewer = crate::app::fs::internal_tab::FsInternalTabViewer::new();
+
+            if !has_tabs {
+                // Show empty state instructions when no tabs exist
+                log::debug!("Dock is empty, showing empty state instructions");
+
                 // Show instructions when no tabs are open - properly centered both horizontally and vertically
                 let available_rect = ui.available_rect_before_wrap();
 
@@ -137,28 +164,15 @@ impl Window for FsWindow {
                             .color(super::theme::MutantColors::TEXT_DISABLED)
                     );
                 });
-            } else {
-                // FORCE egui style override directly in the UI context
-                ui.style_mut().visuals.widgets.active.weak_bg_fill = super::theme::MutantColors::BACKGROUND_LIGHT;
-                ui.style_mut().visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0, super::theme::MutantColors::ACCENT_ORANGE);
-                ui.style_mut().visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, super::theme::MutantColors::ACCENT_ORANGE);
-
-                ui.style_mut().visuals.widgets.inactive.weak_bg_fill = super::theme::MutantColors::BACKGROUND_MEDIUM;
-                ui.style_mut().visuals.widgets.inactive.bg_stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
-                ui.style_mut().visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_MUTED);
-
-                ui.style_mut().visuals.widgets.hovered.weak_bg_fill = super::theme::MutantColors::SURFACE_HOVER;
-                ui.style_mut().visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, super::theme::MutantColors::ACCENT_ORANGE);
-                ui.style_mut().visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, super::theme::MutantColors::TEXT_PRIMARY);
-
-                // Create a custom tab viewer that handles colors
-                let mut tab_viewer = crate::app::fs::internal_tab::FsInternalTabViewer {};
-
-                // Show the internal dock area with a unique ID
-                egui_dock::DockArea::new(&mut self.internal_dock)
-                    .id(egui::Id::new(format!("fs_internal_dock_{}", self.dock_area_id)))
-                    .show_inside(ui, &mut tab_viewer);
             }
+
+            // ALWAYS show the dock area - this is critical for proper docking functionality
+            // Even when empty, this allows floating windows to dock properly
+            egui_dock::DockArea::new(&mut self.internal_dock)
+                .id(egui::Id::new(format!("fs_internal_dock_{}", self.dock_area_id)))
+                .show_inside(ui, &mut tab_viewer);
+
+            log::debug!("Dock area rendered with {} tabs", tab_count);
         });
 
         // Draw delete confirmation modal if needed
@@ -417,10 +431,16 @@ impl FsWindow {
     pub fn add_put_tab_floating(&mut self) {
         log::info!("FsWindow: Creating new floating Put window tab");
 
+        // Debug: Check current dock state
+        let current_tab_count = self.internal_dock.iter_all_tabs().count();
+        log::debug!("Current dock state before adding Put tab: {} tabs", current_tab_count);
+
         // Check if a Put tab already exists
         let tab_exists = self.internal_dock.iter_all_tabs().any(|(_, existing_tab)| {
             matches!(existing_tab, crate::app::fs::internal_tab::FsInternalTab::Put(_))
         });
+
+        log::debug!("Put tab already exists: {}", tab_exists);
 
         if !tab_exists {
             // Create a new Put window
@@ -429,6 +449,7 @@ impl FsWindow {
 
             // Add as a floating window using add_window instead of push_to_focused_leaf
             let surface = self.internal_dock.add_window(vec![tab]);
+            log::debug!("Added floating window with surface ID: {:?}", surface);
 
             // Set the window position and size for Put windows
             let size = [900.0, 650.0]; // Wide for side-by-side file picker and configuration
@@ -439,7 +460,14 @@ impl FsWindow {
                 window_state
                     .set_size(size.into())
                     .set_position(position.into());
+                log::debug!("Set window size and position for Put tab");
+            } else {
+                log::warn!("Failed to get window state for Put tab surface");
             }
+
+            // Debug: Check dock state after adding
+            let new_tab_count = self.internal_dock.iter_all_tabs().count();
+            log::debug!("Dock state after adding Put tab: {} tabs", new_tab_count);
 
             log::info!("FsWindow: Successfully added floating Put tab to internal dock");
         } else {
