@@ -249,12 +249,12 @@ impl Window for ColonyWindow {
             }
         }
         // Reserve space for the footer (30px) and use the remaining space for content
-        let footer_height = 30.0;
+        let footer_height = 18.0;
         let available_height = ui.available_height();
         let content_height = available_height - footer_height - 40.0; // 10px for separator
 
         let available_width = ui.available_width();
-        let content_width = available_width - 80.0; // 10px for each side padding
+        let content_width = available_width - 00.0; // Reduced padding to prevent overflow
 
         // Use a vertical layout for the main content with reserved space
         ui.allocate_ui_with_layout(
@@ -320,31 +320,38 @@ impl Window for ColonyWindow {
                     egui::Frame::new()
                         .fill(super::theme::MutantColors::SURFACE)
                         .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_MEDIUM))
-                        .inner_margin(egui::Margin::symmetric(4, 2))
+                        .inner_margin(egui::Margin::symmetric(8, 6))
                         .corner_radius(6.0)
                         .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new("📡 Your Colony Address:")
-                                        .size(12.0)
-                                        .color(super::theme::MutantColors::TEXT_SECONDARY)
-                                );
+                            ui.vertical(|ui| {
+                                // Header row with label and copy button
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("📡 Your Colony Address:")
+                                            .size(12.0)
+                                            .color(super::theme::MutantColors::TEXT_SECONDARY)
+                                    );
 
-                                ui.label(
-                                    egui::RichText::new(&user_info.contact_address)
-                                        .strong()
-                                        .family(egui::FontFamily::Monospace)
-                                        .size(11.0)
-                                        .color(super::theme::MutantColors::ACCENT_BLUE)
-                                );
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.small_button(
+                                            egui::RichText::new("📋 Copy")
+                                                .color(super::theme::MutantColors::TEXT_PRIMARY)
+                                        ).clicked() {
+                                            ui.ctx().copy_text(user_info.contact_address.clone());
+                                        }
+                                    });
+                                });
 
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.small_button(
-                                        egui::RichText::new("📋 Copy")
-                                            .color(super::theme::MutantColors::TEXT_PRIMARY)
-                                    ).clicked() {
-                                        ui.ctx().copy_text(user_info.contact_address.clone());
-                                    }
+                                // Address on separate line to prevent overflow
+                                ui.add_space(1.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(&user_info.contact_address)
+                                            .strong()
+                                            .family(egui::FontFamily::Monospace)
+                                            .size(10.0)
+                                            .color(super::theme::MutantColors::ACCENT_BLUE)
+                                    );
                                 });
                             });
                         });
@@ -717,7 +724,7 @@ impl Window for ColonyWindow {
 
                                 // Search input with better styling
                                 let search_response = ui.add_sized(
-                                    [ui.available_width() - 180.0, 24.0],
+                                    [ui.available_width() - 160.0, 24.0],
                                     egui::TextEdit::singleline(&mut self.search_query)
                                         .hint_text("Search for content across all pods...")
                                 );
@@ -981,7 +988,7 @@ impl Window for ColonyWindow {
                                 let progress_bar = egui::ProgressBar::new(self.current_progress)
                                     .fill(super::theme::MutantColors::ACCENT_ORANGE)
                                     .animate(true)
-                                    .desired_width(content_width)
+                                    .desired_width(content_width - 70.0)
                                     .desired_height(8.0);
                                 ui.add(progress_bar);
 
@@ -1013,7 +1020,7 @@ impl Window for ColonyWindow {
                                 // Completed progress bar
                                 let progress_bar = egui::ProgressBar::new(1.0)
                                     .fill(super::theme::MutantColors::SUCCESS)
-                                    .desired_width(content_width)
+                                    .desired_width(content_width - 100.0)
                                     .desired_height(8.0);
                                 ui.add(progress_bar);
 
@@ -1038,7 +1045,7 @@ impl Window for ColonyWindow {
                                 // Ready progress bar
                                 let progress_bar = egui::ProgressBar::new(0.0)
                                     .fill(super::theme::MutantColors::BORDER_MEDIUM)
-                                    .desired_width(content_width)
+                                    .desired_width(content_width - 80.0)
                                     .desired_height(8.0);
                                 ui.add(progress_bar);
 
