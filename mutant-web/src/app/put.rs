@@ -49,11 +49,28 @@ pub struct PutWindow {
     storage_mode: Arc<RwLock<StorageMode>>,
     no_verify: Arc<RwLock<bool>>,
 
-    // Network progress tracking (Phase 3: Daemon-to-Network)
+    // Two-phase progress tracking for public uploads
+    // Phase 1: File data upload
+    phase1_reservation_progress: Arc<RwLock<f32>>,
+    phase1_upload_progress: Arc<RwLock<f32>>,
+    phase1_confirmation_progress: Arc<RwLock<f32>>,
+    phase1_total_chunks: Arc<RwLock<usize>>,
+    phase1_complete: Arc<RwLock<bool>>,
+
+    // Phase 2: Public index upload (only for public files)
+    phase2_reservation_progress: Arc<RwLock<f32>>,
+    phase2_upload_progress: Arc<RwLock<f32>>,
+    phase2_confirmation_progress: Arc<RwLock<f32>>,
+    phase2_total_chunks: Arc<RwLock<usize>>,
+    phase2_complete: Arc<RwLock<bool>>,
+
+    // Current phase tracking
+    current_phase: Arc<RwLock<u8>>, // 1 for file data, 2 for public index
+
+    // Legacy fields for backward compatibility (now used for current phase)
     reservation_progress: Arc<RwLock<f32>>,
     upload_progress: Arc<RwLock<f32>>,
     confirmation_progress: Arc<RwLock<f32>>,
-
     total_chunks: Arc<RwLock<usize>>,
     chunks_to_reserve: Arc<RwLock<usize>>,
     initial_written_count: Arc<RwLock<usize>>,
@@ -91,7 +108,24 @@ impl Default for PutWindow {
             storage_mode: Arc::new(RwLock::new(StorageMode::Heaviest)),
             no_verify: Arc::new(RwLock::new(false)),
 
-            // Network progress (Phase 3)
+            // Phase 1: File data upload progress
+            phase1_reservation_progress: Arc::new(RwLock::new(0.0)),
+            phase1_upload_progress: Arc::new(RwLock::new(0.0)),
+            phase1_confirmation_progress: Arc::new(RwLock::new(0.0)),
+            phase1_total_chunks: Arc::new(RwLock::new(0)),
+            phase1_complete: Arc::new(RwLock::new(false)),
+
+            // Phase 2: Public index upload progress
+            phase2_reservation_progress: Arc::new(RwLock::new(0.0)),
+            phase2_upload_progress: Arc::new(RwLock::new(0.0)),
+            phase2_confirmation_progress: Arc::new(RwLock::new(0.0)),
+            phase2_total_chunks: Arc::new(RwLock::new(0)),
+            phase2_complete: Arc::new(RwLock::new(false)),
+
+            // Current phase tracking
+            current_phase: Arc::new(RwLock::new(1)), // Start with phase 1
+
+            // Legacy fields for backward compatibility (now used for current phase)
             reservation_progress: Arc::new(RwLock::new(0.0)),
             upload_progress: Arc::new(RwLock::new(0.0)),
             confirmation_progress: Arc::new(RwLock::new(0.0)),
@@ -219,51 +253,50 @@ impl PutWindow {
                     // Update total chunks
                     *self.total_chunks.write().unwrap() = total_chunks;
 
-                    // Check if operation is complete
+                    // Check if current phase is complete
                     if confirmed_count == total_chunks && total_chunks > 0 {
-                        // Mark upload as complete
-                        *self.is_uploading.write().unwrap() = false;
-                        *self.upload_complete.write().unwrap() = true;
-                        *self.current_step.write().unwrap() = PutStep::Upload;
+                        let current_phase = *self.current_phase.read().unwrap();
+                        let is_public = *self.public.read().unwrap();
 
-                        // Set elapsed time
-                        if let Some(start) = *self.start_time.read().unwrap() {
-                            *self.elapsed_time.write().unwrap() = start.elapsed().unwrap();
-                        }
+                        if current_phase == 1 {
+                            // Phase 1 (file data) is complete
+                            *self.phase1_complete.write().unwrap() = true;
 
-                        // Show notification
-                        notifications::info("Upload complete!".to_string());
+                            // Store Phase 1 progress
+                            *self.phase1_reservation_progress.write().unwrap() = *self.reservation_progress.read().unwrap();
+                            *self.phase1_upload_progress.write().unwrap() = *self.upload_progress.read().unwrap();
+                            *self.phase1_confirmation_progress.write().unwrap() = *self.confirmation_progress.read().unwrap();
+                            *self.phase1_total_chunks.write().unwrap() = *self.total_chunks.read().unwrap();
 
-                        // Refresh the keys list to update the file explorer
-                        spawn_local(async {
-                            let ctx = context::context();
-                            let _ = ctx.list_keys().await;
-                        });
+                            if is_public {
+                                // For public uploads, move to Phase 2 (public index upload)
+                                *self.current_phase.write().unwrap() = 2;
 
-                        // If this is a public upload, get the key details to find the public address
-                        let public = *self.public.read().unwrap();
-                        if public {
-                            // Fetch the key details to get the public address
-                            spawn_local({
-                                let ctx = context::context();
-                                let key_name = self.key_name.read().unwrap().clone();
-                                let public_address_clone = self.public_address.clone();
+                                // Reset current progress for Phase 2
+                                *self.reservation_progress.write().unwrap() = 0.0;
+                                *self.upload_progress.write().unwrap() = 0.0;
+                                *self.confirmation_progress.write().unwrap() = 0.0;
+                                *self.total_chunks.write().unwrap() = 0;
 
-                                async move {
-                                    // Fetch the keys directly
-                                    let keys = ctx.list_keys().await;
+                                // Don't mark as complete yet - wait for Phase 2
+                                log::info!("Phase 1 complete, starting Phase 2 (public index upload)");
+                            } else {
+                                // For private uploads, we're done after Phase 1
+                                self.complete_upload();
+                            }
+                        } else if current_phase == 2 {
+                            // Phase 2 (public index) is complete
+                            *self.phase2_complete.write().unwrap() = true;
 
-                                    // Find our key
-                                    for key in keys {
-                                        if key.key == key_name && key.is_public {
-                                            if let Some(addr) = key.public_address {
-                                                *public_address_clone.write().unwrap() = Some(addr);
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            });
+                            // Store Phase 2 progress
+                            *self.phase2_reservation_progress.write().unwrap() = *self.reservation_progress.read().unwrap();
+                            *self.phase2_upload_progress.write().unwrap() = *self.upload_progress.read().unwrap();
+                            *self.phase2_confirmation_progress.write().unwrap() = *self.confirmation_progress.read().unwrap();
+                            *self.phase2_total_chunks.write().unwrap() = *self.total_chunks.read().unwrap();
+
+                            // Both phases complete for public upload
+                            self.complete_upload();
+                            log::info!("Phase 2 complete, public upload finished");
                         }
                     }
                 }
@@ -632,54 +665,160 @@ impl PutWindow {
                         }
 
                         // Show upload progress bars
-                        let total_chunks = *self.total_chunks.read().unwrap();
-                        let reservation_progress = *self.reservation_progress.read().unwrap();
-                        let upload_progress = *self.upload_progress.read().unwrap();
-                        let confirmation_progress = *self.confirmation_progress.read().unwrap();
+                        let is_public = *self.public.read().unwrap();
+                        let current_phase = *self.current_phase.read().unwrap();
+                        let phase1_complete = *self.phase1_complete.read().unwrap();
+                        let phase2_complete = *self.phase2_complete.read().unwrap();
                         let elapsed = *self.elapsed_time.read().unwrap();
                         let elapsed_str = format!("{:.1}s", elapsed.as_secs_f64());
 
                         // Progress bars with full width
                         ui.vertical(|ui| {
-                            // Reservation progress
-                            ui.label("Reserving pads:");
-                            ui.add_sized(
-                                [max_content_width, 20.0],
-                                detailed_progress(
-                                    reservation_progress,
-                                    (reservation_progress * total_chunks as f32) as usize,
-                                    total_chunks,
-                                    elapsed_str.clone(),
-                                ),
-                            );
+                            if is_public {
+                                // Two-phase progress for public uploads
 
-                            ui.add_space(5.0);
+                                // Phase 1: File Data Upload
+                                ui.group(|ui| {
+                                    ui.vertical(|ui| {
+                                        let phase1_icon = if phase1_complete { "✅" } else { "📤" };
+                                        let phase1_color = if phase1_complete {
+                                            MutantColors::ACCENT_GREEN
+                                        } else if current_phase == 1 {
+                                            MutantColors::ACCENT_ORANGE
+                                        } else {
+                                            MutantColors::TEXT_MUTED
+                                        };
 
-                            // Upload progress
-                            ui.label("Uploading pads:");
-                            ui.add_sized(
-                                [max_content_width, 20.0],
-                                detailed_progress(
-                                    upload_progress,
-                                    (upload_progress * total_chunks as f32) as usize,
-                                    total_chunks,
-                                    elapsed_str.clone(),
-                                ),
-                            );
+                                        ui.label(
+                                            RichText::new(format!("{} Phase 1: Uploading file data", phase1_icon))
+                                                .color(phase1_color)
+                                                .strong()
+                                        );
 
-                            ui.add_space(5.0);
+                                        if phase1_complete {
+                                            // Show completed Phase 1 progress
+                                            let phase1_total = *self.phase1_total_chunks.read().unwrap();
+                                            ui.label("Reserving pads:");
+                                            ui.add_sized([max_content_width, 20.0], detailed_progress(1.0, phase1_total, phase1_total, elapsed_str.clone()));
+                                            ui.label("Uploading pads:");
+                                            ui.add_sized([max_content_width, 20.0], detailed_progress(1.0, phase1_total, phase1_total, elapsed_str.clone()));
+                                            ui.label("Confirming pads:");
+                                            ui.add_sized([max_content_width, 20.0], detailed_progress(1.0, phase1_total, phase1_total, elapsed_str.clone()));
+                                        } else if current_phase == 1 {
+                                            // Show current Phase 1 progress
+                                            let total_chunks = *self.total_chunks.read().unwrap();
+                                            let reservation_progress = *self.reservation_progress.read().unwrap();
+                                            let upload_progress = *self.upload_progress.read().unwrap();
+                                            let confirmation_progress = *self.confirmation_progress.read().unwrap();
 
-                            // Confirmation progress
-                            ui.label("Confirming pads:");
-                            ui.add_sized(
-                                [max_content_width, 20.0],
-                                detailed_progress(
-                                    confirmation_progress,
-                                    (confirmation_progress * total_chunks as f32) as usize,
-                                    total_chunks,
-                                    elapsed_str,
-                                ),
-                            );
+                                            ui.label("Reserving pads:");
+                                            ui.add_sized([max_content_width, 20.0], detailed_progress(reservation_progress, (reservation_progress * total_chunks as f32) as usize, total_chunks, elapsed_str.clone()));
+                                            ui.label("Uploading pads:");
+                                            ui.add_sized([max_content_width, 20.0], detailed_progress(upload_progress, (upload_progress * total_chunks as f32) as usize, total_chunks, elapsed_str.clone()));
+                                            ui.label("Confirming pads:");
+                                            ui.add_sized([max_content_width, 20.0], detailed_progress(confirmation_progress, (confirmation_progress * total_chunks as f32) as usize, total_chunks, elapsed_str.clone()));
+                                        } else {
+                                            // Phase 1 not started yet
+                                            ui.label("Waiting to start...");
+                                        }
+                                    });
+                                });
+
+                                ui.add_space(10.0);
+
+                                // Phase 2: Public Index Upload
+                                ui.group(|ui| {
+                                    ui.vertical(|ui| {
+                                        let phase2_icon = if phase2_complete { "✅" } else if current_phase == 2 { "🌐" } else { "⏳" };
+                                        let phase2_color = if phase2_complete {
+                                            MutantColors::ACCENT_GREEN
+                                        } else if current_phase == 2 {
+                                            MutantColors::ACCENT_BLUE
+                                        } else {
+                                            MutantColors::TEXT_MUTED
+                                        };
+
+                                        ui.label(
+                                            RichText::new(format!("{} Phase 2: Uploading public index", phase2_icon))
+                                                .color(phase2_color)
+                                                .strong()
+                                        );
+
+                                        if phase2_complete {
+                                            // Show completed Phase 2 progress
+                                            let phase2_total = *self.phase2_total_chunks.read().unwrap();
+                                            ui.label("Reserving pads:");
+                                            ui.add_sized([max_content_width, 20.0], detailed_progress(1.0, phase2_total, phase2_total, elapsed_str.clone()));
+                                            ui.label("Uploading pads:");
+                                            ui.add_sized([max_content_width, 20.0], detailed_progress(1.0, phase2_total, phase2_total, elapsed_str.clone()));
+                                            ui.label("Confirming pads:");
+                                            ui.add_sized([max_content_width, 20.0], detailed_progress(1.0, phase2_total, phase2_total, elapsed_str.clone()));
+                                        } else if current_phase == 2 {
+                                            // Show current Phase 2 progress
+                                            let total_chunks = *self.total_chunks.read().unwrap();
+                                            let reservation_progress = *self.reservation_progress.read().unwrap();
+                                            let upload_progress = *self.upload_progress.read().unwrap();
+                                            let confirmation_progress = *self.confirmation_progress.read().unwrap();
+
+                                            ui.label("Reserving pads:");
+                                            ui.add_sized([max_content_width, 20.0], detailed_progress(reservation_progress, (reservation_progress * total_chunks as f32) as usize, total_chunks, elapsed_str.clone()));
+                                            ui.label("Uploading pads:");
+                                            ui.add_sized([max_content_width, 20.0], detailed_progress(upload_progress, (upload_progress * total_chunks as f32) as usize, total_chunks, elapsed_str.clone()));
+                                            ui.label("Confirming pads:");
+                                            ui.add_sized([max_content_width, 20.0], detailed_progress(confirmation_progress, (confirmation_progress * total_chunks as f32) as usize, total_chunks, elapsed_str.clone()));
+                                        } else {
+                                            // Phase 2 not started yet
+                                            ui.label("Waiting for Phase 1 to complete...");
+                                        }
+                                    });
+                                });
+                            } else {
+                                // Single-phase progress for private uploads
+                                let total_chunks = *self.total_chunks.read().unwrap();
+                                let reservation_progress = *self.reservation_progress.read().unwrap();
+                                let upload_progress = *self.upload_progress.read().unwrap();
+                                let confirmation_progress = *self.confirmation_progress.read().unwrap();
+
+                                // Reservation progress
+                                ui.label("Reserving pads:");
+                                ui.add_sized(
+                                    [max_content_width, 20.0],
+                                    detailed_progress(
+                                        reservation_progress,
+                                        (reservation_progress * total_chunks as f32) as usize,
+                                        total_chunks,
+                                        elapsed_str.clone(),
+                                    ),
+                                );
+
+                                ui.add_space(5.0);
+
+                                // Upload progress
+                                ui.label("Uploading pads:");
+                                ui.add_sized(
+                                    [max_content_width, 20.0],
+                                    detailed_progress(
+                                        upload_progress,
+                                        (upload_progress * total_chunks as f32) as usize,
+                                        total_chunks,
+                                        elapsed_str.clone(),
+                                    ),
+                                );
+
+                                ui.add_space(5.0);
+
+                                // Confirmation progress
+                                ui.label("Confirming pads:");
+                                ui.add_sized(
+                                    [max_content_width, 20.0],
+                                    detailed_progress(
+                                        confirmation_progress,
+                                        (confirmation_progress * total_chunks as f32) as usize,
+                                        total_chunks,
+                                        elapsed_str,
+                                    ),
+                                );
+                            }
                         });
                     },
                 );
@@ -800,10 +939,27 @@ impl PutWindow {
         *self.start_time.write().unwrap() = Some(SystemTime::now());
         *self.current_step.write().unwrap() = PutStep::Upload;
 
-        // Reset progress
+        // Reset phase tracking
+        *self.current_phase.write().unwrap() = 1; // Start with Phase 1
+        *self.phase1_complete.write().unwrap() = false;
+        *self.phase2_complete.write().unwrap() = false;
+
+        // Reset all progress
         *self.reservation_progress.write().unwrap() = 0.0;
         *self.upload_progress.write().unwrap() = 0.0;
         *self.confirmation_progress.write().unwrap() = 0.0;
+
+        // Reset Phase 1 progress
+        *self.phase1_reservation_progress.write().unwrap() = 0.0;
+        *self.phase1_upload_progress.write().unwrap() = 0.0;
+        *self.phase1_confirmation_progress.write().unwrap() = 0.0;
+        *self.phase1_total_chunks.write().unwrap() = 0;
+
+        // Reset Phase 2 progress
+        *self.phase2_reservation_progress.write().unwrap() = 0.0;
+        *self.phase2_upload_progress.write().unwrap() = 0.0;
+        *self.phase2_confirmation_progress.write().unwrap() = 0.0;
+        *self.phase2_total_chunks.write().unwrap() = 0;
 
         // Start the upload using file path
         let ctx = context::context();
@@ -962,6 +1118,53 @@ impl PutWindow {
         });
     }
 
+    fn complete_upload(&self) {
+        // Mark upload as complete
+        *self.is_uploading.write().unwrap() = false;
+        *self.upload_complete.write().unwrap() = true;
+        *self.current_step.write().unwrap() = PutStep::Upload;
+
+        // Set elapsed time
+        if let Some(start) = *self.start_time.read().unwrap() {
+            *self.elapsed_time.write().unwrap() = start.elapsed().unwrap();
+        }
+
+        // Show notification
+        notifications::info("Upload complete!".to_string());
+
+        // Refresh the keys list to update the file explorer
+        spawn_local(async {
+            let ctx = context::context();
+            let _ = ctx.list_keys().await;
+        });
+
+        // If this is a public upload, get the key details to find the public address
+        let public = *self.public.read().unwrap();
+        if public {
+            // Fetch the key details to get the public address
+            spawn_local({
+                let ctx = context::context();
+                let key_name = self.key_name.read().unwrap().clone();
+                let public_address_clone = self.public_address.clone();
+
+                async move {
+                    // Fetch the keys directly
+                    let keys = ctx.list_keys().await;
+
+                    // Find our key
+                    for key in keys {
+                        if key.key == key_name && key.is_public {
+                            if let Some(addr) = key.public_address {
+                                *public_address_clone.write().unwrap() = Some(addr);
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
     fn reset(&self) {
         *self.current_step.write().unwrap() = PutStep::Configuration;
         *self.file_picker.write().unwrap() = None;
@@ -977,6 +1180,25 @@ impl PutWindow {
         *self.public_address.write().unwrap() = None;
         *self.error_message.write().unwrap() = None;
         *self.current_put_id.write().unwrap() = None;
+
+        // Reset phase tracking
+        *self.current_phase.write().unwrap() = 1;
+        *self.phase1_complete.write().unwrap() = false;
+        *self.phase2_complete.write().unwrap() = false;
+
+        // Reset Phase 1 progress
+        *self.phase1_reservation_progress.write().unwrap() = 0.0;
+        *self.phase1_upload_progress.write().unwrap() = 0.0;
+        *self.phase1_confirmation_progress.write().unwrap() = 0.0;
+        *self.phase1_total_chunks.write().unwrap() = 0;
+
+        // Reset Phase 2 progress
+        *self.phase2_reservation_progress.write().unwrap() = 0.0;
+        *self.phase2_upload_progress.write().unwrap() = 0.0;
+        *self.phase2_confirmation_progress.write().unwrap() = 0.0;
+        *self.phase2_total_chunks.write().unwrap() = 0;
+
+        // Reset current progress (legacy fields)
         *self.reservation_progress.write().unwrap() = 0.0;
         *self.upload_progress.write().unwrap() = 0.0;
         *self.confirmation_progress.write().unwrap() = 0.0;
