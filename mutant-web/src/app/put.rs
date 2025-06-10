@@ -1050,13 +1050,14 @@ impl PutWindow {
                                                     }
                                                 }
                                                 mutant_protocol::PutEvent::Complete => {
-                                                    log::info!("Put operation phase completed successfully");
+                                                    log::info!("Put operation completed successfully");
 
-                                                    // Check which phase just completed
+                                                    // For phase tracking, detect if this is the first completion (Phase 1)
                                                     let current_phase_val = *current_phase.read().unwrap();
+                                                    let is_public = public;
 
-                                                    if current_phase_val == 1 {
-                                                        // Phase 1 (file data) is complete
+                                                    if is_public && current_phase_val == 1 {
+                                                        // This is the end of Phase 1 for a public upload
                                                         *phase1_complete.write().unwrap() = true;
 
                                                         // Store Phase 1 progress
@@ -1065,34 +1066,19 @@ impl PutWindow {
                                                         *phase1_confirmation_progress.write().unwrap() = *confirmation_progress.read().unwrap();
                                                         *phase1_total_chunks.write().unwrap() = *total_chunks.read().unwrap();
 
-                                                        if public {
-                                                            // For public uploads, move to Phase 2 (public index upload)
-                                                            *current_phase.write().unwrap() = 2;
+                                                        // Move to Phase 2 for UI display
+                                                        *current_phase.write().unwrap() = 2;
 
-                                                            // Reset current progress for Phase 2
-                                                            *reservation_progress.write().unwrap() = 0.0;
-                                                            *upload_progress.write().unwrap() = 0.0;
-                                                            *confirmation_progress.write().unwrap() = 0.0;
-                                                            *total_chunks.write().unwrap() = 0;
+                                                        // Reset current progress for Phase 2 display
+                                                        *reservation_progress.write().unwrap() = 0.0;
+                                                        *upload_progress.write().unwrap() = 0.0;
+                                                        *confirmation_progress.write().unwrap() = 0.0;
+                                                        *total_chunks.write().unwrap() = 0;
 
-                                                            // Don't mark as complete yet - wait for Phase 2
-                                                            log::info!("Phase 1 complete, waiting for Phase 2 (public index upload)");
-                                                            // Continue listening for Phase 2 events
-                                                        } else {
-                                                            // For private uploads, we're done after Phase 1
-                                                            *upload_complete_clone.write().unwrap() = true;
-                                                            *is_uploading_clone.write().unwrap() = false;
-
-                                                            // Refresh the keys list
-                                                            spawn_local(async move {
-                                                                let ctx = context::context();
-                                                                let _ = ctx.list_keys().await;
-                                                            });
-
-                                                            break;
-                                                        }
-                                                    } else if current_phase_val == 2 {
-                                                        // Phase 2 (public index) is complete
+                                                        log::info!("Phase 1 complete, transitioning to Phase 2 display");
+                                                        // Continue listening for Phase 2 events - don't break yet
+                                                    } else if is_public && current_phase_val == 2 {
+                                                        // This is the end of Phase 2 for a public upload
                                                         *phase2_complete.write().unwrap() = true;
 
                                                         // Store Phase 2 progress
@@ -1101,7 +1087,12 @@ impl PutWindow {
                                                         *phase2_confirmation_progress.write().unwrap() = *confirmation_progress.read().unwrap();
                                                         *phase2_total_chunks.write().unwrap() = *total_chunks.read().unwrap();
 
-                                                        // Both phases complete for public upload
+                                                        log::info!("Phase 2 complete, continuing to listen for final completion");
+                                                        // Continue listening - the daemon will send final completion after auto-indexing
+                                                    } else {
+                                                        // This is either:
+                                                        // 1. A private upload completion (single phase)
+                                                        // 2. The final completion for a public upload (after auto-indexing)
                                                         *upload_complete_clone.write().unwrap() = true;
                                                         *is_uploading_clone.write().unwrap() = false;
 
@@ -1110,19 +1101,21 @@ impl PutWindow {
                                                             let ctx = context::context();
                                                             let _ = ctx.list_keys().await;
 
-                                                            // Fetch the key details to get the public address
-                                                            let keys = ctx.list_keys().await;
-                                                            for key in keys {
-                                                                if key.key == key_name_clone && key.is_public {
-                                                                    if let Some(addr) = key.public_address {
-                                                                        *public_address.write().unwrap() = Some(addr);
-                                                                        break;
+                                                            // For public uploads, fetch the public address
+                                                            if is_public {
+                                                                let keys = ctx.list_keys().await;
+                                                                for key in keys {
+                                                                    if key.key == key_name_clone && key.is_public {
+                                                                        if let Some(addr) = key.public_address {
+                                                                            *public_address.write().unwrap() = Some(addr);
+                                                                            break;
+                                                                        }
                                                                     }
                                                                 }
                                                             }
                                                         });
 
-                                                        log::info!("Phase 2 complete, public upload finished");
+                                                        log::info!("Upload completed successfully");
                                                         break;
                                                     }
                                                 }
