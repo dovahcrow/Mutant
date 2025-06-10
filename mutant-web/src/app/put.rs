@@ -15,14 +15,13 @@ use super::theme::{MutantColors, primary_button, success_button};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum PutStep {
-    FilePicker,
     Configuration,
     Upload,
 }
 
 impl Default for PutStep {
     fn default() -> Self {
-        PutStep::FilePicker
+        PutStep::Configuration
     }
 }
 
@@ -82,7 +81,7 @@ pub struct PutWindow {
 impl Default for PutWindow {
     fn default() -> Self {
         Self {
-            current_step: Arc::new(RwLock::new(PutStep::FilePicker)),
+            current_step: Arc::new(RwLock::new(PutStep::Configuration)),
             file_picker: Arc::new(RwLock::new(None)),
             selected_file_path: Arc::new(RwLock::new(None)),
             selected_file: Arc::new(RwLock::new(None)),
@@ -278,9 +277,6 @@ impl PutWindow {
         let upload_complete = *self.upload_complete.read().unwrap();
 
         match current_step {
-            PutStep::FilePicker => {
-                self.draw_file_picker_step(ui);
-            }
             PutStep::Configuration => {
                 self.draw_configuration_step(ui);
             }
@@ -297,144 +293,149 @@ impl PutWindow {
         }
     }
 
-    fn draw_file_picker_step(&mut self, ui: &mut egui::Ui) {
-        ui.heading(RichText::new("📁 Select File").size(20.0).color(MutantColors::TEXT_PRIMARY));
-        ui.add_space(15.0);
 
-        ui.label(RichText::new("Choose a file from the daemon's filesystem:").color(MutantColors::TEXT_SECONDARY));
-        ui.add_space(10.0);
-
-        // Initialize file picker if needed
-        if self.file_picker.read().unwrap().is_none() {
-            *self.file_picker.write().unwrap() = Some(FilePicker::new().with_files_only(true));
-        }
-
-        // Draw the file picker
-        if let Some(ref mut picker) = *self.file_picker.write().unwrap() {
-            if picker.draw(ui) {
-                // File was selected - get the full filesystem path for upload
-                if let Some(full_path) = picker.selected_file_full_path() {
-                    *self.selected_file_path.write().unwrap() = Some(full_path.clone());
-
-                    // Extract filename from path for display
-                    let filename = std::path::Path::new(&full_path)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| full_path.clone());
-
-                    *self.selected_file.write().unwrap() = Some(filename.clone());
-                    *self.key_name.write().unwrap() = filename;
-
-                    // Move to configuration step
-                    *self.current_step.write().unwrap() = PutStep::Configuration;
-                }
-            }
-        }
-
-        ui.add_space(20.0);
-        ui.horizontal(|ui| {
-            if ui.button("Cancel").clicked() {
-                // Reset and close window (this would need to be handled by the window system)
-                self.reset();
-            }
-        });
-    }
 
     fn draw_configuration_step(&mut self, ui: &mut egui::Ui) {
-        ui.heading(RichText::new("📤 Configure Upload").size(20.0).color(MutantColors::TEXT_PRIMARY));
+        ui.heading(RichText::new("📤 Upload File").size(20.0).color(MutantColors::TEXT_PRIMARY));
         ui.add_space(15.0);
 
-        // Show selected file info
-        if let Some(filename) = &*self.selected_file.read().unwrap() {
-            ui.group(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("Selected File:").color(MutantColors::TEXT_SECONDARY));
-                    ui.label(RichText::new(filename).color(MutantColors::ACCENT_BLUE));
-
-                    if let Some(path) = &*self.selected_file_path.read().unwrap() {
-                        ui.label(RichText::new(format!("Path: {}", path)).color(MutantColors::TEXT_MUTED));
-                    }
-                });
-            });
-            ui.add_space(10.0);
-        }
-
-        // Key name input with styled frame
-        ui.group(|ui| {
-            ui.vertical(|ui| {
-                ui.label(RichText::new("Key Name:").color(MutantColors::TEXT_PRIMARY));
-                ui.add_space(5.0);
-                let mut key_name = self.key_name.write().unwrap();
-                ui.text_edit_singleline(&mut *key_name);
-            });
-        });
-
-        ui.add_space(10.0);
-
-        // Configuration options
-        ui.collapsing("Upload Options", |ui| {
-            // Public checkbox
-            ui.horizontal(|ui| {
-                let mut public = self.public.write().unwrap();
-                ui.checkbox(&mut *public, "Public");
-                ui.label("Make this file publicly accessible");
-            });
-
-            // Storage mode selection
-            ui.horizontal(|ui| {
-                ui.label("Storage Mode:");
-                let mut storage_mode = self.storage_mode.write().unwrap();
-
-                egui::ComboBox::new(format!("mutant_put_storage_mode_{}", self.window_id), "")
-                    .selected_text(format!("{:?}", *storage_mode))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut *storage_mode, StorageMode::Light, "Light");
-                        ui.selectable_value(&mut *storage_mode, StorageMode::Medium, "Medium");
-                        ui.selectable_value(&mut *storage_mode, StorageMode::Heavy, "Heavy");
-                        ui.selectable_value(&mut *storage_mode, StorageMode::Heaviest, "Heaviest");
-                    });
-            });
-
-            // No verify checkbox
-            ui.horizontal(|ui| {
-                let mut no_verify = self.no_verify.write().unwrap();
-                ui.checkbox(&mut *no_verify, "Skip Verification");
-                ui.label("Skip verification of uploaded data (faster but less safe)");
-            });
-        });
-
-        ui.add_space(15.0);
-
-        // Navigation buttons
+        // Horizontal layout: File picker on left, configuration on right
         ui.horizontal(|ui| {
-            if ui.button("← Back").clicked() {
-                *self.current_step.write().unwrap() = PutStep::FilePicker;
-            }
+            // Left side: File picker (50% width)
+            let available_width = ui.available_width();
+            let left_width = available_width * 0.5;
 
-            ui.add_space(10.0);
+            ui.allocate_ui_with_layout(
+                egui::Vec2::new(left_width, ui.available_height()),
+                egui::Layout::top_down(egui::Align::LEFT),
+                |ui| {
+                    ui.label(RichText::new("Choose a file from the daemon's filesystem:").color(MutantColors::TEXT_SECONDARY));
+                    ui.add_space(10.0);
 
-            let can_upload = !self.key_name.read().unwrap().is_empty() && self.selected_file_path.read().unwrap().is_some();
-            if ui.add_enabled(can_upload, primary_button("🚀 Start Upload")).clicked() {
-                self.start_path_upload();
-            }
+                    // Initialize file picker if needed
+                    if self.file_picker.read().unwrap().is_none() {
+                        *self.file_picker.write().unwrap() = Some(FilePicker::new().with_files_only(true));
+                    }
 
-            if !can_upload {
-                ui.add_space(5.0);
-                if self.selected_file_path.read().unwrap().is_none() {
-                    ui.label(RichText::new("⚠ No file selected").color(MutantColors::WARNING));
-                } else {
-                    ui.label(RichText::new("⚠ Please enter a key name").color(MutantColors::WARNING));
+                    // Draw the file picker
+                    if let Some(ref mut picker) = *self.file_picker.write().unwrap() {
+                        if picker.draw(ui) {
+                            // File was selected - get the full filesystem path for upload
+                            if let Some(full_path) = picker.selected_file_full_path() {
+                                *self.selected_file_path.write().unwrap() = Some(full_path.clone());
+
+                                // Extract filename from path for display
+                                let filename = std::path::Path::new(&full_path)
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| full_path.clone());
+
+                                *self.selected_file.write().unwrap() = Some(filename.clone());
+                                *self.key_name.write().unwrap() = filename;
+                            }
+                        }
+                    }
                 }
-            }
-        });
+            );
 
-        // Show error message if any
-        if let Some(error) = &*self.error_message.read().unwrap() {
             ui.add_space(10.0);
-            ui.group(|ui| {
-                ui.label(RichText::new(format!("❌ Error: {}", error)).color(MutantColors::ERROR));
-            });
-        }
+
+            // Right side: Configuration (50% width)
+            let right_width = available_width * 0.5 - 10.0; // Account for spacing
+
+            ui.allocate_ui_with_layout(
+                egui::Vec2::new(right_width, ui.available_height()),
+                egui::Layout::top_down(egui::Align::LEFT),
+                |ui| {
+                    ui.label(RichText::new("Upload Configuration:").color(MutantColors::TEXT_SECONDARY));
+                    ui.add_space(10.0);
+
+                    // Show selected file info
+                    if let Some(filename) = &*self.selected_file.read().unwrap() {
+                        ui.group(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new("Selected File:").color(MutantColors::TEXT_SECONDARY));
+                                ui.label(RichText::new(filename).color(MutantColors::ACCENT_BLUE));
+
+                                if let Some(path) = &*self.selected_file_path.read().unwrap() {
+                                    ui.label(RichText::new(format!("Path: {}", path)).color(MutantColors::TEXT_MUTED));
+                                }
+                            });
+                        });
+                        ui.add_space(10.0);
+                    }
+
+                    // Key name input with styled frame
+                    ui.group(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new("Key Name:").color(MutantColors::TEXT_PRIMARY));
+                            ui.add_space(5.0);
+                            let mut key_name = self.key_name.write().unwrap();
+                            ui.text_edit_singleline(&mut *key_name);
+                        });
+                    });
+
+                    ui.add_space(10.0);
+
+                    // Configuration options
+                    ui.collapsing("Upload Options", |ui| {
+                        // Public checkbox
+                        ui.horizontal(|ui| {
+                            let mut public = self.public.write().unwrap();
+                            ui.checkbox(&mut *public, "Public");
+                            ui.label("Make this file publicly accessible");
+                        });
+
+                        // Storage mode selection
+                        ui.horizontal(|ui| {
+                            ui.label("Storage Mode:");
+                            let mut storage_mode = self.storage_mode.write().unwrap();
+
+                            egui::ComboBox::new(format!("mutant_put_storage_mode_{}", self.window_id), "")
+                                .selected_text(format!("{:?}", *storage_mode))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut *storage_mode, StorageMode::Light, "Light");
+                                    ui.selectable_value(&mut *storage_mode, StorageMode::Medium, "Medium");
+                                    ui.selectable_value(&mut *storage_mode, StorageMode::Heavy, "Heavy");
+                                    ui.selectable_value(&mut *storage_mode, StorageMode::Heaviest, "Heaviest");
+                                });
+                        });
+
+                        // No verify checkbox
+                        ui.horizontal(|ui| {
+                            let mut no_verify = self.no_verify.write().unwrap();
+                            ui.checkbox(&mut *no_verify, "Skip Verification");
+                            ui.label("Skip verification of uploaded data (faster but less safe)");
+                        });
+                    });
+
+                    ui.add_space(15.0);
+
+                    // Upload button
+                    let can_upload = !self.key_name.read().unwrap().is_empty() && self.selected_file_path.read().unwrap().is_some();
+                    if ui.add_enabled(can_upload, primary_button("🚀 Start Upload")).clicked() {
+                        self.start_path_upload();
+                    }
+
+                    if !can_upload {
+                        ui.add_space(5.0);
+                        if self.selected_file_path.read().unwrap().is_none() {
+                            ui.label(RichText::new("⚠ No file selected").color(MutantColors::WARNING));
+                        } else {
+                            ui.label(RichText::new("⚠ Please enter a key name").color(MutantColors::WARNING));
+                        }
+                    }
+
+                    // Show error message if any
+                    if let Some(error) = &*self.error_message.read().unwrap() {
+                        ui.add_space(10.0);
+                        ui.group(|ui| {
+                            ui.label(RichText::new(format!("❌ Error: {}", error)).color(MutantColors::ERROR));
+                        });
+                    }
+                }
+            );
+        });
     }
 
     fn draw_upload_progress_step(&mut self, ui: &mut egui::Ui) {
@@ -689,7 +690,7 @@ impl PutWindow {
     }
 
     fn reset(&self) {
-        *self.current_step.write().unwrap() = PutStep::FilePicker;
+        *self.current_step.write().unwrap() = PutStep::Configuration;
         *self.file_picker.write().unwrap() = None;
         *self.selected_file_path.write().unwrap() = None;
         *self.selected_file.write().unwrap() = None;
