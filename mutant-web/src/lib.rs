@@ -1242,11 +1242,11 @@ impl MyApp {
                     }
 
                     if menu_button(ui, "📊", "Stats", "Stats", stats_open).clicked() {
-                        self.fs_window.write().unwrap().add_stats_tab();
+                        self.fs_window.write().unwrap().add_stats_tab_floating();
                     }
 
                     if menu_button(ui, "🌐", "Colony", "Colony", colony_open).clicked() {
-                        self.fs_window.write().unwrap().add_colony_tab();
+                        self.fs_window.write().unwrap().add_colony_tab_floating();
                     }
 
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {

@@ -600,6 +600,56 @@ impl FsWindow {
         }
     }
 
+    /// Add a new Stats window tab as a floating window (default behavior)
+    pub fn add_stats_tab_floating(&mut self) {
+        log::info!("FsWindow: Creating new floating Stats window tab");
+
+        // Debug: Check current dock state
+        let current_tab_count = self.internal_dock.iter_all_tabs().count();
+        log::debug!("Current dock state before adding Stats tab: {} tabs", current_tab_count);
+
+        // Check if a Stats tab already exists
+        let tab_exists = self.internal_dock.iter_all_tabs().any(|(_, existing_tab)| {
+            matches!(existing_tab, crate::app::fs::internal_tab::FsInternalTab::Stats(_))
+        });
+
+        log::debug!("Stats tab already exists: {}", tab_exists);
+
+        if !tab_exists {
+            // Create a new Stats window
+            let stats_window = StatsWindow::new();
+            let tab = crate::app::fs::internal_tab::FsInternalTab::Stats(stats_window);
+
+            // Add as a floating window using add_window instead of push_to_focused_leaf
+            let surface = self.internal_dock.add_window(vec![tab]);
+            log::debug!("Added floating window with surface ID: {:?}", surface);
+
+            // Set the window position and size for Stats windows
+            let size = [500.0, 600.0]; // Compact for stats
+
+            // Calculate position - center-right area but offset from Put windows
+            let position = [300.0, 100.0]; // Left of Put windows
+
+            // Set the window position and size
+            if let Some(window_state) = self.internal_dock.get_window_state_mut(surface) {
+                window_state
+                    .set_size(size.into())
+                    .set_position(position.into());
+                log::debug!("Set window size {:?} and position {:?} for Stats tab", size, position);
+            } else {
+                log::warn!("Failed to get window state for Stats tab surface");
+            }
+
+            // Debug: Check dock state after adding
+            let new_tab_count = self.internal_dock.iter_all_tabs().count();
+            log::debug!("Dock state after adding Stats tab: {} tabs", new_tab_count);
+
+            log::info!("FsWindow: Successfully added floating Stats tab to internal dock");
+        } else {
+            log::info!("FsWindow: Stats tab already exists in internal dock");
+        }
+    }
+
     /// Add a new Colony window tab to the internal dock system
     pub fn add_colony_tab(&mut self) {
         log::info!("FsWindow: Creating new Colony window tab");
@@ -624,6 +674,56 @@ impl FsWindow {
             }
 
             log::info!("FsWindow: Successfully added Colony tab to internal dock");
+        } else {
+            log::info!("FsWindow: Colony tab already exists in internal dock");
+        }
+    }
+
+    /// Add a new Colony window tab as a floating window (default behavior)
+    pub fn add_colony_tab_floating(&mut self) {
+        log::info!("FsWindow: Creating new floating Colony window tab");
+
+        // Debug: Check current dock state
+        let current_tab_count = self.internal_dock.iter_all_tabs().count();
+        log::debug!("Current dock state before adding Colony tab: {} tabs", current_tab_count);
+
+        // Check if a Colony tab already exists
+        let tab_exists = self.internal_dock.iter_all_tabs().any(|(_, existing_tab)| {
+            matches!(existing_tab, crate::app::fs::internal_tab::FsInternalTab::Colony(_))
+        });
+
+        log::debug!("Colony tab already exists: {}", tab_exists);
+
+        if !tab_exists {
+            // Create a new Colony window
+            let colony_window = ColonyWindow::default();
+            let tab = crate::app::fs::internal_tab::FsInternalTab::Colony(colony_window);
+
+            // Add as a floating window using add_window instead of push_to_focused_leaf
+            let surface = self.internal_dock.add_window(vec![tab]);
+            log::debug!("Added floating window with surface ID: {:?}", surface);
+
+            // Set the window position and size for Colony windows
+            let size = [800.0, 600.0]; // Wide for colony management
+
+            // Calculate position - center-right area but offset from Put and Stats windows
+            let position = [200.0, 120.0]; // Left of Stats windows
+
+            // Set the window position and size
+            if let Some(window_state) = self.internal_dock.get_window_state_mut(surface) {
+                window_state
+                    .set_size(size.into())
+                    .set_position(position.into());
+                log::debug!("Set window size {:?} and position {:?} for Colony tab", size, position);
+            } else {
+                log::warn!("Failed to get window state for Colony tab surface");
+            }
+
+            // Debug: Check dock state after adding
+            let new_tab_count = self.internal_dock.iter_all_tabs().count();
+            log::debug!("Dock state after adding Colony tab: {} tabs", new_tab_count);
+
+            log::info!("FsWindow: Successfully added floating Colony tab to internal dock");
         } else {
             log::info!("FsWindow: Colony tab already exists in internal dock");
         }
