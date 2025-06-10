@@ -519,8 +519,8 @@ impl FilePicker {
                     ("📁", MutantColors::ACCENT_BLUE)
                 };
 
-                // Expand/collapse arrow
-                let arrow_icon = if node.expanded { "▼" } else { "▶" };
+                // Expand/collapse arrow - using more reliable characters
+                let arrow_icon = if node.expanded { "v" } else { ">" };
 
                 // Use same button-like approach as files for consistent spacing
                 let button_response = ui.allocate_response(
@@ -541,24 +541,25 @@ impl FilePicker {
 
                 // Draw directory content with compact spacing
                 let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, (row_rect.height() - 12.0) / 2.0);
-                let font_id = egui::FontId::new(11.0, egui::FontFamily::Proportional);
+                let font_id = egui::FontId::new(10.0, egui::FontFamily::Monospace); // Use monospace for better arrow rendering
 
-                // Draw expand/collapse arrow
+                // Draw expand/collapse arrow with better styling
                 ui.painter().text(
                     text_pos,
                     egui::Align2::LEFT_CENTER,
                     arrow_icon,
                     font_id.clone(),
-                    MutantColors::TEXT_MUTED
+                    MutantColors::ACCENT_BLUE // More visible color
                 );
 
                 // Draw folder icon
                 let icon_pos = text_pos + egui::Vec2::new(12.0, 0.0);
+                let icon_font_id = egui::FontId::new(11.0, egui::FontFamily::Proportional); // Use proportional for icons
                 ui.painter().text(
                     icon_pos,
                     egui::Align2::LEFT_CENTER,
                     folder_icon,
-                    font_id.clone(),
+                    icon_font_id.clone(),
                     icon_color
                 );
 
@@ -568,7 +569,7 @@ impl FilePicker {
                     name_pos,
                     egui::Align2::LEFT_CENTER,
                     format!("{}/", node.name),
-                    font_id,
+                    icon_font_id,
                     icon_color
                 );
 
