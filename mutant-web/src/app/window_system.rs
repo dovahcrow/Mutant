@@ -294,7 +294,7 @@ impl WindowSystem {
             WindowType::Put(_) => [900.0, 650.0], // Wide for side-by-side file picker and configuration
             WindowType::Fs(_) => [300.0, 600.0],
             WindowType::Stats(_) => [500.0, 600.0],
-            WindowType::Colony(_) => [800.0, 600.0], // Wider for two-column layout
+            WindowType::Colony(_) => [1000.0, 700.0], // Larger size to match screenshot proportions
             // WindowType::Overview(_) => [300.0, 600.0],
             // WindowType::Ships(_) => [300.0, 600.0],
             // WindowType::Bases(_) => [600.0, 400.0],

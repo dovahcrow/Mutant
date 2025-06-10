@@ -127,7 +127,7 @@ impl Default for ColonyWindow {
             current_operation_status: None,
             current_progress: 0.0,
             operation_in_progress: false,
-            contacts_section_expanded: false,
+            contacts_section_expanded: true, // Show contacts by default
         }
     }
 }
