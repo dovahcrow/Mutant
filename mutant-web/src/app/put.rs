@@ -426,8 +426,17 @@ impl PutWindow {
                                     ui.label(RichText::new("Privacy Setting").size(13.0).color(MutantColors::TEXT_PRIMARY).strong());
                                 });
 
-                                // Center the buttons horizontally
-                                ui.horizontal_centered(|ui| {
+                                // Center the buttons manually by calculating position
+                                let available_width = ui.available_width();
+                                let button_width = 80.0; // Approximate button width
+                                let spacing = 6.0;
+                                let total_width = button_width * 2.0 + spacing;
+                                let start_x = (available_width - total_width) / 2.0;
+
+                                ui.horizontal(|ui| {
+                                    // Add space to center the buttons
+                                    ui.add_space(start_x);
+
                                     let mut public = self.public.write().unwrap();
 
                                     // Private button (default)
@@ -445,6 +454,7 @@ impl PutWindow {
                                         *public = false;
                                     }
 
+                                    ui.add_space(spacing);
 
                                     // Public button
                                     let public_button = if *public {
@@ -570,7 +580,6 @@ impl PutWindow {
                             );
                         });
 
-                        ui.add_space(margin);
                     }
                 );
         });
