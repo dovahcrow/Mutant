@@ -245,7 +245,7 @@ impl Window for ColonyWindow {
         // Reserve space for the footer (30px) and use the remaining space for content
         let footer_height = 30.0;
         let available_height = ui.available_height();
-        let content_height = available_height - footer_height - 10.0; // 10px for separator
+        let content_height = available_height - footer_height - 20.0; // 10px for separator
 
         // Use a vertical layout for the main content with reserved space
         ui.allocate_ui_with_layout(
