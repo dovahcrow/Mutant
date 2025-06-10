@@ -55,9 +55,23 @@ pub struct FsWindow {
 
 impl Default for FsWindow {
     fn default() -> Self {
-        // Create an empty dock state - this should show the empty state initially
-        let internal_dock = egui_dock::DockState::new(vec![]);
-        log::debug!("Created new FsWindow with empty dock state");
+        // DIRTY FIX: Create a placeholder tab and immediately remove it to initialize the dock system
+        // This ensures floating windows can dock even when no other tabs exist
+        use crate::app::fs::internal_tab::FsInternalTab;
+        use crate::app::stats::StatsWindow;
+
+        // Create a temporary placeholder tab
+        let placeholder_tab = FsInternalTab::Stats(StatsWindow::new());
+        let mut internal_dock = egui_dock::DockState::new(vec![placeholder_tab]);
+
+        // Immediately remove the placeholder tab, but keep the dock structure
+        let tab_to_remove = internal_dock.iter_all_tabs().next().map(|((s, n), _)| (s, n));
+        if let Some((surface_id, node_id)) = tab_to_remove {
+            // Remove the first (and only) tab - tab index is 0
+            internal_dock.remove_tab((surface_id, node_id, 0.into()));
+        }
+
+        log::debug!("Created new FsWindow with placeholder tab trick for proper dock initialization");
 
         Self {
             keys: crate::app::context::context().get_key_cache(),
@@ -240,7 +254,7 @@ impl FsWindow {
 
             // Add directly to the internal dock system
             if self.internal_dock.iter_all_tabs().next().is_none() {
-                // If the dock is empty, create a new surface
+                // If the dock is empty, create a new surface with the tab
                 self.internal_dock = egui_dock::DockState::new(vec![tab]);
             } else {
                 // Add to the existing surface
@@ -414,7 +428,7 @@ impl FsWindow {
 
             // Add to the internal dock system
             if self.internal_dock.iter_all_tabs().next().is_none() {
-                // If the dock is empty, create a new surface
+                // If the dock is empty, create a new surface with the tab
                 self.internal_dock = egui_dock::DockState::new(vec![tab]);
             } else {
                 // Add to the existing surface
@@ -491,7 +505,7 @@ impl FsWindow {
 
             // Add to the internal dock system
             if self.internal_dock.iter_all_tabs().next().is_none() {
-                // If the dock is empty, create a new surface
+                // If the dock is empty, create a new surface with the tab
                 self.internal_dock = egui_dock::DockState::new(vec![tab]);
             } else {
                 // Add to the existing surface
@@ -520,7 +534,7 @@ impl FsWindow {
 
             // Add to the internal dock system
             if self.internal_dock.iter_all_tabs().next().is_none() {
-                // If the dock is empty, create a new surface
+                // If the dock is empty, create a new surface with the tab
                 self.internal_dock = egui_dock::DockState::new(vec![tab]);
             } else {
                 // Add to the existing surface
