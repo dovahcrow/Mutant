@@ -970,7 +970,7 @@ impl Default for MyApp {
 
         Self {
             fs_window,
-            sidebar_expanded: false,
+            sidebar_expanded: true,
             balance_fetch_counter: 0,
         }
     }

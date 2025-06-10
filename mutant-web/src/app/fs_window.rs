@@ -51,6 +51,9 @@ pub struct FsWindow {
     /// Drag and drop state for the filesystem tree
     #[serde(skip)]
     drag_state: crate::app::fs::tree::DragDropState,
+    /// Last known docking area rect for centering floating windows
+    #[serde(skip)]
+    last_docking_area_rect: Option<egui::Rect>,
 }
 
 impl Default for FsWindow {
@@ -83,6 +86,7 @@ impl Default for FsWindow {
             pending_delete: None,
             dock_area_id: generate_unique_dock_area_id(),
             drag_state: crate::app::fs::tree::DragDropState::default(),
+            last_docking_area_rect: None,
         }
     }
 }
@@ -109,6 +113,9 @@ impl Window for FsWindow {
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
+            // Capture the docking area rect for centering floating windows
+            self.last_docking_area_rect = Some(ui.available_rect_before_wrap());
+
             // Debug: Log the dock state for troubleshooting
             let has_tabs = self.internal_dock.iter_all_tabs().next().is_some();
             let tab_count = self.internal_dock.iter_all_tabs().count();
@@ -506,14 +513,37 @@ impl FsWindow {
 
             // Set the window position and size for Put windows
             let size = [900.0, 650.0]; // Wide for side-by-side file picker and configuration
-            let position = [400.0, 80.0]; // Center-right area
+
+            // Calculate centered position based on available docking area
+            let position = if let Some(available_rect) = self.last_docking_area_rect {
+                // Calculate center position accounting for the file tree panel on the right
+                // The file tree takes up about 320px by default, so we center in the remaining space
+                let tree_panel_width = 320.0;
+                let effective_width = available_rect.width() - tree_panel_width;
+                let effective_height = available_rect.height();
+
+                // Center the window in the effective docking area
+                let x = available_rect.left() + (effective_width - size[0]) / 2.0;
+                let y = available_rect.top() + (effective_height - size[1]) / 2.0;
+
+                // Ensure the window doesn't go off-screen or too close to edges
+                let x = x.max(20.0).min(available_rect.right() - size[0] - 20.0);
+                let y = y.max(20.0).min(available_rect.bottom() - size[1] - 20.0);
+
+                log::debug!("Calculated centered position: [{}, {}] for docking area: {:?}", x, y, available_rect);
+                [x, y]
+            } else {
+                // Fallback to a reasonable default position if no docking area rect is available
+                log::debug!("No docking area rect available, using fallback position");
+                [400.0, 80.0]
+            };
 
             // Set the window position and size
             if let Some(window_state) = self.internal_dock.get_window_state_mut(surface) {
                 window_state
                     .set_size(size.into())
                     .set_position(position.into());
-                log::debug!("Set window size and position for Put tab");
+                log::debug!("Set window size {:?} and position {:?} for Put tab", size, position);
             } else {
                 log::warn!("Failed to get window state for Put tab surface");
             }
