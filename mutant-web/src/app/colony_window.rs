@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
-use eframe::egui;
 use crate::app::{Window, context::context};
-use std::sync::{Arc, Mutex};
+use eframe::egui;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 // Global state for storing user contact info responses
 lazy_static::lazy_static! {
@@ -211,15 +211,21 @@ impl Window for ColonyWindow {
         if self.is_loading_contacts {
             if let Ok(responses) = CONTACT_LIST_RESPONSES.lock() {
                 if let Some(contact_addresses) = responses.get("contact_list") {
-                    log::debug!("Processing contact list response with {} addresses", contact_addresses.len());
+                    log::debug!(
+                        "Processing contact list response with {} addresses",
+                        contact_addresses.len()
+                    );
                     log::debug!("Contact addresses from daemon: {:?}", contact_addresses);
 
                     // Convert contact addresses to Contact structs
-                    self.contacts = contact_addresses.iter().map(|address| Contact {
-                        pod_address: address.clone(),
-                        name: None, // We don't have names from the daemon yet
-                        last_synced: None, // No sync info from daemon yet
-                    }).collect();
+                    self.contacts = contact_addresses
+                        .iter()
+                        .map(|address| Contact {
+                            pod_address: address.clone(),
+                            name: None,        // We don't have names from the daemon yet
+                            last_synced: None, // No sync info from daemon yet
+                        })
+                        .collect();
                     self.is_loading_contacts = false;
                     log::info!("UI: Loaded {} contacts from daemon", self.contacts.len());
 
@@ -245,14 +251,18 @@ impl Window for ColonyWindow {
         // Reserve space for the footer (30px) and use the remaining space for content
         let footer_height = 30.0;
         let available_height = ui.available_height();
-        let content_height = available_height - footer_height - 20.0; // 10px for separator
+        let content_height = available_height - footer_height - 40.0; // 10px for separator
+
+        let available_width = ui.available_width();
+        let content_width = available_width - 80.0; // 10px for each side padding
 
         // Use a vertical layout for the main content with reserved space
         ui.allocate_ui_with_layout(
-            egui::Vec2::new(ui.available_width(), content_height),
+            egui::Vec2::new(content_width, content_height),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
             ui.set_max_height(content_height);
+            ui.set_max_width(content_width);
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -310,7 +320,7 @@ impl Window for ColonyWindow {
                     egui::Frame::new()
                         .fill(super::theme::MutantColors::SURFACE)
                         .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_MEDIUM))
-                        .inner_margin(egui::Margin::symmetric(12, 8))
+                        .inner_margin(egui::Margin::symmetric(4, 2))
                         .corner_radius(6.0)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -707,7 +717,7 @@ impl Window for ColonyWindow {
 
                                 // Search input with better styling
                                 let search_response = ui.add_sized(
-                                    [ui.available_width() - 120.0, 24.0],
+                                    [ui.available_width() - 180.0, 24.0],
                                     egui::TextEdit::singleline(&mut self.search_query)
                                         .hint_text("Search for content across all pods...")
                                 );
@@ -938,8 +948,11 @@ impl Window for ColonyWindow {
         // Progress section with frame
         egui::Frame::new()
             .fill(super::theme::MutantColors::SURFACE)
-            .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_MEDIUM))
-            .inner_margin(egui::Margin::symmetric(12, 8))
+            .stroke(egui::Stroke::new(
+                1.0,
+                super::theme::MutantColors::BORDER_MEDIUM,
+            ))
+            .inner_margin(egui::Margin::symmetric(4, 2))
             .corner_radius(6.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -955,7 +968,7 @@ impl Window for ColonyWindow {
                     ui.label(
                         egui::RichText::new(status_icon)
                             .size(14.0)
-                            .color(status_color)
+                            .color(status_color),
                     );
 
                     ui.add_space(8.0);
@@ -968,16 +981,19 @@ impl Window for ColonyWindow {
                                 let progress_bar = egui::ProgressBar::new(self.current_progress)
                                     .fill(super::theme::MutantColors::ACCENT_ORANGE)
                                     .animate(true)
-                                    .desired_width(250.0)
+                                    .desired_width(content_width)
                                     .desired_height(8.0);
                                 ui.add(progress_bar);
 
                                 // Progress percentage
                                 ui.label(
-                                    egui::RichText::new(format!("{:.0}%", self.current_progress * 100.0))
-                                        .strong()
-                                        .color(super::theme::MutantColors::ACCENT_ORANGE)
-                                        .size(12.0)
+                                    egui::RichText::new(format!(
+                                        "{:.0}%",
+                                        self.current_progress * 100.0
+                                    ))
+                                    .strong()
+                                    .color(super::theme::MutantColors::ACCENT_ORANGE)
+                                    .size(12.0),
                                 );
                             });
 
@@ -986,7 +1002,7 @@ impl Window for ColonyWindow {
                                 ui.label(
                                     egui::RichText::new(status)
                                         .color(super::theme::MutantColors::TEXT_PRIMARY)
-                                        .size(11.0)
+                                        .size(11.0),
                                 );
                             }
                         });
@@ -997,7 +1013,7 @@ impl Window for ColonyWindow {
                                 // Completed progress bar
                                 let progress_bar = egui::ProgressBar::new(1.0)
                                     .fill(super::theme::MutantColors::SUCCESS)
-                                    .desired_width(250.0)
+                                    .desired_width(content_width)
                                     .desired_height(8.0);
                                 ui.add(progress_bar);
 
@@ -1005,14 +1021,14 @@ impl Window for ColonyWindow {
                                     egui::RichText::new("Complete")
                                         .strong()
                                         .color(super::theme::MutantColors::SUCCESS)
-                                        .size(12.0)
+                                        .size(12.0),
                                 );
                             });
 
                             ui.label(
                                 egui::RichText::new(status)
                                     .color(super::theme::MutantColors::TEXT_PRIMARY)
-                                    .size(11.0)
+                                    .size(11.0),
                             );
                         });
                     } else {
@@ -1022,21 +1038,21 @@ impl Window for ColonyWindow {
                                 // Ready progress bar
                                 let progress_bar = egui::ProgressBar::new(0.0)
                                     .fill(super::theme::MutantColors::BORDER_MEDIUM)
-                                    .desired_width(250.0)
+                                    .desired_width(content_width)
                                     .desired_height(8.0);
                                 ui.add(progress_bar);
 
                                 ui.label(
                                     egui::RichText::new("Ready")
                                         .color(super::theme::MutantColors::TEXT_SECONDARY)
-                                        .size(12.0)
+                                        .size(12.0),
                                 );
                             });
 
                             ui.label(
                                 egui::RichText::new("Colony network ready for operations")
                                     .color(super::theme::MutantColors::TEXT_MUTED)
-                                    .size(11.0)
+                                    .size(11.0),
                             );
                         });
                     }
@@ -1059,34 +1075,46 @@ impl ColonyWindow {
                     // Update current operation status based on the event
                     match &event.event {
                         mutant_protocol::ColonyEvent::InitializationStarted => {
-                            self.current_operation_status = Some("Initializing colony manager...".to_string());
+                            self.current_operation_status =
+                                Some("Initializing colony manager...".to_string());
                             self.operation_in_progress = true;
                             self.current_progress = 0.0;
                         }
                         mutant_protocol::ColonyEvent::InitializationCompleted => {
-                            self.current_operation_status = Some("Colony manager initialized".to_string());
+                            self.current_operation_status =
+                                Some("Colony manager initialized".to_string());
                             self.operation_in_progress = false;
                             self.current_progress = 1.0;
                         }
                         mutant_protocol::ColonyEvent::AddContactStarted { pod_address } => {
-                            self.current_operation_status = Some(format!("Adding contact: {}", pod_address));
+                            self.current_operation_status =
+                                Some(format!("Adding contact: {}", pod_address));
                             self.operation_in_progress = true;
                             self.current_progress = 0.0;
                         }
-                        mutant_protocol::ColonyEvent::ContactVerificationStarted { pod_address } => {
-                            self.current_operation_status = Some(format!("Verifying contact: {}", pod_address));
+                        mutant_protocol::ColonyEvent::ContactVerificationStarted {
+                            pod_address,
+                        } => {
+                            self.current_operation_status =
+                                Some(format!("Verifying contact: {}", pod_address));
                             self.current_progress = 0.3;
                         }
-                        mutant_protocol::ColonyEvent::ContactVerificationCompleted { pod_address, exists } => {
+                        mutant_protocol::ColonyEvent::ContactVerificationCompleted {
+                            pod_address,
+                            exists,
+                        } => {
                             if *exists {
-                                self.current_operation_status = Some(format!("Contact verified: {}", pod_address));
+                                self.current_operation_status =
+                                    Some(format!("Contact verified: {}", pod_address));
                             } else {
-                                self.current_operation_status = Some(format!("Contact not found: {}", pod_address));
+                                self.current_operation_status =
+                                    Some(format!("Contact not found: {}", pod_address));
                             }
                             self.current_progress = 0.7;
                         }
                         mutant_protocol::ColonyEvent::AddContactCompleted { pod_address } => {
-                            self.current_operation_status = Some(format!("Contact added: {}", pod_address));
+                            self.current_operation_status =
+                                Some(format!("Contact added: {}", pod_address));
                             self.operation_in_progress = false;
                             self.current_progress = 1.0;
                             // Refresh contacts list after adding
@@ -1095,25 +1123,47 @@ impl ColonyWindow {
                             self.should_load_content = true;
                         }
                         mutant_protocol::ColonyEvent::SyncContactsStarted { total_contacts } => {
-                            self.current_operation_status = Some(format!("Syncing {} contacts...", total_contacts));
+                            self.current_operation_status =
+                                Some(format!("Syncing {} contacts...", total_contacts));
                             self.is_syncing = true;
                             self.operation_in_progress = true;
                             self.current_progress = 0.0;
                         }
-                        mutant_protocol::ColonyEvent::ContactSyncStarted { pod_address, contact_index, total_contacts } => {
-                            self.current_operation_status = Some(format!("Syncing contact {} of {}: {}", contact_index + 1, total_contacts, pod_address));
+                        mutant_protocol::ColonyEvent::ContactSyncStarted {
+                            pod_address,
+                            contact_index,
+                            total_contacts,
+                        } => {
+                            self.current_operation_status = Some(format!(
+                                "Syncing contact {} of {}: {}",
+                                contact_index + 1,
+                                total_contacts,
+                                pod_address
+                            ));
                             if *total_contacts > 0 {
-                                self.current_progress = (*contact_index as f32) / (*total_contacts as f32);
+                                self.current_progress =
+                                    (*contact_index as f32) / (*total_contacts as f32);
                             }
                         }
-                        mutant_protocol::ColonyEvent::ContactSyncCompleted { pod_address, contact_index, total_contacts } => {
-                            self.current_operation_status = Some(format!("Synced contact {} of {}: {}", contact_index + 1, total_contacts, pod_address));
+                        mutant_protocol::ColonyEvent::ContactSyncCompleted {
+                            pod_address,
+                            contact_index,
+                            total_contacts,
+                        } => {
+                            self.current_operation_status = Some(format!(
+                                "Synced contact {} of {}: {}",
+                                contact_index + 1,
+                                total_contacts,
+                                pod_address
+                            ));
                             if *total_contacts > 0 {
-                                self.current_progress = ((*contact_index + 1) as f32) / (*total_contacts as f32);
+                                self.current_progress =
+                                    ((*contact_index + 1) as f32) / (*total_contacts as f32);
                             }
                         }
                         mutant_protocol::ColonyEvent::SyncContactsCompleted { synced_count } => {
-                            self.current_operation_status = Some(format!("Sync completed: {} contacts synced", synced_count));
+                            self.current_operation_status =
+                                Some(format!("Sync completed: {} contacts synced", synced_count));
                             self.is_syncing = false;
                             self.operation_in_progress = false;
                             self.current_progress = 1.0;
@@ -1121,26 +1171,31 @@ impl ColonyWindow {
                             self.should_load_content = true;
                         }
                         mutant_protocol::ColonyEvent::IndexingStarted { user_key } => {
-                            self.current_operation_status = Some(format!("Indexing content: {}", user_key));
+                            self.current_operation_status =
+                                Some(format!("Indexing content: {}", user_key));
                             self.operation_in_progress = true;
                             self.current_progress = 0.0;
                         }
                         mutant_protocol::ColonyEvent::IndexingCompleted { user_key, success } => {
                             if *success {
-                                self.current_operation_status = Some(format!("Content indexed: {}", user_key));
+                                self.current_operation_status =
+                                    Some(format!("Content indexed: {}", user_key));
                             } else {
-                                self.current_operation_status = Some(format!("Failed to index: {}", user_key));
+                                self.current_operation_status =
+                                    Some(format!("Failed to index: {}", user_key));
                             }
                             self.operation_in_progress = false;
                             self.current_progress = 1.0;
                         }
                         mutant_protocol::ColonyEvent::SearchStarted { query_type } => {
-                            self.current_operation_status = Some(format!("Searching: {}", query_type));
+                            self.current_operation_status =
+                                Some(format!("Searching: {}", query_type));
                             self.operation_in_progress = true;
                             self.current_progress = 0.0;
                         }
                         mutant_protocol::ColonyEvent::SearchCompleted { results_count } => {
-                            self.current_operation_status = Some(format!("Search completed: {} results", results_count));
+                            self.current_operation_status =
+                                Some(format!("Search completed: {} results", results_count));
                             self.operation_in_progress = false;
                             self.current_progress = 1.0;
                         }
@@ -1154,12 +1209,18 @@ impl ColonyWindow {
                             self.operation_in_progress = false;
                             self.current_progress = 1.0;
                         }
-                        mutant_protocol::ColonyEvent::Progress { operation, message, current, total } => {
-                            let progress_text = if let (Some(current), Some(total)) = (current, total) {
-                                format!("{}: {} ({}/{})", operation, message, current, total)
-                            } else {
-                                format!("{}: {}", operation, message)
-                            };
+                        mutant_protocol::ColonyEvent::Progress {
+                            operation,
+                            message,
+                            current,
+                            total,
+                        } => {
+                            let progress_text =
+                                if let (Some(current), Some(total)) = (current, total) {
+                                    format!("{}: {} ({}/{})", operation, message, current, total)
+                                } else {
+                                    format!("{}: {}", operation, message)
+                                };
                             self.current_operation_status = Some(progress_text);
                             self.operation_in_progress = true;
 
@@ -1171,31 +1232,37 @@ impl ColonyWindow {
                             }
                         }
                         mutant_protocol::ColonyEvent::OperationCompleted { operation } => {
-                            self.current_operation_status = Some(format!("{} completed", operation));
+                            self.current_operation_status =
+                                Some(format!("{} completed", operation));
                             self.operation_in_progress = false;
                             self.current_progress = 1.0;
                         }
                         mutant_protocol::ColonyEvent::OperationFailed { operation, error } => {
-                            self.current_operation_status = Some(format!("{} failed: {}", operation, error));
+                            self.current_operation_status =
+                                Some(format!("{} failed: {}", operation, error));
                             self.operation_in_progress = false;
                             self.current_progress = 0.0;
                             self.is_syncing = false; // Reset syncing state on any failure
                         }
                         // Additional detailed progress events for init operations
                         mutant_protocol::ColonyEvent::DataStoreInitStarted => {
-                            self.current_operation_status = Some("Initializing data store...".to_string());
+                            self.current_operation_status =
+                                Some("Initializing data store...".to_string());
                             self.current_progress = 0.1;
                         }
                         mutant_protocol::ColonyEvent::DataStoreInitCompleted => {
-                            self.current_operation_status = Some("Data store initialized".to_string());
+                            self.current_operation_status =
+                                Some("Data store initialized".to_string());
                             self.current_progress = 0.2;
                         }
                         mutant_protocol::ColonyEvent::KeyStoreInitStarted => {
-                            self.current_operation_status = Some("Initializing key store...".to_string());
+                            self.current_operation_status =
+                                Some("Initializing key store...".to_string());
                             self.current_progress = 0.3;
                         }
                         mutant_protocol::ColonyEvent::KeyStoreInitCompleted => {
-                            self.current_operation_status = Some("Key store initialized".to_string());
+                            self.current_operation_status =
+                                Some("Key store initialized".to_string());
                             self.current_progress = 0.4;
                         }
                         mutant_protocol::ColonyEvent::KeyDerivationStarted => {
@@ -1203,41 +1270,55 @@ impl ColonyWindow {
                             self.current_progress = 0.5;
                         }
                         mutant_protocol::ColonyEvent::KeyDerivationCompleted { pod_address } => {
-                            self.current_operation_status = Some(format!("Keys derived: {}", pod_address));
+                            self.current_operation_status =
+                                Some(format!("Keys derived: {}", pod_address));
                             self.current_progress = 0.6;
                         }
                         mutant_protocol::ColonyEvent::GraphInitStarted => {
-                            self.current_operation_status = Some("Initializing graph database...".to_string());
+                            self.current_operation_status =
+                                Some("Initializing graph database...".to_string());
                             self.current_progress = 0.7;
                         }
                         mutant_protocol::ColonyEvent::GraphInitCompleted => {
-                            self.current_operation_status = Some("Graph database initialized".to_string());
+                            self.current_operation_status =
+                                Some("Graph database initialized".to_string());
                             self.current_progress = 0.8;
                         }
 
                         // Additional detailed progress events for user pod operations
                         mutant_protocol::ColonyEvent::UserPodCheckStarted => {
-                            self.current_operation_status = Some("Checking user pod...".to_string());
+                            self.current_operation_status =
+                                Some("Checking user pod...".to_string());
                             self.current_progress = 0.0;
                         }
-                        mutant_protocol::ColonyEvent::UserPodVerificationStarted { pod_address } => {
-                            self.current_operation_status = Some(format!("Verifying pod: {}", pod_address));
+                        mutant_protocol::ColonyEvent::UserPodVerificationStarted {
+                            pod_address,
+                        } => {
+                            self.current_operation_status =
+                                Some(format!("Verifying pod: {}", pod_address));
                             self.current_progress = 0.2;
                         }
-                        mutant_protocol::ColonyEvent::UserPodVerificationCompleted { pod_address, exists } => {
+                        mutant_protocol::ColonyEvent::UserPodVerificationCompleted {
+                            pod_address,
+                            exists,
+                        } => {
                             if *exists {
-                                self.current_operation_status = Some(format!("Pod verified: {}", pod_address));
+                                self.current_operation_status =
+                                    Some(format!("Pod verified: {}", pod_address));
                             } else {
-                                self.current_operation_status = Some(format!("Pod not found: {}", pod_address));
+                                self.current_operation_status =
+                                    Some(format!("Pod not found: {}", pod_address));
                             }
                             self.current_progress = 0.5;
                         }
                         mutant_protocol::ColonyEvent::UserPodCreationStarted => {
-                            self.current_operation_status = Some("Creating user pod...".to_string());
+                            self.current_operation_status =
+                                Some("Creating user pod...".to_string());
                             self.current_progress = 0.6;
                         }
                         mutant_protocol::ColonyEvent::UserPodCreationCompleted { pod_address } => {
-                            self.current_operation_status = Some(format!("Pod created: {}", pod_address));
+                            self.current_operation_status =
+                                Some(format!("Pod created: {}", pod_address));
                             self.current_progress = 0.9;
                         }
                         mutant_protocol::ColonyEvent::UserPodCheckCompleted => {
@@ -1247,23 +1328,32 @@ impl ColonyWindow {
 
                         // Additional detailed progress events for contact operations
                         mutant_protocol::ColonyEvent::ContactRefAdditionStarted { pod_address } => {
-                            self.current_operation_status = Some(format!("Adding reference: {}", pod_address));
+                            self.current_operation_status =
+                                Some(format!("Adding reference: {}", pod_address));
                             self.current_progress = 0.3;
                         }
-                        mutant_protocol::ColonyEvent::ContactRefAdditionCompleted { pod_address } => {
-                            self.current_operation_status = Some(format!("Reference added: {}", pod_address));
+                        mutant_protocol::ColonyEvent::ContactRefAdditionCompleted {
+                            pod_address,
+                        } => {
+                            self.current_operation_status =
+                                Some(format!("Reference added: {}", pod_address));
                             self.current_progress = 0.4;
                         }
                         mutant_protocol::ColonyEvent::ContactPodDownloadStarted { pod_address } => {
-                            self.current_operation_status = Some(format!("Downloading pod: {}", pod_address));
+                            self.current_operation_status =
+                                Some(format!("Downloading pod: {}", pod_address));
                             self.current_progress = 0.5;
                         }
-                        mutant_protocol::ColonyEvent::ContactPodDownloadCompleted { pod_address } => {
-                            self.current_operation_status = Some(format!("Pod downloaded: {}", pod_address));
+                        mutant_protocol::ColonyEvent::ContactPodDownloadCompleted {
+                            pod_address,
+                        } => {
+                            self.current_operation_status =
+                                Some(format!("Pod downloaded: {}", pod_address));
                             self.current_progress = 0.7;
                         }
                         mutant_protocol::ColonyEvent::ContactPodUploadStarted => {
-                            self.current_operation_status = Some("Uploading updated pod...".to_string());
+                            self.current_operation_status =
+                                Some("Uploading updated pod...".to_string());
                             self.current_progress = 0.8;
                         }
                         mutant_protocol::ColonyEvent::ContactPodUploadCompleted => {
@@ -1273,11 +1363,13 @@ impl ColonyWindow {
 
                         // Pod refresh events
                         mutant_protocol::ColonyEvent::PodRefreshStarted { total_pods } => {
-                            self.current_operation_status = Some(format!("Refreshing {} pods...", total_pods));
+                            self.current_operation_status =
+                                Some(format!("Refreshing {} pods...", total_pods));
                             self.current_progress = 0.0;
                         }
                         mutant_protocol::ColonyEvent::PodRefreshCompleted { refreshed_pods } => {
-                            self.current_operation_status = Some(format!("Refreshed {} pods", refreshed_pods));
+                            self.current_operation_status =
+                                Some(format!("Refreshed {} pods", refreshed_pods));
                             self.current_progress = 1.0;
                         }
 
@@ -1290,7 +1382,8 @@ impl ColonyWindow {
 
                 // Keep only the last 50 events to prevent memory growth
                 if self.progress_events.len() > 50 {
-                    self.progress_events.drain(0..self.progress_events.len() - 50);
+                    self.progress_events
+                        .drain(0..self.progress_events.len() - 50);
                 }
             }
         }
@@ -1465,11 +1558,21 @@ impl ColonyWindow {
 
         for binding in bindings_array {
             if let (Some(subject), Some(predicate), Some(object)) = (
-                binding.get("subject").and_then(|s| s.get("value")).and_then(|v| v.as_str()),
-                binding.get("predicate").and_then(|p| p.get("value")).and_then(|v| v.as_str()),
-                binding.get("object").and_then(|o| o.get("value")).and_then(|v| v.as_str()),
+                binding
+                    .get("subject")
+                    .and_then(|s| s.get("value"))
+                    .and_then(|v| v.as_str()),
+                binding
+                    .get("predicate")
+                    .and_then(|p| p.get("value"))
+                    .and_then(|v| v.as_str()),
+                binding
+                    .get("object")
+                    .and_then(|o| o.get("value"))
+                    .and_then(|v| v.as_str()),
             ) {
-                subjects.entry(subject.to_string())
+                subjects
+                    .entry(subject.to_string())
                     .or_insert_with(HashMap::new)
                     .insert(predicate.to_string(), object.to_string());
             }
@@ -1479,13 +1582,17 @@ impl ColonyWindow {
 
         for (subject_uri, properties) in subjects {
             // Debug: log all properties for this subject to understand what's available
-            log::debug!("Subject: {} has properties: {:?}", subject_uri, properties.keys().collect::<Vec<_>>());
+            log::debug!(
+                "Subject: {} has properties: {:?}",
+                subject_uri,
+                properties.keys().collect::<Vec<_>>()
+            );
 
             // Filter out colony-specific metadata predicates first
             let has_colony_metadata = properties.keys().any(|key| {
-                key.contains("colonylib/vocabulary") ||
-                key.contains("pod_index") ||
-                key == "ant://colonylib/vocabulary/0.1/predicate#date"
+                key.contains("colonylib/vocabulary")
+                    || key.contains("pod_index")
+                    || key == "ant://colonylib/vocabulary/0.1/predicate#date"
             });
 
             if has_colony_metadata {
@@ -1494,19 +1601,24 @@ impl ColonyWindow {
             }
 
             // Check if this looks like file content (has description mentioning "File uploaded by")
-            let has_file_description = properties.get("http://schema.org/description")
+            let has_file_description = properties
+                .get("http://schema.org/description")
                 .or_else(|| properties.get("schema:description"))
                 .map(|desc| desc.contains("File uploaded by"))
                 .unwrap_or(false);
 
             // For now, be more lenient - include anything that looks like file content
             if !has_file_description {
-                log::debug!("Skipping non-file subject: {} (no file description)", subject_uri);
+                log::debug!(
+                    "Skipping non-file subject: {} (no file description)",
+                    subject_uri
+                );
                 continue;
             }
 
             // Extract the address from the subject URI or url property
-            let address = properties.get("http://schema.org/url")
+            let address = properties
+                .get("http://schema.org/url")
                 .or_else(|| properties.get("schema:url"))
                 .cloned()
                 .unwrap_or_else(|| {
@@ -1518,37 +1630,47 @@ impl ColonyWindow {
                 });
 
             // Extract Schema.org properties (try both formats: with and without schema: prefix)
-            let title = properties.get("http://schema.org/name")
+            let title = properties
+                .get("http://schema.org/name")
                 .or_else(|| properties.get("schema:name"))
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| {
                     // If no name, create a title from the address
                     if address.len() > 16 {
-                        format!("Content {}...{}", &address[0..8], &address[address.len()-8..])
+                        format!(
+                            "Content {}...{}",
+                            &address[0..8],
+                            &address[address.len() - 8..]
+                        )
                     } else {
                         format!("Content {}", address)
                     }
                 });
 
-            let description = properties.get("http://schema.org/description")
+            let description = properties
+                .get("http://schema.org/description")
                 .or_else(|| properties.get("schema:description"))
                 .map(|s| s.to_string());
 
-            let content_type = properties.get("http://schema.org/type")
+            let content_type = properties
+                .get("http://schema.org/type")
                 .or_else(|| properties.get("@type"))
                 .map(|s| Self::format_content_type(s))
                 .unwrap_or_else(|| "Content".to_string());
 
-            let source_contact = properties.get("http://schema.org/author")
+            let source_contact = properties
+                .get("http://schema.org/author")
                 .or_else(|| properties.get("schema:author"))
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
 
-            let size = properties.get("http://schema.org/contentSize")
+            let size = properties
+                .get("http://schema.org/contentSize")
                 .or_else(|| properties.get("schema:contentSize"))
                 .and_then(|s| s.parse::<u64>().ok());
 
-            let date_created = properties.get("http://schema.org/dateCreated")
+            let date_created = properties
+                .get("http://schema.org/dateCreated")
                 .or_else(|| properties.get("schema:dateCreated"))
                 .map(|s| s.to_string());
 
@@ -1563,11 +1685,12 @@ impl ColonyWindow {
             });
         }
 
-        log::info!("Converted {} subjects into content items", content_items.len());
+        log::info!(
+            "Converted {} subjects into content items",
+            content_items.len()
+        );
         content_items
     }
-
-
 
     /// Format content type for display
     fn format_content_type(content_type: &str) -> String {
@@ -1588,8 +1711,8 @@ impl ColonyWindow {
         // Create a KeyDetails for the public address
         let key_details = mutant_protocol::KeyDetails {
             key: address.to_string(),
-            total_size: 0, // Unknown size for public content
-            pad_count: 0,  // Unknown pad count
+            total_size: 0,     // Unknown size for public content
+            pad_count: 0,      // Unknown pad count
             confirmed_pads: 0, // Unknown confirmed pads
             is_public: true,
             public_address: Some(address.to_string()),
@@ -1604,12 +1727,17 @@ impl ColonyWindow {
                     // Use the fs window's existing add_file_tab method which handles everything
                     fs_window.add_file_tab(key_details);
 
-                    log::info!("Colony: Successfully requested file viewer tab addition to fs window for: {}", address_clone);
+                    log::info!(
+                        "Colony: Successfully requested file viewer tab addition to fs window for: {}",
+                        address_clone
+                    );
                 } else {
                     log::warn!("Colony: Could not acquire write lock on fs window (may be busy)");
                 }
             } else {
-                log::warn!("Colony: Main FsWindow reference not available for adding file viewer tab");
+                log::warn!(
+                    "Colony: Main FsWindow reference not available for adding file viewer tab"
+                );
             }
         });
     }
@@ -1639,7 +1767,7 @@ impl ColonyWindow {
         if let Some(t_pos) = date_str.find('T') {
             let date_part = &date_str[..t_pos];
             if let Some(colon_pos) = date_str[t_pos..].find(':') {
-                let time_part = &date_str[t_pos+1..t_pos+colon_pos+3]; // Get HH:MM
+                let time_part = &date_str[t_pos + 1..t_pos + colon_pos + 3]; // Get HH:MM
                 format!("{} {}", date_part, time_part)
             } else {
                 date_part.to_string()
@@ -1665,7 +1793,10 @@ impl ColonyWindow {
             log::debug!("Sending list_contacts request to daemon");
             match ctx.list_contacts().await {
                 Ok(response) => {
-                    log::info!("Contacts loaded successfully: {} contacts", response.contacts.len());
+                    log::info!(
+                        "Contacts loaded successfully: {} contacts",
+                        response.contacts.len()
+                    );
                     log::debug!("Contact addresses: {:?}", response.contacts);
 
                     // Store the contacts in global state for the UI to pick up
@@ -1700,8 +1831,12 @@ impl ColonyWindow {
         wasm_bindgen_futures::spawn_local(async move {
             match ctx.get_user_contact().await {
                 Ok(response) => {
-                    log::info!("Got user contact info: address={}, type={}, display_name={:?}",
-                              response.contact_address, response.contact_type, response.display_name);
+                    log::info!(
+                        "Got user contact info: address={}, type={}, display_name={:?}",
+                        response.contact_address,
+                        response.contact_type,
+                        response.display_name
+                    );
 
                     // Store the response in global state for the UI to pick up
                     let user_info = UserContactInfo {
@@ -1718,11 +1853,14 @@ impl ColonyWindow {
                     log::error!("Failed to get user contact info: {:?}", e);
                     // Clear loading state on error by storing an empty response
                     if let Ok(mut responses) = USER_CONTACT_RESPONSES.lock() {
-                        responses.insert("user_contact_error".to_string(), UserContactInfo {
-                            contact_address: "Error loading contact info".to_string(),
-                            contact_type: "error".to_string(),
-                            display_name: None,
-                        });
+                        responses.insert(
+                            "user_contact_error".to_string(),
+                            UserContactInfo {
+                                contact_address: "Error loading contact info".to_string(),
+                                contact_type: "error".to_string(),
+                                display_name: None,
+                            },
+                        );
                     }
                 }
             }
@@ -1734,7 +1872,9 @@ impl ColonyWindow {
         use std::collections::HashMap;
 
         // Get the user's own pod address to filter it out
-        let user_pod_address = self.user_contact_info.as_ref()
+        let user_pod_address = self
+            .user_contact_info
+            .as_ref()
             .map(|info| &info.contact_address);
 
         // Group content by source_contact (pod address), filtering out user's own content
@@ -1749,25 +1889,31 @@ impl ColonyWindow {
                 }
             }
 
-            pod_groups.entry(content_item.source_contact.clone())
+            pod_groups
+                .entry(content_item.source_contact.clone())
                 .or_insert_with(Vec::new)
                 .push(content_item.clone());
         }
 
         // Convert to PodContent structures
-        self.pod_content = pod_groups.into_iter().map(|(pod_address, content_items)| {
-            // Try to find a friendly name for this pod from our contacts
-            let pod_name = self.contacts.iter()
-                .find(|contact| contact.pod_address == pod_address)
-                .and_then(|contact| contact.name.clone());
+        self.pod_content = pod_groups
+            .into_iter()
+            .map(|(pod_address, content_items)| {
+                // Try to find a friendly name for this pod from our contacts
+                let pod_name = self
+                    .contacts
+                    .iter()
+                    .find(|contact| contact.pod_address == pod_address)
+                    .and_then(|contact| contact.name.clone());
 
-            PodContent {
-                pod_address,
-                pod_name,
-                content_items,
-                is_expanded: true, // Start with all pods expanded
-            }
-        }).collect();
+                PodContent {
+                    pod_address,
+                    pod_name,
+                    content_items,
+                    is_expanded: true, // Start with all pods expanded
+                }
+            })
+            .collect();
 
         // Sort pods by name/address for consistent display
         self.pod_content.sort_by(|a, b| {
@@ -1776,14 +1922,26 @@ impl ColonyWindow {
             a_display.cmp(b_display)
         });
 
-        let filtered_count = self.content_list.len() - self.pod_content.iter().map(|p| p.content_items.len()).sum::<usize>();
-        log::info!("Organized {} content items into {} pods (filtered out {} user's own items)",
-                  self.content_list.len(), self.pod_content.len(), filtered_count);
+        let filtered_count = self.content_list.len()
+            - self
+                .pod_content
+                .iter()
+                .map(|p| p.content_items.len())
+                .sum::<usize>();
+        log::info!(
+            "Organized {} content items into {} pods (filtered out {} user's own items)",
+            self.content_list.len(),
+            self.pod_content.len(),
+            filtered_count
+        );
     }
 }
 
 /// Add a colony progress event to the global state for UI updates
-pub fn add_colony_progress_event(event: mutant_protocol::ColonyEvent, operation_id: Option<String>) {
+pub fn add_colony_progress_event(
+    event: mutant_protocol::ColonyEvent,
+    operation_id: Option<String>,
+) {
     log::debug!("Adding colony progress event: {:?}", event);
 
     let progress_event = ColonyProgressEvent {
@@ -1793,7 +1951,10 @@ pub fn add_colony_progress_event(event: mutant_protocol::ColonyEvent, operation_
 
     if let Ok(mut events) = COLONY_PROGRESS_EVENTS.lock() {
         events.push(progress_event);
-        log::debug!("Colony progress events queue now has {} events", events.len());
+        log::debug!(
+            "Colony progress events queue now has {} events",
+            events.len()
+        );
 
         // Keep only the last 100 events to prevent memory growth
         let len = events.len();
