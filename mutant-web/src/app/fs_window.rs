@@ -186,6 +186,9 @@ impl Window for FsWindow {
                 .id(egui::Id::new(format!("fs_internal_dock_{}", self.dock_area_id)))
                 .show_inside(ui, &mut tab_viewer);
 
+            // Apply default sizes to any newly undocked windows
+            self.apply_default_sizes_to_floating_windows();
+
             log::debug!("Dock area rendered with {} tabs", tab_count);
         });
 
@@ -229,6 +232,42 @@ impl FsWindow {
     pub fn new() -> Self {
         // Use default implementation which already includes unique window_id
         Self::default()
+    }
+
+    /// Get default window size for different internal tab types
+    fn default_window_size_for_tab(tab: &crate::app::fs::internal_tab::FsInternalTab) -> [f32; 2] {
+        match tab {
+            crate::app::fs::internal_tab::FsInternalTab::FileViewer(_) => [800.0, 600.0], // Good size for viewing files
+            crate::app::fs::internal_tab::FsInternalTab::Put(_) => [900.0, 650.0], // Wide for side-by-side file picker and configuration
+            crate::app::fs::internal_tab::FsInternalTab::Stats(_) => [500.0, 600.0], // Compact for stats
+            crate::app::fs::internal_tab::FsInternalTab::Colony(_) => [800.0, 600.0], // Wide for colony management
+        }
+    }
+
+    /// Apply default sizes to floating windows that don't have appropriate sizes
+    fn apply_default_sizes_to_floating_windows(&mut self) {
+        // First, collect surface IDs and tab types for floating windows
+        let floating_window_info: Vec<_> = self.internal_dock.iter_all_tabs()
+            .filter_map(|((surface_id, _), tab)| {
+                // Check if this is a floating window (not the main surface)
+                if surface_id != egui_dock::SurfaceIndex::main() {
+                    let default_size = Self::default_window_size_for_tab(tab);
+                    Some((surface_id, default_size))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Now apply the sizes to each floating window
+        for (surface_id, default_size) in floating_window_info {
+            if let Some(window_state) = self.internal_dock.get_window_state_mut(surface_id) {
+                // Apply default size to all floating windows to ensure they have reasonable sizes
+                // This will override any overly large sizes that result from undocking
+                log::debug!("Applying default size {:?} to floating window", default_size);
+                window_state.set_size(default_size.into());
+            }
+        }
     }
 
     // Download related methods moved to mutant-web/src/app/fs/download.rs
