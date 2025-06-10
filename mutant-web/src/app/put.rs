@@ -676,6 +676,8 @@ impl PutWindow {
                         }
 
                         log::info!("Progress monitoring task completed");
+
+                        ctx.list_keys().await;
                     });
                 }
                 Err(e) => {
