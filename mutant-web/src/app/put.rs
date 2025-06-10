@@ -301,11 +301,11 @@ impl PutWindow {
         let content_height = available_rect.height();
         let content_width = available_rect.width();
 
-        // Horizontal layout: File picker on left, configuration on right
-        ui.allocate_ui_with_layout(
-            egui::Vec2::new(content_width, content_height),
-            egui::Layout::left_to_right(egui::Align::TOP),
-            |ui| {
+        // Force the UI to expand to the full available rectangle
+        ui.expand_to_include_rect(available_rect);
+
+        // Use horizontal layout that fills the entire space
+        ui.horizontal(|ui| {
                 // Left side: File picker (50% width, full height)
                 let left_width = content_width * 0.5;
 
@@ -339,10 +339,8 @@ impl PutWindow {
                     }
                 );
 
-                ui.add_space(10.0);
-
-                // Right side: Configuration (50% width, full height)
-                let right_width = content_width * 0.5 - 10.0; // Account for spacing
+                // Right side: Configuration (50% width, full height) - NO spacing between panels
+                let right_width = content_width * 0.5;
 
                 ui.allocate_ui_with_layout(
                     egui::Vec2::new(right_width, content_height),
@@ -437,8 +435,7 @@ impl PutWindow {
                         }
                     }
                 );
-            }
-        );
+        });
     }
 
     fn draw_upload_progress_step(&mut self, ui: &mut egui::Ui) {
