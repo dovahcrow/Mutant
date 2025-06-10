@@ -767,19 +767,10 @@ impl PutWindow {
                         ui.add_space(10.0);
                     }
 
-                    ui.vertical_centered(|ui| {
-                        if ui.add(success_button("🔄 Upload Another")).clicked() {
-                            self.reset();
-                        }
-
-                        ui.add_space(10.0);
-
-                        if ui.button("Close").clicked() {
-                            // This would need to be handled by the window system
-                            // For now, just reset
-                            self.reset();
-                        }
-                    });
+                    // Action button
+                    if ui.add(success_button("🔄 Upload Another")).clicked() {
+                        self.reset();
+                    }
                 });
             },
         );
