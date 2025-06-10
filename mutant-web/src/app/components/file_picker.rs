@@ -582,8 +582,7 @@ impl FilePicker {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
             } else {
-                // Compact file node styling
-                ui.add_space(28.0); // Align with directory names (arrow + icon spacing)
+                // Compact file node styling - no extra spacing, files should align with folder content
 
                 let is_selected = selected_file
                     .as_ref()
@@ -627,8 +626,8 @@ impl FilePicker {
                     );
                 }
 
-                // Draw file icon and name with compact spacing
-                let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, (row_rect.height() - 12.0) / 2.0);
+                // Draw file icon and name with compact spacing - align with folder base position
+                let text_pos = row_rect.left_top() + egui::Vec2::new(4.0, (row_rect.height() - 12.0) / 2.0); // Same base position as folders
                 let font_id = egui::FontId::new(11.0, egui::FontFamily::Proportional); // Reduced font size
 
                 // Draw icon with specific color
