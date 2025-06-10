@@ -413,6 +413,40 @@ impl FsWindow {
         }
     }
 
+    /// Add a new Put window tab as a floating window (default behavior)
+    pub fn add_put_tab_floating(&mut self) {
+        log::info!("FsWindow: Creating new floating Put window tab");
+
+        // Check if a Put tab already exists
+        let tab_exists = self.internal_dock.iter_all_tabs().any(|(_, existing_tab)| {
+            matches!(existing_tab, crate::app::fs::internal_tab::FsInternalTab::Put(_))
+        });
+
+        if !tab_exists {
+            // Create a new Put window
+            let put_window = PutWindow::new();
+            let tab = crate::app::fs::internal_tab::FsInternalTab::Put(put_window);
+
+            // Add as a floating window using add_window instead of push_to_focused_leaf
+            let surface = self.internal_dock.add_window(vec![tab]);
+
+            // Set the window position and size for Put windows
+            let size = [900.0, 650.0]; // Wide for side-by-side file picker and configuration
+            let position = [400.0, 80.0]; // Center-right area
+
+            // Set the window position and size
+            if let Some(window_state) = self.internal_dock.get_window_state_mut(surface) {
+                window_state
+                    .set_size(size.into())
+                    .set_position(position.into());
+            }
+
+            log::info!("FsWindow: Successfully added floating Put tab to internal dock");
+        } else {
+            log::info!("FsWindow: Put tab already exists in internal dock");
+        }
+    }
+
     /// Add a new Stats window tab to the internal dock system
     pub fn add_stats_tab(&mut self) {
         log::info!("FsWindow: Creating new Stats window tab");

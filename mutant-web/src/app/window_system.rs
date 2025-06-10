@@ -261,8 +261,17 @@ impl WindowSystem {
         *counter = (*counter + 1) % 10; // Cycle through 10 positions to avoid going off-screen
 
         // Calculate position with an offset based on the counter
-        // Start at [60.0, 20.0] and cascade each window by [20.0, 20.0]
-        let position = [60.0 + (*counter as f32 * 20.0), 20.0 + (*counter as f32 * 20.0)];
+        // Different positioning based on window type for better placement
+        let position = match &window {
+            WindowType::Put(_) => {
+                // Put windows spawn in center-right area, similar to the screenshot
+                [400.0 + (*counter as f32 * 30.0), 80.0 + (*counter as f32 * 30.0)]
+            },
+            _ => {
+                // Other windows use the original positioning (left side)
+                [60.0 + (*counter as f32 * 20.0), 20.0 + (*counter as f32 * 20.0)]
+            }
+        };
 
         // Create a new window
         let surface = self.tree.add_window(vec![window.into()]);
