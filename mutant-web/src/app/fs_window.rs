@@ -737,7 +737,7 @@ impl FsWindow {
                 // Draw the root folder '/' as an uncollapsible folder (always expanded)
                 // Draw the root folder with buttons positioned like a file's download button
                 let row_response = ui.allocate_response(
-                    egui::Vec2::new(ui.available_width(), 20.0),
+                    egui::Vec2::new(ui.available_width(), 16.0),
                     egui::Sense::click()
                 );
 
@@ -748,7 +748,7 @@ impl FsWindow {
                     let line_color = super::theme::MutantColors::BORDER_LIGHT;
                     let line_x = 6.0; // Position line at the left edge
                     let line_start = ui.cursor().top();
-                    let line_end = line_start + 20.0; // Height of one row
+                    let line_end = line_start + 16.0; // Height of one row (reduced for compact display)
 
                     ui.painter().line_segment(
                         [egui::Pos2::new(line_x, line_start), egui::Pos2::new(line_x, line_end)],

@@ -128,9 +128,9 @@ impl TreeNode {
         let mut delete_clicked_details = None;
         let mut drag_drop_result = DragDropResult::None;
 
-        // Add subtle vertical spacing between items
+        // Minimal vertical spacing between items for compact display
         if indent_level > 0 {
-            ui.add_space(2.0);
+            ui.add_space(0.5);
         }
 
         ui.horizontal(|ui| {
@@ -139,7 +139,7 @@ impl TreeNode {
                 let line_color = theme::MutantColors::BORDER_LIGHT;
                 let line_x = total_indent - 6.0; // Position line slightly left of content
                 let line_start = ui.cursor().top();
-                let line_end = line_start + 20.0; // Height of one row
+                let line_end = line_start + 16.0; // Height of one row (reduced for compact display)
 
                 ui.painter().line_segment(
                     [egui::Pos2::new(line_x, line_start), egui::Pos2::new(line_x, line_end)],
@@ -364,9 +364,9 @@ impl TreeNode {
                 // Create file display text with icon
                 // We'll draw the text manually for better control over fade effects
 
-                // Make the file node clickable for viewing
+                // Make the file node clickable for viewing - reduced height for compact display
                 let row_response = ui.allocate_response(
-                    egui::Vec2::new(ui.available_width(), 20.0),
+                    egui::Vec2::new(ui.available_width(), 16.0),
                     egui::Sense::click()
                 );
 
