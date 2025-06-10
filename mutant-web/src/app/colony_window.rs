@@ -814,8 +814,8 @@ impl Window for ColonyWindow {
                                         egui::Frame::new()
                                             .fill(super::theme::MutantColors::SURFACE)
                                             .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_MEDIUM))
-                                            .inner_margin(egui::Margin::symmetric(12, 10))
-                                            .corner_radius(6.0)
+                                            .inner_margin(egui::Margin::symmetric(8, 6))
+                                            .corner_radius(12.0)
                                             .show(ui, |ui| {
                                                 // Enhanced pod header
                                                 ui.horizontal(|ui| {
@@ -823,17 +823,18 @@ impl Window for ColonyWindow {
                                                     if ui.add(
                                                         egui::Button::new(expand_icon)
                                                             .fill(super::theme::MutantColors::BACKGROUND_LIGHT)
+                                                            .small()
                                                             .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_LIGHT))
                                                     ).clicked() {
                                                         pod_content.is_expanded = !pod_content.is_expanded;
                                                     }
 
-                                                    ui.add_space(8.0);
+                                                    ui.add_space(1.0);
 
                                                     // Pod icon and name
                                                     ui.label(
                                                         egui::RichText::new("🌐")
-                                                            .size(14.0)
+                                                            .size(11.0)
                                                             .color(super::theme::MutantColors::ACCENT_BLUE)
                                                     );
 
@@ -842,7 +843,7 @@ impl Window for ColonyWindow {
                                                     ui.label(
                                                         egui::RichText::new(pod_display_name)
                                                             .strong()
-                                                            .size(13.0)
+                                                            .size(11.0)
                                                             .color(super::theme::MutantColors::TEXT_PRIMARY)
                                                     );
 
@@ -851,11 +852,11 @@ impl Window for ColonyWindow {
                                                         egui::Frame::new()
                                                             .fill(super::theme::MutantColors::ACCENT_ORANGE)
                                                             .inner_margin(egui::Margin::symmetric(8, 4))
-                                                            .corner_radius(12.0)
+                                                            .corner_radius(6.0)
                                                             .show(ui, |ui| {
                                                                 ui.label(
                                                                     egui::RichText::new(format!("{}", pod_content.content_items.len()))
-                                                                        .size(11.0)
+                                                                        .size(8.0)
                                                                         .strong()
                                                                         .color(super::theme::MutantColors::BACKGROUND_DARK)
                                                                 );
@@ -865,76 +866,77 @@ impl Window for ColonyWindow {
 
                                                 // Show content items if expanded
                                                 if pod_content.is_expanded {
-                                                    ui.add_space(8.0);
                                                     ui.separator();
-                                                    ui.add_space(6.0);
-
+                                                    // Compact content items display
                                                     for content in &pod_content.content_items {
-                                                        // Enhanced content item display
-                                                        egui::Frame::new()
-                                                            .fill(super::theme::MutantColors::BACKGROUND_LIGHT)
-                                                            .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_DARK))
-                                                            .inner_margin(egui::Margin::symmetric(10, 6))
-                                                            .corner_radius(4.0)
-                                                            .show(ui, |ui| {
-                                                                ui.horizontal(|ui| {
-                                                                    // Content type icon
-                                                                    let type_icon = match content.content_type.as_str() {
-                                                                        "video" => "🎥",
-                                                                        "audio" => "🎵",
-                                                                        "image" => "🖼️",
-                                                                        "document" => "📄",
-                                                                        _ => "📁"
-                                                                    };
+                                                        ui.horizontal(|ui| {
+                                                            // Content type icon (compact)
+                                                            let type_icon = match content.content_type.as_str() {
+                                                                "video" => "🎥",
+                                                                "audio" => "🎵",
+                                                                "image" => "🖼️",
+                                                                "document" => "📄",
+                                                                _ => "📁"
+                                                            };
+                                                            ui.label(
+                                                                egui::RichText::new(type_icon)
+                                                                    .size(10.0)
+                                                            );
+
+                                                            ui.add_space(1.0);
+
+                                                            // Title (truncated for compactness)
+                                                            let truncated_title = if content.title.len() > 50 {
+                                                                format!("{}...", &content.title[..47])
+                                                            } else {
+                                                                content.title.clone()
+                                                            };
+                                                            ui.label(
+                                                                egui::RichText::new(&truncated_title)
+                                                                    .size(10.0)
+                                                                    .color(super::theme::MutantColors::TEXT_PRIMARY)
+                                                            );
+
+                                                            // Right-aligned metadata (compact)
+                                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                                // Compact download button
+                                                                if ui.add(
+                                                                    egui::Button::new("⬇")
+                                                                        .fill(super::theme::MutantColors::ACCENT_BLUE)
+                                                                        .stroke(egui::Stroke::NONE)
+                                                                        .small()
+                                                                ).clicked() {
+                                                                    download_address = Some(content.address.clone());
+                                                                }
+
+                                                                ui.add_space(1.0);
+
+                                                                // Size (compact)
+                                                                if let Some(size) = content.size {
                                                                     ui.label(
-                                                                        egui::RichText::new(type_icon)
-                                                                            .size(12.0)
+                                                                        egui::RichText::new(Self::format_file_size(size))
+                                                                            .size(9.0)
+                                                                            .color(super::theme::MutantColors::TEXT_MUTED)
                                                                     );
+                                                                    ui.add_space(1.0);
+                                                                }
 
-                                                                    // Title
+                                                                // Date (compact)
+                                                                if let Some(date) = &content.date_created {
                                                                     ui.label(
-                                                                        egui::RichText::new(&content.title)
-                                                                            .strong()
-                                                                            .size(12.0)
-                                                                            .color(super::theme::MutantColors::ACCENT_GREEN)
+                                                                        egui::RichText::new(Self::format_date(date))
+                                                                            .size(9.0)
+                                                                            .color(super::theme::MutantColors::TEXT_MUTED)
                                                                     );
-
-                                                                    // Metadata
-                                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                                        // Download button
-                                                                        if ui.add(
-                                                                            egui::Button::new("📥")
-                                                                                .fill(super::theme::MutantColors::ACCENT_BLUE)
-                                                                                .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::ACCENT_BLUE))
-                                                                        ).clicked() {
-                                                                            download_address = Some(content.address.clone());
-                                                                        }
-
-                                                                        // Size
-                                                                        if let Some(size) = content.size {
-                                                                            ui.label(
-                                                                                egui::RichText::new(Self::format_file_size(size))
-                                                                                    .size(10.0)
-                                                                                    .color(super::theme::MutantColors::TEXT_MUTED)
-                                                                            );
-                                                                        }
-
-                                                                        // Date
-                                                                        if let Some(date) = &content.date_created {
-                                                                            ui.label(
-                                                                                egui::RichText::new(Self::format_date(date))
-                                                                                    .size(10.0)
-                                                                                    .color(super::theme::MutantColors::TEXT_MUTED)
-                                                                            );
-                                                                        }
-                                                                    });
-                                                                });
+                                                                }
                                                             });
-                                                        ui.add_space(4.0);
+                                                        });
+                                                        // Minimal spacing between items
+                                                        ui.add_space(1.0);
                                                     }
                                                 }
                                             });
-                                        ui.add_space(8.0);
+                                        ui.add_space(1.0);
                                     }
                                 }
 
