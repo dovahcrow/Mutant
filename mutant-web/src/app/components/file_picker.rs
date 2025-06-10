@@ -329,6 +329,11 @@ impl FilePicker {
             available_rect.size(),
             egui::Layout::top_down(egui::Align::LEFT),
             |ui| {
+                // Header for file picker
+                ui.heading(RichText::new("📁 Select File").size(18.0).color(MutantColors::TEXT_PRIMARY));
+                ui.add_space(8.0);
+                ui.label(RichText::new("Choose a file from the daemon's filesystem:").color(MutantColors::TEXT_SECONDARY));
+                ui.add_space(10.0);
                 // Professional header with subtle background
                 egui::Frame::new()
                     .fill(MutantColors::BACKGROUND_MEDIUM)
@@ -417,8 +422,8 @@ impl FilePicker {
                     return;
                 }
 
-                // Compact file tree with full height
-                let remaining_height = ui.available_height() - 60.0; // Reserve space for bottom section
+                // Compact file tree with full available height
+                let remaining_height = ui.available_height(); // Use ALL available height
 
                 egui::Frame::new()
                     .fill(MutantColors::BACKGROUND_DARK)

@@ -170,10 +170,10 @@ impl egui_dock::TabViewer for UnifiedTabViewer {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
-        // Set proper background for the content area
+        // Set proper background for the content area with NO margins to fill the entire space
         let frame = egui::Frame::new()
             .fill(super::theme::MutantColors::BACKGROUND_DARK)
-            .inner_margin(egui::Margin::same(8));
+            .inner_margin(egui::Margin::ZERO); // Remove all margins
 
         frame.show(ui, |ui| {
             // For FsWindow tabs, we need to use the special draw method that avoids deadlock

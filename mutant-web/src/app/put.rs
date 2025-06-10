@@ -313,18 +313,12 @@ impl PutWindow {
                     egui::Vec2::new(left_width, content_height),
                     egui::Layout::top_down(egui::Align::LEFT),
                     |ui| {
-                        // Header for file picker
-                        ui.heading(RichText::new("📁 Select File").size(18.0).color(MutantColors::TEXT_PRIMARY));
-                        ui.add_space(8.0);
-                        ui.label(RichText::new("Choose a file from the daemon's filesystem:").color(MutantColors::TEXT_SECONDARY));
-                        ui.add_space(10.0);
-
                         // Initialize file picker if needed
                         if self.file_picker.read().unwrap().is_none() {
                             *self.file_picker.write().unwrap() = Some(FilePicker::new().with_files_only(true));
                         }
 
-                        // Draw the file picker with remaining height
+                        // Draw the file picker using ALL available space
                         if let Some(ref mut picker) = *self.file_picker.write().unwrap() {
                             if picker.draw(ui) {
                                 // File was selected - get the full filesystem path for upload
