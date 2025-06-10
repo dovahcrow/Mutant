@@ -586,106 +586,182 @@ impl PutWindow {
     }
 
     fn draw_upload_progress_step(&mut self, ui: &mut egui::Ui) {
-        ui.heading(RichText::new("🚀 Uploading...").size(20.0).color(MutantColors::TEXT_PRIMARY));
-        ui.add_space(15.0);
+        let available_rect = ui.available_rect_before_wrap();
+        let available_width = available_rect.width();
+        let available_height = available_rect.height();
 
-        // Show file being uploaded
-        if let Some(filename) = &*self.selected_file.read().unwrap() {
-            ui.label(RichText::new(format!("Uploading: {}", filename)).color(MutantColors::TEXT_SECONDARY));
-            ui.add_space(10.0);
-        }
+        // Center the progress content vertically and horizontally
+        ui.allocate_ui_with_layout(
+            egui::Vec2::new(available_width, available_height),
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| {
+                // Add vertical spacing to center content
+                let content_height = 300.0; // Approximate height of our content
+                let top_spacing = (available_height - content_height) / 2.0;
+                if top_spacing > 0.0 {
+                    ui.add_space(top_spacing);
+                }
 
-        // Show upload progress bars
-        let total_chunks = *self.total_chunks.read().unwrap();
-        let reservation_progress = *self.reservation_progress.read().unwrap();
-        let upload_progress = *self.upload_progress.read().unwrap();
-        let confirmation_progress = *self.confirmation_progress.read().unwrap();
-        let elapsed = *self.elapsed_time.read().unwrap();
-        let elapsed_str = format!("{:.1}s", elapsed.as_secs_f64());
+                // Constrain content width for better readability
+                let max_content_width = (available_width * 0.8).min(500.0);
 
-        // Reservation progress
-        ui.label("Reserving pads:");
-        ui.add(detailed_progress(
-            reservation_progress,
-            (reservation_progress * total_chunks as f32) as usize,
-            total_chunks,
-            elapsed_str.clone()
-        ));
+                ui.allocate_ui_with_layout(
+                    egui::Vec2::new(max_content_width, content_height),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        // Header
+                        ui.vertical_centered(|ui| {
+                            ui.heading(RichText::new("🚀 Uploading...").size(20.0).color(MutantColors::TEXT_PRIMARY));
+                        });
+                        ui.add_space(15.0);
 
-        ui.add_space(5.0);
+                        // Show file being uploaded
+                        if let Some(filename) = &*self.selected_file.read().unwrap() {
+                            ui.vertical_centered(|ui| {
+                                ui.label(RichText::new(format!("Uploading: {}", filename)).color(MutantColors::TEXT_SECONDARY));
+                            });
+                            ui.add_space(10.0);
+                        }
 
-        // Upload progress
-        ui.label("Uploading pads:");
-        ui.add(detailed_progress(
-            upload_progress,
-            (upload_progress * total_chunks as f32) as usize,
-            total_chunks,
-            elapsed_str.clone()
-        ));
+                        // Show upload progress bars
+                        let total_chunks = *self.total_chunks.read().unwrap();
+                        let reservation_progress = *self.reservation_progress.read().unwrap();
+                        let upload_progress = *self.upload_progress.read().unwrap();
+                        let confirmation_progress = *self.confirmation_progress.read().unwrap();
+                        let elapsed = *self.elapsed_time.read().unwrap();
+                        let elapsed_str = format!("{:.1}s", elapsed.as_secs_f64());
 
-        ui.add_space(5.0);
+                        // Progress bars with full width
+                        ui.vertical(|ui| {
+                            // Reservation progress
+                            ui.label("Reserving pads:");
+                            ui.add_sized(
+                                [max_content_width, 20.0],
+                                detailed_progress(
+                                    reservation_progress,
+                                    (reservation_progress * total_chunks as f32) as usize,
+                                    total_chunks,
+                                    elapsed_str.clone()
+                                )
+                            );
 
-        // Confirmation progress
-        ui.label("Confirming pads:");
-        ui.add(detailed_progress(
-            confirmation_progress,
-            (confirmation_progress * total_chunks as f32) as usize,
-            total_chunks,
-            elapsed_str
-        ));
+                            ui.add_space(5.0);
+
+                            // Upload progress
+                            ui.label("Uploading pads:");
+                            ui.add_sized(
+                                [max_content_width, 20.0],
+                                detailed_progress(
+                                    upload_progress,
+                                    (upload_progress * total_chunks as f32) as usize,
+                                    total_chunks,
+                                    elapsed_str.clone()
+                                )
+                            );
+
+                            ui.add_space(5.0);
+
+                            // Confirmation progress
+                            ui.label("Confirming pads:");
+                            ui.add_sized(
+                                [max_content_width, 20.0],
+                                detailed_progress(
+                                    confirmation_progress,
+                                    (confirmation_progress * total_chunks as f32) as usize,
+                                    total_chunks,
+                                    elapsed_str
+                                )
+                            );
+                        });
+                    }
+                );
+            }
+        );
     }
 
     fn draw_upload_complete_step(&mut self, ui: &mut egui::Ui) {
-        ui.heading(RichText::new("✅ Upload Complete!").size(20.0).color(MutantColors::ACCENT_GREEN));
-        ui.add_space(15.0);
+        let available_rect = ui.available_rect_before_wrap();
+        let available_width = available_rect.width();
+        let available_height = available_rect.height();
 
-        // Show completion details
-        if let Some(filename) = &*self.selected_file.read().unwrap() {
-            ui.group(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("Successfully uploaded:").color(MutantColors::TEXT_SECONDARY));
-                    ui.label(RichText::new(filename).color(MutantColors::ACCENT_BLUE));
-                    ui.label(RichText::new(format!("Key: {}", self.key_name.read().unwrap())).color(MutantColors::TEXT_PRIMARY));
+        // Center the completion content vertically and horizontally
+        ui.allocate_ui_with_layout(
+            egui::Vec2::new(available_width, available_height),
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| {
+                // Add vertical spacing to center content
+                let content_height = 250.0; // Approximate height of our content
+                let top_spacing = (available_height - content_height) / 2.0;
+                if top_spacing > 0.0 {
+                    ui.add_space(top_spacing);
+                }
 
-                    let elapsed = *self.elapsed_time.read().unwrap();
-                    ui.label(RichText::new(format!("Time: {:.1}s", elapsed.as_secs_f64())).color(MutantColors::TEXT_MUTED));
-                });
-            });
-        }
+                // Constrain content width for better readability
+                let max_content_width = (available_width * 0.8).min(500.0);
 
-        ui.add_space(10.0);
+                ui.allocate_ui_with_layout(
+                    egui::Vec2::new(max_content_width, content_height),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        // Header
+                        ui.vertical_centered(|ui| {
+                            ui.heading(RichText::new("✅ Upload Complete!").size(20.0).color(MutantColors::ACCENT_GREEN));
+                        });
+                        ui.add_space(15.0);
 
-        // Show public address if available
-        if let Some(public_addr) = &*self.public_address.read().unwrap() {
-            ui.group(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("Public Address:").color(MutantColors::TEXT_SECONDARY));
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(public_addr).color(MutantColors::ACCENT_ORANGE));
-                        if ui.button("📋 Copy").clicked() {
-                            ui.ctx().copy_text(public_addr.clone());
-                            notifications::info("Public address copied to clipboard!".to_string());
+                        // Show completion details
+                        if let Some(filename) = &*self.selected_file.read().unwrap() {
+                            ui.group(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new("Successfully uploaded:").color(MutantColors::TEXT_SECONDARY));
+                                    ui.label(RichText::new(filename).color(MutantColors::ACCENT_BLUE));
+                                    ui.label(RichText::new(format!("Key: {}", self.key_name.read().unwrap())).color(MutantColors::TEXT_PRIMARY));
+
+                                    let elapsed = *self.elapsed_time.read().unwrap();
+                                    ui.label(RichText::new(format!("Time: {:.1}s", elapsed.as_secs_f64())).color(MutantColors::TEXT_MUTED));
+                                });
+                            });
                         }
-                    });
-                });
-            });
-            ui.add_space(10.0);
-        }
 
-        // Action buttons
-        ui.horizontal(|ui| {
-            if ui.add(success_button("🔄 Upload Another")).clicked() {
-                self.reset();
+                        ui.add_space(10.0);
+
+                        // Show public address if available
+                        if let Some(public_addr) = &*self.public_address.read().unwrap() {
+                            ui.group(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new("Public Address:").color(MutantColors::TEXT_SECONDARY));
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(public_addr).color(MutantColors::ACCENT_ORANGE));
+                                        if ui.button("📋 Copy").clicked() {
+                                            ui.ctx().copy_text(public_addr.clone());
+                                            notifications::info("Public address copied to clipboard!".to_string());
+                                        }
+                                    });
+                                });
+                            });
+                            ui.add_space(10.0);
+                        }
+
+                        // Action buttons - centered
+                        ui.vertical_centered(|ui| {
+                            ui.horizontal(|ui| {
+                                if ui.add(success_button("🔄 Upload Another")).clicked() {
+                                    self.reset();
+                                }
+
+                                ui.add_space(10.0);
+
+                                if ui.button("Close").clicked() {
+                                    // This would need to be handled by the window system
+                                    // For now, just reset
+                                    self.reset();
+                                }
+                            });
+                        });
+                    }
+                );
             }
-
-            ui.add_space(10.0);
-
-            if ui.button("Close").clicked() {
-                // This would need to be handled by the window system
-                // For now, just reset
-                self.reset();
-            }
-        });
+        );
     }
 
     fn start_path_upload(&self) {
