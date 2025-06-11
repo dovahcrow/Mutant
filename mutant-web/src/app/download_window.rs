@@ -23,6 +23,9 @@ pub struct DownloadWindow {
     /// Download error message
     #[serde(skip)]
     download_error: Option<String>,
+    /// Destination path for the download
+    #[serde(skip)]
+    destination_path: Option<String>,
 
     // Progress tracking fields
     /// Total number of chunks to download
@@ -57,6 +60,7 @@ impl DownloadWindow {
             downloading: false,
             download_completed: false,
             download_error: None,
+            destination_path: None,
             total_chunks: Arc::new(RwLock::new(0)),
             fetched_chunks: Arc::new(RwLock::new(0)),
             progress: Arc::new(RwLock::new(0.0)),
@@ -368,12 +372,20 @@ impl DownloadWindow {
                         });
                         ui.add_space(15.0);
 
-                        // Show file being downloaded
+                        // Show file being downloaded and destination
                         ui.vertical_centered(|ui| {
                             ui.label(
                                 egui::RichText::new(format!("Downloading: {}", self.filename))
                                     .color(super::theme::MutantColors::TEXT_SECONDARY),
                             );
+                            if let Some(dest_path) = &self.destination_path {
+                                ui.label(
+                                    egui::RichText::new(format!("To: {}", dest_path))
+                                        .size(12.0)
+                                        .color(super::theme::MutantColors::TEXT_MUTED)
+                                        .monospace(),
+                                );
+                            }
                         });
                         ui.add_space(10.0);
 
@@ -492,6 +504,17 @@ impl DownloadWindow {
                                         .size(14.0)
                                         .color(super::theme::MutantColors::TEXT_PRIMARY)
                                 );
+
+                                // Show destination path
+                                if let Some(dest_path) = &self.destination_path {
+                                    ui.add_space(8.0);
+                                    ui.label(
+                                        egui::RichText::new(format!("Saved to: {}", dest_path))
+                                            .size(12.0)
+                                            .color(super::theme::MutantColors::TEXT_MUTED)
+                                            .monospace()
+                                    );
+                                }
                             }
 
                             ui.add_space(20.0);
@@ -507,6 +530,7 @@ impl DownloadWindow {
         self.downloading = true;
         self.download_completed = false;
         self.download_error = None;
+        self.destination_path = Some(destination_path.clone());
 
         // Reset progress tracking
         *self.total_chunks.write().unwrap() = 0;
