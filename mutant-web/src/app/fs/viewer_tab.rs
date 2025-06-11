@@ -223,6 +223,13 @@ impl FileViewerTab {
                 ui.label(egui::RichText::new(&self.file.key).size(16.0).strong().color(theme::MutantColors::TEXT_PRIMARY));
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Download button
+                    if ui.add(theme::secondary_button("⬇ Download")).clicked() {
+                        self.open_download_window();
+                    }
+
+                    ui.add_space(8.0);
+
                     if self.file_modified {
                         ui.label(egui::RichText::new("● Modified").size(11.0).color(theme::MutantColors::WARNING));
                         if ui.add(theme::primary_button("Save")).clicked() {
@@ -375,6 +382,28 @@ impl FileViewerTab {
                 }
             } else { ui.label("No file content available"); }
         }
+    }
+
+    /// Open a download window for this file using the main FsWindow's download functionality
+    pub fn open_download_window(&self) {
+        log::info!("FileViewerTab: Opening download window for file: {}", self.file.key);
+
+        // Use a deferred approach to avoid lock contention during UI rendering
+        let file_details = self.file.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            // Access the main FsWindow through the global reference in an async context
+            if let Some(fs_window_ref) = crate::app::fs::global::get_main_fs_window() {
+                if let Ok(mut fs_window) = fs_window_ref.try_write() {
+                    // Call the existing download window method from FsWindow
+                    fs_window.open_download_window(file_details.clone());
+                    log::info!("FileViewerTab: Successfully opened download window for: {}", file_details.key);
+                } else {
+                    log::warn!("FileViewerTab: Could not acquire write lock on main FsWindow for download (may be busy during UI rendering)");
+                }
+            } else {
+                log::error!("FileViewerTab: Main FsWindow reference not available for download");
+            }
+        });
     }
 
     /// Cleanup video player if it exists
