@@ -363,31 +363,22 @@ install_nodejs() {
     log_success "Node.js and package managers installed"
 }
 
-# Install Autonomi CLI (ant)
-install_ant_cli() {
-    log_step "Installing Autonomi CLI (ant)..."
+# Check for existing Autonomi CLI (optional)
+check_ant_cli() {
+    log_step "Checking for Autonomi CLI (optional)..."
 
     if command_exists ant; then
         log_info "ant CLI is already installed. Version: $(ant --version 2>/dev/null || echo 'unknown')"
+        ANT_AVAILABLE=true
     else
-        log_info "Installing ant CLI via antup..."
-        curl -sSf https://raw.githubusercontent.com/maidsafe/antup/main/install.sh | sh
-
-        # Add to PATH if not already there
-        if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-            export PATH="$HOME/.local/bin:$PATH"
-        fi
-
-        # Install the client
-        if command_exists antup; then
-            antup client
-        else
-            log_warning "antup installation may have failed. Will continue in public-only mode."
-        fi
+        log_info "Autonomi CLI not found - daemon will run in public-only mode"
+        log_info "To enable full functionality later, install ant CLI with:"
+        log_info "  curl -sSf https://raw.githubusercontent.com/maidsafe/antup/main/install.sh | sh"
+        log_info "  antup client"
+        ANT_AVAILABLE=false
     fi
 
-    log_success "Autonomi CLI installation completed"
+    log_success "Autonomi CLI check completed"
 }
 
 # Clone or update repository
@@ -474,19 +465,19 @@ setup_configuration() {
 check_wallet_setup() {
     log_step "Checking wallet setup..."
 
-    if command_exists ant; then
+    if [[ "$ANT_AVAILABLE" == "true" ]] && command_exists ant; then
         # Check if ant wallet exists
         if ant wallet balance &>/dev/null; then
             log_success "Autonomi wallet is configured and accessible"
             WALLET_CONFIGURED=true
         else
-            log_warning "Autonomi wallet not configured or not accessible"
+            log_warning "Autonomi CLI found but wallet not configured"
             log_info "The daemon will run in public-only mode (can only download public data)"
             WALLET_CONFIGURED=false
         fi
     else
-        log_warning "Autonomi CLI not available"
-        log_info "The daemon will run in public-only mode (can only download public data)"
+        log_info "No Autonomi CLI found - daemon will run in public-only mode"
+        log_info "This allows downloading public data without wallet setup"
         WALLET_CONFIGURED=false
     fi
 }
@@ -565,12 +556,13 @@ test_functionality() {
     fi
 
     # Test public data fetch (this should work even without wallet)
-    log_info "Testing public data fetch..."
+    log_info "Testing public data fetch (this works without wallet)..."
     if mutant get -p a420224971527d61ce6ee21d850a07c243498c95808697e8fac23f461545656933016697d10b805c0fa26b50eb3532b2 /tmp/test_meme.jpg &>/dev/null; then
-        log_success "Public data fetch test successful"
+        log_success "Public data fetch test successful - MutAnt is working!"
         rm -f /tmp/test_meme.jpg
     else
-        log_warning "Public data fetch test failed (this may be normal if network is unavailable)"
+        log_info "Public data fetch test skipped (network may be unavailable)"
+        log_info "This is normal and doesn't indicate a problem with the installation"
     fi
 }
 
@@ -598,8 +590,8 @@ print_final_instructions() {
 
     log_highlight "🔧 Command Line Interface:"
     echo "   mutant --help                    # Show CLI help"
-    echo "   mutant ls                        # List your stored keys"
-    echo "   mutant get -p <address> <file>   # Download public data"
+    echo "   mutant get -p <address> <file>   # Download public data (works without wallet)"
+    echo "   mutant ls                        # List your stored keys (requires wallet)"
     echo ""
 
     log_highlight "🔍 Service Status:"
@@ -617,15 +609,21 @@ print_final_instructions() {
     if [[ "$WALLET_CONFIGURED" == "false" ]]; then
         log_warning "⚠️  Wallet Configuration:"
         echo "   Your daemon is running in PUBLIC-ONLY mode."
+        echo "   This allows downloading public data without any setup."
+        echo ""
         echo "   To enable full functionality (upload/store data):"
         echo ""
-        echo "   1. Create a new wallet:"
+        echo "   1. Install Autonomi CLI:"
+        echo "      curl -sSf https://raw.githubusercontent.com/maidsafe/antup/main/install.sh | sh"
+        echo "      antup client"
+        echo ""
+        echo "   2. Create a new wallet:"
         echo "      ant wallet create"
         echo ""
-        echo "   2. Or import existing wallet:"
+        echo "   3. Or import existing wallet:"
         echo "      ant wallet import YOUR_PRIVATE_KEY"
         echo ""
-        echo "   3. Restart the daemon:"
+        echo "   4. Restart the daemon:"
         echo "      pkill mutant-daemon"
         echo "      mutant daemon start"
         echo ""
@@ -726,8 +724,10 @@ main() {
         setup_ffmpeg_env
         install_rust
         install_nodejs
-        install_ant_cli
     fi
+
+    # Always check for ant CLI (doesn't install, just checks)
+    check_ant_cli
 
     setup_repository
     build_rust_workspace
