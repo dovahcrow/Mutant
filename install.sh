@@ -524,7 +524,7 @@ start_web_server() {
 
     # Start web server in background
     log_info "Starting web server on port $WEB_PORT..."
-    nohup trunk serve --port "$WEB_PORT" --address "127.0.0.1" > ~/.local/share/mutant/web.log 2>&1 &
+    trunk serve --port "$WEB_PORT" --address "127.0.0.1"
 
     # Wait a moment for web server to start
     sleep 3
