@@ -501,6 +501,11 @@ impl FilePicker {
             return false;
         }
 
+        // Skip files if we're in directory-only mode
+        if !files_only && !node.is_directory {
+            return false;
+        }
+
         // Compact indentation with maximum depth limit to prevent exponential growth
         let indent_per_level = 8.0; // Reduced from 12.0
         let max_indent = 80.0; // Maximum indentation to prevent excessive nesting
@@ -589,14 +594,31 @@ impl FilePicker {
                     icon_color
                 );
 
-                // Draw folder name
+                // Draw folder name with selection indicator
                 let name_pos = egui::Pos2::new(icon_pos.x + 16.0, text_y);
+                let folder_name = if files_only {
+                    format!("{}/", node.name)
+                } else {
+                    // In directory selection mode, add visual indicator that it's selectable
+                    if is_selected {
+                        format!("✓ {}/", node.name)
+                    } else {
+                        format!("{}/", node.name)
+                    }
+                };
+
+                let name_color = if is_selected {
+                    MutantColors::ACCENT_ORANGE
+                } else {
+                    icon_color
+                };
+
                 ui.painter().text(
                     name_pos,
                     egui::Align2::LEFT_CENTER,
-                    format!("{}/", node.name),
+                    folder_name,
                     icon_font_id,
-                    icon_color
+                    name_color
                 );
 
                 // Handle directory interaction
@@ -605,11 +627,16 @@ impl FilePicker {
                         // In files_only mode, just expand/collapse directories
                         node.expanded = !node.expanded;
                     } else {
-                        // In directory selection mode, allow selecting directories
+                        // In directory selection mode, single click selects, double click expands
                         *selected_file_arc.write().unwrap() = Some(node.path.clone());
                         *error_message.write().unwrap() = None;
                         file_selected = true;
                     }
+                }
+
+                // Handle double-click to expand/collapse in directory selection mode
+                if !files_only && button_response.double_clicked() {
+                    node.expanded = !node.expanded;
                 }
 
                 if button_response.hovered() {
@@ -737,6 +764,11 @@ impl FilePicker {
             });
 
             for (_, child) in sorted_children {
+                // Skip files if we're in directory-only mode
+                if !files_only && !child.is_directory {
+                    continue;
+                }
+
                 if Self::draw_tree_node_static(
                     ui,
                     child,

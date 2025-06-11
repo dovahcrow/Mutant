@@ -129,6 +129,16 @@ impl DownloadWindow {
                     .strong()
             );
 
+            ui.add_space(4.0);
+
+            // Add helpful instruction
+            ui.label(
+                egui::RichText::new("Click on a folder to select it. Double-click to expand/collapse.")
+                    .size(11.0)
+                    .color(super::theme::MutantColors::TEXT_MUTED)
+                    .italics()
+            );
+
             ui.add_space(8.0);
 
             // Directory picker (takes most of the space)
