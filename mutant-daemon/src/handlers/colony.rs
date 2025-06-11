@@ -49,7 +49,15 @@ pub async fn set_colony_init_params(network_choice: NetworkChoice, private_key_h
 pub async fn init_colony_manager(wallet: autonomi::Wallet, network_choice: NetworkChoice, private_key_hex: Option<String>) -> Result<(), DaemonError> {
     log::info!("Starting colony manager initialization");
 
-    let manager = ColonyManager::new(wallet, network_choice, private_key_hex).await?;
+    let manager_opt = ColonyManager::new(wallet, network_choice, private_key_hex).await?;
+
+    let manager = match manager_opt {
+        Some(manager) => manager,
+        None => {
+            log::info!("Colony initialization skipped due to missing private key and COLONY_MNEMONIC");
+            return Ok(());
+        }
+    };
 
     // Ensure the user's pod exists on the network
     log::info!("Ensuring user pod exists during initialization");
@@ -79,7 +87,17 @@ pub async fn init_colony_manager_with_progress(
     // Send progress event: initialization started
     send_colony_progress(&update_tx, ColonyEvent::InitializationStarted, None);
 
-    let manager = ColonyManager::new_with_progress(wallet, network_choice, private_key_hex, update_tx.clone()).await?;
+    let manager_opt = ColonyManager::new_with_progress(wallet, network_choice, private_key_hex, update_tx.clone()).await?;
+
+    let manager = match manager_opt {
+        Some(manager) => manager,
+        None => {
+            log::info!("Colony initialization skipped due to missing private key and COLONY_MNEMONIC");
+            // Send progress event: initialization skipped
+            send_colony_progress(&update_tx, ColonyEvent::InitializationCompleted, Some("Skipped due to missing credentials".to_string()));
+            return Ok(());
+        }
+    };
 
     // Send progress event: user pod check started
     send_colony_progress(&update_tx, ColonyEvent::UserPodCheckStarted, None);
@@ -125,6 +143,12 @@ pub async fn ensure_colony_manager_with_progress(
     let (network_choice, private_key_hex) = COLONY_INIT_PARAMS.get()
         .ok_or_else(|| DaemonError::ColonyError("Colony initialization parameters not set".to_string()))?
         .clone();
+
+    // Check if we have the necessary credentials
+    let has_colony_mnemonic = std::env::var("COLONY_MNEMONIC").is_ok();
+    if private_key_hex.is_none() && !has_colony_mnemonic {
+        return Err(DaemonError::ColonyError("Colony manager cannot be initialized: no private key provided and no COLONY_MNEMONIC environment variable set".to_string()));
+    }
 
     // Get wallet from MutAnt
     let wallet = mutant.get_wallet().await

@@ -44,11 +44,20 @@ impl ColonyManager {
     ///
     /// This will create or load existing colony data from the standard data directory.
     /// The manager can operate in public-only mode for search operations.
-    pub async fn new(wallet: Wallet, network_choice: NetworkChoice, private_key_hex: Option<String>) -> Result<Self, DaemonError> {
+    /// Returns None if no private key is provided and no COLONY_MNEMONIC is set.
+    pub async fn new(wallet: Wallet, network_choice: NetworkChoice, private_key_hex: Option<String>) -> Result<Option<Self>, DaemonError> {
+        // Check if we have a private key or colony mnemonic
+        let has_colony_mnemonic = std::env::var("COLONY_MNEMONIC").is_ok();
+
+        if private_key_hex.is_none() && !has_colony_mnemonic {
+            log::info!("No private key provided and no COLONY_MNEMONIC environment variable set, skipping colony initialization");
+            return Ok(None);
+        }
+
         // Initialize data store (creates directories if needed)
         let data_store = DataStore::create()
             .map_err(|e| DaemonError::ColonyError(format!("Failed to create data store: {}", e)))?;
-        
+
         // Initialize or load key store
         let key_store_path = data_store.get_keystore_path();
         let mut key_store = if key_store_path.exists() {
@@ -59,12 +68,9 @@ impl ColonyManager {
                 .map_err(|e| DaemonError::ColonyError(format!("Failed to load key store: {}", e)))?
         } else {
             log::info!("Creating new colony key store from environment mnemonic");
-            // Get mnemonic from environment variable, fall back to default if not set
+            // Get mnemonic from environment variable - we already checked it exists above
             let mnemonic = std::env::var("COLONY_MNEMONIC")
-                .unwrap_or_else(|_| {
-                    log::warn!("COLONY_MNEMONIC environment variable not set, using default mnemonic");
-                    "distance unusual problem mail service tide talk term lonely weather cheap patrol".to_string()
-                });
+                .map_err(|_| DaemonError::ColonyError("COLONY_MNEMONIC environment variable not set".to_string()))?;
             KeyStore::from_mnemonic(&mnemonic)
                 .map_err(|e| DaemonError::ColonyError(format!("Failed to create key store: {}", e)))?
         };
@@ -98,7 +104,7 @@ impl ColonyManager {
         let graph = Graph::open(&graph_path)
             .map_err(|e| DaemonError::ColonyError(format!("Failed to open graph database: {}", e)))?;
 
-        Ok(ColonyManager {
+        Ok(Some(ColonyManager {
             key_store: Arc::new(RwLock::new(key_store)),
             data_store: Arc::new(RwLock::new(data_store)),
             graph: Arc::new(RwLock::new(graph)),
@@ -106,16 +112,25 @@ impl ColonyManager {
             network_choice,
             initialized: true,
             pod_public_address,
-        })
+        }))
     }
 
     /// Initialize the colony manager with progress updates
+    /// Returns None if no private key is provided and no COLONY_MNEMONIC is set.
     pub async fn new_with_progress(
         wallet: Wallet,
         network_choice: NetworkChoice,
         private_key_hex: Option<String>,
         update_tx: tokio::sync::mpsc::UnboundedSender<mutant_protocol::Response>
-    ) -> Result<Self, DaemonError> {
+    ) -> Result<Option<Self>, DaemonError> {
+        // Check if we have a private key or colony mnemonic
+        let has_colony_mnemonic = std::env::var("COLONY_MNEMONIC").is_ok();
+
+        if private_key_hex.is_none() && !has_colony_mnemonic {
+            log::info!("No private key provided and no COLONY_MNEMONIC environment variable set, skipping colony initialization");
+            return Ok(None);
+        }
+
         // Helper function to send progress events
         let send_progress = |event: mutant_protocol::ColonyEvent| {
             let response = mutant_protocol::Response::ColonyProgress(mutant_protocol::ColonyProgressResponse {
@@ -150,12 +165,9 @@ impl ColonyManager {
                 .map_err(|e| DaemonError::ColonyError(format!("Failed to load key store: {}", e)))?
         } else {
             log::info!("Creating new colony key store from environment mnemonic");
-            // Get mnemonic from environment variable, fall back to default if not set
+            // Get mnemonic from environment variable - we already checked it exists above
             let mnemonic = std::env::var("COLONY_MNEMONIC")
-                .unwrap_or_else(|_| {
-                    log::warn!("COLONY_MNEMONIC environment variable not set, using default mnemonic");
-                    "distance unusual problem mail service tide talk term lonely weather cheap patrol".to_string()
-                });
+                .map_err(|_| DaemonError::ColonyError("COLONY_MNEMONIC environment variable not set".to_string()))?;
             KeyStore::from_mnemonic(&mnemonic)
                 .map_err(|e| DaemonError::ColonyError(format!("Failed to create key store: {}", e)))?
         };
@@ -206,7 +218,7 @@ impl ColonyManager {
         // Send progress event: graph initialization completed
         send_progress(mutant_protocol::ColonyEvent::GraphInitCompleted);
 
-        Ok(ColonyManager {
+        Ok(Some(ColonyManager {
             key_store: Arc::new(RwLock::new(key_store)),
             data_store: Arc::new(RwLock::new(data_store)),
             graph: Arc::new(RwLock::new(graph)),
@@ -214,7 +226,7 @@ impl ColonyManager {
             network_choice,
             initialized: true,
             pod_public_address,
-        })
+        }))
     }
 
     /// Get a client configured for the correct network
