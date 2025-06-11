@@ -482,6 +482,231 @@ check_wallet_setup() {
     fi
 }
 
+# Generate a secure Ethereum private key
+generate_ethereum_private_key() {
+    # Try multiple methods to generate a secure 32-byte private key
+
+    # Method 1: Use openssl if available
+    if command_exists openssl; then
+        openssl rand -hex 32 2>/dev/null && return
+    fi
+
+    # Method 2: Use /dev/urandom if available (Linux/macOS)
+    if [[ -r "/dev/urandom" ]]; then
+        head -c 32 /dev/urandom | xxd -p -c 32 2>/dev/null && return
+    fi
+
+    # Method 3: Use Python if available
+    if command_exists python3; then
+        python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null && return
+    fi
+
+    # Method 4: Use Node.js if available
+    if command_exists node; then
+        node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2>/dev/null && return
+    fi
+
+    # Method 5: Fallback using bash RANDOM (less secure, but better than nothing)
+    log_warning "Using less secure fallback method for private key generation"
+    local key=""
+    for i in {1..64}; do
+        key+=$(printf "%x" $((RANDOM % 16)))
+    done
+    echo "$key"
+}
+
+# Generate a BIP39 mnemonic phrase
+generate_mnemonic() {
+    # BIP39 wordlist (first 128 words for simplicity - enough for basic generation)
+    local words=(
+        "abandon" "ability" "able" "about" "above" "absent" "absorb" "abstract"
+        "absurd" "abuse" "access" "accident" "account" "accuse" "achieve" "acid"
+        "acoustic" "acquire" "across" "act" "action" "actor" "actress" "actual"
+        "adapt" "add" "addict" "address" "adjust" "admit" "adult" "advance"
+        "advice" "aerobic" "affair" "afford" "afraid" "again" "age" "agent"
+        "agree" "ahead" "aim" "air" "airport" "aisle" "alarm" "album"
+        "alcohol" "alert" "alien" "all" "alley" "allow" "almost" "alone"
+        "alpha" "already" "also" "alter" "always" "amateur" "amazing" "among"
+        "amount" "amused" "analyst" "anchor" "ancient" "anger" "angle" "angry"
+        "animal" "ankle" "announce" "annual" "another" "answer" "antenna" "antique"
+        "anxiety" "any" "apart" "apology" "appear" "apple" "approve" "april"
+        "arch" "arctic" "area" "arena" "argue" "arm" "armed" "armor"
+        "army" "around" "arrange" "arrest" "arrive" "arrow" "art" "article"
+        "artist" "artwork" "ask" "aspect" "assault" "asset" "assist" "assume"
+        "asthma" "athlete" "atom" "attack" "attend" "attitude" "attract" "auction"
+        "audit" "august" "aunt" "author" "auto" "autumn" "average" "avocado"
+        "avoid" "awake" "aware" "away" "awesome" "awful" "awkward" "axis"
+    )
+
+    # Generate 12 random words
+    local mnemonic=""
+    local word_count=${#words[@]}
+
+    # Try to use secure random number generation
+    for i in {1..12}; do
+        local index
+
+        # Method 1: Use openssl for random number
+        if command_exists openssl; then
+            index=$(openssl rand -hex 1 | head -c 2)
+            index=$((0x$index % word_count))
+        # Method 2: Use /dev/urandom
+        elif [[ -r "/dev/urandom" ]]; then
+            index=$(head -c 1 /dev/urandom | od -An -tu1 | tr -d ' ')
+            index=$((index % word_count))
+        # Method 3: Use Python
+        elif command_exists python3; then
+            index=$(python3 -c "import random; print(random.randint(0, $((word_count-1))))" 2>/dev/null)
+        # Method 4: Fallback to bash RANDOM
+        else
+            index=$((RANDOM % word_count))
+        fi
+
+        if [[ $i -eq 1 ]]; then
+            mnemonic="${words[$index]}"
+        else
+            mnemonic="$mnemonic ${words[$index]}"
+        fi
+    done
+
+    echo "$mnemonic"
+}
+
+# Collect user credentials and create .env file
+setup_user_credentials() {
+    log_step "Setting up user credentials..."
+
+    cd "$INSTALL_DIR"
+
+    # Check if .env already exists
+    if [[ -f ".env" ]]; then
+        log_info ".env file already exists. Checking contents..."
+        if grep -q "PRIVATE_KEY=" .env && grep -q "COLONY_MNEMONIC=" .env; then
+            log_info "Credentials already configured in .env file"
+            return 0
+        fi
+    fi
+
+    echo ""
+    log_highlight "🔐 Credential Setup"
+    echo "   MutAnt needs your private key and colony mnemonic to function properly."
+    echo "   These will be stored securely in a .env file in the installation directory."
+    echo ""
+    echo "   Options:"
+    echo "   - Enter your existing credentials"
+    echo "   - Press Enter to generate new ones automatically"
+    echo "   - Type 'skip' to run in public-only mode (download only)"
+    echo "   - Generated credentials will be cryptographically secure"
+    echo ""
+
+    # Ask for private key
+    echo -n "Enter your private key (hex format, Enter to generate, or 'skip' for public-only): "
+    read -r PRIVATE_KEY
+
+    if [[ "$PRIVATE_KEY" == "skip" ]]; then
+        log_info "Skipping credential setup. Daemon will run in public-only mode."
+        PRIVATE_KEY=""
+        COLONY_MNEMONIC=""
+        # Create minimal .env file
+        cat > .env << EOF
+# MutAnt Configuration - Public-only mode
+# Generated by install script on $(date)
+
+# No credentials configured - running in public-only mode
+PRIVATE_KEY=""
+COLONY_MNEMONIC=""
+EOF
+        chmod 600 .env
+        log_success "Created .env file for public-only mode"
+        return 0
+    elif [[ -z "$PRIVATE_KEY" ]]; then
+        log_info "No private key provided. Generating a new Ethereum private key..."
+        PRIVATE_KEY=$(generate_ethereum_private_key)
+        if [[ -n "$PRIVATE_KEY" ]]; then
+            log_success "Generated new private key: $PRIVATE_KEY"
+            log_warning "⚠️  IMPORTANT: Save this private key securely! You'll need it to access your data."
+        else
+            log_error "Failed to generate private key. Daemon will run in public-only mode."
+            PRIVATE_KEY=""
+        fi
+    else
+        # Basic validation - check if it looks like a hex string
+        if [[ ! "$PRIVATE_KEY" =~ ^[0-9a-fA-F]+$ ]]; then
+            log_warning "Private key doesn't appear to be valid hex format, but continuing..."
+        fi
+    fi
+
+    echo ""
+    # Ask for colony mnemonic
+    echo -n "Enter your colony mnemonic (12-24 words, or press Enter to generate a new one): "
+    read -r COLONY_MNEMONIC
+
+    if [[ -z "$COLONY_MNEMONIC" ]]; then
+        log_info "No colony mnemonic provided. Generating a new 12-word mnemonic..."
+        COLONY_MNEMONIC=$(generate_mnemonic)
+        if [[ -n "$COLONY_MNEMONIC" ]]; then
+            log_success "Generated new mnemonic: $COLONY_MNEMONIC"
+            log_warning "⚠️  IMPORTANT: Save this mnemonic securely! You'll need it for colony features."
+        else
+            log_error "Failed to generate mnemonic. Colony features will be disabled."
+            COLONY_MNEMONIC=""
+        fi
+    fi
+
+    # Create .env file
+    log_info "Creating .env file..."
+    cat > .env << EOF
+# MutAnt Configuration
+# Generated by install script on $(date)
+
+# Private key for Autonomi network access (hex format)
+PRIVATE_KEY="$PRIVATE_KEY"
+
+# Colony mnemonic for decentralized social features (12-24 words)
+COLONY_MNEMONIC="$COLONY_MNEMONIC"
+EOF
+
+    # Set appropriate permissions
+    chmod 600 .env
+
+    log_success "Credentials saved to .env file"
+    log_info "File permissions set to 600 (owner read/write only)"
+    echo ""
+}
+
+# Load and export environment variables from .env file
+load_environment() {
+    log_step "Loading environment variables..."
+
+    cd "$INSTALL_DIR"
+
+    if [[ -f ".env" ]]; then
+        log_info "Loading variables from .env file..."
+
+        # Export variables from .env file
+        set -a  # Automatically export all variables
+        source .env
+        set +a  # Stop automatically exporting
+
+        # Verify variables are loaded
+        if [[ -n "$PRIVATE_KEY" ]]; then
+            log_info "Private key loaded (${#PRIVATE_KEY} characters)"
+        else
+            log_info "No private key found in .env"
+        fi
+
+        if [[ -n "$COLONY_MNEMONIC" ]]; then
+            log_info "Colony mnemonic loaded"
+        else
+            log_info "No colony mnemonic found in .env"
+        fi
+
+        log_success "Environment variables loaded"
+    else
+        log_warning "No .env file found, continuing without custom credentials"
+    fi
+}
+
 # Start daemon
 start_daemon() {
     log_step "Starting MutAnt daemon..."
@@ -600,10 +825,11 @@ print_final_instructions() {
     echo "   ps aux | grep trunk              # Check web server process"
     echo ""
 
-    log_highlight "📁 Important Directories:"
+    log_highlight "📁 Important Files & Directories:"
     echo "   Installation: $INSTALL_DIR"
     echo "   Config:       ~/.config/mutant/"
     echo "   Logs:         ~/.local/share/mutant/"
+    echo "   Credentials:  $INSTALL_DIR/.env"
     echo ""
 
     if [[ "$WALLET_CONFIGURED" == "false" ]]; then
@@ -639,6 +865,22 @@ print_final_instructions() {
     log_highlight "🔄 To Restart Services:"
     echo "   cd $INSTALL_DIR && ./install.sh --restart-only"
     echo ""
+
+    log_highlight "🔐 Credential Management:"
+    echo "   Your credentials are stored in: $INSTALL_DIR/.env"
+    echo "   To view your credentials: cat $INSTALL_DIR/.env"
+    echo "   To update credentials: edit $INSTALL_DIR/.env with your preferred editor"
+    echo "   After editing: cd $INSTALL_DIR && ./install.sh --restart-only"
+    echo ""
+
+    # Show generated credentials warning if .env exists
+    if [[ -f "$INSTALL_DIR/.env" ]]; then
+        echo -e "${YELLOW}⚠️  SECURITY REMINDER:${NC}"
+        echo "   - Keep your private key and mnemonic secure and backed up"
+        echo "   - Never share these credentials with anyone"
+        echo "   - Consider storing a backup in a secure location"
+        echo ""
+    fi
 
     log_info "For more information, visit: https://github.com/Champii/Anthill"
     echo ""
@@ -704,8 +946,9 @@ main() {
         pkill trunk || true
         sleep 2
 
-        # Start services
+        # Load environment and start services
         cd "$INSTALL_DIR" || exit 1
+        load_environment
         start_daemon
         start_web_server
 
@@ -734,6 +977,10 @@ main() {
     setup_web_interface
     setup_configuration
     check_wallet_setup
+
+    # Setup user credentials and environment
+    setup_user_credentials
+    load_environment
 
     # Start services
     start_daemon

@@ -204,24 +204,35 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
             Some(key_from_file)
         }
         None => {
-            // Try to scan for wallets
-            match wallet::scan_and_select_wallet().await {
-                Ok((selected_private_key, pk_hex)) => {
-                    // Save the selected wallet for future use
-                    config.set_public_key(network_choice, pk_hex.clone());
-                    config.save()?;
-                    log::info!(
-                        "Saved newly selected public key {} to config for network {:?}",
-                        pk_hex,
-                        network_choice
-                    );
-                    Some(selected_private_key)
+            // Check for PRIVATE_KEY environment variable first
+            match std::env::var("PRIVATE_KEY") {
+                Ok(env_key) if !env_key.is_empty() => {
+                    log::info!("Found PRIVATE_KEY environment variable, using it");
+                    Some(env_key)
                 }
-                Err(e) => {
-                    // No wallet found, initialize in public-only mode
-                    log::warn!("No wallet found: {}. Initializing in public-only mode.", e);
-                    log::info!("Only public downloads (mutant get -p) will be available.");
-                    None
+                _ => {
+                    log::info!("No PRIVATE_KEY environment variable found, trying to scan for wallets");
+
+                    // Try to scan for wallets
+                    match wallet::scan_and_select_wallet().await {
+                        Ok((selected_private_key, pk_hex)) => {
+                            // Save the selected wallet for future use
+                            config.set_public_key(network_choice, pk_hex.clone());
+                            config.save()?;
+                            log::info!(
+                                "Saved newly selected public key {} to config for network {:?}",
+                                pk_hex,
+                                network_choice
+                            );
+                            Some(selected_private_key)
+                        }
+                        Err(e) => {
+                            // No wallet found, initialize in public-only mode
+                            log::warn!("No wallet found: {}. Initializing in public-only mode.", e);
+                            log::info!("Only public downloads (mutant get -p) will be available.");
+                            None
+                        }
+                    }
                 }
             }
         }
