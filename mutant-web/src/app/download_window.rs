@@ -117,124 +117,194 @@ impl DownloadWindow {
         response
     }
 
-    /// Draw the directory picker and filename editing interface
+    /// Draw the directory picker and filename editing interface using side-by-side layout like put window
     fn draw_file_picker_ui(&mut self, ui: &mut egui::Ui, response: &mut DownloadWindowResponse) {
-        // Split the UI into two sections: directory picker and filename editor
-        ui.vertical(|ui| {
-            // Directory selection section
-            ui.label(
-                egui::RichText::new("1. Choose destination folder:")
-                    .size(14.0)
-                    .color(super::theme::MutantColors::TEXT_PRIMARY)
-                    .strong()
-            );
+        // Use the full available space without any margins, similar to put window
+        let available_rect = ui.available_rect_before_wrap();
+        let content_height = available_rect.height();
+        let content_width = available_rect.width();
 
-            ui.add_space(4.0);
+        // Force the UI to expand to the full available rectangle
+        ui.expand_to_include_rect(available_rect);
 
-            // Add helpful instruction
-            ui.label(
-                egui::RichText::new("Click on a folder to select it. Double-click to expand/collapse.")
-                    .size(11.0)
-                    .color(super::theme::MutantColors::TEXT_MUTED)
-                    .italics()
-            );
-
-            ui.add_space(8.0);
-
-            // Directory picker (takes most of the space)
-            let available_height = ui.available_height();
-            let picker_height = (available_height * 0.7).max(200.0); // 70% of available height, minimum 200px
+        // Use horizontal layout that fills the entire space (50/50 split like put window)
+        ui.horizontal(|ui| {
+            // Left side: Directory picker (50% width, full height)
+            let left_width = content_width * 0.5;
 
             ui.allocate_ui_with_layout(
-                egui::Vec2::new(ui.available_width(), picker_height),
-                egui::Layout::top_down(egui::Align::LEFT),
+                egui::Vec2::new(left_width, content_height - 15.0),
+                egui::Layout::top_down(egui::Align::Min),
                 |ui| {
-                    if let Some(ref mut directory_picker) = self.directory_picker {
-                        directory_picker.draw(ui);
-                    }
-                }
-            );
-
-            ui.add_space(15.0);
-
-            // Filename editing section
-            ui.label(
-                egui::RichText::new("2. Edit filename:")
-                    .size(14.0)
-                    .color(super::theme::MutantColors::TEXT_PRIMARY)
-                    .strong()
-            );
-
-            ui.add_space(8.0);
-
-            // Filename input field
-            egui::Frame::new()
-                .fill(super::theme::MutantColors::BACKGROUND_MEDIUM)
-                .corner_radius(6.0)
-                .inner_margin(8.0)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("Filename:")
-                                .size(12.0)
-                                .color(super::theme::MutantColors::TEXT_SECONDARY)
+                    // Initialize directory picker if needed
+                    if self.directory_picker.is_none() {
+                        self.directory_picker = Some(
+                            crate::app::components::file_picker::FilePicker::new()
+                                .with_files_only(false) // Directory selection mode
                         );
+                    }
 
-                        let text_edit = egui::TextEdit::singleline(&mut self.filename)
-                            .desired_width(ui.available_width() - 10.0)
-                            .font(egui::TextStyle::Monospace);
-
-                        ui.add(text_edit);
-                    });
-                });
-
-            ui.add_space(15.0);
-
-            // Action buttons
-            ui.horizontal(|ui| {
-                // Cancel button
-                if ui.add_sized(
-                    [100.0, 32.0],
-                    egui::Button::new("Cancel")
-                        .fill(super::theme::MutantColors::BACKGROUND_MEDIUM)
-                        .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_LIGHT))
-                ).clicked() {
-                    *response = DownloadWindowResponse::Cancel;
-                }
-
-                ui.add_space(10.0);
-
-                // Download button
-                let selected_directory = self.directory_picker
-                    .as_ref()
-                    .and_then(|picker| picker.selected_file_full_path());
-
-                let download_enabled = selected_directory.is_some() && !self.filename.trim().is_empty();
-
-                let download_button = egui::Button::new("Download")
-                    .fill(if download_enabled {
-                        super::theme::MutantColors::ACCENT_GREEN
-                    } else {
-                        super::theme::MutantColors::BACKGROUND_MEDIUM
-                    })
-                    .stroke(egui::Stroke::new(1.0, if download_enabled {
-                        super::theme::MutantColors::ACCENT_GREEN
-                    } else {
-                        super::theme::MutantColors::BORDER_LIGHT
-                    }));
-
-                if ui.add_sized([120.0, 32.0], download_button).clicked() && download_enabled {
-                    if let Some(directory) = selected_directory {
-                        // Construct the full download path
-                        let full_path = if directory.ends_with('/') {
-                            format!("{}{}", directory, self.filename.trim())
-                        } else {
-                            format!("{}/{}", directory, self.filename.trim())
-                        };
-                        *response = DownloadWindowResponse::StartDownload(full_path);
+                    // Draw the directory picker using ALL available space
+                    if let Some(ref mut picker) = self.directory_picker {
+                        picker.draw(ui);
                     }
                 }
-            });
+            );
+
+            // Right side: Download configuration (50% width, full height) - NO spacing between panels
+            let right_width = content_width * 0.5;
+
+            ui.allocate_ui_with_layout(
+                egui::Vec2::new(right_width, content_height),
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    // Simple centering with equal top/bottom margins
+                    let available_height = ui.available_height();
+                    let margin = available_height * 0.1; // 10% margin top and bottom
+
+                    ui.add_space(margin);
+
+                    ui.vertical_centered(|ui| {
+                        // Constrain the content width for better readability
+                        let max_content_width = (right_width * 0.8).min(350.0);
+
+                        ui.allocate_ui_with_layout(
+                            egui::Vec2::new(max_content_width, available_height - (margin * 2.0)),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                // Header for download configuration - centered
+                                ui.vertical_centered(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new("📥").size(20.0).color(super::theme::MutantColors::ACCENT_BLUE));
+                                        ui.add_space(8.0);
+                                        ui.heading(egui::RichText::new("Download Configuration").size(18.0).color(super::theme::MutantColors::TEXT_PRIMARY));
+                                    });
+                                });
+                                ui.add_space(12.0);
+
+                                // Show file info with enhanced styling - centered
+                                ui.vertical_centered(|ui| {
+                                    ui.group(|ui| {
+                                        ui.set_min_width(ui.available_width());
+                                        ui.vertical_centered(|ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new("📄").size(14.0).color(super::theme::MutantColors::ACCENT_ORANGE));
+                                                ui.label(egui::RichText::new("File to Download").size(13.0).color(super::theme::MutantColors::TEXT_SECONDARY).strong());
+                                            });
+                                            ui.add_space(4.0);
+                                            ui.label(egui::RichText::new(&self.file_details.key).size(14.0).color(super::theme::MutantColors::ACCENT_ORANGE).strong());
+                                            ui.label(egui::RichText::new(&crate::app::fs::tree::humanize_size(self.file_details.total_size)).size(11.0).color(super::theme::MutantColors::TEXT_MUTED));
+                                        });
+                                    });
+                                });
+
+                                ui.add_space(12.0);
+
+                                // Selected directory info
+                                let selected_directory = self.directory_picker
+                                    .as_ref()
+                                    .and_then(|picker| picker.selected_file_full_path());
+
+                                ui.vertical_centered(|ui| {
+                                    ui.group(|ui| {
+                                        ui.set_min_width(ui.available_width());
+                                        ui.vertical_centered(|ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new("📂").size(14.0).color(super::theme::MutantColors::ACCENT_BLUE));
+                                                ui.label(egui::RichText::new("Destination Folder").size(13.0).color(super::theme::MutantColors::TEXT_SECONDARY).strong());
+                                            });
+                                            ui.add_space(4.0);
+                                            if let Some(directory) = &selected_directory {
+                                                ui.label(egui::RichText::new(directory).size(12.0).color(super::theme::MutantColors::ACCENT_BLUE).monospace());
+                                            } else {
+                                                ui.label(egui::RichText::new("← Select a folder from the left panel").size(12.0).color(super::theme::MutantColors::TEXT_MUTED).italics());
+                                            }
+                                        });
+                                    });
+                                });
+
+                                ui.add_space(12.0);
+
+                                // Filename input with enhanced styling - centered
+                                ui.vertical_centered(|ui| {
+                                    ui.group(|ui| {
+                                        ui.set_min_width(ui.available_width());
+                                        ui.vertical_centered(|ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new("✏️").size(14.0).color(super::theme::MutantColors::ACCENT_GREEN));
+                                                ui.label(egui::RichText::new("Filename").size(13.0).color(super::theme::MutantColors::TEXT_PRIMARY).strong());
+                                            });
+                                            ui.add_space(6.0);
+                                            let text_edit = egui::TextEdit::singleline(&mut self.filename)
+                                                .desired_width(ui.available_width() - 10.0)
+                                                .font(egui::TextStyle::Monospace);
+                                            ui.add(text_edit);
+                                        });
+                                    });
+                                });
+
+                                ui.add_space(20.0);
+
+                                // Action buttons with enhanced styling - centered
+                                let download_enabled = selected_directory.is_some() && !self.filename.trim().is_empty();
+                                let selected_directory_clone = selected_directory.clone(); // Clone for use in closure
+
+                                ui.vertical_centered(|ui| {
+                                    ui.horizontal(|ui| {
+                                        // Cancel button
+                                        let cancel_button = egui::Button::new(egui::RichText::new("Cancel").color(super::theme::MutantColors::TEXT_SECONDARY))
+                                            .fill(super::theme::MutantColors::BACKGROUND_MEDIUM)
+                                            .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_LIGHT))
+                                            .min_size([80.0, 32.0].into());
+
+                                        if ui.add(cancel_button).clicked() {
+                                            *response = DownloadWindowResponse::Cancel;
+                                        }
+
+                                        ui.add_space(10.0);
+
+                                        // Download button
+                                        let download_button = if download_enabled {
+                                            egui::Button::new(egui::RichText::new("📥 Download").size(14.0).strong().color(super::theme::MutantColors::TEXT_PRIMARY))
+                                                .fill(super::theme::MutantColors::ACCENT_GREEN)
+                                                .stroke(egui::Stroke::new(2.0, super::theme::MutantColors::ACCENT_GREEN))
+                                                .min_size([120.0, 32.0].into())
+                                        } else {
+                                            egui::Button::new(egui::RichText::new("📥 Download").size(14.0).color(super::theme::MutantColors::TEXT_MUTED))
+                                                .fill(super::theme::MutantColors::SURFACE)
+                                                .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::BORDER_MEDIUM))
+                                                .min_size([120.0, 32.0].into())
+                                        };
+
+                                        if ui.add_enabled(download_enabled, download_button).clicked() {
+                                            if let Some(directory) = selected_directory_clone {
+                                                // Construct the full download path
+                                                let full_path = if directory.ends_with('/') {
+                                                    format!("{}{}", directory, self.filename.trim())
+                                                } else {
+                                                    format!("{}/{}", directory, self.filename.trim())
+                                                };
+                                                *response = DownloadWindowResponse::StartDownload(full_path);
+                                            }
+                                        }
+                                    });
+                                });
+
+                                if !download_enabled {
+                                    ui.add_space(8.0);
+                                    ui.vertical_centered(|ui| {
+                                        if selected_directory.is_none() {
+                                            ui.label(egui::RichText::new("⚠ Please select a destination folder").size(12.0).color(super::theme::MutantColors::WARNING));
+                                        } else {
+                                            ui.label(egui::RichText::new("⚠ Please enter a filename").size(12.0).color(super::theme::MutantColors::WARNING));
+                                        }
+                                    });
+                                }
+                            }
+                        );
+                    });
+                }
+            );
         });
     }
 
