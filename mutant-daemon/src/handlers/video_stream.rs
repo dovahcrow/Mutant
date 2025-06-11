@@ -11,8 +11,16 @@ pub async fn handle_video_stream(ws: WebSocket, mutant: Arc<MutAnt>, filename: S
 
     log::info!("Video streaming client connected for file: {}", filename);
 
-    // Use the full filename as the key (including extension)
-    let user_key = filename.clone();
+    // URL decode the filename to get the actual key name
+    let user_key = match urlencoding::decode(&filename) {
+        Ok(decoded) => decoded.to_string(),
+        Err(e) => {
+            log::error!("Failed to URL decode filename '{}': {}", filename, e);
+            filename.clone() // Fallback to original filename
+        }
+    };
+
+    log::info!("URL decoded key: '{}' (from '{}')", user_key, filename);
 
     log::info!("Attempting to stream video for key: '{}'", user_key);
 

@@ -12,8 +12,16 @@ pub async fn handle_http_video(
 ) -> Result<impl Reply, Rejection> {
     log::info!("HTTP video request for file: {}, range: {:?}", filename, range_header);
 
-    // Use the full filename as the key (including extension)
-    let user_key = filename.clone();
+    // URL decode the filename to get the actual key name
+    let user_key = match urlencoding::decode(&filename) {
+        Ok(decoded) => decoded.to_string(),
+        Err(e) => {
+            log::error!("Failed to URL decode filename '{}': {}", filename, e);
+            filename.clone() // Fallback to original filename
+        }
+    };
+
+    log::info!("URL decoded key: '{}' (from '{}')", user_key, filename);
 
     // Get the video data from MutAnt
     let video_data = match get_video_data(&mutant, &user_key).await {
