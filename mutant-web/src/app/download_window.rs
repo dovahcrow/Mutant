@@ -452,7 +452,7 @@ impl DownloadWindow {
     }
 
     /// Draw completion UI
-    fn draw_completion_ui(&self, ui: &mut egui::Ui, response: &mut DownloadWindowResponse) {
+    fn draw_completion_ui(&self, ui: &mut egui::Ui, _response: &mut DownloadWindowResponse) {
         // Use the full available space without any margins, similar to downloading UI
         let available_rect = ui.available_rect_before_wrap();
         ui.expand_to_include_rect(available_rect);
@@ -513,16 +513,6 @@ impl DownloadWindow {
                             }
 
                             ui.add_space(20.0);
-
-                            // Close button
-                            if ui.add_sized(
-                                [100.0, 32.0],
-                                egui::Button::new("Close")
-                                    .fill(super::theme::MutantColors::ACCENT_BLUE)
-                                    .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::ACCENT_BLUE))
-                            ).clicked() {
-                                *response = DownloadWindowResponse::Close;
-                            }
                         });
                     },
                 );
@@ -631,5 +621,4 @@ pub enum DownloadWindowResponse {
     None,
     Cancel,
     StartDownload(String),
-    Close,
 }

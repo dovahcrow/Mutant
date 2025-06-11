@@ -57,10 +57,6 @@ impl FsInternalTab {
                         log::info!("Download cancelled by user");
                         // The tab will be closed by the user clicking the close button
                     },
-                    crate::app::download_window::DownloadWindowResponse::Close => {
-                        log::info!("Download window closed by user");
-                        // The tab will be closed by the user clicking the close button
-                    },
                 }
             },
         }

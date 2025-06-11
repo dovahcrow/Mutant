@@ -754,7 +754,7 @@ impl FsWindow {
             log::debug!("Added floating download window with surface ID: {:?}", surface);
 
             // Set the window position and size for download windows
-            let size = [700.0, 500.0]; // Good size for file picker
+            let size = [900.0, 700.0]; // Larger size for better filesystem visibility and content display
 
             // Calculate centered position based on available docking area
             let position = if let Some(available_rect) = self.last_docking_area_rect {
