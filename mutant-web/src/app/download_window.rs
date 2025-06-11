@@ -90,8 +90,8 @@ impl DownloadWindow {
         ui.vertical(|ui| {
             ui.add_space(10.0);
 
-            // Title
-            ui.horizontal(|ui| {
+            // Title - centered
+            ui.vertical_centered(|ui| {
                 ui.label(
                     egui::RichText::new("📥 Download File")
                         .size(18.0)
@@ -101,39 +101,21 @@ impl DownloadWindow {
 
             ui.add_space(10.0);
 
-            // File information
-            egui::Frame::new()
-                .fill(super::theme::MutantColors::BACKGROUND_MEDIUM)
-                .corner_radius(6.0)
-                .inner_margin(12.0)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("File:")
-                                .size(14.0)
-                                .color(super::theme::MutantColors::TEXT_SECONDARY)
-                        );
-                        ui.label(
-                            egui::RichText::new(&self.file_details.key)
-                                .size(14.0)
-                                .color(super::theme::MutantColors::TEXT_PRIMARY)
-                                .monospace()
-                        );
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("Size:")
-                                .size(14.0)
-                                .color(super::theme::MutantColors::TEXT_SECONDARY)
-                        );
-                        ui.label(
-                            egui::RichText::new(&crate::app::fs::tree::humanize_size(self.file_details.total_size))
-                                .size(14.0)
-                                .color(super::theme::MutantColors::TEXT_PRIMARY)
-                        );
-                    });
-                });
+            // File information - centered
+            ui.vertical_centered(|ui| {
+                // Create single centered labels instead of horizontal layouts
+                ui.label(
+                    egui::RichText::new(format!("File: {}", &self.file_details.key))
+                        .size(14.0)
+                        .color(super::theme::MutantColors::TEXT_PRIMARY)
+                        .monospace()
+                );
+                ui.label(
+                    egui::RichText::new(format!("Size: {}", &crate::app::fs::tree::humanize_size(self.file_details.total_size)))
+                        .size(14.0)
+                        .color(super::theme::MutantColors::TEXT_PRIMARY)
+                );
+            });
 
             ui.add_space(15.0);
 
