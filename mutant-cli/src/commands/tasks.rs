@@ -51,6 +51,9 @@ pub async fn handle_tasks(command: TasksCommands) -> Result<()> {
                     TaskProgress::HealthCheck(event) => {
                         println!("  Progress: {:?}", event);
                     }
+                    TaskProgress::Colony(event) => {
+                        println!("  Progress: {:?}", event);
+                    }
                 }
             }
 

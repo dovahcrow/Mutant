@@ -168,6 +168,7 @@ pub fn create_put_progress(mut progress_rx: ProgressReceiver, multi_progress: Mu
                     drop(confirm_pb_guard);
                     Ok::<bool, Box<dyn std::error::Error + Send + Sync>>(true)
                 }
+
                 PutEvent::Complete => {
                     // Check if this is the first or second Complete event
                     let mut first_complete_seen_guard = ctx.first_complete_seen.lock().await;

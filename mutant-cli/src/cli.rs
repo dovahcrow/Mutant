@@ -29,14 +29,22 @@ pub enum Commands {
     #[command(about = "Retrieve a value associated with a key")]
     Get {
         key: String,
-        destination_path: String,
+        #[arg(default_value = None)]
+        destination_path: Option<String>,
         #[arg(short, long)]
         background: bool,
         #[arg(short, long)]
         public: bool,
+        #[arg(short, long, help = "Output to stdout instead of a file")]
+        stdout: bool,
     },
     #[command(about = "Remove a key-value pair")]
     Rm { key: String },
+    #[command(about = "Rename/move a key")]
+    Mv {
+        old_key: String,
+        new_key: String,
+    },
     #[command(about = "List stored keys")]
     Ls {
         #[arg(long, help = "Show fetch history")]
@@ -53,6 +61,8 @@ pub enum Commands {
     Daemon {
         #[command(subcommand)]
         command: DaemonCommands,
+        #[arg(long, default_value = "/tmp/mutant-daemon.lock", help = "Path to the daemon lock file")]
+        lock_file: String,
     },
     #[command(about = "Synchronize local index cache with remote storage")]
     Sync {

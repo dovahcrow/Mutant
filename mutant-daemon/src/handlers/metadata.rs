@@ -5,10 +5,11 @@ use mutant_lib::storage::{IndexEntry, PadStatus};
 use mutant_lib::MutAnt;
 use mutant_protocol::{
     ErrorResponse, KeyDetails, ListKeysRequest, ListKeysResponse, Response, StatsRequest,
-    StatsResponse,
+    StatsResponse, WalletBalanceRequest, WalletBalanceResponse, DaemonStatusRequest, DaemonStatusResponse,
 };
 
 use super::common::UpdateSender;
+use super::is_public_only_mode;
 
 pub(crate) async fn handle_list_keys(
     _req: ListKeysRequest,
@@ -27,12 +28,12 @@ pub(crate) async fn handle_list_keys(
                 .into_iter()
                 .map(|(key, entry)| match entry {
                     IndexEntry::PrivateKey(pads) => {
-                        let total_size = pads.iter().map(|p| p.size).sum::<usize>();
-                        let pad_count = pads.len();
+                        let total_size = pads.iter().map(|p| p.size).sum::<usize>() as u64;
+                        let pad_count = pads.len() as u64;
                         let confirmed_pads = pads
                             .iter()
                             .filter(|p| p.status == PadStatus::Confirmed)
-                            .count();
+                            .count() as u64;
                         KeyDetails {
                             key,
                             total_size,
@@ -44,8 +45,8 @@ pub(crate) async fn handle_list_keys(
                     }
                     IndexEntry::PublicUpload(index_pad, pads) => {
                         let data_size = pads.iter().map(|p| p.size).sum::<usize>();
-                        let total_size = data_size + index_pad.size;
-                        let pad_count = pads.len() + 1; // +1 for index pad
+                        let total_size = (data_size + index_pad.size) as u64;
+                        let pad_count = (pads.len() + 1) as u64; // +1 for index pad
                         let confirmed_data_pads = pads
                             .iter()
                             .filter(|p| p.status == PadStatus::Confirmed)
@@ -55,7 +56,7 @@ pub(crate) async fn handle_list_keys(
                         } else {
                             0
                         };
-                        let confirmed_pads = confirmed_data_pads + index_pad_confirmed;
+                        let confirmed_pads = (confirmed_data_pads + index_pad_confirmed) as u64;
                         KeyDetails {
                             key,
                             total_size,
@@ -105,6 +106,116 @@ pub(crate) async fn handle_stats(
         occupied_pads: stats.occupied_pads,
         free_pads: stats.free_pads,
         pending_verify_pads: stats.pending_verification_pads,
+    });
+
+    update_tx
+        .send(response)
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    Ok(())
+}
+
+pub(crate) async fn handle_wallet_balance(
+    _req: WalletBalanceRequest,
+    update_tx: UpdateSender,
+    mutant: Arc<MutAnt>,
+) -> Result<(), DaemonError> {
+    log::debug!("Handling WalletBalance request");
+
+    // Get the wallet from MutAnt
+    let wallet_result = mutant.get_wallet().await;
+
+    let response = match wallet_result {
+        Ok(wallet) => {
+            // Get token and gas balances
+            let token_balance_result = wallet.balance_of_tokens().await;
+            let gas_balance_result = wallet.balance_of_gas_tokens().await;
+
+            match (token_balance_result, gas_balance_result) {
+                (Ok(token_balance), Ok(gas_balance)) => {
+                    log::info!("Retrieved wallet balances - Tokens: {}, Gas: {}", token_balance, gas_balance);
+                    Response::WalletBalance(WalletBalanceResponse {
+                        token_balance: token_balance.to_string(),
+                        gas_balance: gas_balance.to_string(),
+                    })
+                }
+                (Err(token_err), Ok(_)) => {
+                    log::error!("Failed to get token balance: {}", token_err);
+                    Response::Error(ErrorResponse {
+                        error: format!("Failed to get token balance: {}", token_err),
+                        original_request: None,
+                    })
+                }
+                (Ok(_), Err(gas_err)) => {
+                    log::error!("Failed to get gas balance: {}", gas_err);
+                    Response::Error(ErrorResponse {
+                        error: format!("Failed to get gas balance: {}", gas_err),
+                        original_request: None,
+                    })
+                }
+                (Err(token_err), Err(gas_err)) => {
+                    log::error!("Failed to get both balances - Token: {}, Gas: {}", token_err, gas_err);
+                    Response::Error(ErrorResponse {
+                        error: format!("Failed to get wallet balances - Token: {}, Gas: {}", token_err, gas_err),
+                        original_request: None,
+                    })
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to get wallet: {}", e);
+            Response::Error(ErrorResponse {
+                error: format!("Failed to get wallet: {}", e),
+                original_request: None,
+            })
+        }
+    };
+
+    update_tx
+        .send(response)
+        .map_err(|e| DaemonError::Internal(format!("Update channel send error: {}", e)))?;
+
+    Ok(())
+}
+
+pub(crate) async fn handle_daemon_status(
+    _req: DaemonStatusRequest,
+    update_tx: UpdateSender,
+    mutant: Arc<MutAnt>,
+) -> Result<(), DaemonError> {
+    log::debug!("Handling DaemonStatus request");
+
+    let is_public_only = is_public_only_mode();
+
+    // Get the public key if available
+    let public_key = if is_public_only {
+        None
+    } else {
+        // Try to get the public key from the wallet
+        match mutant.get_wallet().await {
+            Ok(wallet) => {
+                let public_key_hex = format!("{:x}", wallet.address());
+                Some(public_key_hex)
+            }
+            Err(e) => {
+                log::warn!("Failed to get wallet for public key: {}", e);
+                None
+            }
+        }
+    };
+
+    // Determine network (this is a simplified approach - in a real implementation
+    // you might want to store this information during initialization)
+    let network = if is_public_only {
+        "Public-Only".to_string()
+    } else {
+        "Mainnet".to_string() // Default assumption
+    };
+
+    let response = Response::DaemonStatus(DaemonStatusResponse {
+        public_key,
+        is_public_only,
+        network,
     });
 
     update_tx

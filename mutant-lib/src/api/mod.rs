@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use autonomi::ScratchpadAddress;
+use autonomi::{ScratchpadAddress, Wallet};
 use tokio::sync::RwLock;
 
 use crate::{
@@ -36,6 +36,14 @@ impl MutAnt {
 
         Ok(Self { index, data })
     }
+
+    async fn init_all_with_wallet(wallet: Wallet, private_key_hex: &str, network_choice: NetworkChoice) -> Result<Self, Error> {
+        let network = Arc::new(Network::new_with_wallet(wallet, private_key_hex, network_choice)?);
+        let index = Arc::new(RwLock::new(MasterIndex::new(network_choice)));
+        let data = Arc::new(RwLock::new(Data::new(network.clone(), index.clone())));
+
+        Ok(Self { index, data })
+    }
     pub async fn init(private_key_hex: &str) -> Result<Self, Error> {
         Self::init_all(private_key_hex, NetworkChoice::Mainnet).await
     }
@@ -60,6 +68,24 @@ impl MutAnt {
         Self::init_all(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Alphanet).await
     }
 
+    /// Initialize MutAnt for testnet mode with a new random wallet and fund transfer
+    /// Returns (MutAnt instance, new wallet public address, new private key)
+    pub async fn init_testnet() -> Result<(Self, String, String), Error> {
+        use crate::network::wallet::create_testnet_wallet_with_transfer;
+        use crate::network::DEV_TESTNET_PRIVATE_KEY_HEX;
+
+        // Create new random wallet and transfer funds from master
+        let (new_wallet, new_private_key_hex, new_public_address) =
+            create_testnet_wallet_with_transfer(DEV_TESTNET_PRIVATE_KEY_HEX, NetworkChoice::Devnet)
+                .await
+                .map_err(|e| Error::Network(e))?;
+
+        // Initialize MutAnt with the new wallet
+        let mutant = Self::init_all_with_wallet(new_wallet, &new_private_key_hex, NetworkChoice::Devnet).await?;
+
+        Ok((mutant, new_public_address, new_private_key_hex))
+    }
+
     pub async fn put(
         &self,
         user_key: &str,
@@ -80,24 +106,61 @@ impl MutAnt {
         &self,
         user_key: &str,
         get_callback: Option<GetCallback>,
+        stream_data: bool,
     ) -> Result<Vec<u8>, Error> {
-        self.data.read().await.get(user_key, get_callback).await
+        self.data.read().await.get(user_key, get_callback, stream_data).await
     }
 
     pub async fn get_public(
         &self,
         address: &ScratchpadAddress,
         get_callback: Option<GetCallback>,
+        stream_data: bool,
     ) -> Result<Vec<u8>, Error> {
         self.data
             .read()
             .await
-            .get_public(address, get_callback)
+            .get_public(address, get_callback, stream_data)
+            .await
+    }
+
+    /// Get data with immediate pad streaming for video playback.
+    /// Returns a receiver that immediately starts receiving pads as they arrive.
+    /// This is used specifically for video streaming where pads need to be forwarded immediately as they arrive.
+    pub async fn get_with_immediate_streaming(
+        &self,
+        user_key: &str,
+        get_callback: Option<GetCallback>,
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<(usize, Vec<u8>)>, Error> {
+        self.data
+            .read()
+            .await
+            .get_with_immediate_streaming(user_key, get_callback)
+            .await
+    }
+
+    /// Get public data with immediate pad streaming for video playback.
+    /// Returns a receiver that immediately starts receiving pads as they arrive.
+    /// This is used specifically for video streaming where pads need to be forwarded immediately as they arrive.
+    pub async fn get_public_with_immediate_streaming(
+        &self,
+        address: &ScratchpadAddress,
+        get_callback: Option<GetCallback>,
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<(usize, Vec<u8>)>, Error> {
+        self.data
+            .read()
+            .await
+            .get_public_with_immediate_streaming(address, get_callback)
             .await
     }
 
     pub async fn rm(&self, user_key: &str) -> Result<(), Error> {
         self.index.write().await.remove_key(user_key)?;
+        Ok(())
+    }
+
+    pub async fn mv(&self, old_key: &str, new_key: &str) -> Result<(), Error> {
+        self.index.write().await.rename_key(old_key, new_key)?;
         Ok(())
     }
 
@@ -179,6 +242,14 @@ impl MutAnt {
     ) -> Result<SyncResult, Error> {
         self.data.read().await.sync(force, sync_callback).await
     }
+
+    /// Get the wallet from the network adapter
+    ///
+    /// This method provides access to the underlying Autonomi wallet for operations
+    /// that require direct wallet access, such as Colony integration.
+    pub async fn get_wallet(&self) -> Result<Wallet, Error> {
+        self.data.read().await.get_wallet().await
+    }
 }
 
 #[cfg(test)]
@@ -233,7 +304,7 @@ mod tests {
         assert!(keys.contains_key(&user_key));
 
         // check of the data
-        let data = mutant.get(&user_key, None).await.unwrap();
+        let data = mutant.get(&user_key, None, false).await.unwrap();
         assert_eq!(data, data_bytes);
     }
 
@@ -271,7 +342,7 @@ mod tests {
 
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
 
-        let data = mutant.get(&user_key, None).await.unwrap();
+        let data = mutant.get(&user_key, None, false).await.unwrap();
         assert_eq!(data, data_bytes_updated);
     }
 
@@ -310,7 +381,7 @@ mod tests {
         assert!(result.is_ok(), "Store operation failed: {:?}", result.err());
 
         // Verify that the data is correctly stored
-        let data = mutant.get(&user_key, None).await.unwrap();
+        let data = mutant.get(&user_key, None, false).await.unwrap();
         assert_eq!(data, data_bytes);
     }
 }

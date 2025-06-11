@@ -47,11 +47,15 @@ pub async fn run() -> Result<()> {
             destination_path,
             background,
             public,
+            stdout,
         } => {
-            commands::get::handle_get(key, destination_path, public, background, cli.quiet).await?;
+            commands::get::handle_get(key, destination_path, public, background, stdout, cli.quiet).await?;
         }
         Commands::Rm { key } => {
             commands::rm::handle_rm(key).await?;
+        }
+        Commands::Mv { old_key, new_key } => {
+            commands::mv::handle_mv(old_key, new_key).await?;
         }
         Commands::Ls { history } => {
             commands::ls::handle_ls(history).await?;
@@ -62,8 +66,8 @@ pub async fn run() -> Result<()> {
         Commands::Tasks { command } => {
             commands::tasks::handle_tasks(command).await?;
         }
-        Commands::Daemon { command } => {
-            commands::daemon::handle_daemon(command).await?;
+        Commands::Daemon { command, lock_file } => {
+            commands::daemon::handle_daemon(command, lock_file).await?;
         }
         Commands::Sync {
             background,
@@ -98,6 +102,10 @@ pub async fn run() -> Result<()> {
 
 pub async fn connect_to_daemon() -> Result<MutantClient> {
     let mut client = MutantClient::new();
-    client.connect("ws://localhost:3030/ws").await?;
+    client.connect(get_daemon_url()).await?;
     Ok(client)
+}
+
+pub fn get_daemon_url() -> &'static str {
+    "ws://localhost:3030/ws"
 }

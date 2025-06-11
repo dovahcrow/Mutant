@@ -45,6 +45,11 @@ pub fn create_get_progress(mut progress_rx: ProgressReceiver, multi_progress: &M
                     }
                     drop(pb_guard);
                 }
+                GetEvent::PadData { chunk_index: _, data: _ } => {
+                    // We don't need to do anything with the data here
+                    // The data is handled by the data stream receiver in the CLI command
+                    trace!("Get Callback: PadData event received");
+                }
                 GetEvent::Complete => {
                     let mut pb_guard = pb_arc.lock().await;
                     if let Some(pb) = pb_guard.take() {

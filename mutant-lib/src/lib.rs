@@ -159,7 +159,7 @@ mod internal_events;
 pub use crate::api::MutAnt;
 
 pub mod config {
-    pub use crate::network::NetworkChoice;
+    pub use crate::network::{NetworkChoice, DEV_TESTNET_PRIVATE_KEY_HEX};
 }
 
 pub mod storage {

@@ -13,11 +13,12 @@ pub async fn handle_health_check(
     quiet: bool,
 ) -> Result<()> {
     if background {
-        let _ = tokio::spawn(async move {
-            let mut client = connect_to_daemon().await.unwrap();
-            let (start_task, _progress_rx) = client.health_check(&key_name, recycle).await.unwrap();
-            start_task.await.unwrap();
-        });
+        // For background tasks, we'll just start the operation and return
+        // without waiting for it to complete
+        let mut client = connect_to_daemon().await?;
+        let (_start_task, _progress_rx, _) = client.health_check(&key_name, recycle).await?;
+
+        // Don't await the start_task, just let it run in the background
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -25,7 +26,7 @@ pub async fn handle_health_check(
     }
 
     let mut client = connect_to_daemon().await?;
-    let (start_task, progress_rx) = client.health_check(&key_name, recycle).await?;
+    let (start_task, progress_rx, _) = client.health_check(&key_name, recycle).await?;
 
     // Create the progress bar wrapper
     // Keep it in scope until the end of the function to ensure progress bars are properly cleaned up

@@ -7,7 +7,7 @@ mod commands;
 mod history;
 mod utils;
 
-pub use app::connect_to_daemon;
+pub use app::{connect_to_daemon, get_daemon_url};
 use log::LevelFilter;
 
 #[tokio::main]

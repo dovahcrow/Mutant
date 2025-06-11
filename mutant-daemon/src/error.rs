@@ -1,4 +1,3 @@
-use dialoguer;
 use std::{io, path::PathBuf};
 use thiserror::Error;
 use warp::reject::Reject;
@@ -39,7 +38,7 @@ pub enum Error {
     NoWalletsFound(PathBuf),
 
     #[error("Failed to get user wallet selection: {0}")]
-    UserSelectionFailed(dialoguer::Error),
+    UserSelectionFailed(String),
 
     #[error("No wallet configured or selected")]
     WalletNotSet,
@@ -52,6 +51,9 @@ pub enum Error {
 
     #[error("Failed to join server task: {0}")]
     JoinError(#[from] tokio::task::JoinError),
+
+    #[error("Colony integration error: {0}")]
+    ColonyError(String),
 }
 
 // Implement warp::reject::Reject for DaemonError so we can use it in warp filters

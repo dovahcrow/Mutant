@@ -1,4 +1,4 @@
 [workspace]
 resolver = "3"
-members = ["mutant-lib", "mutant-cli", "mutant-daemon", "mutant-client", "mutant-protocol"]
+members = ["mutant-lib", "mutant-cli", "mutant-daemon", "mutant-client", "mutant-protocol", "mutant-web"]
 default-members = ["mutant-cli"]

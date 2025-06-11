@@ -37,7 +37,34 @@ pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap, activ
         let msg = match result {
             Ok(msg) => msg,
             Err(e) => {
-                log::trace!("WebSocket receive error: {}", e);
+                // Improved error logging for WebSocket receive errors
+                if e.to_string().contains("Space limit exceeded") || e.to_string().contains("too long") {
+                    log::error!("WebSocket receive error: {}. This indicates the message size exceeds the configured limit.", e);
+
+                    // Extract the message size from the error if possible
+                    let size_info = if let Some(size_start) = e.to_string().find("Message too long: ") {
+                        let size_start = size_start + "Message too long: ".len();
+                        if let Some(size_end) = e.to_string()[size_start..].find(" >") {
+                            let size = &e.to_string()[size_start..size_start+size_end];
+                            format!("Your message was {} bytes. ", size)
+                        } else {
+                            "".to_string()
+                        }
+                    } else {
+                        "".to_string()
+                    };
+
+                    // Try to send an error response before disconnecting
+                    let _ = update_tx.send(Response::Error(ErrorResponse {
+                        error: format!(
+                            "Message size limit exceeded. {}Please try uploading a smaller file or contact the administrator to increase the limit. Error: {}",
+                            size_info, e
+                        ),
+                        original_request: None,
+                    }));
+                } else {
+                    log::trace!("WebSocket receive error: {}", e);
+                }
                 // Don't need to send error here, forwarder handles closure
                 break;
             }
@@ -49,6 +76,11 @@ pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap, activ
         }
 
         if let Ok(text) = msg.to_str() {
+            let text_len = text.len();
+            if text_len > 1024 * 1024 { // Log large messages (>1MB)
+                log::info!("Received large text message: {} bytes", text_len);
+            }
+
             let original_request = text.to_string(); // Keep for error reporting
             match serde_json::from_str::<Request>(text) {
                 Ok(request) => {
@@ -78,7 +110,7 @@ pub async fn handle_ws(ws: WebSocket, mutant: Arc<MutAnt>, tasks: TaskMap, activ
                 }
             }
         } else if msg.is_binary() {
-            log::warn!("Received binary message, ignoring.");
+            log::warn!("Received binary message of size {} bytes, ignoring.", msg.as_bytes().len());
             let _ = update_tx.send(Response::Error(ErrorResponse {
                 error: "Binary messages are not supported".to_string(),
                 original_request: None,

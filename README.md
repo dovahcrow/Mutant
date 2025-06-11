@@ -6,15 +6,15 @@
 [![Docs.rs](https://docs.rs/mutant-lib/badge.svg)](https://docs.rs/mutant-lib)
 [![License: LGPLv3](https://img.shields.io/badge/license-LGPLv3-blue.svg)](LICENSE)
 
-> **Mutant** is a decentralized P2P mutable key-value storage system built on the Autonomi network, featuring chunking, encryption, resumable uploads, pad recycling, daemon architecture, and background task management with a powerful async Rust API + CLI.
+> **Mutant** is a decentralized P2P mutable key-value storage system built on the Autonomi network, featuring chunking, encryption, resumable uploads, pad recycling, daemon architecture, and background task management with a powerful async Rust API + CLI. Self-Hosted by default.
 
 <p align="center">
   <img src="docs/screenshots/banner_medium.png" alt="cover" width="100%">
 </p>
-<p align="center">
-  <img src="docs/screenshots/demo.gif" alt="demo" width="100%">
-</p>
 
+<p align="center">
+  <img src="docs/screenshots/screenshot.png" alt="web" width="100%">
+</p>
 
 
 **Note:** No LLMs were harmed in the making of this project.
@@ -65,6 +65,11 @@
 *   **Task Management:** Monitor, query, and control background tasks.
 *   **Async-first Design:** Built on `tokio` for high-performance non-blocking operations.
 *   **Dual Interface:** Use as a Rust library (`mutant-lib`) or via the `mutant` CLI.
+*   **Web Interface**
+       - Customizable windowed workspace 
+       - Image viewer
+       - Text/Code viewer/editor
+       - Universal video format support with real-time transcoding and streaming with ffmpeg
 
 ## Getting Started
 
@@ -131,6 +136,12 @@ $> mutant get -p a420224971527d61ce6ee21d850a07c243498c95808697e8fac23f461545656
 ```
 
 ## Command-Line Interface (CLI)
+
+
+<p align="center">
+  <img src="docs/screenshots/demo.gif" alt="demo" width="100%">
+</p>
+
 
 MutAnt includes the `mutant` command for convenient command-line access. When run without arguments, it defaults to listing your stored keys.
 

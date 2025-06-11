@@ -17,7 +17,7 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 futures = { version = "0.3", features = ["alloc"] }
 url = "2.5"
 thiserror = "1.0"
-ewebsock = "0.8" # Add WebSocket abstraction library
+nash-ws = "0.3.1" # Cross-platform async WebSocket library
 
 # WASM-specific dependencies
 wasm-bindgen = "0.2"
@@ -28,8 +28,7 @@ log = "0.4" # Required by tracing-wasm/console_log
 console_error_panic_hook = "0.1"
 
 # Native-specific dependencies (conditional compilation)
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
 
 [dependencies.web-sys]
 version = "0.3"

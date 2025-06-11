@@ -42,6 +42,15 @@ pub enum ClientError {
 
     #[error("Task with ID {0} not found")]
     TaskNotFound(mutant_protocol::TaskId),
+
+    #[error("Channel closed unexpectedly")]
+    ChannelClosed,
+
+    #[error("Daemon returned an error: {0}")]
+    DaemonError(String),
+
+    #[error("Multipart upload failed: {0}")]
+    MultipartError(String),
 }
 
 // Helper to convert JsValue to ClientError

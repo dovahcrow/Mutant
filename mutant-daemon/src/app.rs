@@ -1,7 +1,7 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use xdg::BaseDirectories;
 
-use mutant_lib::{config::NetworkChoice, MutAnt};
+use mutant_lib::{config::{NetworkChoice, DEV_TESTNET_PRIVATE_KEY_HEX}, MutAnt};
 use tokio::sync::{RwLock, OnceCell};
 use warp::Filter;
 
@@ -17,15 +17,39 @@ use tokio::signal;
 pub static PUBLIC_ONLY_MODE: OnceCell<bool> = OnceCell::const_new();
 
 /// Helper function to initialize MutAnt based on network choice and private key
-async fn init_mutant(network_choice: NetworkChoice, private_key: Option<String>) -> Result<(MutAnt, bool), Error> {
+/// Returns (MutAnt instance, is_public_only, actual_private_key_used)
+async fn init_mutant(network_choice: NetworkChoice, private_key: Option<String>, random_testnet_key: bool) -> Result<(MutAnt, bool, Option<String>), Error> {
     let mut is_public_only = private_key.is_none();
+    let mut actual_private_key = private_key.clone();
 
     let mutant = match (network_choice, private_key) {
         // Full access with private key
         (NetworkChoice::Devnet, _) => {
-            log::info!("Running in local mode");
             is_public_only = false;
-            MutAnt::init_local().await
+
+            if random_testnet_key {
+                log::info!("Running in testnet mode - generating new random wallet");
+                // Use the new testnet mode that generates a valid wallet and transfers funds
+                match MutAnt::init_testnet().await {
+                    Ok((mutant, public_address, new_private_key)) => {
+                        log::info!("🔑 NEW TESTNET WALLET CREATED");
+                        log::info!("📍 Public Address: {}", public_address);
+                        log::info!("💰 Transferred funds to new wallet");
+                        log::info!("🚀 Using new wallet for all operations");
+                        actual_private_key = Some(new_private_key);
+                        Ok(mutant)
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to create testnet wallet: {}. Falling back to master key.", e);
+                        MutAnt::init_local().await
+                    }
+                }
+            } else {
+                log::info!("Running in testnet mode - using testnet master key");
+                // Set the actual private key to the testnet master key for colony manager
+                actual_private_key = Some(DEV_TESTNET_PRIVATE_KEY_HEX.to_string());
+                MutAnt::init_local().await
+            }
         }
         (NetworkChoice::Alphanet, Some(key)) => {
             log::info!("Running in alphanet mode");
@@ -47,7 +71,7 @@ async fn init_mutant(network_choice: NetworkChoice, private_key: Option<String>)
         }
     }.map_err(Error::MutAnt)?;
 
-    Ok((mutant, is_public_only))
+    Ok((mutant, is_public_only, actual_private_key))
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -136,23 +160,26 @@ pub struct AppOptions {
     pub local: bool,
     pub alphanet: bool,
     pub ignore_ctrl_c: bool,
+    pub bind_address: String,
+    pub lock_file_path: String,
+    pub random_testnet_key: bool,
 }
 
 pub async fn run(options: AppOptions) -> Result<(), Error> {
-    // check if the daemon is running by checking the /tmp/mutant-daemon.lock file
-    if std::fs::File::open("/tmp/mutant-daemon.lock").is_ok() {
+    // check if the daemon is running by checking the lock file
+    if std::fs::File::open(&options.lock_file_path).is_ok() {
         println!("Mutant Daemon is already running");
         return Ok(());
     }
 
     // Create the lock file. It will be held until the process exits.
     let _lock_file =
-        lockfile::Lockfile::create("/tmp/mutant-daemon.lock").map_err(Error::Lockfile)?;
+        lockfile::Lockfile::create(&options.lock_file_path).map_err(Error::Lockfile)?;
 
     // put the pid of the daemon in the lock file
     // Note: The lockfile crate typically manages this implicitly through the file lock.
     // Writing the PID might be redundant or could be handled differently.
-    std::fs::write("/tmp/mutant-daemon.lock", std::process::id().to_string())?;
+    std::fs::write(&options.lock_file_path, std::process::id().to_string())?;
 
     log::info!("Starting Mutant Daemon...");
 
@@ -201,7 +228,7 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     };
 
     // Initialize MutAnt with the appropriate mode
-    let (mutant, is_public_only) = init_mutant(network_choice, private_key).await?;
+    let (mutant, is_public_only, actual_private_key) = init_mutant(network_choice, private_key.clone(), options.random_testnet_key).await?;
     let mutant = Arc::new(mutant);
 
     // Set the public-only mode flag
@@ -210,6 +237,39 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     log::info!("MutAnt initialized successfully{}",
         if is_public_only { " in public-only mode" } else { "" });
 
+    // Store colony initialization parameters for later use when WebSocket clients connect
+    crate::handlers::colony::set_colony_init_params(network_choice, actual_private_key.clone()).await;
+
+    // Initialize colony manager at startup if we have a wallet (not in public-only mode)
+    if !is_public_only {
+        log::info!("Initializing colony manager at daemon startup...");
+
+        // Get wallet from MutAnt for colony initialization
+        match mutant.get_wallet().await {
+            Ok(wallet) => {
+                // Spawn colony manager initialization as async task to avoid blocking daemon startup
+                let wallet_clone = wallet.clone();
+                let network_choice_clone = network_choice;
+                let private_key_clone = actual_private_key.clone();
+
+                tokio::spawn(async move {
+                    match crate::handlers::colony::init_colony_manager(wallet_clone, network_choice_clone, private_key_clone).await {
+                        Ok(_) => {
+                            log::info!("Colony manager initialized successfully at daemon startup");
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to initialize colony manager at startup: {}. Colony features will be available on-demand.", e);
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                log::warn!("Failed to get wallet for colony initialization: {}. Colony features will be available on-demand.", e);
+            }
+        }
+    } else {
+        log::info!("Running in public-only mode, skipping colony manager initialization");
+    }
     // Initialize Task Management
     let tasks: TaskMap = Arc::new(RwLock::new(HashMap::new()));
     log::info!("Task manager initialized.");
@@ -218,21 +278,61 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
     let active_keys: handlers::ActiveKeysMap = Arc::new(RwLock::new(HashMap::new()));
     log::info!("Active keys manager initialized.");
 
-    // Define WebSocket route using the actual handler
+    // Define WebSocket route using the actual handler with increased message size limit
+    // Set max message size to 2GB (2 * 1024 * 1024 * 1024)
+    // This is the maximum size for WebSocket messages
+    let max_message_size = 2 * 1024 * 1024 * 1024;
+
+    // Set max frame size to 2GB (2 * 1024 * 1024 * 1024)
+    // This needs to be large enough to handle the largest expected frame
+    let max_frame_size = 2 * 1024 * 1024 * 1024;
+
+    log::info!("Configuring WebSocket with max_message_size={} bytes, max_frame_size={} bytes",
+               max_message_size, max_frame_size);
+
+    // Clone mutant for use in multiple routes
+    let mutant_for_ws = mutant.clone();
+    let mutant_for_video = mutant.clone();
+
     let ws_route = warp::path("ws")
         .and(warp::ws())
-        .and(warp::any().map(move || mutant.clone()))
+        .and(warp::any().map(move || mutant_for_ws.clone()))
         .and(warp::any().map(move || tasks.clone()))
         .and(warp::any().map(move || active_keys.clone()))
         .map(
-            |ws: warp::ws::Ws, mutant_instance: Arc<MutAnt>, task_map: TaskMap, active_keys_map: handlers::ActiveKeysMap| {
-                ws.on_upgrade(move |socket| handlers::handle_ws(socket, mutant_instance, task_map, active_keys_map))
+            move |ws: warp::ws::Ws, mutant_instance: Arc<MutAnt>, task_map: TaskMap, active_keys_map: handlers::ActiveKeysMap| {
+                // Configure WebSocket with increased message size limit and frame size
+                ws.max_message_size(max_message_size)
+                  .max_frame_size(max_frame_size)
+                  .on_upgrade(move |socket| handlers::handle_ws(socket, mutant_instance, task_map, active_keys_map))
             },
         );
 
-    // Define server address
-    // TODO: Make this configurable
-    let addr: SocketAddr = ([127, 0, 0, 1], 3030).into();
+    // Add video streaming endpoint (WebSocket)
+    let video_stream_route = warp::path("video_stream")
+        .and(warp::path::param::<String>()) // filename parameter
+        .and(warp::ws())
+        .and(warp::any().map(move || mutant_for_video.clone()))
+        .map(
+            move |filename: String, ws: warp::ws::Ws, mutant_instance: Arc<MutAnt>| {
+                ws.max_message_size(max_message_size)
+                  .max_frame_size(max_frame_size)
+                  .on_upgrade(move |socket| handlers::handle_video_stream(socket, mutant_instance, filename))
+            },
+        );
+
+    // Add HTTP video endpoint for range requests (true streaming)
+    let mutant_for_http_video = mutant.clone();
+    let video_http_route = warp::path("video")
+        .and(warp::path::param::<String>()) // filename parameter
+        .and(warp::get())
+        .and(warp::header::optional::<String>("range"))
+        .and(warp::any().map(move || mutant_for_http_video.clone()))
+        .and_then(handlers::handle_http_video);
+
+    // Parse the bind address from options
+    let addr: SocketAddr = options.bind_address.parse()
+        .map_err(|e| Error::Internal(format!("Invalid bind address '{}': {}", options.bind_address, e)))?;
     log::info!("WebSocket server listening on {}", addr);
 
     let ignore_ctrl_c = options.ignore_ctrl_c;
@@ -262,8 +362,11 @@ pub async fn run(options: AppOptions) -> Result<(), Error> {
 
     };
 
+    // Combine routes
+    let routes = ws_route.or(video_stream_route).or(video_http_route);
+
     // Start the server with graceful shutdown
-    let (_, server) = warp::serve(ws_route).bind_with_graceful_shutdown(addr, shutdown_signal);
+    let (_, server) = warp::serve(routes).bind_with_graceful_shutdown(addr, shutdown_signal);
 
     log::info!("Starting server task...");
     // Await the server task. The lock file will be released when the process exits.

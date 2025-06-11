@@ -130,6 +130,14 @@ pub enum GetEvent {
     },
     /// Indicates that a single pad (chunk) has been fetched.
     PadFetched,
+    /// Contains data from a fetched pad (chunk).
+    /// Only sent when streaming is enabled.
+    PadData {
+        /// The index of the chunk in the overall file.
+        chunk_index: usize,
+        /// The actual data from the pad.
+        data: Vec<u8>,
+    },
     /// Indicates that the `get` operation has completed successfully.
     Complete,
 }
@@ -239,6 +247,7 @@ pub enum TaskType {
     Purge,
     HealthCheck,
     Rm,
+    Mv,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -277,6 +286,147 @@ pub type PutCallback = Arc<
         + Sync,
 >;
 
+/// Events emitted during colony operations.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ColonyEvent {
+    /// Colony manager initialization started
+    InitializationStarted,
+
+    /// Data store initialization started
+    DataStoreInitStarted,
+
+    /// Data store initialization completed
+    DataStoreInitCompleted,
+
+    /// Key store initialization started
+    KeyStoreInitStarted,
+
+    /// Key store initialization completed
+    KeyStoreInitCompleted,
+
+    /// Key derivation started
+    KeyDerivationStarted,
+
+    /// Key derivation completed
+    KeyDerivationCompleted { pod_address: String },
+
+    /// Graph database initialization started
+    GraphInitStarted,
+
+    /// Graph database initialization completed
+    GraphInitCompleted,
+
+    /// Colony manager initialization completed
+    InitializationCompleted,
+
+    /// User pod creation/verification started
+    UserPodCheckStarted,
+
+    /// User pod creation started
+    UserPodCreationStarted,
+
+    /// User pod creation completed
+    UserPodCreationCompleted { pod_address: String },
+
+    /// User pod verification started
+    UserPodVerificationStarted { pod_address: String },
+
+    /// User pod verification completed
+    UserPodVerificationCompleted { pod_address: String, exists: bool },
+
+    /// User pod check completed
+    UserPodCheckCompleted,
+
+    /// Contact addition started
+    AddContactStarted { pod_address: String },
+
+    /// Contact pod verification started
+    ContactVerificationStarted { pod_address: String },
+
+    /// Contact pod verification completed
+    ContactVerificationCompleted { pod_address: String, exists: bool },
+
+    /// Contact pod reference addition started
+    ContactRefAdditionStarted { pod_address: String },
+
+    /// Contact pod reference addition completed
+    ContactRefAdditionCompleted { pod_address: String },
+
+    /// Contact pod download started
+    ContactPodDownloadStarted { pod_address: String },
+
+    /// Contact pod download completed
+    ContactPodDownloadCompleted { pod_address: String },
+
+    /// Contact pod upload started
+    ContactPodUploadStarted,
+
+    /// Contact pod upload completed
+    ContactPodUploadCompleted,
+
+    /// Contact addition completed
+    AddContactCompleted { pod_address: String },
+
+    /// Contacts sync started
+    SyncContactsStarted { total_contacts: usize },
+
+    /// Individual contact sync started
+    ContactSyncStarted { pod_address: String, contact_index: usize, total_contacts: usize },
+
+    /// Individual contact sync completed
+    ContactSyncCompleted { pod_address: String, contact_index: usize, total_contacts: usize },
+
+    /// Pod refresh operation started
+    PodRefreshStarted { total_pods: usize },
+
+    /// Pod refresh operation completed
+    PodRefreshCompleted { refreshed_pods: usize },
+
+    /// Contacts sync completed
+    SyncContactsCompleted { synced_count: usize },
+
+    /// Content indexing started
+    IndexingStarted { user_key: String },
+
+    /// Content indexing completed
+    IndexingCompleted { user_key: String, success: bool },
+
+    /// Cache refresh started
+    CacheRefreshStarted,
+
+    /// Cache refresh completed
+    CacheRefreshCompleted,
+
+    /// Search operation started
+    SearchStarted { query_type: String },
+
+    /// Search operation completed
+    SearchCompleted { results_count: usize },
+
+    /// Generic operation progress with custom message
+    Progress { operation: String, message: String, current: Option<usize>, total: Option<usize> },
+
+    /// Operation completed successfully
+    OperationCompleted { operation: String },
+
+    /// Operation failed
+    OperationFailed { operation: String, error: String },
+}
+
+/// Callback type used during colony operations to report progress and allow cancellation.
+pub type ColonyCallback = Arc<
+    dyn Fn(
+            ColonyEvent,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = Result<bool, Box<dyn std::error::Error + Send + Sync>>>
+                    + Send
+                    + Sync,
+            >,
+        > + Send
+        + Sync,
+>;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskProgress {
     Put(PutEvent),
@@ -284,6 +434,7 @@ pub enum TaskProgress {
     Sync(SyncEvent),
     Purge(PurgeEvent),
     HealthCheck(HealthCheckEvent),
+    Colony(ColonyEvent),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -324,19 +475,47 @@ pub struct Task {
 // --- Incoming Requests ---
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PutSource {
+    /// Path to a file on the daemon's filesystem
+    FilePath(String),
+    /// Direct byte data to upload
+    Bytes(Vec<u8>),
+    /// Streaming data - data will be sent in chunks via PutData requests
+    Stream { total_size: u64 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PutRequest {
     pub user_key: String,
-    pub source_path: String, // Path to the file on the daemon's filesystem
+    pub source: PutSource,
+    /// Original filename (used for display purposes)
+    pub filename: Option<String>,
     pub mode: StorageMode,
     pub public: bool,
     pub no_verify: bool,
 }
 
+/// Request containing a chunk of data for a streaming put operation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PutDataRequest {
+    /// The task ID associated with this data chunk.
+    pub task_id: TaskId,
+    /// The index of this chunk in the overall file.
+    pub chunk_index: usize,
+    /// The total number of chunks in the file.
+    pub total_chunks: usize,
+    /// The actual data for this chunk.
+    pub data: Vec<u8>,
+    /// Whether this is the last chunk of the file.
+    pub is_last: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetRequest {
     pub user_key: String,
-    pub destination_path: String, // Path where the fetched file should be saved on the daemon
+    pub destination_path: Option<String>, // Optional path where the fetched file should be saved on the daemon
     pub public: bool,
+    pub stream_data: bool, // Whether to stream data back to the client
 }
 
 #[derive(Deserialize, Debug, PartialEq, Eq, Serialize, Clone)]
@@ -358,6 +537,12 @@ pub struct RmRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MvRequest {
+    pub old_key: String,
+    pub new_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ListKeysRequest;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -365,16 +550,19 @@ pub struct PurgeRequest {
     pub aggressive: bool,
 }
 
-/// Represents all possible requests the client can send to the daemon.
+
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub enum Request {
     Put(PutRequest),
+    PutData(PutDataRequest),
     Get(GetRequest),
     QueryTask(QueryTaskRequest),
     ListTasks(ListTasksRequest),
     StopTask(StopTaskRequest),
     Rm(RmRequest),
+    Mv(MvRequest),
     ListKeys(ListKeysRequest),
     Stats(StatsRequest),
     Sync(SyncRequest),
@@ -382,6 +570,20 @@ pub enum Request {
     Import(ImportRequest),
     Export(ExportRequest),
     HealthCheck(HealthCheckRequest),
+    WalletBalance(WalletBalanceRequest),
+    DaemonStatus(DaemonStatusRequest),
+    // Colony integration requests
+    Search(SearchRequest),
+    IndexContent(IndexContentRequest),
+    GetMetadata(GetMetadataRequest),
+    AddContact(AddContactRequest),
+    ListContent(ListContentRequest),
+    SyncContacts(SyncContactsRequest),
+    GetUserContact(GetUserContactRequest),
+    ListContacts(ListContactsRequest),
+    // Filesystem navigation requests
+    ListDirectory(ListDirectoryRequest),
+    GetFileInfo(GetFileInfoRequest),
 }
 
 // --- Outgoing Responses ---
@@ -433,13 +635,19 @@ pub struct RmSuccessResponse {
     pub user_key: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MvSuccessResponse {
+    pub old_key: String,
+    pub new_key: String,
+}
+
 /// Detailed information about a single stored key.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KeyDetails {
     pub key: String,
-    pub total_size: usize,
-    pub pad_count: usize,
-    pub confirmed_pads: usize,
+    pub total_size: u64,
+    pub pad_count: u64,
+    pub confirmed_pads: u64,
     pub is_public: bool,
     pub public_address: Option<String>, // hex representation
 }
@@ -460,6 +668,27 @@ pub struct StatsResponse {
     pub occupied_pads: u64,
     pub free_pads: u64,
     pub pending_verify_pads: u64,
+}
+
+// Wallet balance request/response
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct WalletBalanceRequest {}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct WalletBalanceResponse {
+    pub token_balance: String,
+    pub gas_balance: String,
+}
+
+// Daemon status request/response
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct DaemonStatusRequest {}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct DaemonStatusResponse {
+    pub public_key: Option<String>,
+    pub is_public_only: bool,
+    pub network: String,
 }
 // End of added structs
 
@@ -485,7 +714,9 @@ pub struct SyncResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetResult {
     /// Total size of the retrieved data in bytes.
-    pub size: usize,
+    pub size: u64,
+    /// Indicates if data was streamed back to the client.
+    pub streamed: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -545,6 +776,175 @@ pub struct HealthCheckResult {
     pub nb_keys_recycled: usize,
 }
 
+// Colony integration request types
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SearchRequest {
+    pub query: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct IndexContentRequest {
+    pub user_key: String,
+    pub metadata: serde_json::Value,
+    pub public_address: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct GetMetadataRequest {
+    pub address: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AddContactRequest {
+    pub pod_address: String,
+    pub contact_name: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ListContentRequest {
+    // Empty for now - lists all content
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SyncContactsRequest {
+    // Empty for now - syncs all contacts
+}
+
+// --- Filesystem Navigation Requests ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListDirectoryRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetFileInfoRequest {
+    pub path: String,
+}
+
+// Colony integration response types
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SearchResponse {
+    pub results: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct IndexContentResponse {
+    pub success: bool,
+    pub pod_address: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct GetMetadataResponse {
+    pub metadata: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AddContactResponse {
+    pub success: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ListContentResponse {
+    pub content: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SyncContactsResponse {
+    pub synced_count: usize,
+}
+
+// --- Filesystem Navigation Response Types ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileSystemEntry {
+    pub name: String,
+    pub path: String,
+    pub is_directory: bool,
+    pub size: Option<u64>,
+    pub modified: Option<u64>, // Unix timestamp
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListDirectoryResponse {
+    pub path: String,
+    pub entries: Vec<FileSystemEntry>,
+    /// The actual home directory path for display purposes
+    pub home_directory: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetFileInfoResponse {
+    pub path: String,
+    pub exists: bool,
+    pub is_directory: bool,
+    pub size: Option<u64>,
+    pub modified: Option<u64>, // Unix timestamp
+    pub readable: bool,
+}
+
+/// Request to get user's own contact information
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetUserContactRequest;
+
+/// Response containing user's contact information
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetUserContactResponse {
+    pub contact_address: String,
+    pub contact_type: String, // "wallet" or "pod"
+    pub display_name: Option<String>,
+}
+
+/// Request to list all contacts
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListContactsRequest;
+
+/// Response containing list of contacts
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListContactsResponse {
+    pub contacts: Vec<String>, // List of pod addresses
+}
+
+/// Response containing colony operation progress
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ColonyProgressResponse {
+    pub event: ColonyEvent,
+    pub operation_id: Option<String>,
+}
+
+/// Response containing a chunk of data from a get operation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetDataResponse {
+    /// The task ID associated with this data chunk.
+    pub task_id: TaskId,
+    /// The index of this chunk in the overall file.
+    pub chunk_index: u64,
+    /// The total number of chunks in the file.
+    pub total_chunks: u64,
+    /// The actual data for this chunk.
+    pub data: Vec<u8>,
+    /// Whether this is the last chunk of the file.
+    pub is_last: bool,
+}
+
+/// Response containing a streaming pad chunk for immediate video playback.
+/// This is sent as soon as each pad is downloaded, without waiting for completion.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StreamingPadResponse {
+    /// The task ID associated with this streaming get operation.
+    pub task_id: TaskId,
+    /// The index of this pad in the overall file.
+    pub pad_index: usize,
+    /// The total number of pads expected (may be updated as more pads are discovered).
+    pub total_pads: usize,
+    /// The actual pad data.
+    pub data: Vec<u8>,
+    /// Whether this is the last pad of the file.
+    pub is_last: bool,
+    /// The key being streamed (for client identification).
+    pub key: String,
+}
+
 /// Represents all possible responses the daemon can send to the client.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
@@ -556,10 +956,31 @@ pub enum Response {
     TaskStopped(TaskStoppedResponse),
     TaskList(TaskListResponse),
     RmSuccess(RmSuccessResponse),
+    MvSuccess(MvSuccessResponse),
     ListKeys(ListKeysResponse),
     Stats(StatsResponse),
+    WalletBalance(WalletBalanceResponse),
+    DaemonStatus(DaemonStatusResponse),
     Import(ImportResponse),
     Export(ExportResponse),
+    /// A chunk of data from a get operation.
+    GetData(GetDataResponse),
+    /// A streaming pad chunk from a get operation (for immediate video streaming).
+    StreamingPad(StreamingPadResponse),
+    // Colony integration responses
+    Search(SearchResponse),
+    IndexContent(IndexContentResponse),
+    GetMetadata(GetMetadataResponse),
+    AddContact(AddContactResponse),
+    ListContent(ListContentResponse),
+    SyncContacts(SyncContactsResponse),
+    GetUserContact(GetUserContactResponse),
+    ListContacts(ListContactsResponse),
+    /// Colony operation progress update
+    ColonyProgress(ColonyProgressResponse),
+    // Filesystem navigation responses
+    ListDirectory(ListDirectoryResponse),
+    GetFileInfo(GetFileInfoResponse),
 }
 
 // Helper moved to where Response is used (client/server)
