@@ -62,6 +62,8 @@ enum ClientCommand {
     GetFileInfo(String, oneshot::Sender<Result<mutant_protocol::GetFileInfoResponse, String>>),
     // File path upload
     PutFilePath(String, String, mutant_protocol::StorageMode, bool, bool, oneshot::Sender<Result<(String, mpsc::UnboundedReceiver<Result<mutant_protocol::TaskProgress, String>>), String>>),
+    // File path download
+    DownloadToPath(String, String, bool, oneshot::Sender<Result<(), String>>),
 }
 
 // Singleton channel to the client manager
@@ -799,6 +801,62 @@ fn spawn_client_manager(mut rx: futures::channel::mpsc::UnboundedReceiver<Client
                         }
                     });
                 }
+                ClientCommand::DownloadToPath(key, destination_path, is_public, sender) => {
+                    if let Err(e) = ensure_connected(&mut client, &mut connected).await {
+                        if !sender.is_canceled() {
+                            let _ = sender.send(Err(e));
+                        }
+                        continue;
+                    }
+
+                    // Create a new client for the download operation to avoid lifetime issues
+                    let mut download_client = client.clone();
+
+                    // Spawn a separate task to handle the download operation
+                    spawn_local(async move {
+                        // Connect the client first since cloned clients don't have a connection
+                        let ws_url = default_ws_url();
+                        if let Err(e) = download_client.connect(&ws_url).await {
+                            error!("Failed to connect cloned client: {:?}", e);
+                            if !sender.is_canceled() {
+                                let _ = sender.send(Err(format!("Failed to connect: {:?}", e)));
+                            }
+                            return;
+                        }
+
+                        info!("Starting file path download: {} -> {}", key, destination_path);
+
+                        // Use the get method with destination path (no streaming)
+                        match download_client.get(&key, Some(&destination_path), is_public, false).await {
+                            Ok((_task_id, task_future, _progress_rx, _data_stream)) => {
+                                // Wait for the download to complete
+                                match task_future.await {
+                                    Ok(_result) => {
+                                        info!("Download completed successfully: {} -> {}", key, destination_path);
+                                        if !sender.is_canceled() {
+                                            let _ = sender.send(Ok(()));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("Download task failed: {:?}", e);
+                                        if !sender.is_canceled() {
+                                            let _ = sender.send(Err(format!("Download failed: {:?}", e)));
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to start file path download: {:?}", e);
+                                if e.to_string().contains("connection") || e.to_string().contains("websocket") {
+                                    warn!("Connection lost during download, will reconnect on next request");
+                                }
+                                if !sender.is_canceled() {
+                                    let _ = sender.send(Err(format!("Failed to start download: {:?}", e)));
+                                }
+                            }
+                        }
+                    });
+                }
                 ClientCommand::StartGetStream(name, is_public, sender) => {
                     info!("Processing StartGetStream command for key: {}", name);
 
@@ -1408,6 +1466,40 @@ pub async fn put_file_path(
         },
         Err(e) => {
             error!("Failed to send put file path command: {:?}", e);
+            Err(format!("Failed to send command: {:?}", e))
+        }
+    }
+}
+
+pub async fn download_to_path(
+    key: &str,
+    destination_path: &str,
+    is_public: bool,
+) -> Result<(), String> {
+    info!("Starting download to path request for key {} to path {}", key, destination_path);
+
+    let (tx, rx) = oneshot::channel();
+    match CLIENT_COMMAND_SENDER.unbounded_send(ClientCommand::DownloadToPath(
+        key.to_string(),
+        destination_path.to_string(),
+        is_public,
+        tx,
+    )) {
+        Ok(_) => {
+            info!("DownloadToPath command sent to client manager");
+            match rx.await {
+                Ok(result) => {
+                    info!("Received download to path response from client manager");
+                    result
+                },
+                Err(e) => {
+                    error!("Failed to receive download to path response: {:?}", e);
+                    Err(format!("Failed to receive response: {:?}", e))
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to send download to path command: {:?}", e);
             Err(format!("Failed to send command: {:?}", e))
         }
     }

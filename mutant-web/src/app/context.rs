@@ -678,4 +678,14 @@ impl Context {
     ) -> Result<(String, tokio::sync::mpsc::UnboundedReceiver<Result<mutant_protocol::TaskProgress, String>>), String> {
         client_manager::put_file_path(key, file_path, mode, public, no_verify).await
     }
+
+    /// Download a file directly to the filesystem path
+    pub async fn download_to_path(
+        &self,
+        key: &str,
+        destination_path: &str,
+        is_public: bool,
+    ) -> Result<(), String> {
+        client_manager::download_to_path(key, destination_path, is_public).await
+    }
 }

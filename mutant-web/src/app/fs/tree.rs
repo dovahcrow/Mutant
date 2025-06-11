@@ -7,7 +7,7 @@ use crate::app::theme;
 use humansize::{format_size, BINARY}; // For humanize_size
 
 /// Helper function to format file sizes in a human-readable way
-fn humanize_size(size: u64) -> String {
+pub fn humanize_size(size: u64) -> String {
     format_size(size, BINARY)
 }
 

@@ -248,6 +248,7 @@ impl FsWindow {
             crate::app::fs::internal_tab::FsInternalTab::Put(_) => [900.0, 650.0], // Wide for side-by-side file picker and configuration
             crate::app::fs::internal_tab::FsInternalTab::Stats(_) => [500.0, 600.0], // Compact for stats
             crate::app::fs::internal_tab::FsInternalTab::Colony(_) => [800.0, 600.0], // Wide for colony management
+            crate::app::fs::internal_tab::FsInternalTab::Download(_) => [700.0, 500.0], // Good size for file picker
         }
     }
 
@@ -729,6 +730,65 @@ impl FsWindow {
         }
     }
 
+    /// Open a download window for the specified file
+    pub fn open_download_window(&mut self, file_details: KeyDetails) {
+        log::info!("FsWindow: Creating new download window for file: {}", file_details.key);
+
+        // Check if a download tab for this file already exists
+        let tab_exists = self.internal_dock.iter_all_tabs().any(|(_, existing_tab)| {
+            match existing_tab {
+                crate::app::fs::internal_tab::FsInternalTab::Download(download_window) => {
+                    download_window.file_details.key == file_details.key
+                }
+                _ => false,
+            }
+        });
+
+        if !tab_exists {
+            // Create a new download window
+            let download_window = crate::app::download_window::DownloadWindow::new(file_details);
+            let tab = crate::app::fs::internal_tab::FsInternalTab::Download(download_window);
+
+            // Add as a floating window
+            let surface = self.internal_dock.add_window(vec![tab]);
+            log::debug!("Added floating download window with surface ID: {:?}", surface);
+
+            // Set the window position and size for download windows
+            let size = [700.0, 500.0]; // Good size for file picker
+
+            // Calculate centered position based on available docking area
+            let position = if let Some(available_rect) = self.last_docking_area_rect {
+                let x = available_rect.left() + (available_rect.width() - size[0]) / 2.0;
+                let y = available_rect.top() + (available_rect.height() - size[1]) / 2.0;
+
+                // Ensure the window doesn't go off-screen
+                let x = x.max(20.0).min(available_rect.right() - size[0] - 20.0);
+                let y = y.max(20.0).min(available_rect.bottom() - size[1] - 20.0);
+
+                log::debug!("Calculated centered position: [{}, {}] for download window", x, y);
+                [x, y]
+            } else {
+                // Fallback to a reasonable default position
+                log::debug!("No docking area rect available, using fallback position for download window");
+                [300.0, 150.0]
+            };
+
+            // Set the window position and size
+            if let Some(window_state) = self.internal_dock.get_window_state_mut(surface) {
+                window_state
+                    .set_size(size.into())
+                    .set_position(position.into());
+                log::debug!("Set window size {:?} and position {:?} for download window", size, position);
+            } else {
+                log::warn!("Failed to get window state for download window surface");
+            }
+
+            log::info!("FsWindow: Successfully added floating download window to internal dock");
+        } else {
+            log::info!("FsWindow: Download window for this file already exists in internal dock");
+        }
+    }
+
     /// Check if a specific window type is currently open in the internal dock
     pub fn is_window_open(&self, window_name: &str) -> bool {
         self.internal_dock.iter_all_tabs().any(|(_, tab)| {
@@ -736,6 +796,7 @@ impl FsWindow {
                 crate::app::fs::internal_tab::FsInternalTab::Put(_) => window_name == "MutAnt Upload",
                 crate::app::fs::internal_tab::FsInternalTab::Stats(_) => window_name == "MutAnt Stats",
                 crate::app::fs::internal_tab::FsInternalTab::Colony(_) => window_name == "Colony",
+                crate::app::fs::internal_tab::FsInternalTab::Download(_) => window_name == "Download",
                 crate::app::fs::internal_tab::FsInternalTab::FileViewer(_) => false, // File viewers don't count for menu highlighting
             }
         })
@@ -1112,13 +1173,8 @@ impl FsWindow {
 
         // Handle the download click
         if let Some(details) = scroll_response.inner.1 {
-            // self.initiate_download(details, ui.ctx().clone());
-            // Call the new free-standing function
-            crate::app::fs::download::initiate_download(
-                Arc::clone(&self.active_downloads),
-                details,
-                ui.ctx().clone(),
-            );
+            // Open the download window with file picker
+            self.open_download_window(details);
         }
 
         // Handle the delete click

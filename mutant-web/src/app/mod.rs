@@ -35,6 +35,7 @@ pub mod put;
 // mod tasks;
 pub mod window_system;
 pub mod colony_window;
+pub mod download_window;
 
 // Re-export the dynamic URL function
 pub use client_manager::default_ws_url as DEFAULT_WS_URL;

@@ -329,10 +329,16 @@ impl FilePicker {
             available_rect.size(),
             egui::Layout::top_down(egui::Align::LEFT),
             |ui| {
-                // Header for file picker
-                ui.heading(RichText::new("📁 Select File").size(18.0).color(MutantColors::TEXT_PRIMARY));
+                // Header for file picker - adapt based on files_only mode
+                let (header_icon, header_text, description_text) = if self.files_only {
+                    ("📁", "Select File", "Choose a file from the daemon's filesystem:")
+                } else {
+                    ("📂", "Select Folder", "Choose a folder from the daemon's filesystem:")
+                };
+
+                ui.heading(RichText::new(format!("{} {}", header_icon, header_text)).size(18.0).color(MutantColors::TEXT_PRIMARY));
                 ui.add_space(8.0);
-                ui.label(RichText::new("Choose a file from the daemon's filesystem:").color(MutantColors::TEXT_SECONDARY));
+                ui.label(RichText::new(description_text).color(MutantColors::TEXT_SECONDARY));
                 ui.add_space(10.0);
                 // Professional header with subtle background
                 egui::Frame::new()
@@ -512,6 +518,11 @@ impl FilePicker {
             ui.add_space(total_indent);
 
             if node.is_directory {
+                // Check if this directory is selected (only relevant when not in files_only mode)
+                let is_selected = !files_only && selected_file
+                    .as_ref()
+                    .map_or(false, |selected| selected == &node.path);
+
                 // Custom compact directory styling to match file rows
                 let (folder_icon, icon_color) = if node.expanded {
                     ("📂", MutantColors::ACCENT_ORANGE)
@@ -530,8 +541,20 @@ impl FilePicker {
 
                 let row_rect = button_response.rect;
 
-                // Hover effect for directories
-                if button_response.hovered() {
+                // Selection background for directories (when not in files_only mode)
+                if is_selected {
+                    ui.painter().rect_filled(
+                        row_rect,
+                        3.0,
+                        MutantColors::ACCENT_BLUE.gamma_multiply(0.15)
+                    );
+                    ui.painter().rect_stroke(
+                        row_rect,
+                        3.0,
+                        egui::Stroke::new(1.0, MutantColors::ACCENT_BLUE.gamma_multiply(0.6)),
+                        egui::epaint::StrokeKind::Outside
+                    );
+                } else if button_response.hovered() {
                     ui.painter().rect_filled(
                         row_rect,
                         3.0,
@@ -576,9 +599,17 @@ impl FilePicker {
                     icon_color
                 );
 
-                // Handle directory expansion
+                // Handle directory interaction
                 if button_response.clicked() {
-                    node.expanded = !node.expanded;
+                    if files_only {
+                        // In files_only mode, just expand/collapse directories
+                        node.expanded = !node.expanded;
+                    } else {
+                        // In directory selection mode, allow selecting directories
+                        *selected_file_arc.write().unwrap() = Some(node.path.clone());
+                        *error_message.write().unwrap() = None;
+                        file_selected = true;
+                    }
                 }
 
                 if button_response.hovered() {
