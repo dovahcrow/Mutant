@@ -1,6 +1,8 @@
 use eframe::egui;
-use mutant_protocol::KeyDetails;
+use mutant_protocol::{KeyDetails, TaskProgress, GetEvent};
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, RwLock};
+use web_time::{Duration, SystemTime};
 
 /// Download window with directory picker and filename editing functionality
 #[derive(Clone, Serialize, Deserialize)]
@@ -21,6 +23,23 @@ pub struct DownloadWindow {
     /// Download error message
     #[serde(skip)]
     download_error: Option<String>,
+
+    // Progress tracking fields
+    /// Total number of chunks to download
+    #[serde(skip)]
+    total_chunks: Arc<RwLock<usize>>,
+    /// Number of chunks fetched so far
+    #[serde(skip)]
+    fetched_chunks: Arc<RwLock<usize>>,
+    /// Download progress (0.0 to 1.0)
+    #[serde(skip)]
+    progress: Arc<RwLock<f32>>,
+    /// Start time for elapsed time calculation
+    #[serde(skip)]
+    start_time: Arc<RwLock<Option<SystemTime>>>,
+    /// Elapsed time
+    #[serde(skip)]
+    elapsed_time: Arc<RwLock<Duration>>,
 }
 
 impl DownloadWindow {
@@ -38,12 +57,26 @@ impl DownloadWindow {
             downloading: false,
             download_completed: false,
             download_error: None,
+            total_chunks: Arc::new(RwLock::new(0)),
+            fetched_chunks: Arc::new(RwLock::new(0)),
+            progress: Arc::new(RwLock::new(0.0)),
+            start_time: Arc::new(RwLock::new(None)),
+            elapsed_time: Arc::new(RwLock::new(Duration::from_secs(0))),
         }
     }
 
     /// Draw the download window UI
     pub fn draw(&mut self, ui: &mut egui::Ui) -> DownloadWindowResponse {
         let mut response = DownloadWindowResponse::None;
+
+        // Check if download is complete (progress reached 1.0)
+        if self.downloading && !self.download_completed {
+            let current_progress = *self.progress.read().unwrap();
+            if current_progress >= 1.0 {
+                self.downloading = false;
+                self.download_completed = true;
+            }
+        }
 
         // Initialize directory picker on first draw
         if self.directory_picker.is_none() {
@@ -113,6 +146,11 @@ impl DownloadWindow {
                 self.draw_file_picker_ui(ui, &mut response);
             }
         });
+
+        // Request repaint for progress updates
+        if self.downloading {
+            ui.ctx().request_repaint_after(Duration::from_millis(100));
+        }
 
         response
     }
@@ -310,99 +348,266 @@ impl DownloadWindow {
 
 
 
-    /// Draw downloading UI
+    /// Draw downloading UI with progress
     fn draw_downloading_ui(&self, ui: &mut egui::Ui) {
-        ui.vertical_centered(|ui| {
-            ui.add_space(20.0);
+        // Use the full available space without any margins, similar to put window
+        let available_rect = ui.available_rect_before_wrap();
+        ui.expand_to_include_rect(available_rect);
 
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(
-                    egui::RichText::new("Downloading file...")
-                        .size(16.0)
-                        .color(super::theme::MutantColors::TEXT_PRIMARY)
+        let available_width = available_rect.width();
+        let available_height = available_rect.height();
+
+        // Use the full available space without any inner margins
+        ui.allocate_ui_with_layout(
+            egui::Vec2::new(available_width, available_height),
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| {
+                // Add vertical spacing to center content
+                let content_height = 250.0; // Approximate height of our content
+                let top_spacing = (available_height - content_height) / 2.0;
+                if top_spacing > 0.0 {
+                    ui.add_space(top_spacing);
+                }
+
+                // Constrain content width for better readability
+                let max_content_width = (available_width * 0.8).min(500.0);
+
+                ui.allocate_ui_with_layout(
+                    egui::Vec2::new(max_content_width, content_height),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        // Header
+                        ui.vertical_centered(|ui| {
+                            ui.heading(
+                                egui::RichText::new("📥 Downloading...")
+                                    .size(20.0)
+                                    .color(super::theme::MutantColors::TEXT_PRIMARY),
+                            );
+                        });
+                        ui.add_space(15.0);
+
+                        // Show file being downloaded
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("Downloading: {}", self.filename))
+                                    .color(super::theme::MutantColors::TEXT_SECONDARY),
+                            );
+                        });
+                        ui.add_space(10.0);
+
+                        // Progress information
+                        let total_chunks = *self.total_chunks.read().unwrap();
+                        let fetched_chunks = *self.fetched_chunks.read().unwrap();
+                        let progress = *self.progress.read().unwrap();
+                        let elapsed = *self.elapsed_time.read().unwrap();
+                        let elapsed_str = format!("{:.1}s", elapsed.as_secs_f64());
+
+                        // Progress bar with full width
+                        ui.vertical(|ui| {
+                            ui.group(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("📦 Fetching chunks...")
+                                            .color(super::theme::MutantColors::ACCENT_BLUE)
+                                            .strong()
+                                    );
+
+                                    ui.add_space(5.0);
+
+                                    // Progress bar
+                                    ui.add_sized(
+                                        [max_content_width, 20.0],
+                                        super::components::progress::detailed_progress(
+                                            progress,
+                                            fetched_chunks,
+                                            total_chunks,
+                                            elapsed_str,
+                                        ),
+                                    );
+
+                                    ui.add_space(5.0);
+
+                                    // Additional info
+                                    if total_chunks > 0 {
+                                        ui.label(
+                                            egui::RichText::new(format!("Progress: {}/{} chunks ({:.1}%)",
+                                                fetched_chunks, total_chunks, progress * 100.0))
+                                                .size(12.0)
+                                                .color(super::theme::MutantColors::TEXT_MUTED)
+                                        );
+                                    } else {
+                                        ui.label(
+                                            egui::RichText::new("Initializing download...")
+                                                .size(12.0)
+                                                .color(super::theme::MutantColors::TEXT_MUTED)
+                                        );
+                                    }
+                                });
+                            });
+                        });
+                    },
                 );
-            });
-
-            ui.add_space(10.0);
-
-            ui.label(
-                egui::RichText::new("Download in progress...")
-                    .size(12.0)
-                    .color(super::theme::MutantColors::TEXT_MUTED)
-            );
-
-            ui.add_space(20.0);
-        });
+            },
+        );
     }
 
     /// Draw completion UI
     fn draw_completion_ui(&self, ui: &mut egui::Ui, response: &mut DownloadWindowResponse) {
-        ui.vertical_centered(|ui| {
-            ui.add_space(20.0);
+        // Use the full available space without any margins, similar to downloading UI
+        let available_rect = ui.available_rect_before_wrap();
+        ui.expand_to_include_rect(available_rect);
 
-            if let Some(error) = &self.download_error {
-                // Error state
-                ui.label(
-                    egui::RichText::new("❌ Download Failed")
-                        .size(18.0)
-                        .color(super::theme::MutantColors::ERROR)
+        let available_width = available_rect.width();
+        let available_height = available_rect.height();
+
+        // Use the full available space without any inner margins
+        ui.allocate_ui_with_layout(
+            egui::Vec2::new(available_width, available_height),
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| {
+                // Add vertical spacing to center content
+                let content_height = 200.0; // Approximate height of our content
+                let top_spacing = (available_height - content_height) / 2.0;
+                if top_spacing > 0.0 {
+                    ui.add_space(top_spacing);
+                }
+
+                // Constrain content width for better readability
+                let max_content_width = (available_width * 0.8).min(400.0);
+
+                ui.allocate_ui_with_layout(
+                    egui::Vec2::new(max_content_width, content_height),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        ui.vertical_centered(|ui| {
+                            if let Some(error) = &self.download_error {
+                                // Error state
+                                ui.label(
+                                    egui::RichText::new("❌ Download Failed")
+                                        .size(18.0)
+                                        .color(super::theme::MutantColors::ERROR)
+                                );
+
+                                ui.add_space(10.0);
+
+                                ui.label(
+                                    egui::RichText::new(error)
+                                        .size(14.0)
+                                        .color(super::theme::MutantColors::ERROR)
+                                );
+                            } else {
+                                // Success state
+                                ui.label(
+                                    egui::RichText::new("✅ Download Complete")
+                                        .size(18.0)
+                                        .color(super::theme::MutantColors::ACCENT_GREEN)
+                                );
+
+                                ui.add_space(10.0);
+
+                                ui.label(
+                                    egui::RichText::new("File has been downloaded successfully!")
+                                        .size(14.0)
+                                        .color(super::theme::MutantColors::TEXT_PRIMARY)
+                                );
+                            }
+
+                            ui.add_space(20.0);
+
+                            // Close button
+                            if ui.add_sized(
+                                [100.0, 32.0],
+                                egui::Button::new("Close")
+                                    .fill(super::theme::MutantColors::ACCENT_BLUE)
+                                    .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::ACCENT_BLUE))
+                            ).clicked() {
+                                *response = DownloadWindowResponse::Close;
+                            }
+                        });
+                    },
                 );
-
-                ui.add_space(10.0);
-
-                ui.label(
-                    egui::RichText::new(error)
-                        .size(14.0)
-                        .color(super::theme::MutantColors::ERROR)
-                );
-            } else {
-                // Success state
-                ui.label(
-                    egui::RichText::new("✅ Download Complete")
-                        .size(18.0)
-                        .color(super::theme::MutantColors::ACCENT_GREEN)
-                );
-
-                ui.add_space(10.0);
-
-                ui.label(
-                    egui::RichText::new("File has been downloaded successfully!")
-                        .size(14.0)
-                        .color(super::theme::MutantColors::TEXT_PRIMARY)
-                );
-            }
-
-            ui.add_space(20.0);
-
-            // Close button
-            if ui.add_sized(
-                [100.0, 32.0],
-                egui::Button::new("Close")
-                    .fill(super::theme::MutantColors::ACCENT_BLUE)
-                    .stroke(egui::Stroke::new(1.0, super::theme::MutantColors::ACCENT_BLUE))
-            ).clicked() {
-                *response = DownloadWindowResponse::Close;
-            }
-        });
+            },
+        );
     }
 
-    /// Start the download process
+    /// Start the download process with progress tracking
     pub fn start_download(&mut self, destination_path: String) {
         self.downloading = true;
+        self.download_completed = false;
+        self.download_error = None;
+
+        // Reset progress tracking
+        *self.total_chunks.write().unwrap() = 0;
+        *self.fetched_chunks.write().unwrap() = 0;
+        *self.progress.write().unwrap() = 0.0;
+        *self.start_time.write().unwrap() = Some(SystemTime::now());
+        *self.elapsed_time.write().unwrap() = Duration::from_secs(0);
 
         let file_details = self.file_details.clone();
         let ctx = crate::app::context::context();
 
+        // Clone progress tracking references for the async task
+        let total_chunks = self.total_chunks.clone();
+        let fetched_chunks = self.fetched_chunks.clone();
+        let progress = self.progress.clone();
+        let start_time = self.start_time.clone();
+        let elapsed_time = self.elapsed_time.clone();
+
         wasm_bindgen_futures::spawn_local(async move {
-            match ctx.download_to_path(&file_details.key, &destination_path, file_details.is_public).await {
-                Ok(_) => {
-                    log::info!("Download completed successfully to: {}", destination_path);
-                    // TODO: Update completion state - this would need proper state management
+            match ctx.download_to_path_with_progress(&file_details.key, &destination_path, file_details.is_public).await {
+                Ok(mut progress_rx) => {
+                    log::info!("Download started successfully to: {}", destination_path);
+
+                    // Listen for progress updates
+                    while let Some(progress_result) = progress_rx.recv().await {
+                        match progress_result {
+                            Ok(TaskProgress::Get(get_event)) => {
+                                match get_event {
+                                    GetEvent::Starting { total_chunks: total } => {
+                                        log::info!("Download starting: {} total chunks", total);
+                                        *total_chunks.write().unwrap() = total;
+                                        *fetched_chunks.write().unwrap() = 0;
+                                        *progress.write().unwrap() = 0.0;
+                                    }
+                                    GetEvent::PadFetched => {
+                                        let mut fetched = fetched_chunks.write().unwrap();
+                                        *fetched += 1;
+                                        let total = *total_chunks.read().unwrap();
+                                        if total > 0 {
+                                            *progress.write().unwrap() = *fetched as f32 / total as f32;
+                                        }
+
+                                        // Update elapsed time
+                                        if let Some(start) = *start_time.read().unwrap() {
+                                            if let Ok(elapsed) = SystemTime::now().duration_since(start) {
+                                                *elapsed_time.write().unwrap() = elapsed;
+                                            }
+                                        }
+                                    }
+                                    GetEvent::Complete => {
+                                        log::info!("Download completed successfully");
+                                        *progress.write().unwrap() = 1.0;
+                                        // Note: We can't directly update the window state here due to ownership
+                                        // The UI will detect completion when progress reaches 1.0
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            Ok(_) => {
+                                // Other task progress types (not Get events)
+                            }
+                            Err(e) => {
+                                log::error!("Progress stream error: {}", e);
+                                // Note: We can't directly update error state here due to ownership
+                                break;
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     log::error!("Download failed: {}", e);
-                    // TODO: Update error state - this would need proper state management
+                    // Note: We can't directly update error state here due to ownership
                 }
             }
         });

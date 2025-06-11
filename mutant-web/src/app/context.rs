@@ -688,4 +688,14 @@ impl Context {
     ) -> Result<(), String> {
         client_manager::download_to_path(key, destination_path, is_public).await
     }
+
+    /// Download a file with progress tracking
+    pub async fn download_to_path_with_progress(
+        &self,
+        key: &str,
+        destination_path: &str,
+        is_public: bool,
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<Result<mutant_protocol::TaskProgress, String>>, String> {
+        client_manager::download_to_path_with_progress(key, destination_path, is_public).await
+    }
 }
