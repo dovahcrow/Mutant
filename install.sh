@@ -413,13 +413,13 @@ build_rust_workspace() {
     fi
 
     # Build all workspace members in release mode
-    log_info "Building all workspace crates in release mode..."
-    cargo build --workspace --release
+    # log_info "Building all workspace crates in release mode..."
+    # cargo build --workspace --release
 
     # Install CLI tools
     log_info "Installing CLI tools..."
-    cargo install --path mutant-cli --force
-    cargo install --path mutant-daemon --force
+    cargo install --path mutant-cli --force --locked
+    cargo install --path mutant-daemon --force --locked
 
     log_success "Rust workspace built and installed successfully"
 }
