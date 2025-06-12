@@ -574,7 +574,7 @@ generate_mnemonic() {
 
 # Collect user credentials and create .env file
 setup_user_credentials() {
-    log_step "Setting up user credentials..."
+    log_step "Setting up user credentials (before building)..."
 
     cd "$INSTALL_DIR"
 
@@ -588,7 +588,8 @@ setup_user_credentials() {
     fi
 
     echo ""
-    log_highlight "🔐 Credential Setup"
+    log_highlight "🔐 Credential Setup (Before Building)"
+    echo "   Setting up credentials now so they're available during the build process."
     echo "   MutAnt needs your private key and colony mnemonic to function properly."
     echo "   These will be stored securely in a .env file in the installation directory."
     echo ""
@@ -973,14 +974,15 @@ main() {
     check_ant_cli
 
     setup_repository
+
+    # Setup user credentials and environment BEFORE building anything
+    setup_user_credentials
+    load_environment
+
     build_rust_workspace
     setup_web_interface
     setup_configuration
     check_wallet_setup
-
-    # Setup user credentials and environment
-    setup_user_credentials
-    load_environment
 
     # Start services
     start_daemon
