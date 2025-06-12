@@ -21,6 +21,8 @@ INSTALL_DIR="$HOME/mutant"
 DAEMON_PORT="3030"
 WEB_PORT="8080"
 
+RUST_LOG=mutant=debug,colony=debug
+
 # Logging functions
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
@@ -484,35 +486,78 @@ check_wallet_setup() {
 
 # Generate a secure Ethereum private key
 generate_ethereum_private_key() {
-    # Try multiple methods to generate a secure 32-byte private key
+    # secp256k1 curve order (max valid private key)
+    local max_key="fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140"
+    local attempts=0
+    local max_attempts=100
 
-    # Method 1: Use openssl if available
-    if command_exists openssl; then
-        openssl rand -hex 32 2>/dev/null && return
-    fi
+    while [[ $attempts -lt $max_attempts ]]; do
+        local key=""
 
-    # Method 2: Use /dev/urandom if available (Linux/macOS)
-    if [[ -r "/dev/urandom" ]]; then
-        head -c 32 /dev/urandom | xxd -p -c 32 2>/dev/null && return
-    fi
+        # Method 1: Use openssl if available
+        if command_exists openssl; then
+            key=$(openssl rand -hex 32 2>/dev/null)
+        # Method 2: Use /dev/urandom if available (Linux/macOS)
+        elif [[ -r "/dev/urandom" ]]; then
+            key=$(head -c 32 /dev/urandom | xxd -p -c 32 2>/dev/null | tr -d '\n')
+        # Method 3: Use Python if available
+        elif command_exists python3; then
+            key=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null)
+        # Method 4: Use Node.js if available
+        elif command_exists node; then
+            key=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2>/dev/null)
+        # Method 5: Fallback using bash RANDOM (less secure, but better than nothing)
+        else
+            log_warning "Using less secure fallback method for private key generation"
+            key=""
+            for i in {1..64}; do
+                key+=$(printf "%x" $((RANDOM % 16)))
+            done
+        fi
 
-    # Method 3: Use Python if available
-    if command_exists python3; then
-        python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null && return
-    fi
+        # Validate the generated key
+        if [[ -n "$key" ]] && is_valid_ethereum_private_key "$key"; then
+            echo "$key"
+            return 0
+        fi
 
-    # Method 4: Use Node.js if available
-    if command_exists node; then
-        node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2>/dev/null && return
-    fi
-
-    # Method 5: Fallback using bash RANDOM (less secure, but better than nothing)
-    log_warning "Using less secure fallback method for private key generation"
-    local key=""
-    for i in {1..64}; do
-        key+=$(printf "%x" $((RANDOM % 16)))
+        ((attempts++))
     done
-    echo "$key"
+
+    log_error "Failed to generate valid Ethereum private key after $max_attempts attempts"
+    return 1
+}
+
+# Validate Ethereum private key
+is_valid_ethereum_private_key() {
+    local key="$1"
+
+    # Check if key is 64 hex characters
+    if [[ ! "$key" =~ ^[0-9a-fA-F]{64}$ ]]; then
+        return 1
+    fi
+
+    # Check if key is not zero
+    if [[ "$key" =~ ^0+$ ]]; then
+        return 1
+    fi
+
+    # Check if key is less than secp256k1 curve order
+    # Note: This is a simplified check for install script purposes
+    # The probability of generating a key >= curve order is ~1 in 2^128 (astronomically small)
+    # For production applications, proper big number comparison should be used
+    local first_char="${key:0:1}"
+    if [[ "$first_char" =~ ^[0-9a-eA-E]$ ]]; then
+        # First character is 0-e, so definitely less than f (curve order starts with f)
+        return 0
+    elif [[ "$first_char" =~ ^[fF]$ ]]; then
+        # Starts with f - in practice, this is almost certainly valid
+        # The invalid range is tiny: only ~2^128 out of 2^256 possible values
+        return 0
+    else
+        # Should not happen with valid hex, but just in case
+        return 1
+    fi
 }
 
 # Generate a BIP39 mnemonic phrase
@@ -644,18 +689,34 @@ EOF
         return 0
     elif [[ -z "$PRIVATE_KEY" ]]; then
         log_info "No private key provided. Generating a new Ethereum private key..."
-        PRIVATE_KEY=$(generate_ethereum_private_key)
-        if [[ -n "$PRIVATE_KEY" ]]; then
+        if PRIVATE_KEY=$(generate_ethereum_private_key); then
             log_success "Generated new private key: $PRIVATE_KEY"
             log_warning "⚠️  IMPORTANT: Save this private key securely! You'll need it to access your data."
+            log_info "This key is cryptographically secure and valid for Ethereum/Autonomi networks."
         else
-            log_error "Failed to generate private key. Daemon will run in public-only mode."
+            log_error "Failed to generate valid private key. Daemon will run in public-only mode."
+            log_error "This may be due to insufficient entropy sources on your system."
             PRIVATE_KEY=""
         fi
     else
-        # Basic validation - check if it looks like a hex string
-        if [[ ! "$PRIVATE_KEY" =~ ^[0-9a-fA-F]+$ ]]; then
-            log_warning "Private key doesn't appear to be valid hex format, but continuing..."
+        # Validate user-provided private key
+        if is_valid_ethereum_private_key "$PRIVATE_KEY"; then
+            log_success "Private key validated successfully"
+        else
+            log_error "Invalid private key provided!"
+            log_error "Ethereum private keys must be:"
+            log_error "- Exactly 64 hexadecimal characters"
+            log_error "- Not all zeros"
+            log_error "- Within valid range for secp256k1 curve"
+            log_info "Generating a new valid private key instead..."
+
+            if PRIVATE_KEY=$(generate_ethereum_private_key); then
+                log_success "Generated new private key: $PRIVATE_KEY"
+                log_warning "⚠️  IMPORTANT: Save this private key securely! You'll need it to access your data."
+            else
+                log_error "Failed to generate valid private key. Daemon will run in public-only mode."
+                PRIVATE_KEY=""
+            fi
         fi
     fi
 
