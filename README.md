@@ -72,7 +72,7 @@
 This is the all-in-one installation script that will install all dependencies, build the project, then run the daemon and the web interface.
 
 ```bash
-curl https://raw.githubusercontent.com/Champii/Mutant/refs/heads/master/install.sh | bash"
+curl https://raw.githubusercontent.com/Champii/Mutant/refs/heads/master/install.sh | bash
 ```
 
 You will need to provide an Ethereum private key as well as an mnemonic phrase for the colony.  
