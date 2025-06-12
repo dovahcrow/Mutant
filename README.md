@@ -21,13 +21,9 @@
 
 ## Table of Contents
 1. [Core Concepts](#core-concepts)
-2. [Getting Started](#getting-started)
-    1. [Prerequisites](#prerequisites)
-    2. [Setup Rust Toolchain](#setup-rust-toolchain)
-    3. [Setup `ant` Wallet](#setup-ant-wallet)
-3. [Installation](#installation)
-4. [Quick start demo](#quick-start-demo)
-5. [Command-Line Interface (CLI)](#command-line-interface-cli)
+2. [Installation](#installation)
+3. [Quick start demo](#quick-start-demo)
+4. [Command-Line Interface (CLI)](#command-line-interface-cli)
     1. [CLI Usage Examples](#cli-usage-examples)
     2. [Basic Usage](#basic-usage)
         1. [Store/fetch private data](#storefetch-private-data)
@@ -35,16 +31,16 @@
         3. [Pipes and redirects](#pipes-and-redirects)
         4. [Stats and debug](#stats-and-debug)
     3. [Screenshots](#screenshots)
-6. [Library Usage](#library-usage)
+5. [Library Usage](#library-usage)
     1. [Fetching Public Data (Keyless Initialization)](#fetching-public-data-keyless-initialization)
-7. [Development and Testing](#development-and-testing)
+6. [Development and Testing](#development-and-testing)
     1. [Local Testnet Management (`scripts/manage_local_testnet.sh`)](#local-testnet-management-scriptsmanage_local_testnetsh)
     2. [Running Integration Tests (`scripts/run_tests_with_env.sh`)](#running-integration-tests-scriptsrun_tests_with_envsh)
-8. [Migration](#migration)
-9. [Architecture Overview](#architecture-overview)
-10. [Configuration](#configuration)
-11. [License](#license)
-12. [Contributing](#contributing)
+7. [Migration](#migration)
+8. [Architecture Overview](#architecture-overview)
+9. [Configuration](#configuration)
+10. [License](#license)
+11. [Contributing](#contributing)
 
 ## Core Concepts
 
@@ -71,61 +67,19 @@
        - Text/Code viewer/editor
        - Universal video format support with real-time transcoding and streaming with ffmpeg
 
-## Getting Started
-
-### Prerequisites
-
-*   Rust Toolchain (latest stable recommended)
-*   `ant` CLI configured with a wallet (see below)
-
-### Setup Rust Toolchain
-
-This will install rustup
-
-```bash
-$> curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-This will install the latest stable version of the Rust toolchain and cargo
-
-```bash
-$> rustup install nightly
-```
-
-### Setup `ant` Wallet
-
-#### If you just want to fetch public data, you can skip this section.
-
-Before using `mutant` to actually store data, you need to have an `ant` wallet configured for the target network (Mainnet by default, or Devnet if using the `--local` flag). If you don't have `ant` installed, you can get it using [antup](https://github.com/maidsafe/antup):
-
-```bash
-$> curl -sSf https://raw.githubusercontent.com/maidsafe/antup/main/install.sh | sh
-```
-
-This will install the `ant` CLI and configure it for the Mainnet.
-
-```bash
-$> antup client
-```
-
-Once `ant` is installed, if you haven't already, you can import your existing Ethereum/ANT wallet's private key using the `ant` CLI:
-
-```bash
-$> ant wallet import YOUR_PRIVATE_KEY_HERE
-```
-
-Replace `YOUR_PRIVATE_KEY_HERE` with your actual private key. `mutant` will automatically detect and use this wallet.
-
-Alternatively, you can create a new empty wallet using `ant wallet create` and fund it with the necessary ANT or ETH later.
-
-MutAnt will look for your ant wallets and ask you which one you want to use if you have multiple on the first run, then save your choice in `~/.config/mutant/config.json`.
-
 ## Installation
 
+This is the all-in-one installation script that will install all dependencies, build the project, then run the daemon and the web interface.
+
 ```bash
-$> cargo install mutant-daemon
-$> cargo install mutant
+curl https://raw.githubusercontent.com/Champii/Mutant/refs/heads/master/install.sh | bash"
 ```
+
+You will need to provide an Ethereum private key as well as an mnemonic phrase for the colony.  
+While this script propose to generate both, this feature is currently broken. 
+
+You need to generate both from [https://devtoolcafe.com/tools/bip39-generator](https://devtoolcafe.com/tools/bip39-generator) and give them to the script when asked.
+
 
 ## Quick start demo
 
