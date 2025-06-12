@@ -338,6 +338,7 @@ impl Window for ColonyWindow {
                                                 .color(super::theme::MutantColors::TEXT_PRIMARY)
                                         ).clicked() {
                                             ui.ctx().copy_text(user_info.contact_address.clone());
+                                            log::info!("Attempted to copy user contact address to clipboard: {}", user_info.contact_address);
                                         }
                                     });
                                 });
@@ -673,6 +674,7 @@ impl Window for ColonyWindow {
 
                                                                 if copy_button.clicked() {
                                                                     ui.ctx().copy_text(contact.pod_address.clone());
+                                                                    log::info!("Attempted to copy contact address to clipboard: {}", contact.pod_address);
                                                                 }
 
                                                                 copy_button.on_hover_text("Copy address");
@@ -784,7 +786,7 @@ impl Window for ColonyWindow {
                         egui::ScrollArea::vertical()
                             .auto_shrink([false; 2])
                             .show(ui, |ui| {
-                                let mut download_address: Option<String> = None;
+                                let mut download_address: Option<(String, String)> = None;
 
                                 if self.pod_content.is_empty() {
                                     // Empty state with helpful message
@@ -906,7 +908,7 @@ impl Window for ColonyWindow {
                                                                         .stroke(egui::Stroke::NONE)
                                                                         .small()
                                                                 ).clicked() {
-                                                                    download_address = Some(content.address.clone());
+                                                                    download_address = Some((content.address.clone(), content.title.clone()));
                                                                 }
 
                                                                 ui.add_space(1.0);
@@ -941,8 +943,8 @@ impl Window for ColonyWindow {
                                 }
 
                                 // Handle download outside the loop to avoid borrowing issues
-                                if let Some(address) = download_address {
-                                    self.download_content(&address);
+                                if let Some((address, filename)) = download_address {
+                                    self.download_content(&address, &filename);
                                 }
                             });
                     });
@@ -1714,12 +1716,12 @@ impl ColonyWindow {
     }
 
     /// Download content by address and open in new viewer tab
-    fn download_content(&self, address: &str) {
-        log::info!("Downloading content from address: {}", address);
+    fn download_content(&self, address: &str, filename: &str) {
+        log::info!("Downloading content from address: {} with filename: {}", address, filename);
 
-        // Create a KeyDetails for the public address
+        // Create a KeyDetails for the public address using the filename as the key
         let key_details = mutant_protocol::KeyDetails {
-            key: address.to_string(),
+            key: filename.to_string(),
             total_size: 0,     // Unknown size for public content
             pad_count: 0,      // Unknown pad count
             confirmed_pads: 0, // Unknown confirmed pads
