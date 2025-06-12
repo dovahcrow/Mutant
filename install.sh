@@ -593,16 +593,38 @@ setup_user_credentials() {
     echo "   MutAnt needs your private key and colony mnemonic to function properly."
     echo "   These will be stored securely in a .env file in the installation directory."
     echo ""
-    echo "   Options:"
-    echo "   - Enter your existing credentials"
-    echo "   - Press Enter to generate new ones automatically"
-    echo "   - Type 'skip' to run in public-only mode (download only)"
-    echo "   - Generated credentials will be cryptographically secure"
-    echo ""
+
+    # Check if we're in an interactive environment
+    if [[ ! -t 0 ]] && [[ ! -r "/dev/tty" ]]; then
+        log_warning "Non-interactive environment detected (e.g., piped from curl)"
+        log_info "Auto-generating secure credentials..."
+        echo ""
+    else
+        echo "   Options:"
+        echo "   - Enter your existing credentials"
+        echo "   - Press Enter to generate new ones automatically"
+        echo "   - Type 'skip' to run in public-only mode (download only)"
+        echo "   - Generated credentials will be cryptographically secure"
+        echo ""
+    fi
 
     # Ask for private key
     echo -n "Enter your private key (hex format, Enter to generate, or 'skip' for public-only): "
-    read -r PRIVATE_KEY
+
+    # Try to read with timeout to handle non-interactive environments
+    if ([[ -t 0 ]] && [[ -r "/dev/tty" ]]) || [[ "$FORCE_INTERACTIVE" == "true" ]]; then
+        # Interactive environment - read from tty with timeout
+        if read -r -t 60 PRIVATE_KEY < /dev/tty; then
+            echo  # Add newline after input
+        else
+            log_warning "Input timeout or error, auto-generating credentials..."
+            PRIVATE_KEY=""
+        fi
+    else
+        # Non-interactive environment (like curl | bash) - auto-generate
+        log_warning "Non-interactive environment detected, auto-generating credentials..."
+        PRIVATE_KEY=""
+    fi
 
     if [[ "$PRIVATE_KEY" == "skip" ]]; then
         log_info "Skipping credential setup. Daemon will run in public-only mode."
@@ -640,7 +662,21 @@ EOF
     echo ""
     # Ask for colony mnemonic
     echo -n "Enter your colony mnemonic (12-24 words, or press Enter to generate a new one): "
-    read -r COLONY_MNEMONIC
+
+    # Try to read with timeout to handle non-interactive environments
+    if ([[ -t 0 ]] && [[ -r "/dev/tty" ]]) || [[ "$FORCE_INTERACTIVE" == "true" ]]; then
+        # Interactive environment - read from tty with timeout
+        if read -r -t 60 COLONY_MNEMONIC < /dev/tty; then
+            echo  # Add newline after input
+        else
+            log_warning "Input timeout or error, auto-generating mnemonic..."
+            COLONY_MNEMONIC=""
+        fi
+    else
+        # Non-interactive environment (like curl | bash) - auto-generate
+        log_info "Non-interactive environment detected, auto-generating mnemonic..."
+        COLONY_MNEMONIC=""
+    fi
 
     if [[ -z "$COLONY_MNEMONIC" ]]; then
         log_info "No colony mnemonic provided. Generating a new 12-word mnemonic..."
@@ -900,6 +936,7 @@ trap cleanup EXIT
 parse_arguments() {
     RESTART_ONLY=false
     SKIP_DEPS=false
+    FORCE_INTERACTIVE=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -911,6 +948,10 @@ parse_arguments() {
                 SKIP_DEPS=true
                 shift
                 ;;
+            --interactive)
+                FORCE_INTERACTIVE=true
+                shift
+                ;;
             --help|-h)
                 echo "MutAnt All-in-One Installer"
                 echo ""
@@ -919,6 +960,7 @@ parse_arguments() {
                 echo "Options:"
                 echo "  --restart-only    Only restart services (skip installation)"
                 echo "  --skip-deps       Skip dependency installation"
+                echo "  --interactive     Force interactive credential input"
                 echo "  --help, -h        Show this help message"
                 echo ""
                 exit 0
