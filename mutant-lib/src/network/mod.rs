@@ -87,6 +87,7 @@ impl Network {
 
         let (wallet, secret_key) = create_wallet(private_key_hex, network_choice)?;
 
+        dbg!(wallet.address(), &secret_key.public_key());
         Ok(Self {
             wallet,
             network_choice,
@@ -109,8 +110,9 @@ impl Network {
         let hex_to_decode = private_key_hex
             .strip_prefix("0x")
             .unwrap_or(private_key_hex);
-        let pk_bytes = hex::decode(hex_to_decode)
-            .map_err(|e| NetworkError::InvalidKeyInput(format!("Invalid hex private key: {}", e)))?;
+        let pk_bytes = hex::decode(hex_to_decode).map_err(|e| {
+            NetworkError::InvalidKeyInput(format!("Invalid hex private key: {}", e))
+        })?;
 
         let mut hasher = Sha256::new();
         hasher.update(&pk_bytes);
@@ -129,10 +131,7 @@ impl Network {
 
     /// Retrieves an Autonomi network client.
     /// This method creates a new client for each call.
-    pub(crate) async fn get_client(
-        &self,
-        config: Config,
-    ) -> Result<Client, NetworkError> {
+    pub(crate) async fn get_client(&self, config: Config) -> Result<Client, NetworkError> {
         client::create_client(self.network_choice, config).await
     }
 

@@ -36,6 +36,7 @@ pub(super) async fn sync(
     let owner_secret_key_data = network.secret_key();
     let (owner_address, owner_secret_key) =
         derive_master_index_info(&owner_secret_key_data.to_hex())?;
+    dbg!(&owner_address);
 
     let client_get = network
         .get_client(Config::Get)
