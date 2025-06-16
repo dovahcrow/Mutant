@@ -17,7 +17,7 @@ struct Args {
     alphanet: bool,
     #[arg(long)]
     ignore_ctrl_c: bool,
-    #[arg(long, default_value = "127.0.0.1:3030", help = "Address to bind the WebSocket server to")]
+    #[arg(long, default_value = "127.0.0.1:3001", help = "Address to bind the WebSocket server to")]
     bind: String,
     #[arg(long, default_value = "/tmp/mutant-daemon.lock", help = "Path to the daemon lock file")]
     lock_file: String,

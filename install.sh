@@ -18,7 +18,7 @@ NC='\033[0m' # No Color
 REPO_URL="https://github.com/Champii/Anthill.git"
 REPO_BRANCH="master"
 INSTALL_DIR="$HOME/mutant"
-DAEMON_PORT="3030"
+DAEMON_PORT="3001"
 WEB_PORT="8080"
 
 RUST_LOG=mutant=debug,colony=debug

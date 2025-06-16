@@ -13,8 +13,8 @@ pub fn get_daemon_ws_url() -> String {
     let location = window.location();
     let hostname = location.hostname().expect("should have a hostname");
 
-    // Use the hostname with the default daemon port 3030
-    let daemon_url = format!("ws://{}:3030/ws", hostname);
+    // Use the hostname with the default daemon port 3001
+    let daemon_url = format!("ws://{}:3001/ws", hostname);
     log::info!("Dynamic WebSocket URL: {}", daemon_url);
     daemon_url
 }

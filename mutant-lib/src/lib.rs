@@ -107,7 +107,7 @@
 //! async fn main() -> Result<()> {
 //!     // Connect to the daemon (must be running)
 //!     let mut client = MutantClient::new();
-//!     client.connect("ws://localhost:3030/ws").await?;
+//!     client.connect("ws://localhost:3001/ws").await?;
 //!
 //!     // Start a put operation in the background
 //!     let (start_task, progress_rx) = client.put(

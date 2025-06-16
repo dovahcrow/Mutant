@@ -107,5 +107,5 @@ pub async fn connect_to_daemon() -> Result<MutantClient> {
 }
 
 pub fn get_daemon_url() -> &'static str {
-    "ws://localhost:3030/ws"
+    "ws://localhost:3001/ws"
 }

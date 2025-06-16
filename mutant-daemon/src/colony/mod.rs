@@ -988,7 +988,7 @@ impl ColonyManager {
         .map_err(|e| DaemonError::ColonyError(format!("Failed to create pod manager: {}", e)))?;
 
         // Use our pod public address instead of "main"
-        pod_manager.add_pod_ref(&self.pod_public_address, pod_address)
+        pod_manager.add_pod_ref(&self.pod_public_address, pod_address).await
             .map_err(|e| DaemonError::ColonyError(format!("Failed to add pod reference: {}", e)))?;
 
         log::debug!("Added pod reference: {} to our pod: {} at depth 1", pod_address, self.pod_public_address);
@@ -1065,7 +1065,7 @@ impl ColonyManager {
         });
 
         // Use our pod public address instead of "main"
-        pod_manager.add_pod_ref(&self.pod_public_address, pod_address)
+        pod_manager.add_pod_ref(&self.pod_public_address, pod_address).await
             .map_err(|e| DaemonError::ColonyError(format!("Failed to add pod reference: {}", e)))?;
 
         log::debug!("Added pod reference: {} to our pod: {} at depth 1", pod_address, self.pod_public_address);
